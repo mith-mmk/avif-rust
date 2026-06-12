@@ -1,0 +1,12 @@
+[package]
+name = "avif-rust"
+version = "0.0.1"
+edition = "2024"
+description = "Pure Rust AVIF container parser and decoder scaffolding"
+keywords = ["avif", "av1", "image", "decoder", "codec"]
+categories = ["multimedia::images", "encoding"]
+license = "MIT"
+repository = "https://github.com/mith-mmk/wml2-on-rust"
+
+[dependencies]
+bin-rs = { version = "0.0.10", features = ["stream", "util"] }
