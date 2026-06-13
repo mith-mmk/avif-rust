@@ -7,6 +7,7 @@ pub const DIRECTIONAL_MODES: usize = 8;
 pub const COEFF_CDF_Q_CONTEXTS: usize = 4;
 pub const TX_SIZE_CONTEXTS: usize = 5;
 pub const TXB_SKIP_CONTEXTS: usize = 13;
+pub const PLANE_TYPES: usize = 2;
 
 pub const DEFAULT_PARTITION_W8_CDF: [[u16; 5]; PARTITION_CONTEXTS] = [
     [19132, 25510, 30392, 32768, 0],
@@ -382,6 +383,199 @@ pub const DEFAULT_TXB_SKIP_CDF: [[[[u16; 3]; TXB_SKIP_CONTEXTS]; TX_SIZE_CONTEXT
     ],
 ];
 
+pub const DEFAULT_EOB_PT_1024_CDF: [[[u16; 12]; PLANE_TYPES]; COEFF_CDF_Q_CONTEXTS] = [
+    [
+        [
+            393, 421, 751, 1623, 3160, 6352, 13345, 18047, 22571, 25830, 32768, 0,
+        ],
+        [
+            1865, 1988, 2930, 4242, 10533, 16538, 21354, 27255, 28546, 31784, 32768, 0,
+        ],
+    ],
+    [
+        [
+            696, 948, 3145, 5702, 9706, 13217, 17851, 21856, 25692, 28034, 32768, 0,
+        ],
+        [
+            2672, 3591, 9330, 17084, 22725, 24284, 26527, 28027, 28377, 30876, 32768, 0,
+        ],
+    ],
+    [
+        [
+            2784, 3831, 7041, 10521, 14847, 18844, 23155, 26682, 29229, 31045, 32768, 0,
+        ],
+        [
+            9577, 12466, 17739, 20750, 22061, 23215, 24601, 25483, 25843, 32056, 32768, 0,
+        ],
+    ],
+    [
+        [
+            6698, 8334, 11961, 15762, 20186, 23862, 27434, 29326, 31082, 32050, 32768, 0,
+        ],
+        [
+            20569, 22426, 25569, 26859, 28053, 28913, 29486, 29724, 29807, 32570, 32768, 0,
+        ],
+    ],
+];
+
+pub const DEFAULT_EOB_EXTRA_TX32_CDF: [[[[u16; 3]; 9]; PLANE_TYPES]; COEFF_CDF_Q_CONTEXTS] = [
+    [
+        [
+            [27399, 32768, 0],
+            [16327, 32768, 0],
+            [18071, 32768, 0],
+            [19584, 32768, 0],
+            [20721, 32768, 0],
+            [18432, 32768, 0],
+            [19560, 32768, 0],
+            [10150, 32768, 0],
+            [8805, 32768, 0],
+        ],
+        [
+            [24932, 32768, 0],
+            [20833, 32768, 0],
+            [12027, 32768, 0],
+            [16670, 32768, 0],
+            [19914, 32768, 0],
+            [15106, 32768, 0],
+            [17662, 32768, 0],
+            [13783, 32768, 0],
+            [28756, 32768, 0],
+        ],
+    ],
+    [
+        [
+            [25991, 32768, 0],
+            [20314, 32768, 0],
+            [17731, 32768, 0],
+            [19678, 32768, 0],
+            [18649, 32768, 0],
+            [17307, 32768, 0],
+            [21798, 32768, 0],
+            [17549, 32768, 0],
+            [15630, 32768, 0],
+        ],
+        [
+            [26585, 32768, 0],
+            [21469, 32768, 0],
+            [20432, 32768, 0],
+            [17735, 32768, 0],
+            [19280, 32768, 0],
+            [15235, 32768, 0],
+            [20297, 32768, 0],
+            [22471, 32768, 0],
+            [28997, 32768, 0],
+        ],
+    ],
+    [
+        [
+            [23312, 32768, 0],
+            [21607, 32768, 0],
+            [16526, 32768, 0],
+            [18957, 32768, 0],
+            [18034, 32768, 0],
+            [18934, 32768, 0],
+            [24247, 32768, 0],
+            [16921, 32768, 0],
+            [17080, 32768, 0],
+        ],
+        [
+            [26579, 32768, 0],
+            [24910, 32768, 0],
+            [18637, 32768, 0],
+            [19800, 32768, 0],
+            [20388, 32768, 0],
+            [9887, 32768, 0],
+            [15642, 32768, 0],
+            [30198, 32768, 0],
+            [24721, 32768, 0],
+        ],
+    ],
+    [
+        [
+            [21442, 32768, 0],
+            [22358, 32768, 0],
+            [18503, 32768, 0],
+            [20291, 32768, 0],
+            [19945, 32768, 0],
+            [21294, 32768, 0],
+            [21178, 32768, 0],
+            [19400, 32768, 0],
+            [10556, 32768, 0],
+        ],
+        [
+            [24648, 32768, 0],
+            [24949, 32768, 0],
+            [20708, 32768, 0],
+            [23905, 32768, 0],
+            [20501, 32768, 0],
+            [9558, 32768, 0],
+            [9423, 32768, 0],
+            [30365, 32768, 0],
+            [19253, 32768, 0],
+        ],
+    ],
+];
+
+pub const DEFAULT_COEFF_BASE_EOB_TX32_CDF: [[[[u16; 4]; 4]; PLANE_TYPES]; COEFF_CDF_Q_CONTEXTS] = [
+    [
+        [
+            [1787, 2532, 32768, 0],
+            [30832, 31662, 32768, 0],
+            [31824, 32682, 32768, 0],
+            [32133, 32569, 32768, 0],
+        ],
+        [
+            [13751, 22235, 32768, 0],
+            [32089, 32409, 32768, 0],
+            [27084, 27920, 32768, 0],
+            [29291, 32594, 32768, 0],
+        ],
+    ],
+    [
+        [
+            [1044, 2257, 32768, 0],
+            [30755, 31923, 32768, 0],
+            [32208, 32693, 32768, 0],
+            [32244, 32615, 32768, 0],
+        ],
+        [
+            [21317, 26207, 32768, 0],
+            [29133, 30868, 32768, 0],
+            [29311, 31231, 32768, 0],
+            [29657, 31087, 32768, 0],
+        ],
+    ],
+    [
+        [
+            [2809, 19301, 32768, 0],
+            [32205, 32622, 32768, 0],
+            [32338, 32730, 32768, 0],
+            [31786, 32616, 32768, 0],
+        ],
+        [
+            [22737, 29105, 32768, 0],
+            [30810, 32362, 32768, 0],
+            [30014, 32627, 32768, 0],
+            [30528, 32574, 32768, 0],
+        ],
+    ],
+    [
+        [
+            [24647, 30463, 32768, 0],
+            [32412, 32695, 32768, 0],
+            [32468, 32720, 32768, 0],
+            [31269, 32523, 32768, 0],
+        ],
+        [
+            [28482, 31505, 32768, 0],
+            [32152, 32701, 32768, 0],
+            [31732, 32598, 32768, 0],
+            [31767, 32712, 32768, 0],
+        ],
+    ],
+];
+
 pub const DEFAULT_INTRA_FRAME_Y_MODE_CDF: [[[u16; INTRA_MODES + 1]; INTRA_MODE_CONTEXTS];
     INTRA_MODE_CONTEXTS] = [
     [
@@ -591,6 +785,9 @@ pub struct CdfContext {
     pub uv_mode_cfl_not_allowed: [[u16; INTRA_MODES + 1]; INTRA_MODES],
     pub angle_delta: [[u16; 8]; DIRECTIONAL_MODES],
     pub txb_skip: [[[u16; 3]; TXB_SKIP_CONTEXTS]; TX_SIZE_CONTEXTS],
+    pub eob_pt_1024: [[u16; 12]; PLANE_TYPES],
+    pub eob_extra_tx32: [[[u16; 3]; 9]; PLANE_TYPES],
+    pub coeff_base_eob_tx32: [[[u16; 4]; 4]; PLANE_TYPES],
 }
 
 impl Default for CdfContext {
@@ -614,6 +811,9 @@ impl CdfContext {
             uv_mode_cfl_not_allowed: DEFAULT_UV_MODE_CFL_NOT_ALLOWED_CDF,
             angle_delta: DEFAULT_ANGLE_DELTA_CDF,
             txb_skip: DEFAULT_TXB_SKIP_CDF[coeff_q_context],
+            eob_pt_1024: DEFAULT_EOB_PT_1024_CDF[coeff_q_context],
+            eob_extra_tx32: DEFAULT_EOB_EXTRA_TX32_CDF[coeff_q_context],
+            coeff_base_eob_tx32: DEFAULT_COEFF_BASE_EOB_TX32_CDF[coeff_q_context],
         }
     }
 }
@@ -656,6 +856,18 @@ impl CdfContext {
     pub fn txb_skip_cdf_mut(&mut self, tx_size_context: usize, context: usize) -> &mut [u16] {
         &mut self.txb_skip[tx_size_context][context]
     }
+
+    pub fn eob_pt_1024_cdf_mut(&mut self, plane_type: usize) -> &mut [u16] {
+        &mut self.eob_pt_1024[plane_type]
+    }
+
+    pub fn eob_extra_tx32_cdf_mut(&mut self, plane_type: usize, context: usize) -> &mut [u16] {
+        &mut self.eob_extra_tx32[plane_type][context]
+    }
+
+    pub fn coeff_base_eob_tx32_cdf_mut(&mut self, plane_type: usize, context: usize) -> &mut [u16] {
+        &mut self.coeff_base_eob_tx32[plane_type][context]
+    }
 }
 
 pub fn coeff_q_context(base_q_idx: u8) -> usize {
@@ -687,6 +899,12 @@ mod tests {
         assert_eq!(context.angle_delta[0][6], 32768);
         assert_eq!(context.txb_skip[0][0][1], 32768);
         assert_eq!(context.txb_skip[4][12][1], 32768);
+        assert_eq!(context.eob_pt_1024[0][10], 32768);
+        assert_eq!(context.eob_pt_1024[1][10], 32768);
+        assert_eq!(context.eob_extra_tx32[0][0][1], 32768);
+        assert_eq!(context.eob_extra_tx32[1][8][1], 32768);
+        assert_eq!(context.coeff_base_eob_tx32[0][0][2], 32768);
+        assert_eq!(context.coeff_base_eob_tx32[1][3][2], 32768);
     }
 
     #[test]
@@ -706,5 +924,29 @@ mod tests {
         assert_eq!(CdfContext::new(21).txb_skip[0][0], [30371, 32768, 0]);
         assert_eq!(CdfContext::new(61).txb_skip[0][0], [29614, 32768, 0]);
         assert_eq!(CdfContext::new(121).txb_skip[0][0], [26887, 32768, 0]);
+        assert_eq!(CdfContext::new(20).eob_pt_1024[0][0], 393);
+        assert_eq!(CdfContext::new(21).eob_pt_1024[0][0], 696);
+        assert_eq!(CdfContext::new(61).eob_pt_1024[0][0], 2784);
+        assert_eq!(CdfContext::new(121).eob_pt_1024[0][0], 6698);
+        assert_eq!(CdfContext::new(20).eob_extra_tx32[0][0], [27399, 32768, 0]);
+        assert_eq!(CdfContext::new(21).eob_extra_tx32[0][0], [25991, 32768, 0]);
+        assert_eq!(CdfContext::new(61).eob_extra_tx32[0][0], [23312, 32768, 0]);
+        assert_eq!(CdfContext::new(121).eob_extra_tx32[0][0], [21442, 32768, 0]);
+        assert_eq!(
+            CdfContext::new(20).coeff_base_eob_tx32[0][0],
+            [1787, 2532, 32768, 0]
+        );
+        assert_eq!(
+            CdfContext::new(21).coeff_base_eob_tx32[0][0],
+            [1044, 2257, 32768, 0]
+        );
+        assert_eq!(
+            CdfContext::new(61).coeff_base_eob_tx32[0][0],
+            [2809, 19301, 32768, 0]
+        );
+        assert_eq!(
+            CdfContext::new(121).coeff_base_eob_tx32[0][0],
+            [24647, 30463, 32768, 0]
+        );
     }
 }

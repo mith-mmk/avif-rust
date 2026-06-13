@@ -5,7 +5,7 @@ use super::frame::FrameHeader;
 use super::sequence::SequenceHeader;
 use super::syntax::{BlockSize, Partition, PredictionMode, UvPredictionMode};
 use super::tile_group::TileGroup;
-use super::transform::{TransformBlock, plan_transform_blocks};
+use super::transform::{TransformBlock, plan_transform_blocks, zig_zag_scan};
 use crate::DecoderError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,9 +53,27 @@ pub struct ResidualProbe {
     pub transform_count: usize,
     pub zero_transform_count: usize,
     pub first_tx_size: Option<super::syntax::TxSize>,
+    pub first_non_zero_transform_index: Option<usize>,
+    pub first_non_zero_tx_size: Option<super::syntax::TxSize>,
     pub txb_skip_context: Option<usize>,
     pub all_zero_symbol: Option<usize>,
     pub first_transform_all_zero: bool,
+    pub eob_multisize: Option<usize>,
+    pub eob_pt_symbol: Option<usize>,
+    pub eob_pt: Option<usize>,
+    pub eob_base: Option<usize>,
+    pub eob_extra_context: Option<usize>,
+    pub eob_extra_symbol: Option<usize>,
+    pub eob_extra_literal_bits: Option<usize>,
+    pub eob: Option<usize>,
+    pub coeff_base_eob_context: Option<usize>,
+    pub coeff_base_eob_symbol: Option<usize>,
+    pub coeff_base_eob_level: Option<usize>,
+    pub regular_coeff_base_count: Option<usize>,
+    pub first_coeff_base_scan_index: Option<usize>,
+    pub first_coeff_base_position: Option<usize>,
+    pub first_coeff_base_context: Option<usize>,
+    pub first_coeff_base_reference_magnitude: Option<usize>,
     pub bit_position_after: usize,
 }
 
@@ -210,9 +228,10 @@ impl<'a> TileDecoder<'a> {
         &mut self,
         tile_id: u32,
         block_mode: &BlockModeProbe,
-        first_transform: Option<TransformBlock>,
-        transform_count: usize,
+        transforms: &[TransformBlock],
     ) -> Result<ResidualProbe, DecoderError> {
+        let transform_count = transforms.len();
+        let first_transform = transforms.first().copied();
         if block_mode.skip {
             return Ok(ResidualProbe {
                 tile_id,
@@ -221,9 +240,27 @@ impl<'a> TileDecoder<'a> {
                 transform_count,
                 zero_transform_count: transform_count,
                 first_tx_size: first_transform.map(|transform| transform.tx_size),
+                first_non_zero_transform_index: None,
+                first_non_zero_tx_size: None,
                 txb_skip_context: None,
                 all_zero_symbol: None,
                 first_transform_all_zero: true,
+                eob_multisize: None,
+                eob_pt_symbol: None,
+                eob_pt: None,
+                eob_base: None,
+                eob_extra_context: None,
+                eob_extra_symbol: None,
+                eob_extra_literal_bits: None,
+                eob: None,
+                coeff_base_eob_context: None,
+                coeff_base_eob_symbol: None,
+                coeff_base_eob_level: None,
+                regular_coeff_base_count: None,
+                first_coeff_base_scan_index: None,
+                first_coeff_base_position: None,
+                first_coeff_base_context: None,
+                first_coeff_base_reference_magnitude: None,
                 bit_position_after: block_mode.bit_position_after,
             });
         }
@@ -236,32 +273,210 @@ impl<'a> TileDecoder<'a> {
                 transform_count,
                 zero_transform_count: 0,
                 first_tx_size: None,
+                first_non_zero_transform_index: None,
+                first_non_zero_tx_size: None,
                 txb_skip_context: None,
                 all_zero_symbol: None,
                 first_transform_all_zero: false,
+                eob_multisize: None,
+                eob_pt_symbol: None,
+                eob_pt: None,
+                eob_base: None,
+                eob_extra_context: None,
+                eob_extra_symbol: None,
+                eob_extra_literal_bits: None,
+                eob: None,
+                coeff_base_eob_context: None,
+                coeff_base_eob_symbol: None,
+                coeff_base_eob_level: None,
+                regular_coeff_base_count: None,
+                first_coeff_base_scan_index: None,
+                first_coeff_base_position: None,
+                first_coeff_base_context: None,
+                first_coeff_base_reference_magnitude: None,
                 bit_position_after: block_mode.bit_position_after,
             });
         };
 
-        let txb_skip_context = first_txb_skip_context(block_mode.block_size, first_transform);
-        let all_zero_symbol = self.reader.read_symbol(
-            self.cdf
-                .txb_skip_cdf_mut(first_transform.tx_size.coeff_cdf_index(), txb_skip_context),
-        )?;
-        let first_transform_all_zero = all_zero_symbol != 0;
+        let mut first_txb_skip_context_value = None;
+        let mut first_all_zero_symbol = None;
+        let mut first_transform_all_zero = true;
+        let mut zero_transform_count = 0usize;
+        let mut first_non_zero_transform = None;
+        let mut first_non_zero_transform_index = None;
+
+        for (index, transform) in transforms.iter().copied().enumerate() {
+            let txb_skip_context = first_txb_skip_context(block_mode.block_size, transform);
+            let all_zero_symbol = self.reader.read_symbol(
+                self.cdf
+                    .txb_skip_cdf_mut(transform.tx_size.coeff_cdf_index(), txb_skip_context),
+            )?;
+            if index == 0 {
+                first_txb_skip_context_value = Some(txb_skip_context);
+                first_all_zero_symbol = Some(all_zero_symbol);
+                first_transform_all_zero = all_zero_symbol != 0;
+            }
+            if all_zero_symbol != 0 {
+                zero_transform_count += 1;
+                continue;
+            }
+            first_non_zero_transform = Some(transform);
+            first_non_zero_transform_index = Some(index);
+            break;
+        }
+
+        let (
+            eob_multisize,
+            eob_pt_symbol,
+            eob_pt,
+            eob_base,
+            eob_extra_context,
+            eob_extra_symbol,
+            eob_extra_literal_bits,
+            eob,
+            coeff_base_eob_context,
+            coeff_base_eob_symbol,
+            coeff_base_eob_level,
+            regular_coeff_base_count,
+            first_coeff_base_scan_index,
+            first_coeff_base_position,
+            first_coeff_base_context,
+            first_coeff_base_reference_magnitude,
+        ) = if let Some(non_zero_transform) = first_non_zero_transform {
+            let eob_multisize = eob_multisize(non_zero_transform);
+            if eob_multisize != 6 {
+                return Err(DecoderError::Unsupported(format!(
+                    "AV1 eob_pt decode for eobMultisize {eob_multisize} is not supported yet"
+                )));
+            }
+            let plane_type = usize::from(non_zero_transform.plane > 0);
+            let eob_pt_symbol = self
+                .reader
+                .read_symbol(self.cdf.eob_pt_1024_cdf_mut(plane_type))?;
+            let eob_pt = eob_pt_symbol + 1;
+            let eob_base = eob_base_from_pt(eob_pt);
+            let (eob_extra_context, eob_extra_symbol, eob_extra_literal_bits, eob) =
+                self.read_eob_extra(non_zero_transform, plane_type, eob_pt, eob_base)?;
+            if non_zero_transform.tx_size != super::syntax::TxSize::Tx32x32 {
+                return Err(DecoderError::Unsupported(format!(
+                    "AV1 coeff_base_eob decode for {:?} is not supported yet",
+                    non_zero_transform.tx_size
+                )));
+            }
+            let coeff_base_eob_context =
+                coeff_base_eob_context(non_zero_transform.tx_size, eob.saturating_sub(1));
+            let coeff_base_eob_symbol = self.reader.read_symbol(
+                self.cdf
+                    .coeff_base_eob_tx32_cdf_mut(plane_type, coeff_base_eob_context),
+            )?;
+            let coeff_base_eob_level = coeff_base_eob_symbol + 1;
+            let coeff_base_probe = first_regular_coeff_base_probe(
+                non_zero_transform.tx_size,
+                eob,
+                coeff_base_eob_level,
+            )?;
+            (
+                Some(eob_multisize),
+                Some(eob_pt_symbol),
+                Some(eob_pt),
+                Some(eob_base),
+                eob_extra_context,
+                eob_extra_symbol,
+                eob_extra_literal_bits,
+                Some(eob),
+                Some(coeff_base_eob_context),
+                Some(coeff_base_eob_symbol),
+                Some(coeff_base_eob_level),
+                Some(coeff_base_probe.remaining_count),
+                coeff_base_probe.scan_index,
+                coeff_base_probe.position,
+                coeff_base_probe.context,
+                coeff_base_probe.reference_magnitude,
+            )
+        } else {
+            (
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None,
+            )
+        };
 
         Ok(ResidualProbe {
             tile_id,
             block_size: block_mode.block_size,
             skipped: false,
             transform_count,
-            zero_transform_count: usize::from(first_transform_all_zero),
+            zero_transform_count,
             first_tx_size: Some(first_transform.tx_size),
-            txb_skip_context: Some(txb_skip_context),
-            all_zero_symbol: Some(all_zero_symbol),
+            first_non_zero_transform_index,
+            first_non_zero_tx_size: first_non_zero_transform.map(|transform| transform.tx_size),
+            txb_skip_context: first_txb_skip_context_value,
+            all_zero_symbol: first_all_zero_symbol,
             first_transform_all_zero,
+            eob_multisize,
+            eob_pt_symbol,
+            eob_pt,
+            eob_base,
+            eob_extra_context,
+            eob_extra_symbol,
+            eob_extra_literal_bits,
+            eob,
+            coeff_base_eob_context,
+            coeff_base_eob_symbol,
+            coeff_base_eob_level,
+            regular_coeff_base_count,
+            first_coeff_base_scan_index,
+            first_coeff_base_position,
+            first_coeff_base_context,
+            first_coeff_base_reference_magnitude,
             bit_position_after: self.reader.bit_position(),
         })
+    }
+
+    fn read_eob_extra(
+        &mut self,
+        transform: TransformBlock,
+        plane_type: usize,
+        eob_pt: usize,
+        eob_base: usize,
+    ) -> Result<(Option<usize>, Option<usize>, Option<usize>, usize), DecoderError> {
+        if eob_pt < 3 {
+            return Ok((None, None, Some(0), eob_base));
+        }
+        if transform.tx_size != super::syntax::TxSize::Tx32x32 {
+            return Err(DecoderError::Unsupported(format!(
+                "AV1 eob_extra decode for {:?} is not supported yet",
+                transform.tx_size
+            )));
+        }
+
+        let context = eob_pt - 3;
+        let eob_extra_symbol = self
+            .reader
+            .read_symbol(self.cdf.eob_extra_tx32_cdf_mut(plane_type, context))?;
+        let mut eob = eob_base;
+        let eob_shift = eob_pt - 3;
+        if eob_extra_symbol != 0 {
+            eob += 1usize << eob_shift;
+        }
+
+        let literal_bits = eob_pt.saturating_sub(3);
+        for index in 0..literal_bits {
+            let shift = literal_bits - 1 - index;
+            let bit = self
+                .reader
+                .read_literal(1)
+                .map_err(|err| DecoderError::Bitstream(format!("AV1 eob_extra_bit: {err}")))?;
+            if bit != 0 {
+                eob += 1usize << shift;
+            }
+        }
+
+        Ok((
+            Some(context),
+            Some(eob_extra_symbol),
+            Some(literal_bits),
+            eob,
+        ))
     }
 }
 
@@ -273,6 +488,155 @@ fn first_txb_skip_context(block_size: BlockSize, transform: TransformBlock) -> u
     } else {
         1
     }
+}
+
+fn eob_multisize(transform: TransformBlock) -> usize {
+    usize::from(transform.tx_size.width_log2().min(5) + transform.tx_size.height_log2().min(5) - 4)
+}
+
+fn eob_base_from_pt(eob_pt: usize) -> usize {
+    if eob_pt < 2 {
+        eob_pt
+    } else {
+        (1 << (eob_pt - 2)) + 1
+    }
+}
+
+fn coeff_base_eob_context(tx_size: super::syntax::TxSize, scan_index: usize) -> usize {
+    let samples = tx_size.sample_count();
+    if scan_index == 0 {
+        0
+    } else if scan_index <= samples / 8 {
+        1
+    } else if scan_index <= samples / 4 {
+        2
+    } else {
+        3
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CoeffBaseProbe {
+    remaining_count: usize,
+    scan_index: Option<usize>,
+    position: Option<usize>,
+    context: Option<usize>,
+    reference_magnitude: Option<usize>,
+}
+
+const SIG_REF_DIFF_OFFSET_2D: [(usize, usize); 5] = [(0, 1), (1, 0), (1, 1), (0, 2), (2, 0)];
+const COEFF_BASE_CTX_OFFSET_SQUARE: [[[usize; 5]; 5]; 5] = [
+    [
+        [0, 1, 6, 6, 0],
+        [1, 6, 6, 21, 0],
+        [6, 6, 21, 21, 0],
+        [6, 21, 21, 21, 0],
+        [0, 0, 0, 0, 0],
+    ],
+    [
+        [0, 1, 6, 6, 21],
+        [1, 6, 6, 21, 21],
+        [6, 6, 21, 21, 21],
+        [6, 21, 21, 21, 21],
+        [21, 21, 21, 21, 21],
+    ],
+    [
+        [0, 1, 6, 6, 21],
+        [1, 6, 6, 21, 21],
+        [6, 6, 21, 21, 21],
+        [6, 21, 21, 21, 21],
+        [21, 21, 21, 21, 21],
+    ],
+    [
+        [0, 1, 6, 6, 21],
+        [1, 6, 6, 21, 21],
+        [6, 6, 21, 21, 21],
+        [6, 21, 21, 21, 21],
+        [21, 21, 21, 21, 21],
+    ],
+    [
+        [0, 1, 6, 6, 21],
+        [1, 6, 6, 21, 21],
+        [6, 6, 21, 21, 21],
+        [6, 21, 21, 21, 21],
+        [21, 21, 21, 21, 21],
+    ],
+];
+
+fn first_regular_coeff_base_probe(
+    tx_size: super::syntax::TxSize,
+    eob: usize,
+    eob_level: usize,
+) -> Result<CoeffBaseProbe, DecoderError> {
+    let sample_count = tx_size.sample_count();
+    if eob == 0 || eob > sample_count {
+        return Err(DecoderError::Bitstream(format!(
+            "AV1 eob {eob} is invalid for {tx_size:?}"
+        )));
+    }
+    let remaining_count = eob - 1;
+    if remaining_count == 0 {
+        return Ok(CoeffBaseProbe {
+            remaining_count,
+            scan_index: None,
+            position: None,
+            context: None,
+            reference_magnitude: None,
+        });
+    }
+
+    let scan = zig_zag_scan(tx_size);
+    let mut quant = vec![0i32; sample_count];
+    quant[scan[eob - 1]] = eob_level as i32;
+    let scan_index = eob - 2;
+    let position = scan[scan_index];
+    let (context, reference_magnitude) = coeff_base_context_2d(tx_size, position, &quant)?;
+
+    Ok(CoeffBaseProbe {
+        remaining_count,
+        scan_index: Some(scan_index),
+        position: Some(position),
+        context: Some(context),
+        reference_magnitude: Some(reference_magnitude),
+    })
+}
+
+fn coeff_base_context_2d(
+    tx_size: super::syntax::TxSize,
+    position: usize,
+    quant: &[i32],
+) -> Result<(usize, usize), DecoderError> {
+    if quant.len() != tx_size.sample_count() {
+        return Err(DecoderError::InvalidParam(
+            "AV1 coeff_base context quant buffer size does not match transform size".to_string(),
+        ));
+    }
+    if position >= quant.len() {
+        return Err(DecoderError::InvalidParam(
+            "AV1 coeff_base context position exceeds transform size".to_string(),
+        ));
+    }
+
+    let width = tx_size.width();
+    let height = tx_size.height();
+    let row = position / width;
+    let col = position % width;
+    let mut magnitude = 0usize;
+    for (row_offset, col_offset) in SIG_REF_DIFF_OFFSET_2D {
+        let ref_row = row + row_offset;
+        let ref_col = col + col_offset;
+        if ref_row < height && ref_col < width {
+            magnitude += quant[ref_row * width + ref_col].unsigned_abs().min(3) as usize;
+        }
+    }
+
+    if row == 0 && col == 0 {
+        return Ok((0, magnitude));
+    }
+
+    let context_delta = ((magnitude + 1) >> 1).min(4);
+    let offset = COEFF_BASE_CTX_OFFSET_SQUARE[tx_size.coeff_cdf_index()][row.min(4)][col.min(4)];
+    Ok((context_delta + offset, magnitude))
 }
 
 pub fn prepare_tile_entropy(
@@ -396,8 +760,7 @@ pub fn probe_first_block_residuals(
             probes.push(decoder.read_first_transform_residual(
                 tile_plan.tile_id,
                 &block_mode,
-                transforms.first().copied(),
-                transforms.len(),
+                &transforms,
             )?);
         }
     }
@@ -609,17 +972,120 @@ mod tests {
             assert_eq!(probes[0].zero_transform_count, 16);
             assert_eq!(probes[0].txb_skip_context, None);
             assert_eq!(probes[0].all_zero_symbol, None);
+            assert_eq!(probes[0].first_non_zero_transform_index, None);
+            assert_eq!(probes[0].first_non_zero_tx_size, None);
+            assert_eq!(probes[0].coeff_base_eob_context, None);
+            assert_eq!(probes[0].coeff_base_eob_symbol, None);
+            assert_eq!(probes[0].coeff_base_eob_level, None);
+            assert_eq!(probes[0].regular_coeff_base_count, None);
+            assert_eq!(probes[0].first_coeff_base_scan_index, None);
+            assert_eq!(probes[0].first_coeff_base_context, None);
         } else {
             assert!(probes[0].txb_skip_context.unwrap() <= 1);
             assert!(probes[0].all_zero_symbol.unwrap() <= 1);
             assert_eq!(
                 probes[0].zero_transform_count,
-                usize::from(probes[0].first_transform_all_zero)
+                probes[0].first_non_zero_transform_index.unwrap_or(16)
             );
+            if probes[0].first_non_zero_transform_index.is_none() {
+                assert_eq!(probes[0].eob_multisize, None);
+                assert_eq!(probes[0].eob_pt_symbol, None);
+                assert_eq!(probes[0].eob_base, None);
+                assert_eq!(probes[0].eob_extra_symbol, None);
+                assert_eq!(probes[0].eob, None);
+                assert_eq!(probes[0].coeff_base_eob_context, None);
+                assert_eq!(probes[0].coeff_base_eob_symbol, None);
+                assert_eq!(probes[0].coeff_base_eob_level, None);
+                assert_eq!(probes[0].regular_coeff_base_count, None);
+                assert_eq!(probes[0].first_coeff_base_scan_index, None);
+                assert_eq!(probes[0].first_coeff_base_context, None);
+            } else {
+                assert!(probes[0].first_non_zero_transform_index.unwrap() < 16);
+                assert_eq!(
+                    probes[0].first_non_zero_tx_size,
+                    Some(super::super::syntax::TxSize::Tx32x32)
+                );
+                assert_eq!(probes[0].eob_multisize, Some(6));
+                assert!(probes[0].eob_pt_symbol.unwrap() < 11);
+                assert_eq!(
+                    probes[0].eob_pt.unwrap(),
+                    probes[0].eob_pt_symbol.unwrap() + 1
+                );
+                assert!(probes[0].eob_base.unwrap() > 0);
+                assert_eq!(
+                    probes[0].eob_extra_context,
+                    probes[0].eob_pt.filter(|pt| *pt >= 3).map(|pt| pt - 3)
+                );
+                assert!(probes[0].eob_extra_symbol.unwrap_or(0) <= 1);
+                assert_eq!(
+                    probes[0].eob_extra_literal_bits,
+                    Some(probes[0].eob_pt.unwrap().saturating_sub(3))
+                );
+                assert!(probes[0].eob.unwrap() >= probes[0].eob_base.unwrap());
+                assert!(probes[0].eob.unwrap() <= 1024);
+                assert!(probes[0].coeff_base_eob_context.unwrap() < 4);
+                assert!(probes[0].coeff_base_eob_symbol.unwrap() < 3);
+                assert_eq!(
+                    probes[0].coeff_base_eob_level.unwrap(),
+                    probes[0].coeff_base_eob_symbol.unwrap() + 1
+                );
+                assert_eq!(
+                    probes[0].regular_coeff_base_count,
+                    Some(probes[0].eob.unwrap() - 1)
+                );
+                if probes[0].regular_coeff_base_count.unwrap() > 0 {
+                    assert_eq!(
+                        probes[0].first_coeff_base_scan_index,
+                        Some(probes[0].eob.unwrap() - 2)
+                    );
+                    assert!(probes[0].first_coeff_base_position.unwrap() < 1024);
+                    assert!(probes[0].first_coeff_base_context.unwrap() < 42);
+                    assert!(probes[0].first_coeff_base_reference_magnitude.unwrap() <= 15);
+                }
+            }
         }
         assert_eq!(
             probes[0].first_tx_size,
             Some(super::super::syntax::TxSize::Tx32x32)
         );
+    }
+
+    #[test]
+    fn coeff_base_context_2d_matches_square_offset_rules() {
+        let mut quant = vec![0; super::super::syntax::TxSize::Tx32x32.sample_count()];
+
+        assert_eq!(
+            coeff_base_context_2d(super::super::syntax::TxSize::Tx32x32, 0, &quant).unwrap(),
+            (0, 0)
+        );
+
+        quant[2] = 3;
+        assert_eq!(
+            coeff_base_context_2d(super::super::syntax::TxSize::Tx32x32, 1, &quant).unwrap(),
+            (3, 3)
+        );
+
+        assert_eq!(
+            coeff_base_context_2d(super::super::syntax::TxSize::Tx32x32, 4 * 32 + 4, &quant)
+                .unwrap(),
+            (21, 0)
+        );
+    }
+
+    #[test]
+    fn first_regular_coeff_base_probe_reports_next_scan_slot() {
+        let probe =
+            first_regular_coeff_base_probe(super::super::syntax::TxSize::Tx4x4, 3, 2).unwrap();
+
+        assert_eq!(probe.remaining_count, 2);
+        assert_eq!(probe.scan_index, Some(1));
+        assert_eq!(probe.position, Some(1));
+        assert_eq!(probe.reference_magnitude, Some(0));
+        assert_eq!(probe.context, Some(1));
+
+        let dc_only =
+            first_regular_coeff_base_probe(super::super::syntax::TxSize::Tx4x4, 1, 1).unwrap();
+        assert_eq!(dc_only.remaining_count, 0);
+        assert_eq!(dc_only.context, None);
     }
 }

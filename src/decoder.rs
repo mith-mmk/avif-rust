@@ -497,6 +497,112 @@ fn emit_metadata(
                 "AV1 first transform all zero",
                 DataMap::UInt(residual.first_transform_all_zero as u64),
             )?;
+            if let Some(index) = residual.first_non_zero_transform_index {
+                option.drawer.set_metadata(
+                    "AV1 first non-zero transform index",
+                    DataMap::UInt(index as u64),
+                )?;
+            }
+            if let Some(tx_size) = residual.first_non_zero_tx_size {
+                option.drawer.set_metadata(
+                    "AV1 first non-zero transform size",
+                    DataMap::Ascii(format!("{tx_size:?}")),
+                )?;
+            }
+            if let Some(eob_multisize) = residual.eob_multisize {
+                option.drawer.set_metadata(
+                    "AV1 first transform eob multisize",
+                    DataMap::UInt(eob_multisize as u64),
+                )?;
+            }
+            if let Some(eob_pt_symbol) = residual.eob_pt_symbol {
+                option.drawer.set_metadata(
+                    "AV1 first transform eob pt symbol",
+                    DataMap::UInt(eob_pt_symbol as u64),
+                )?;
+            }
+            if let Some(eob_pt) = residual.eob_pt {
+                option
+                    .drawer
+                    .set_metadata("AV1 first transform eob pt", DataMap::UInt(eob_pt as u64))?;
+            }
+            if let Some(eob_base) = residual.eob_base {
+                option.drawer.set_metadata(
+                    "AV1 first transform eob base",
+                    DataMap::UInt(eob_base as u64),
+                )?;
+            }
+            if let Some(context) = residual.eob_extra_context {
+                option.drawer.set_metadata(
+                    "AV1 first transform eob extra context",
+                    DataMap::UInt(context as u64),
+                )?;
+            }
+            if let Some(symbol) = residual.eob_extra_symbol {
+                option.drawer.set_metadata(
+                    "AV1 first transform eob extra symbol",
+                    DataMap::UInt(symbol as u64),
+                )?;
+            }
+            if let Some(bits) = residual.eob_extra_literal_bits {
+                option.drawer.set_metadata(
+                    "AV1 first transform eob extra literal bits",
+                    DataMap::UInt(bits as u64),
+                )?;
+            }
+            if let Some(eob) = residual.eob {
+                option
+                    .drawer
+                    .set_metadata("AV1 first transform eob", DataMap::UInt(eob as u64))?;
+            }
+            if let Some(context) = residual.coeff_base_eob_context {
+                option.drawer.set_metadata(
+                    "AV1 first transform coeff base eob context",
+                    DataMap::UInt(context as u64),
+                )?;
+            }
+            if let Some(symbol) = residual.coeff_base_eob_symbol {
+                option.drawer.set_metadata(
+                    "AV1 first transform coeff base eob symbol",
+                    DataMap::UInt(symbol as u64),
+                )?;
+            }
+            if let Some(level) = residual.coeff_base_eob_level {
+                option.drawer.set_metadata(
+                    "AV1 first transform coeff base eob level",
+                    DataMap::UInt(level as u64),
+                )?;
+            }
+            if let Some(count) = residual.regular_coeff_base_count {
+                option.drawer.set_metadata(
+                    "AV1 first transform regular coeff base count",
+                    DataMap::UInt(count as u64),
+                )?;
+            }
+            if let Some(scan_index) = residual.first_coeff_base_scan_index {
+                option.drawer.set_metadata(
+                    "AV1 first transform first coeff base scan index",
+                    DataMap::UInt(scan_index as u64),
+                )?;
+            }
+            if let Some(position) = residual.first_coeff_base_position {
+                option.drawer.set_metadata(
+                    "AV1 first transform first coeff base position",
+                    DataMap::UInt(position as u64),
+                )?;
+            }
+            if let Some(context) = residual.first_coeff_base_context {
+                option.drawer.set_metadata(
+                    "AV1 first transform first coeff base context",
+                    DataMap::UInt(context as u64),
+                )?;
+            }
+            if let Some(magnitude) = residual.first_coeff_base_reference_magnitude {
+                option.drawer.set_metadata(
+                    "AV1 first transform first coeff base reference magnitude",
+                    DataMap::UInt(magnitude as u64),
+                )?;
+            }
             option.drawer.set_metadata(
                 "AV1 first block residual bit position",
                 DataMap::UInt(residual.bit_position_after as u64),
