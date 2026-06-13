@@ -90,7 +90,7 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
     }
 
     let mut meta = MetaState::default();
-    for header in top_level_boxes(data)? {
+    for_each_top_level_box(data, |header| {
         match &header.box_type {
             b"meta" => parse_meta(data, header, &mut meta)?,
             b"moov" => {
@@ -100,7 +100,8 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
             }
             _ => {}
         }
-    }
+        Ok(())
+    })?;
 
     let primary_item_payload = primary_item_payload(data, &meta)?;
     Ok(AvifInfo {
@@ -141,8 +142,10 @@ fn parse_ftyp(data: &[u8]) -> Result<([u8; 4], Vec<[u8; 4]>), DecoderError> {
     Ok((major_brand, compatible_brands))
 }
 
-fn top_level_boxes(data: &[u8]) -> Result<Vec<BoxHeader>, DecoderError> {
-    let mut boxes = Vec::new();
+fn for_each_top_level_box<F>(data: &[u8], mut callback: F) -> Result<(), DecoderError>
+where
+    F: FnMut(BoxHeader) -> Result<(), DecoderError>,
+{
     let mut offset = 0;
     while offset < data.len() {
         let header = read_box_header(data, offset, data.len())?;
@@ -152,9 +155,9 @@ fn top_level_boxes(data: &[u8]) -> Result<Vec<BoxHeader>, DecoderError> {
             ));
         }
         offset = checked_add(header.offset, header.size, "top-level box end")?;
-        boxes.push(header);
+        callback(header)?;
     }
-    Ok(boxes)
+    Ok(())
 }
 
 fn parse_meta(data: &[u8], header: BoxHeader, state: &mut MetaState) -> Result<(), DecoderError> {
@@ -377,7 +380,14 @@ fn primary_item_payload(data: &[u8], state: &MetaState) -> Result<Vec<u8>, Decod
         .find(|location| location.item_id == primary_item_id)
         .ok_or_else(|| DecoderError::Bitstream("primary item location is missing".to_string()))?;
 
-    let mut payload = Vec::new();
+    let payload_len = location.extents.iter().try_fold(0usize, |sum, extent| {
+        let length = usize::try_from(extent.length)
+            .map_err(|_| DecoderError::Bitstream("item extent length is too large".to_string()))?;
+        sum.checked_add(length).ok_or_else(|| {
+            DecoderError::Bitstream("item extent payload length overflow".to_string())
+        })
+    })?;
+    let mut payload = Vec::with_capacity(payload_len);
     for extent in &location.extents {
         let start = location
             .base_offset

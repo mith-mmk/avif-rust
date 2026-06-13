@@ -4,11 +4,13 @@
 //! draw-side adapter. Container parsing is implemented with `bin-rs`
 //! `BinaryReader` inputs for compatibility with the surrounding codecs.
 
+pub mod av1;
 pub mod compat;
 pub mod container;
 pub mod decoder;
 mod error;
 mod image;
+pub mod obu;
 
 pub use compat::{
     CallbackResponse, DataMap, DecodeOptions, DrawCallback, DrawOptions, InitOptions, Metadata,
