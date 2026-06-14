@@ -1202,7 +1202,10 @@ fn build_residual_preview(
             "AV1 residual preview coefficient count does not match transform size".to_string(),
         ));
     }
-    if !matches!(tx_type, TxType::DctDct | TxType::Identity) {
+    if !matches!(
+        tx_type,
+        TxType::DctDct | TxType::Identity | TxType::VerticalDct | TxType::HorizontalDct
+    ) {
         return Ok(None);
     }
     let plane_quant = quant_state.plane(transform.plane);
@@ -1853,7 +1856,15 @@ mod tests {
                 );
                 assert!(probes[0].first_dequant_coeff_position.unwrap() < 1024);
                 assert_ne!(probes[0].first_dequant_coeff_value.unwrap(), 0);
-                if matches!(probes[0].tx_type, Some(TxType::DctDct | TxType::Identity)) {
+                if matches!(
+                    probes[0].tx_type,
+                    Some(
+                        TxType::DctDct
+                            | TxType::Identity
+                            | TxType::VerticalDct
+                            | TxType::HorizontalDct
+                    )
+                ) {
                     assert_eq!(probes[0].residual_preview_tx_type, probes[0].tx_type);
                     assert_eq!(probes[0].residual_preview_sample_count, Some(1024));
                     assert!(probes[0].first_residual_preview_sample.is_some());

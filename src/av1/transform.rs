@@ -181,13 +181,11 @@ pub fn inverse_transform(
     match tx_type {
         TxType::DctDct => inverse_dct_2d(tx_size, dequant, bit_depth),
         TxType::Identity => Ok(inverse_identity(tx_size, dequant, bit_depth)),
-        TxType::AdstDct
-        | TxType::DctAdst
-        | TxType::AdstAdst
-        | TxType::VerticalDct
-        | TxType::HorizontalDct => Err(DecoderError::Unsupported(format!(
-            "AV1 inverse transform {tx_type:?} is not supported yet"
-        ))),
+        TxType::VerticalDct => inverse_vertical_dct(tx_size, dequant, bit_depth),
+        TxType::HorizontalDct => inverse_horizontal_dct(tx_size, dequant, bit_depth),
+        TxType::AdstDct | TxType::DctAdst | TxType::AdstAdst => Err(DecoderError::Unsupported(
+            format!("AV1 inverse transform {tx_type:?} is not supported yet"),
+        )),
     }
 }
 
@@ -228,6 +226,72 @@ fn inverse_dct_2d(
                 }
             }
             let value = (sum * width_scale * height_scale).round() as i32;
+            out[y * width + x] = value.clamp(-residual_limit, residual_limit - 1);
+        }
+    }
+    Ok(out)
+}
+
+fn inverse_vertical_dct(
+    tx_size: TxSize,
+    dequant: &[i32],
+    bit_depth: u8,
+) -> Result<Vec<i32>, DecoderError> {
+    if tx_size.height() > 32 {
+        return Err(DecoderError::Unsupported(
+            "AV1 vertical DCT transforms larger than 32 are not supported yet".to_string(),
+        ));
+    }
+
+    let width = tx_size.width();
+    let height = tx_size.height();
+    let mut out = vec![0i32; width * height];
+    let height_scale = (2.0 / height as f64).sqrt();
+    let residual_limit = 1i32 << (bit_depth + 7);
+
+    for y in 0..height {
+        for x in 0..width {
+            let mut sum = 0.0;
+            for v in 0..height {
+                let alpha_v = if v == 0 { 1.0 / 2.0_f64.sqrt() } else { 1.0 };
+                let cos_v =
+                    (((2 * y + 1) * v) as f64 * std::f64::consts::PI / (2.0 * height as f64)).cos();
+                sum += alpha_v * f64::from(dequant[v * width + x]) * cos_v;
+            }
+            let value = (sum * height_scale).round() as i32;
+            out[y * width + x] = value.clamp(-residual_limit, residual_limit - 1);
+        }
+    }
+    Ok(out)
+}
+
+fn inverse_horizontal_dct(
+    tx_size: TxSize,
+    dequant: &[i32],
+    bit_depth: u8,
+) -> Result<Vec<i32>, DecoderError> {
+    if tx_size.width() > 32 {
+        return Err(DecoderError::Unsupported(
+            "AV1 horizontal DCT transforms larger than 32 are not supported yet".to_string(),
+        ));
+    }
+
+    let width = tx_size.width();
+    let height = tx_size.height();
+    let mut out = vec![0i32; width * height];
+    let width_scale = (2.0 / width as f64).sqrt();
+    let residual_limit = 1i32 << (bit_depth + 7);
+
+    for y in 0..height {
+        for x in 0..width {
+            let mut sum = 0.0;
+            for u in 0..width {
+                let alpha_u = if u == 0 { 1.0 / 2.0_f64.sqrt() } else { 1.0 };
+                let cos_u =
+                    (((2 * x + 1) * u) as f64 * std::f64::consts::PI / (2.0 * width as f64)).cos();
+                sum += alpha_u * f64::from(dequant[y * width + u]) * cos_u;
+            }
+            let value = (sum * width_scale).round() as i32;
             out[y * width + x] = value.clamp(-residual_limit, residual_limit - 1);
         }
     }
@@ -314,6 +378,34 @@ mod tests {
         let residual = inverse_transform(TxType::Identity, TxSize::Tx4x4, &[64; 16], 8).unwrap();
 
         assert_eq!(residual, vec![4; 16]);
+    }
+
+    #[test]
+    fn vertical_dct_only_mixes_columns() {
+        let mut coeffs = vec![0; TxSize::Tx4x4.sample_count()];
+        coeffs[0] = 16;
+        coeffs[1] = 32;
+
+        let residual = inverse_transform(TxType::VerticalDct, TxSize::Tx4x4, &coeffs, 8).unwrap();
+
+        assert_eq!(
+            residual,
+            vec![8, 16, 0, 0, 8, 16, 0, 0, 8, 16, 0, 0, 8, 16, 0, 0]
+        );
+    }
+
+    #[test]
+    fn horizontal_dct_only_mixes_rows() {
+        let mut coeffs = vec![0; TxSize::Tx4x4.sample_count()];
+        coeffs[0] = 16;
+        coeffs[4] = 32;
+
+        let residual = inverse_transform(TxType::HorizontalDct, TxSize::Tx4x4, &coeffs, 8).unwrap();
+
+        assert_eq!(
+            residual,
+            vec![8, 8, 8, 8, 16, 16, 16, 16, 0, 0, 0, 0, 0, 0, 0, 0]
+        );
     }
 
     #[test]
