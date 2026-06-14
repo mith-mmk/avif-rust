@@ -70,10 +70,29 @@ pub struct ResidualProbe {
     pub coeff_base_eob_symbol: Option<usize>,
     pub coeff_base_eob_level: Option<usize>,
     pub regular_coeff_base_count: Option<usize>,
+    pub regular_coeff_base_decoded_count: Option<usize>,
+    pub coeff_base_non_zero_count: Option<usize>,
+    pub coeff_base_range_count: Option<usize>,
+    pub coeff_br_decoded_count: Option<usize>,
+    pub first_coeff_br_scan_index: Option<usize>,
+    pub first_coeff_br_position: Option<usize>,
+    pub first_coeff_br_context: Option<usize>,
+    pub first_coeff_br_symbol: Option<usize>,
+    pub first_coeff_br_level: Option<usize>,
+    pub sign_decoded_count: Option<usize>,
+    pub dc_sign_context: Option<usize>,
+    pub dc_sign_symbol: Option<usize>,
+    pub first_ac_sign_scan_index: Option<usize>,
+    pub first_ac_sign_bit: Option<usize>,
+    pub golomb_decoded_count: Option<usize>,
+    pub first_golomb_scan_index: Option<usize>,
+    pub first_golomb_value: Option<usize>,
     pub first_coeff_base_scan_index: Option<usize>,
     pub first_coeff_base_position: Option<usize>,
     pub first_coeff_base_context: Option<usize>,
     pub first_coeff_base_reference_magnitude: Option<usize>,
+    pub first_coeff_base_symbol: Option<usize>,
+    pub first_coeff_base_level: Option<usize>,
     pub bit_position_after: usize,
 }
 
@@ -257,10 +276,29 @@ impl<'a> TileDecoder<'a> {
                 coeff_base_eob_symbol: None,
                 coeff_base_eob_level: None,
                 regular_coeff_base_count: None,
+                regular_coeff_base_decoded_count: None,
+                coeff_base_non_zero_count: None,
+                coeff_base_range_count: None,
+                coeff_br_decoded_count: None,
+                first_coeff_br_scan_index: None,
+                first_coeff_br_position: None,
+                first_coeff_br_context: None,
+                first_coeff_br_symbol: None,
+                first_coeff_br_level: None,
+                sign_decoded_count: None,
+                dc_sign_context: None,
+                dc_sign_symbol: None,
+                first_ac_sign_scan_index: None,
+                first_ac_sign_bit: None,
+                golomb_decoded_count: None,
+                first_golomb_scan_index: None,
+                first_golomb_value: None,
                 first_coeff_base_scan_index: None,
                 first_coeff_base_position: None,
                 first_coeff_base_context: None,
                 first_coeff_base_reference_magnitude: None,
+                first_coeff_base_symbol: None,
+                first_coeff_base_level: None,
                 bit_position_after: block_mode.bit_position_after,
             });
         }
@@ -290,10 +328,29 @@ impl<'a> TileDecoder<'a> {
                 coeff_base_eob_symbol: None,
                 coeff_base_eob_level: None,
                 regular_coeff_base_count: None,
+                regular_coeff_base_decoded_count: None,
+                coeff_base_non_zero_count: None,
+                coeff_base_range_count: None,
+                coeff_br_decoded_count: None,
+                first_coeff_br_scan_index: None,
+                first_coeff_br_position: None,
+                first_coeff_br_context: None,
+                first_coeff_br_symbol: None,
+                first_coeff_br_level: None,
+                sign_decoded_count: None,
+                dc_sign_context: None,
+                dc_sign_symbol: None,
+                first_ac_sign_scan_index: None,
+                first_ac_sign_bit: None,
+                golomb_decoded_count: None,
+                first_golomb_scan_index: None,
+                first_golomb_value: None,
                 first_coeff_base_scan_index: None,
                 first_coeff_base_position: None,
                 first_coeff_base_context: None,
                 first_coeff_base_reference_magnitude: None,
+                first_coeff_base_symbol: None,
+                first_coeff_base_level: None,
                 bit_position_after: block_mode.bit_position_after,
             });
         };
@@ -338,10 +395,29 @@ impl<'a> TileDecoder<'a> {
             coeff_base_eob_symbol,
             coeff_base_eob_level,
             regular_coeff_base_count,
+            regular_coeff_base_decoded_count,
+            coeff_base_non_zero_count,
+            coeff_base_range_count,
+            coeff_br_decoded_count,
+            first_coeff_br_scan_index,
+            first_coeff_br_position,
+            first_coeff_br_context,
+            first_coeff_br_symbol,
+            first_coeff_br_level,
+            sign_decoded_count,
+            dc_sign_context,
+            dc_sign_symbol,
+            first_ac_sign_scan_index,
+            first_ac_sign_bit,
+            golomb_decoded_count,
+            first_golomb_scan_index,
+            first_golomb_value,
             first_coeff_base_scan_index,
             first_coeff_base_position,
             first_coeff_base_context,
             first_coeff_base_reference_magnitude,
+            first_coeff_base_symbol,
+            first_coeff_base_level,
         ) = if let Some(non_zero_transform) = first_non_zero_transform {
             let eob_multisize = eob_multisize(non_zero_transform);
             if eob_multisize != 6 {
@@ -370,11 +446,16 @@ impl<'a> TileDecoder<'a> {
                     .coeff_base_eob_tx32_cdf_mut(plane_type, coeff_base_eob_context),
             )?;
             let coeff_base_eob_level = coeff_base_eob_symbol + 1;
-            let coeff_base_probe = first_regular_coeff_base_probe(
+            let coeff_base_read = self.read_regular_coeff_bases(
                 non_zero_transform.tx_size,
+                plane_type,
                 eob,
                 coeff_base_eob_level,
             )?;
+            debug_assert_eq!(
+                coeff_base_read.base_levels.len(),
+                non_zero_transform.tx_size.sample_count()
+            );
             (
                 Some(eob_multisize),
                 Some(eob_pt_symbol),
@@ -387,16 +468,38 @@ impl<'a> TileDecoder<'a> {
                 Some(coeff_base_eob_context),
                 Some(coeff_base_eob_symbol),
                 Some(coeff_base_eob_level),
-                Some(coeff_base_probe.remaining_count),
-                coeff_base_probe.scan_index,
-                coeff_base_probe.position,
-                coeff_base_probe.context,
-                coeff_base_probe.reference_magnitude,
+                Some(coeff_base_read.probe.remaining_count),
+                Some(coeff_base_read.probe.decoded_count),
+                Some(coeff_base_read.non_zero_count),
+                Some(coeff_base_read.base_range_count),
+                Some(coeff_base_read.coeff_br_symbol_count),
+                coeff_base_read.first_coeff_br.map(|first| first.scan_index),
+                coeff_base_read.first_coeff_br.map(|first| first.position),
+                coeff_base_read.first_coeff_br.map(|first| first.context),
+                coeff_base_read.first_coeff_br.map(|first| first.symbol),
+                coeff_base_read
+                    .first_coeff_br
+                    .map(|first| first.level_after_symbol),
+                Some(coeff_base_read.signs.sign_count),
+                coeff_base_read.signs.dc_sign_context,
+                coeff_base_read.signs.dc_sign_symbol,
+                coeff_base_read.signs.first_ac_sign_scan_index,
+                coeff_base_read.signs.first_ac_sign_bit,
+                Some(coeff_base_read.signs.golomb_count),
+                coeff_base_read.signs.first_golomb_scan_index,
+                coeff_base_read.signs.first_golomb_value,
+                coeff_base_read.probe.scan_index,
+                coeff_base_read.probe.position,
+                coeff_base_read.probe.context,
+                coeff_base_read.probe.reference_magnitude,
+                coeff_base_read.probe.symbol,
+                coeff_base_read.probe.level,
             )
         } else {
             (
                 None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-                None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None,
             )
         };
 
@@ -424,10 +527,29 @@ impl<'a> TileDecoder<'a> {
             coeff_base_eob_symbol,
             coeff_base_eob_level,
             regular_coeff_base_count,
+            regular_coeff_base_decoded_count,
+            coeff_base_non_zero_count,
+            coeff_base_range_count,
+            coeff_br_decoded_count,
+            first_coeff_br_scan_index,
+            first_coeff_br_position,
+            first_coeff_br_context,
+            first_coeff_br_symbol,
+            first_coeff_br_level,
+            sign_decoded_count,
+            dc_sign_context,
+            dc_sign_symbol,
+            first_ac_sign_scan_index,
+            first_ac_sign_bit,
+            golomb_decoded_count,
+            first_golomb_scan_index,
+            first_golomb_value,
             first_coeff_base_scan_index,
             first_coeff_base_position,
             first_coeff_base_context,
             first_coeff_base_reference_magnitude,
+            first_coeff_base_symbol,
+            first_coeff_base_level,
             bit_position_after: self.reader.bit_position(),
         })
     }
@@ -478,6 +600,262 @@ impl<'a> TileDecoder<'a> {
             eob,
         ))
     }
+
+    fn read_regular_coeff_bases(
+        &mut self,
+        tx_size: super::syntax::TxSize,
+        plane_type: usize,
+        eob: usize,
+        eob_level: usize,
+    ) -> Result<CoeffBaseRead, DecoderError> {
+        let sample_count = tx_size.sample_count();
+        if eob == 0 || eob > sample_count {
+            return Err(DecoderError::Bitstream(format!(
+                "AV1 eob {eob} is invalid for {tx_size:?}"
+            )));
+        }
+        let remaining_count = eob - 1;
+        let scan = zig_zag_scan(tx_size);
+        let mut quant = vec![0i32; sample_count];
+        let mut base_range_count = 0usize;
+        let mut coeff_br_symbol_count = 0usize;
+        let mut first_coeff_br = None;
+
+        let eob_position = scan[eob - 1];
+        let eob_level = self.read_coeff_br_range(
+            tx_size,
+            plane_type,
+            eob - 1,
+            eob_position,
+            eob_level,
+            &quant,
+            &mut base_range_count,
+            &mut coeff_br_symbol_count,
+            &mut first_coeff_br,
+        )?;
+        quant[eob_position] = eob_level as i32;
+        if remaining_count == 0 {
+            let non_zero_count = coeff_base_non_zero_count(&quant);
+            let signs =
+                self.read_coeff_signs_and_golomb(tx_size, plane_type, eob, &scan, &mut quant)?;
+            return Ok(CoeffBaseRead {
+                probe: CoeffBaseProbe {
+                    remaining_count,
+                    decoded_count: 0,
+                    scan_index: None,
+                    position: None,
+                    context: None,
+                    reference_magnitude: None,
+                    symbol: None,
+                    level: None,
+                },
+                base_levels: quant,
+                non_zero_count,
+                base_range_count,
+                coeff_br_symbol_count,
+                first_coeff_br,
+                signs,
+            });
+        }
+
+        let mut first = None;
+        let mut decoded_count = 0usize;
+
+        for scan_index in (0..eob - 1).rev() {
+            let position = scan[scan_index];
+            let (context, reference_magnitude) = coeff_base_context_2d(tx_size, position, &quant)?;
+            if context >= 42 {
+                return Err(DecoderError::Unsupported(format!(
+                    "AV1 coeff_base decode for Tx32x32 context {context} is not supported yet"
+                )));
+            }
+            let symbol = self
+                .reader
+                .read_symbol(self.cdf.coeff_base_tx32_cdf_mut(plane_type, context))?;
+            let level = self.read_coeff_br_range(
+                tx_size,
+                plane_type,
+                scan_index,
+                position,
+                symbol,
+                &quant,
+                &mut base_range_count,
+                &mut coeff_br_symbol_count,
+                &mut first_coeff_br,
+            )?;
+            quant[position] = level as i32;
+            decoded_count += 1;
+
+            if first.is_none() {
+                first = Some((scan_index, position, context, reference_magnitude, symbol));
+            }
+        }
+
+        let (scan_index, position, context, reference_magnitude, symbol) =
+            first.expect("remaining_count > 0 should decode at least one coeff_base");
+        let non_zero_count = coeff_base_non_zero_count(&quant);
+        Ok(CoeffBaseRead {
+            probe: CoeffBaseProbe {
+                remaining_count,
+                decoded_count,
+                scan_index: Some(scan_index),
+                position: Some(position),
+                context: Some(context),
+                reference_magnitude: Some(reference_magnitude),
+                symbol: Some(symbol),
+                level: Some(symbol),
+            },
+            signs: self.read_coeff_signs_and_golomb(tx_size, plane_type, eob, &scan, &mut quant)?,
+            base_levels: quant,
+            non_zero_count,
+            base_range_count,
+            coeff_br_symbol_count,
+            first_coeff_br,
+        })
+    }
+
+    fn read_coeff_br_range(
+        &mut self,
+        tx_size: super::syntax::TxSize,
+        plane_type: usize,
+        scan_index: usize,
+        position: usize,
+        base_level: usize,
+        quant: &[i32],
+        base_range_count: &mut usize,
+        coeff_br_symbol_count: &mut usize,
+        first_coeff_br: &mut Option<CoeffBrProbe>,
+    ) -> Result<usize, DecoderError> {
+        if base_level <= NUM_BASE_LEVELS {
+            return Ok(base_level);
+        }
+        *base_range_count += 1;
+        let mut level = base_level;
+        for _ in 0..COEFF_BR_CDF_ROUNDS {
+            let context = coeff_br_context_2d(tx_size, position, quant)?;
+            let symbol = self
+                .reader
+                .read_symbol(self.cdf.coeff_br_tx32_cdf_mut(plane_type, context))?;
+            level += symbol;
+            *coeff_br_symbol_count += 1;
+            if first_coeff_br.is_none() {
+                *first_coeff_br = Some(CoeffBrProbe {
+                    scan_index,
+                    position,
+                    context,
+                    symbol,
+                    level_after_symbol: level,
+                });
+            }
+            if symbol < BR_CDF_SIZE - 1 {
+                break;
+            }
+        }
+        Ok(level)
+    }
+
+    fn read_coeff_signs_and_golomb(
+        &mut self,
+        _tx_size: super::syntax::TxSize,
+        plane_type: usize,
+        eob: usize,
+        scan: &[usize],
+        levels: &mut [i32],
+    ) -> Result<CoeffSignRead, DecoderError> {
+        if eob == 0 || eob > scan.len() {
+            return Err(DecoderError::InvalidParam(
+                "AV1 coefficient sign eob exceeds scan".to_string(),
+            ));
+        }
+
+        let mut sign_count = 0usize;
+        let mut dc_sign_context = None;
+        let mut dc_sign_symbol = None;
+        let mut first_ac_sign_scan_index = None;
+        let mut first_ac_sign_bit = None;
+        let mut golomb_count = 0usize;
+        let mut first_golomb_scan_index = None;
+        let mut first_golomb_value = None;
+
+        for scan_index in 0..eob {
+            let position = scan[scan_index];
+            let mut level = levels[position].unsigned_abs() as usize;
+            if level == 0 {
+                continue;
+            }
+
+            let sign = if scan_index == 0 {
+                let context = 0;
+                let symbol = self
+                    .reader
+                    .read_symbol(self.cdf.dc_sign_cdf_mut(plane_type, context))?;
+                dc_sign_context = Some(context);
+                dc_sign_symbol = Some(symbol);
+                symbol != 0
+            } else {
+                let bit =
+                    self.reader.read_literal(1).map_err(|err| {
+                        DecoderError::Bitstream(format!("AV1 coeff_sign_bit: {err}"))
+                    })? as usize;
+                if first_ac_sign_scan_index.is_none() {
+                    first_ac_sign_scan_index = Some(scan_index);
+                    first_ac_sign_bit = Some(bit);
+                }
+                bit != 0
+            };
+            sign_count += 1;
+
+            if level >= MAX_BASE_BR_RANGE {
+                let golomb = self.read_golomb()?;
+                level += golomb;
+                golomb_count += 1;
+                if first_golomb_scan_index.is_none() {
+                    first_golomb_scan_index = Some(scan_index);
+                    first_golomb_value = Some(golomb);
+                }
+            }
+
+            levels[position] = if sign { -(level as i32) } else { level as i32 };
+        }
+
+        Ok(CoeffSignRead {
+            sign_count,
+            dc_sign_context,
+            dc_sign_symbol,
+            first_ac_sign_scan_index,
+            first_ac_sign_bit,
+            golomb_count,
+            first_golomb_scan_index,
+            first_golomb_value,
+        })
+    }
+
+    fn read_golomb(&mut self) -> Result<usize, DecoderError> {
+        let mut value = 1usize;
+        let mut length = 0usize;
+        loop {
+            length += 1;
+            if length > 20 {
+                return Err(DecoderError::Bitstream(
+                    "AV1 coeff golomb length exceeds 20 bits".to_string(),
+                ));
+            }
+            let bit = self.reader.read_literal(1).map_err(|err| {
+                DecoderError::Bitstream(format!("AV1 coeff_golomb_prefix: {err}"))
+            })?;
+            if bit != 0 {
+                break;
+            }
+        }
+        for _ in 0..length - 1 {
+            value <<= 1;
+            value |=
+                self.reader.read_literal(1).map_err(|err| {
+                    DecoderError::Bitstream(format!("AV1 coeff_golomb_suffix: {err}"))
+                })? as usize;
+        }
+        Ok(value - 1)
+    }
 }
 
 fn first_txb_skip_context(block_size: BlockSize, transform: TransformBlock) -> usize {
@@ -518,12 +896,65 @@ fn coeff_base_eob_context(tx_size: super::syntax::TxSize, scan_index: usize) -> 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CoeffBaseProbe {
     remaining_count: usize,
+    decoded_count: usize,
     scan_index: Option<usize>,
     position: Option<usize>,
     context: Option<usize>,
     reference_magnitude: Option<usize>,
+    symbol: Option<usize>,
+    level: Option<usize>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CoeffBaseRead {
+    probe: CoeffBaseProbe,
+    base_levels: Vec<i32>,
+    non_zero_count: usize,
+    base_range_count: usize,
+    coeff_br_symbol_count: usize,
+    first_coeff_br: Option<CoeffBrProbe>,
+    signs: CoeffSignRead,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CoeffBrProbe {
+    scan_index: usize,
+    position: usize,
+    context: usize,
+    symbol: usize,
+    level_after_symbol: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CoeffSignRead {
+    sign_count: usize,
+    dc_sign_context: Option<usize>,
+    dc_sign_symbol: Option<usize>,
+    first_ac_sign_scan_index: Option<usize>,
+    first_ac_sign_bit: Option<usize>,
+    golomb_count: usize,
+    first_golomb_scan_index: Option<usize>,
+    first_golomb_value: Option<usize>,
+}
+
+fn coeff_base_non_zero_count(base_levels: &[i32]) -> usize {
+    let mut non_zero_count = 0usize;
+    for level in base_levels.iter().copied() {
+        let magnitude = level.unsigned_abs() as usize;
+        if magnitude != 0 {
+            non_zero_count += 1;
+        }
+    }
+    non_zero_count
+}
+
+const NUM_BASE_LEVELS: usize = 2;
+const COEFF_BASE_RANGE: usize = 12;
+const BR_CDF_SIZE: usize = 4;
+const COEFF_BR_CDF_ROUNDS: usize = COEFF_BASE_RANGE / (BR_CDF_SIZE - 1);
+const MAX_BASE_BR_RANGE: usize = NUM_BASE_LEVELS + COEFF_BASE_RANGE + 1;
+const BR_LEVEL_CAP: usize = COEFF_BASE_RANGE + NUM_BASE_LEVELS + 1;
+const MAG_REF_OFFSET_WITH_TX_CLASS_2D: [(usize, usize); 3] = [(0, 1), (1, 0), (1, 1)];
 const SIG_REF_DIFF_OFFSET_2D: [(usize, usize); 5] = [(0, 1), (1, 0), (1, 1), (0, 2), (2, 0)];
 const COEFF_BASE_CTX_OFFSET_SQUARE: [[[usize; 5]; 5]; 5] = [
     [
@@ -563,44 +994,6 @@ const COEFF_BASE_CTX_OFFSET_SQUARE: [[[usize; 5]; 5]; 5] = [
     ],
 ];
 
-fn first_regular_coeff_base_probe(
-    tx_size: super::syntax::TxSize,
-    eob: usize,
-    eob_level: usize,
-) -> Result<CoeffBaseProbe, DecoderError> {
-    let sample_count = tx_size.sample_count();
-    if eob == 0 || eob > sample_count {
-        return Err(DecoderError::Bitstream(format!(
-            "AV1 eob {eob} is invalid for {tx_size:?}"
-        )));
-    }
-    let remaining_count = eob - 1;
-    if remaining_count == 0 {
-        return Ok(CoeffBaseProbe {
-            remaining_count,
-            scan_index: None,
-            position: None,
-            context: None,
-            reference_magnitude: None,
-        });
-    }
-
-    let scan = zig_zag_scan(tx_size);
-    let mut quant = vec![0i32; sample_count];
-    quant[scan[eob - 1]] = eob_level as i32;
-    let scan_index = eob - 2;
-    let position = scan[scan_index];
-    let (context, reference_magnitude) = coeff_base_context_2d(tx_size, position, &quant)?;
-
-    Ok(CoeffBaseProbe {
-        remaining_count,
-        scan_index: Some(scan_index),
-        position: Some(position),
-        context: Some(context),
-        reference_magnitude: Some(reference_magnitude),
-    })
-}
-
 fn coeff_base_context_2d(
     tx_size: super::syntax::TxSize,
     position: usize,
@@ -637,6 +1030,46 @@ fn coeff_base_context_2d(
     let context_delta = ((magnitude + 1) >> 1).min(4);
     let offset = COEFF_BASE_CTX_OFFSET_SQUARE[tx_size.coeff_cdf_index()][row.min(4)][col.min(4)];
     Ok((context_delta + offset, magnitude))
+}
+
+fn coeff_br_context_2d(
+    tx_size: super::syntax::TxSize,
+    position: usize,
+    quant: &[i32],
+) -> Result<usize, DecoderError> {
+    if quant.len() != tx_size.sample_count() {
+        return Err(DecoderError::InvalidParam(
+            "AV1 coeff_br context quant buffer size does not match transform size".to_string(),
+        ));
+    }
+    if position >= quant.len() {
+        return Err(DecoderError::InvalidParam(
+            "AV1 coeff_br context position exceeds transform size".to_string(),
+        ));
+    }
+
+    let width = tx_size.width();
+    let height = tx_size.height();
+    let row = position / width;
+    let col = position % width;
+    let mut magnitude = 0usize;
+    for (row_offset, col_offset) in MAG_REF_OFFSET_WITH_TX_CLASS_2D {
+        let ref_row = row + row_offset;
+        let ref_col = col + col_offset;
+        if ref_row < height && ref_col < width {
+            magnitude +=
+                (quant[ref_row * width + ref_col].unsigned_abs() as usize).min(BR_LEVEL_CAP);
+        }
+    }
+
+    let magnitude_context = ((magnitude + 1) >> 1).min(6);
+    if position == 0 {
+        Ok(magnitude_context)
+    } else if row < 2 && col < 2 {
+        Ok(magnitude_context + 7)
+    } else {
+        Ok(magnitude_context + 14)
+    }
 }
 
 pub fn prepare_tile_entropy(
@@ -978,8 +1411,18 @@ mod tests {
             assert_eq!(probes[0].coeff_base_eob_symbol, None);
             assert_eq!(probes[0].coeff_base_eob_level, None);
             assert_eq!(probes[0].regular_coeff_base_count, None);
+            assert_eq!(probes[0].regular_coeff_base_decoded_count, None);
+            assert_eq!(probes[0].coeff_base_non_zero_count, None);
+            assert_eq!(probes[0].coeff_base_range_count, None);
+            assert_eq!(probes[0].coeff_br_decoded_count, None);
+            assert_eq!(probes[0].first_coeff_br_scan_index, None);
+            assert_eq!(probes[0].first_coeff_br_context, None);
+            assert_eq!(probes[0].first_coeff_br_symbol, None);
+            assert_eq!(probes[0].first_coeff_br_level, None);
             assert_eq!(probes[0].first_coeff_base_scan_index, None);
             assert_eq!(probes[0].first_coeff_base_context, None);
+            assert_eq!(probes[0].first_coeff_base_symbol, None);
+            assert_eq!(probes[0].first_coeff_base_level, None);
         } else {
             assert!(probes[0].txb_skip_context.unwrap() <= 1);
             assert!(probes[0].all_zero_symbol.unwrap() <= 1);
@@ -997,8 +1440,18 @@ mod tests {
                 assert_eq!(probes[0].coeff_base_eob_symbol, None);
                 assert_eq!(probes[0].coeff_base_eob_level, None);
                 assert_eq!(probes[0].regular_coeff_base_count, None);
+                assert_eq!(probes[0].regular_coeff_base_decoded_count, None);
+                assert_eq!(probes[0].coeff_base_non_zero_count, None);
+                assert_eq!(probes[0].coeff_base_range_count, None);
+                assert_eq!(probes[0].coeff_br_decoded_count, None);
+                assert_eq!(probes[0].first_coeff_br_scan_index, None);
+                assert_eq!(probes[0].first_coeff_br_context, None);
+                assert_eq!(probes[0].first_coeff_br_symbol, None);
+                assert_eq!(probes[0].first_coeff_br_level, None);
                 assert_eq!(probes[0].first_coeff_base_scan_index, None);
                 assert_eq!(probes[0].first_coeff_base_context, None);
+                assert_eq!(probes[0].first_coeff_base_symbol, None);
+                assert_eq!(probes[0].first_coeff_base_level, None);
             } else {
                 assert!(probes[0].first_non_zero_transform_index.unwrap() < 16);
                 assert_eq!(
@@ -1033,6 +1486,32 @@ mod tests {
                     probes[0].regular_coeff_base_count,
                     Some(probes[0].eob.unwrap() - 1)
                 );
+                assert_eq!(
+                    probes[0].regular_coeff_base_decoded_count,
+                    probes[0].regular_coeff_base_count
+                );
+                assert!(probes[0].coeff_base_non_zero_count.unwrap() >= 1);
+                assert!(probes[0].coeff_base_non_zero_count.unwrap() <= probes[0].eob.unwrap());
+                assert!(
+                    probes[0].coeff_base_range_count.unwrap()
+                        <= probes[0].coeff_base_non_zero_count.unwrap()
+                );
+                assert!(
+                    probes[0].coeff_br_decoded_count.unwrap()
+                        >= probes[0].coeff_base_range_count.unwrap()
+                );
+                if probes[0].coeff_base_range_count.unwrap() > 0 {
+                    assert!(probes[0].first_coeff_br_scan_index.unwrap() < probes[0].eob.unwrap());
+                    assert!(probes[0].first_coeff_br_position.unwrap() < 1024);
+                    assert!(probes[0].first_coeff_br_context.unwrap() < 21);
+                    assert!(probes[0].first_coeff_br_symbol.unwrap() < 4);
+                    assert!(probes[0].first_coeff_br_level.unwrap() >= 3);
+                } else {
+                    assert_eq!(probes[0].first_coeff_br_scan_index, None);
+                    assert_eq!(probes[0].first_coeff_br_context, None);
+                    assert_eq!(probes[0].first_coeff_br_symbol, None);
+                    assert_eq!(probes[0].first_coeff_br_level, None);
+                }
                 if probes[0].regular_coeff_base_count.unwrap() > 0 {
                     assert_eq!(
                         probes[0].first_coeff_base_scan_index,
@@ -1041,6 +1520,11 @@ mod tests {
                     assert!(probes[0].first_coeff_base_position.unwrap() < 1024);
                     assert!(probes[0].first_coeff_base_context.unwrap() < 42);
                     assert!(probes[0].first_coeff_base_reference_magnitude.unwrap() <= 15);
+                    assert!(probes[0].first_coeff_base_symbol.unwrap() < 4);
+                    assert_eq!(
+                        probes[0].first_coeff_base_level,
+                        probes[0].first_coeff_base_symbol
+                    );
                 }
             }
         }
@@ -1073,19 +1557,28 @@ mod tests {
     }
 
     #[test]
-    fn first_regular_coeff_base_probe_reports_next_scan_slot() {
-        let probe =
-            first_regular_coeff_base_probe(super::super::syntax::TxSize::Tx4x4, 3, 2).unwrap();
+    fn coeff_br_context_2d_matches_square_tx_rules() {
+        let mut quant = vec![0; super::super::syntax::TxSize::Tx32x32.sample_count()];
 
-        assert_eq!(probe.remaining_count, 2);
-        assert_eq!(probe.scan_index, Some(1));
-        assert_eq!(probe.position, Some(1));
-        assert_eq!(probe.reference_magnitude, Some(0));
-        assert_eq!(probe.context, Some(1));
+        assert_eq!(
+            coeff_br_context_2d(super::super::syntax::TxSize::Tx32x32, 0, &quant).unwrap(),
+            0
+        );
 
-        let dc_only =
-            first_regular_coeff_base_probe(super::super::syntax::TxSize::Tx4x4, 1, 1).unwrap();
-        assert_eq!(dc_only.remaining_count, 0);
-        assert_eq!(dc_only.context, None);
+        quant[1] = 3;
+        assert_eq!(
+            coeff_br_context_2d(super::super::syntax::TxSize::Tx32x32, 0, &quant).unwrap(),
+            2
+        );
+
+        assert_eq!(
+            coeff_br_context_2d(super::super::syntax::TxSize::Tx32x32, 32 + 1, &quant).unwrap(),
+            7
+        );
+
+        assert_eq!(
+            coeff_br_context_2d(super::super::syntax::TxSize::Tx32x32, 4 * 32 + 4, &quant).unwrap(),
+            14
+        );
     }
 }

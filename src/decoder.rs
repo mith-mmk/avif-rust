@@ -579,6 +579,108 @@ fn emit_metadata(
                     DataMap::UInt(count as u64),
                 )?;
             }
+            if let Some(count) = residual.regular_coeff_base_decoded_count {
+                option.drawer.set_metadata(
+                    "AV1 first transform regular coeff base decoded count",
+                    DataMap::UInt(count as u64),
+                )?;
+            }
+            if let Some(count) = residual.coeff_base_non_zero_count {
+                option.drawer.set_metadata(
+                    "AV1 first transform coeff base non-zero count",
+                    DataMap::UInt(count as u64),
+                )?;
+            }
+            if let Some(count) = residual.coeff_base_range_count {
+                option.drawer.set_metadata(
+                    "AV1 first transform coeff base range count",
+                    DataMap::UInt(count as u64),
+                )?;
+            }
+            if let Some(count) = residual.coeff_br_decoded_count {
+                option.drawer.set_metadata(
+                    "AV1 first transform coeff br decoded count",
+                    DataMap::UInt(count as u64),
+                )?;
+            }
+            if let Some(scan_index) = residual.first_coeff_br_scan_index {
+                option.drawer.set_metadata(
+                    "AV1 first transform first coeff br scan index",
+                    DataMap::UInt(scan_index as u64),
+                )?;
+            }
+            if let Some(position) = residual.first_coeff_br_position {
+                option.drawer.set_metadata(
+                    "AV1 first transform first coeff br position",
+                    DataMap::UInt(position as u64),
+                )?;
+            }
+            if let Some(context) = residual.first_coeff_br_context {
+                option.drawer.set_metadata(
+                    "AV1 first transform first coeff br context",
+                    DataMap::UInt(context as u64),
+                )?;
+            }
+            if let Some(symbol) = residual.first_coeff_br_symbol {
+                option.drawer.set_metadata(
+                    "AV1 first transform first coeff br symbol",
+                    DataMap::UInt(symbol as u64),
+                )?;
+            }
+            if let Some(level) = residual.first_coeff_br_level {
+                option.drawer.set_metadata(
+                    "AV1 first transform first coeff br level",
+                    DataMap::UInt(level as u64),
+                )?;
+            }
+            if let Some(count) = residual.sign_decoded_count {
+                option.drawer.set_metadata(
+                    "AV1 first transform coeff sign decoded count",
+                    DataMap::UInt(count as u64),
+                )?;
+            }
+            if let Some(context) = residual.dc_sign_context {
+                option.drawer.set_metadata(
+                    "AV1 first transform dc sign context",
+                    DataMap::UInt(context as u64),
+                )?;
+            }
+            if let Some(symbol) = residual.dc_sign_symbol {
+                option.drawer.set_metadata(
+                    "AV1 first transform dc sign symbol",
+                    DataMap::UInt(symbol as u64),
+                )?;
+            }
+            if let Some(scan_index) = residual.first_ac_sign_scan_index {
+                option.drawer.set_metadata(
+                    "AV1 first transform first ac sign scan index",
+                    DataMap::UInt(scan_index as u64),
+                )?;
+            }
+            if let Some(bit) = residual.first_ac_sign_bit {
+                option.drawer.set_metadata(
+                    "AV1 first transform first ac sign bit",
+                    DataMap::UInt(bit as u64),
+                )?;
+            }
+            if let Some(count) = residual.golomb_decoded_count {
+                option.drawer.set_metadata(
+                    "AV1 first transform coeff golomb decoded count",
+                    DataMap::UInt(count as u64),
+                )?;
+            }
+            if let Some(scan_index) = residual.first_golomb_scan_index {
+                option.drawer.set_metadata(
+                    "AV1 first transform first golomb scan index",
+                    DataMap::UInt(scan_index as u64),
+                )?;
+            }
+            if let Some(value) = residual.first_golomb_value {
+                option.drawer.set_metadata(
+                    "AV1 first transform first golomb value",
+                    DataMap::UInt(value as u64),
+                )?;
+            }
             if let Some(scan_index) = residual.first_coeff_base_scan_index {
                 option.drawer.set_metadata(
                     "AV1 first transform first coeff base scan index",
@@ -601,6 +703,18 @@ fn emit_metadata(
                 option.drawer.set_metadata(
                     "AV1 first transform first coeff base reference magnitude",
                     DataMap::UInt(magnitude as u64),
+                )?;
+            }
+            if let Some(symbol) = residual.first_coeff_base_symbol {
+                option.drawer.set_metadata(
+                    "AV1 first transform first coeff base symbol",
+                    DataMap::UInt(symbol as u64),
+                )?;
+            }
+            if let Some(level) = residual.first_coeff_base_level {
+                option.drawer.set_metadata(
+                    "AV1 first transform first coeff base level",
+                    DataMap::UInt(level as u64),
                 )?;
             }
             option.drawer.set_metadata(
