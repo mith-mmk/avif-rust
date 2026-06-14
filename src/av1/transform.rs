@@ -181,7 +181,11 @@ pub fn inverse_transform(
     match tx_type {
         TxType::DctDct => inverse_dct_2d(tx_size, dequant, bit_depth),
         TxType::Identity => Ok(inverse_identity(tx_size, dequant, bit_depth)),
-        _ => Err(DecoderError::Unsupported(format!(
+        TxType::AdstDct
+        | TxType::DctAdst
+        | TxType::AdstAdst
+        | TxType::VerticalDct
+        | TxType::HorizontalDct => Err(DecoderError::Unsupported(format!(
             "AV1 inverse transform {tx_type:?} is not supported yet"
         ))),
     }

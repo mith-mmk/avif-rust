@@ -294,4 +294,32 @@ pub enum TxType {
     DctAdst,
     AdstAdst,
     Identity,
+    VerticalDct,
+    HorizontalDct,
+}
+
+impl TxType {
+    pub fn from_intra_ext_tx_set1_symbol(symbol: usize) -> Option<Self> {
+        match symbol {
+            0 => Some(Self::DctDct),
+            1 => Some(Self::AdstDct),
+            2 => Some(Self::DctAdst),
+            3 => Some(Self::AdstAdst),
+            4 => Some(Self::Identity),
+            5 => Some(Self::VerticalDct),
+            6 => Some(Self::HorizontalDct),
+            _ => None,
+        }
+    }
+
+    pub fn from_intra_ext_tx_set2_symbol(symbol: usize) -> Option<Self> {
+        match symbol {
+            0 => Some(Self::DctDct),
+            1 => Some(Self::Identity),
+            2 => Some(Self::VerticalDct),
+            3 => Some(Self::HorizontalDct),
+            4 => Some(Self::AdstAdst),
+            _ => None,
+        }
+    }
 }

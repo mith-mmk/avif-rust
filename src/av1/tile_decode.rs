@@ -2,10 +2,11 @@ use super::cdf::CdfContext;
 use super::decode::{FrameDecodePlan, TileDecodePlan};
 use super::entropy::EntropyDecoder;
 use super::frame::FrameHeader;
+use super::quant::{QuantState, dequantize_coefficients};
 use super::sequence::SequenceHeader;
-use super::syntax::{BlockSize, Partition, PredictionMode, UvPredictionMode};
+use super::syntax::{BlockSize, Partition, PredictionMode, TxType, UvPredictionMode};
 use super::tile_group::TileGroup;
-use super::transform::{TransformBlock, plan_transform_blocks, zig_zag_scan};
+use super::transform::{TransformBlock, inverse_transform, plan_transform_blocks, zig_zag_scan};
 use crate::DecoderError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +56,10 @@ pub struct ResidualProbe {
     pub first_tx_size: Option<super::syntax::TxSize>,
     pub first_non_zero_transform_index: Option<usize>,
     pub first_non_zero_tx_size: Option<super::syntax::TxSize>,
+    pub tx_type_read: bool,
+    pub tx_type_set: Option<usize>,
+    pub tx_type_symbol: Option<usize>,
+    pub tx_type: Option<TxType>,
     pub txb_skip_context: Option<usize>,
     pub all_zero_symbol: Option<usize>,
     pub first_transform_all_zero: bool,
@@ -87,6 +92,16 @@ pub struct ResidualProbe {
     pub golomb_decoded_count: Option<usize>,
     pub first_golomb_scan_index: Option<usize>,
     pub first_golomb_value: Option<usize>,
+    pub signed_coeff_non_zero_count: Option<usize>,
+    pub first_signed_coeff_scan_index: Option<usize>,
+    pub first_signed_coeff_position: Option<usize>,
+    pub first_signed_coeff_value: Option<i32>,
+    pub dequant_non_zero_count: Option<usize>,
+    pub first_dequant_coeff_position: Option<usize>,
+    pub first_dequant_coeff_value: Option<i32>,
+    pub residual_preview_tx_type: Option<TxType>,
+    pub residual_preview_sample_count: Option<usize>,
+    pub first_residual_preview_sample: Option<i32>,
     pub first_coeff_base_scan_index: Option<usize>,
     pub first_coeff_base_position: Option<usize>,
     pub first_coeff_base_context: Option<usize>,
@@ -246,8 +261,11 @@ impl<'a> TileDecoder<'a> {
     pub fn read_first_transform_residual(
         &mut self,
         tile_id: u32,
+        frame: &FrameHeader,
         block_mode: &BlockModeProbe,
         transforms: &[TransformBlock],
+        quant_state: QuantState,
+        bit_depth: u8,
     ) -> Result<ResidualProbe, DecoderError> {
         let transform_count = transforms.len();
         let first_transform = transforms.first().copied();
@@ -261,6 +279,10 @@ impl<'a> TileDecoder<'a> {
                 first_tx_size: first_transform.map(|transform| transform.tx_size),
                 first_non_zero_transform_index: None,
                 first_non_zero_tx_size: None,
+                tx_type_read: false,
+                tx_type_set: None,
+                tx_type_symbol: None,
+                tx_type: None,
                 txb_skip_context: None,
                 all_zero_symbol: None,
                 first_transform_all_zero: true,
@@ -293,6 +315,16 @@ impl<'a> TileDecoder<'a> {
                 golomb_decoded_count: None,
                 first_golomb_scan_index: None,
                 first_golomb_value: None,
+                signed_coeff_non_zero_count: None,
+                first_signed_coeff_scan_index: None,
+                first_signed_coeff_position: None,
+                first_signed_coeff_value: None,
+                dequant_non_zero_count: None,
+                first_dequant_coeff_position: None,
+                first_dequant_coeff_value: None,
+                residual_preview_tx_type: None,
+                residual_preview_sample_count: None,
+                first_residual_preview_sample: None,
                 first_coeff_base_scan_index: None,
                 first_coeff_base_position: None,
                 first_coeff_base_context: None,
@@ -313,6 +345,10 @@ impl<'a> TileDecoder<'a> {
                 first_tx_size: None,
                 first_non_zero_transform_index: None,
                 first_non_zero_tx_size: None,
+                tx_type_read: false,
+                tx_type_set: None,
+                tx_type_symbol: None,
+                tx_type: None,
                 txb_skip_context: None,
                 all_zero_symbol: None,
                 first_transform_all_zero: false,
@@ -345,6 +381,16 @@ impl<'a> TileDecoder<'a> {
                 golomb_decoded_count: None,
                 first_golomb_scan_index: None,
                 first_golomb_value: None,
+                signed_coeff_non_zero_count: None,
+                first_signed_coeff_scan_index: None,
+                first_signed_coeff_position: None,
+                first_signed_coeff_value: None,
+                dequant_non_zero_count: None,
+                first_dequant_coeff_position: None,
+                first_dequant_coeff_value: None,
+                residual_preview_tx_type: None,
+                residual_preview_sample_count: None,
+                first_residual_preview_sample: None,
                 first_coeff_base_scan_index: None,
                 first_coeff_base_position: None,
                 first_coeff_base_context: None,
@@ -391,6 +437,10 @@ impl<'a> TileDecoder<'a> {
             eob_extra_symbol,
             eob_extra_literal_bits,
             eob,
+            tx_type_read,
+            tx_type_set,
+            tx_type_symbol,
+            tx_type,
             coeff_base_eob_context,
             coeff_base_eob_symbol,
             coeff_base_eob_level,
@@ -412,6 +462,16 @@ impl<'a> TileDecoder<'a> {
             golomb_decoded_count,
             first_golomb_scan_index,
             first_golomb_value,
+            signed_coeff_non_zero_count,
+            first_signed_coeff_scan_index,
+            first_signed_coeff_position,
+            first_signed_coeff_value,
+            dequant_non_zero_count,
+            first_dequant_coeff_position,
+            first_dequant_coeff_value,
+            residual_preview_tx_type,
+            residual_preview_sample_count,
+            first_residual_preview_sample,
             first_coeff_base_scan_index,
             first_coeff_base_position,
             first_coeff_base_context,
@@ -419,6 +479,7 @@ impl<'a> TileDecoder<'a> {
             first_coeff_base_symbol,
             first_coeff_base_level,
         ) = if let Some(non_zero_transform) = first_non_zero_transform {
+            let tx_type_probe = self.read_intra_tx_type(frame, block_mode, non_zero_transform)?;
             let eob_multisize = eob_multisize(non_zero_transform);
             if eob_multisize != 6 {
                 return Err(DecoderError::Unsupported(format!(
@@ -456,6 +517,29 @@ impl<'a> TileDecoder<'a> {
                 coeff_base_read.base_levels.len(),
                 non_zero_transform.tx_size.sample_count()
             );
+            let plane_quant = quant_state.plane(non_zero_transform.plane);
+            let dequant = dequantize_coefficients(
+                &coeff_base_read.base_levels,
+                plane_quant,
+                bit_depth,
+                non_zero_transform.tx_size.dq_denom(),
+            );
+            let dequant_non_zero_count = dequant.iter().filter(|value| **value != 0).count();
+            let first_dequant_coeff =
+                dequant
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .find_map(|(position, value)| {
+                        (value != 0).then_some(DequantCoeffProbe { position, value })
+                    });
+            let residual_preview = build_residual_preview(
+                non_zero_transform,
+                &coeff_base_read.base_levels,
+                quant_state,
+                bit_depth,
+                tx_type_probe.tx_type,
+            )?;
             (
                 Some(eob_multisize),
                 Some(eob_pt_symbol),
@@ -465,6 +549,10 @@ impl<'a> TileDecoder<'a> {
                 eob_extra_symbol,
                 eob_extra_literal_bits,
                 Some(eob),
+                tx_type_probe.read,
+                tx_type_probe.set,
+                tx_type_probe.symbol,
+                Some(tx_type_probe.tx_type),
                 Some(coeff_base_eob_context),
                 Some(coeff_base_eob_symbol),
                 Some(coeff_base_eob_level),
@@ -488,6 +576,24 @@ impl<'a> TileDecoder<'a> {
                 Some(coeff_base_read.signs.golomb_count),
                 coeff_base_read.signs.first_golomb_scan_index,
                 coeff_base_read.signs.first_golomb_value,
+                Some(coeff_base_read.signed_non_zero_count),
+                coeff_base_read
+                    .first_signed_coeff
+                    .map(|first| first.scan_index),
+                coeff_base_read
+                    .first_signed_coeff
+                    .map(|first| first.position),
+                coeff_base_read.first_signed_coeff.map(|first| first.value),
+                Some(dequant_non_zero_count),
+                first_dequant_coeff.map(|first| first.position),
+                first_dequant_coeff.map(|first| first.value),
+                residual_preview.as_ref().map(|preview| preview.tx_type),
+                residual_preview
+                    .as_ref()
+                    .map(|preview| preview.residual_sample_count),
+                residual_preview
+                    .as_ref()
+                    .and_then(|preview| preview.first_residual_sample),
                 coeff_base_read.probe.scan_index,
                 coeff_base_read.probe.position,
                 coeff_base_read.probe.context,
@@ -497,9 +603,10 @@ impl<'a> TileDecoder<'a> {
             )
         } else {
             (
+                None, None, None, None, None, None, None, None, false, None, None, None, None,
                 None, None, None, None, None, None, None, None, None, None, None, None, None, None,
                 None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-                None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None,
             )
         };
 
@@ -512,6 +619,10 @@ impl<'a> TileDecoder<'a> {
             first_tx_size: Some(first_transform.tx_size),
             first_non_zero_transform_index,
             first_non_zero_tx_size: first_non_zero_transform.map(|transform| transform.tx_size),
+            tx_type_read,
+            tx_type_set,
+            tx_type_symbol,
+            tx_type,
             txb_skip_context: first_txb_skip_context_value,
             all_zero_symbol: first_all_zero_symbol,
             first_transform_all_zero,
@@ -544,6 +655,16 @@ impl<'a> TileDecoder<'a> {
             golomb_decoded_count,
             first_golomb_scan_index,
             first_golomb_value,
+            signed_coeff_non_zero_count,
+            first_signed_coeff_scan_index,
+            first_signed_coeff_position,
+            first_signed_coeff_value,
+            dequant_non_zero_count,
+            first_dequant_coeff_position,
+            first_dequant_coeff_value,
+            residual_preview_tx_type,
+            residual_preview_sample_count,
+            first_residual_preview_sample,
             first_coeff_base_scan_index,
             first_coeff_base_position,
             first_coeff_base_context,
@@ -601,6 +722,61 @@ impl<'a> TileDecoder<'a> {
         ))
     }
 
+    fn read_intra_tx_type(
+        &mut self,
+        frame: &FrameHeader,
+        block_mode: &BlockModeProbe,
+        transform: TransformBlock,
+    ) -> Result<TxTypeProbe, DecoderError> {
+        if transform.plane != 0 || frame.base_q_idx == 0 {
+            return Ok(TxTypeProbe {
+                read: false,
+                set: None,
+                symbol: None,
+                tx_type: TxType::DctDct,
+            });
+        }
+        if transform.tx_size != super::syntax::TxSize::Tx32x32 {
+            return Err(DecoderError::Unsupported(format!(
+                "AV1 tx_type decode for {:?} is not supported yet",
+                transform.tx_size
+            )));
+        }
+
+        let intra_mode = block_mode.y_mode_symbol;
+        if frame.reduced_tx_set {
+            let symbol = self
+                .reader
+                .read_symbol(self.cdf.intra_ext_tx_set2_tx32_cdf_mut(intra_mode))?;
+            let tx_type = TxType::from_intra_ext_tx_set2_symbol(symbol).ok_or_else(|| {
+                DecoderError::Bitstream(format!(
+                    "AV1 intra tx_type set2 symbol {symbol} is invalid"
+                ))
+            })?;
+            Ok(TxTypeProbe {
+                read: true,
+                set: Some(2),
+                symbol: Some(symbol),
+                tx_type,
+            })
+        } else {
+            let symbol = self
+                .reader
+                .read_symbol(self.cdf.intra_ext_tx_set1_tx32_cdf_mut(intra_mode))?;
+            let tx_type = TxType::from_intra_ext_tx_set1_symbol(symbol).ok_or_else(|| {
+                DecoderError::Bitstream(format!(
+                    "AV1 intra tx_type set1 symbol {symbol} is invalid"
+                ))
+            })?;
+            Ok(TxTypeProbe {
+                read: true,
+                set: Some(1),
+                symbol: Some(symbol),
+                tx_type,
+            })
+        }
+    }
+
     fn read_regular_coeff_bases(
         &mut self,
         tx_size: super::syntax::TxSize,
@@ -638,6 +814,8 @@ impl<'a> TileDecoder<'a> {
             let non_zero_count = coeff_base_non_zero_count(&quant);
             let signs =
                 self.read_coeff_signs_and_golomb(tx_size, plane_type, eob, &scan, &mut quant)?;
+            let signed_non_zero_count = coeff_base_non_zero_count(&quant);
+            let first_signed_coeff = first_signed_coeff(eob, &scan, &quant)?;
             return Ok(CoeffBaseRead {
                 probe: CoeffBaseProbe {
                     remaining_count,
@@ -655,6 +833,8 @@ impl<'a> TileDecoder<'a> {
                 coeff_br_symbol_count,
                 first_coeff_br,
                 signs,
+                signed_non_zero_count,
+                first_signed_coeff,
             });
         }
 
@@ -694,6 +874,10 @@ impl<'a> TileDecoder<'a> {
         let (scan_index, position, context, reference_magnitude, symbol) =
             first.expect("remaining_count > 0 should decode at least one coeff_base");
         let non_zero_count = coeff_base_non_zero_count(&quant);
+        let signs =
+            self.read_coeff_signs_and_golomb(tx_size, plane_type, eob, &scan, &mut quant)?;
+        let signed_non_zero_count = coeff_base_non_zero_count(&quant);
+        let first_signed_coeff = first_signed_coeff(eob, &scan, &quant)?;
         Ok(CoeffBaseRead {
             probe: CoeffBaseProbe {
                 remaining_count,
@@ -705,12 +889,14 @@ impl<'a> TileDecoder<'a> {
                 symbol: Some(symbol),
                 level: Some(symbol),
             },
-            signs: self.read_coeff_signs_and_golomb(tx_size, plane_type, eob, &scan, &mut quant)?,
             base_levels: quant,
             non_zero_count,
             base_range_count,
             coeff_br_symbol_count,
             first_coeff_br,
+            signs,
+            signed_non_zero_count,
+            first_signed_coeff,
         })
     }
 
@@ -905,6 +1091,14 @@ struct CoeffBaseProbe {
     level: Option<usize>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TxTypeProbe {
+    read: bool,
+    set: Option<usize>,
+    symbol: Option<usize>,
+    tx_type: TxType,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CoeffBaseRead {
     probe: CoeffBaseProbe,
@@ -914,6 +1108,8 @@ struct CoeffBaseRead {
     coeff_br_symbol_count: usize,
     first_coeff_br: Option<CoeffBrProbe>,
     signs: CoeffSignRead,
+    signed_non_zero_count: usize,
+    first_signed_coeff: Option<SignedCoeffProbe>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -937,6 +1133,28 @@ struct CoeffSignRead {
     first_golomb_value: Option<usize>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SignedCoeffProbe {
+    scan_index: usize,
+    position: usize,
+    value: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResidualPreview {
+    tx_type: TxType,
+    dequant_non_zero_count: usize,
+    first_dequant_coeff: Option<DequantCoeffProbe>,
+    residual_sample_count: usize,
+    first_residual_sample: Option<i32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DequantCoeffProbe {
+    position: usize,
+    value: i32,
+}
+
 fn coeff_base_non_zero_count(base_levels: &[i32]) -> usize {
     let mut non_zero_count = 0usize;
     for level in base_levels.iter().copied() {
@@ -946,6 +1164,71 @@ fn coeff_base_non_zero_count(base_levels: &[i32]) -> usize {
         }
     }
     non_zero_count
+}
+
+fn first_signed_coeff(
+    eob: usize,
+    scan: &[usize],
+    coefficients: &[i32],
+) -> Result<Option<SignedCoeffProbe>, DecoderError> {
+    if eob == 0 || eob > scan.len() {
+        return Err(DecoderError::InvalidParam(
+            "AV1 signed coefficient eob exceeds scan".to_string(),
+        ));
+    }
+    for scan_index in 0..eob {
+        let position = scan[scan_index];
+        let value = coefficients[position];
+        if value != 0 {
+            return Ok(Some(SignedCoeffProbe {
+                scan_index,
+                position,
+                value,
+            }));
+        }
+    }
+    Ok(None)
+}
+
+fn build_residual_preview(
+    transform: TransformBlock,
+    coefficients: &[i32],
+    quant_state: QuantState,
+    bit_depth: u8,
+    tx_type: TxType,
+) -> Result<Option<ResidualPreview>, DecoderError> {
+    if coefficients.len() != transform.tx_size.sample_count() {
+        return Err(DecoderError::InvalidParam(
+            "AV1 residual preview coefficient count does not match transform size".to_string(),
+        ));
+    }
+    if !matches!(tx_type, TxType::DctDct | TxType::Identity) {
+        return Ok(None);
+    }
+    let plane_quant = quant_state.plane(transform.plane);
+    let dequant = dequantize_coefficients(
+        coefficients,
+        plane_quant,
+        bit_depth,
+        transform.tx_size.dq_denom(),
+    );
+    let first_dequant_coeff = dequant
+        .iter()
+        .copied()
+        .enumerate()
+        .find_map(|(position, value)| {
+            (value != 0).then_some(DequantCoeffProbe { position, value })
+        });
+    let dequant_non_zero_count = dequant.iter().filter(|value| **value != 0).count();
+    let residual = inverse_transform(tx_type, transform.tx_size, &dequant, bit_depth)?;
+    let first_residual_sample = residual.first().copied();
+    Ok(Some(ResidualPreview {
+        tx_type,
+        dequant_non_zero_count,
+        first_dequant_coeff,
+        residual_sample_count: residual.len(),
+        first_residual_sample,
+    }))
 }
 
 const NUM_BASE_LEVELS: usize = 2;
@@ -1167,6 +1450,8 @@ pub fn probe_first_block_residuals(
     frame: &FrameHeader,
     plan: &FrameDecodePlan,
 ) -> Result<Vec<ResidualProbe>, DecoderError> {
+    let quant_state =
+        QuantState::from_params(&frame.quantization, sequence.color_config.bit_depth)?;
     let mut probes = Vec::with_capacity(tile_group.tiles.len());
     for (index, tile_payload) in tile_group.tiles.iter().enumerate() {
         let end = tile_payload
@@ -1192,8 +1477,11 @@ pub fn probe_first_block_residuals(
                 plan_transform_blocks(0, 0, 0, block_mode.block_size, plan.width, plan.height);
             probes.push(decoder.read_first_transform_residual(
                 tile_plan.tile_id,
+                frame,
                 &block_mode,
                 &transforms,
+                quant_state,
+                sequence.color_config.bit_depth,
             )?);
         }
     }
@@ -1407,6 +1695,10 @@ mod tests {
             assert_eq!(probes[0].all_zero_symbol, None);
             assert_eq!(probes[0].first_non_zero_transform_index, None);
             assert_eq!(probes[0].first_non_zero_tx_size, None);
+            assert!(!probes[0].tx_type_read);
+            assert_eq!(probes[0].tx_type_set, None);
+            assert_eq!(probes[0].tx_type_symbol, None);
+            assert_eq!(probes[0].tx_type, None);
             assert_eq!(probes[0].coeff_base_eob_context, None);
             assert_eq!(probes[0].coeff_base_eob_symbol, None);
             assert_eq!(probes[0].coeff_base_eob_level, None);
@@ -1419,6 +1711,24 @@ mod tests {
             assert_eq!(probes[0].first_coeff_br_context, None);
             assert_eq!(probes[0].first_coeff_br_symbol, None);
             assert_eq!(probes[0].first_coeff_br_level, None);
+            assert_eq!(probes[0].sign_decoded_count, None);
+            assert_eq!(probes[0].dc_sign_context, None);
+            assert_eq!(probes[0].dc_sign_symbol, None);
+            assert_eq!(probes[0].first_ac_sign_scan_index, None);
+            assert_eq!(probes[0].first_ac_sign_bit, None);
+            assert_eq!(probes[0].golomb_decoded_count, None);
+            assert_eq!(probes[0].first_golomb_scan_index, None);
+            assert_eq!(probes[0].first_golomb_value, None);
+            assert_eq!(probes[0].signed_coeff_non_zero_count, None);
+            assert_eq!(probes[0].first_signed_coeff_scan_index, None);
+            assert_eq!(probes[0].first_signed_coeff_position, None);
+            assert_eq!(probes[0].first_signed_coeff_value, None);
+            assert_eq!(probes[0].dequant_non_zero_count, None);
+            assert_eq!(probes[0].first_dequant_coeff_position, None);
+            assert_eq!(probes[0].first_dequant_coeff_value, None);
+            assert_eq!(probes[0].residual_preview_tx_type, None);
+            assert_eq!(probes[0].residual_preview_sample_count, None);
+            assert_eq!(probes[0].first_residual_preview_sample, None);
             assert_eq!(probes[0].first_coeff_base_scan_index, None);
             assert_eq!(probes[0].first_coeff_base_context, None);
             assert_eq!(probes[0].first_coeff_base_symbol, None);
@@ -1436,6 +1746,10 @@ mod tests {
                 assert_eq!(probes[0].eob_base, None);
                 assert_eq!(probes[0].eob_extra_symbol, None);
                 assert_eq!(probes[0].eob, None);
+                assert!(!probes[0].tx_type_read);
+                assert_eq!(probes[0].tx_type_set, None);
+                assert_eq!(probes[0].tx_type_symbol, None);
+                assert_eq!(probes[0].tx_type, None);
                 assert_eq!(probes[0].coeff_base_eob_context, None);
                 assert_eq!(probes[0].coeff_base_eob_symbol, None);
                 assert_eq!(probes[0].coeff_base_eob_level, None);
@@ -1448,6 +1762,24 @@ mod tests {
                 assert_eq!(probes[0].first_coeff_br_context, None);
                 assert_eq!(probes[0].first_coeff_br_symbol, None);
                 assert_eq!(probes[0].first_coeff_br_level, None);
+                assert_eq!(probes[0].sign_decoded_count, None);
+                assert_eq!(probes[0].dc_sign_context, None);
+                assert_eq!(probes[0].dc_sign_symbol, None);
+                assert_eq!(probes[0].first_ac_sign_scan_index, None);
+                assert_eq!(probes[0].first_ac_sign_bit, None);
+                assert_eq!(probes[0].golomb_decoded_count, None);
+                assert_eq!(probes[0].first_golomb_scan_index, None);
+                assert_eq!(probes[0].first_golomb_value, None);
+                assert_eq!(probes[0].signed_coeff_non_zero_count, None);
+                assert_eq!(probes[0].first_signed_coeff_scan_index, None);
+                assert_eq!(probes[0].first_signed_coeff_position, None);
+                assert_eq!(probes[0].first_signed_coeff_value, None);
+                assert_eq!(probes[0].dequant_non_zero_count, None);
+                assert_eq!(probes[0].first_dequant_coeff_position, None);
+                assert_eq!(probes[0].first_dequant_coeff_value, None);
+                assert_eq!(probes[0].residual_preview_tx_type, None);
+                assert_eq!(probes[0].residual_preview_sample_count, None);
+                assert_eq!(probes[0].first_residual_preview_sample, None);
                 assert_eq!(probes[0].first_coeff_base_scan_index, None);
                 assert_eq!(probes[0].first_coeff_base_context, None);
                 assert_eq!(probes[0].first_coeff_base_symbol, None);
@@ -1476,6 +1808,10 @@ mod tests {
                 );
                 assert!(probes[0].eob.unwrap() >= probes[0].eob_base.unwrap());
                 assert!(probes[0].eob.unwrap() <= 1024);
+                assert!(probes[0].tx_type_read);
+                assert_eq!(probes[0].tx_type_set, Some(1));
+                assert!(probes[0].tx_type_symbol.unwrap() < 7);
+                assert_eq!(probes[0].tx_type, Some(TxType::VerticalDct));
                 assert!(probes[0].coeff_base_eob_context.unwrap() < 4);
                 assert!(probes[0].coeff_base_eob_symbol.unwrap() < 3);
                 assert_eq!(
@@ -1500,6 +1836,56 @@ mod tests {
                     probes[0].coeff_br_decoded_count.unwrap()
                         >= probes[0].coeff_base_range_count.unwrap()
                 );
+                assert_eq!(
+                    probes[0].sign_decoded_count,
+                    probes[0].coeff_base_non_zero_count
+                );
+                assert_eq!(
+                    probes[0].signed_coeff_non_zero_count,
+                    probes[0].coeff_base_non_zero_count
+                );
+                assert!(probes[0].first_signed_coeff_scan_index.unwrap() < probes[0].eob.unwrap());
+                assert!(probes[0].first_signed_coeff_position.unwrap() < 1024);
+                assert_ne!(probes[0].first_signed_coeff_value.unwrap(), 0);
+                assert_eq!(
+                    probes[0].dequant_non_zero_count,
+                    probes[0].signed_coeff_non_zero_count
+                );
+                assert!(probes[0].first_dequant_coeff_position.unwrap() < 1024);
+                assert_ne!(probes[0].first_dequant_coeff_value.unwrap(), 0);
+                if matches!(probes[0].tx_type, Some(TxType::DctDct | TxType::Identity)) {
+                    assert_eq!(probes[0].residual_preview_tx_type, probes[0].tx_type);
+                    assert_eq!(probes[0].residual_preview_sample_count, Some(1024));
+                    assert!(probes[0].first_residual_preview_sample.is_some());
+                } else {
+                    assert_eq!(probes[0].residual_preview_tx_type, None);
+                    assert_eq!(probes[0].residual_preview_sample_count, None);
+                    assert_eq!(probes[0].first_residual_preview_sample, None);
+                }
+                if probes[0].dc_sign_symbol.is_some() {
+                    assert!(probes[0].dc_sign_context.unwrap() < 3);
+                    assert!(probes[0].dc_sign_symbol.unwrap() <= 1);
+                }
+                assert!(
+                    probes[0].golomb_decoded_count.unwrap()
+                        <= probes[0].sign_decoded_count.unwrap()
+                );
+                if probes[0].sign_decoded_count.unwrap()
+                    > usize::from(probes[0].dc_sign_symbol.is_some())
+                {
+                    assert!(probes[0].first_ac_sign_scan_index.unwrap() < probes[0].eob.unwrap());
+                    assert!(probes[0].first_ac_sign_bit.unwrap() <= 1);
+                } else {
+                    assert_eq!(probes[0].first_ac_sign_scan_index, None);
+                    assert_eq!(probes[0].first_ac_sign_bit, None);
+                }
+                if probes[0].golomb_decoded_count.unwrap() > 0 {
+                    assert!(probes[0].first_golomb_scan_index.unwrap() < probes[0].eob.unwrap());
+                    assert!(probes[0].first_golomb_value.is_some());
+                } else {
+                    assert_eq!(probes[0].first_golomb_scan_index, None);
+                    assert_eq!(probes[0].first_golomb_value, None);
+                }
                 if probes[0].coeff_base_range_count.unwrap() > 0 {
                     assert!(probes[0].first_coeff_br_scan_index.unwrap() < probes[0].eob.unwrap());
                     assert!(probes[0].first_coeff_br_position.unwrap() < 1024);

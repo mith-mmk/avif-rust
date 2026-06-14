@@ -10,6 +10,14 @@ pub const TXB_SKIP_CONTEXTS: usize = 13;
 pub const PLANE_TYPES: usize = 2;
 pub const COEFF_BR_CONTEXTS: usize = 21;
 pub const DC_SIGN_CONTEXTS: usize = 3;
+pub const INTRA_EXT_TX_TYPES_SET1: usize = 7;
+pub const INTRA_EXT_TX_TYPES_SET2: usize = 5;
+
+pub const DEFAULT_INTRA_EXT_TX_SET1_TX32_CDF: [[u16; INTRA_EXT_TX_TYPES_SET1 + 1]; INTRA_MODES] =
+    [[4681, 9362, 14043, 18725, 23406, 28087, 32768, 0]; INTRA_MODES];
+
+pub const DEFAULT_INTRA_EXT_TX_SET2_TX32_CDF: [[u16; INTRA_EXT_TX_TYPES_SET2 + 1]; INTRA_MODES] =
+    [[6554, 13107, 19661, 26214, 32768, 0]; INTRA_MODES];
 
 pub const DEFAULT_DC_SIGN_CDF: [[[[u16; 3]; DC_SIGN_CONTEXTS]; PLANE_TYPES]; COEFF_CDF_Q_CONTEXTS] = [
     [
@@ -1370,6 +1378,8 @@ pub struct CdfContext {
     pub coeff_base_tx32: [[[u16; 5]; 42]; PLANE_TYPES],
     pub coeff_br_tx32: [[[u16; 5]; COEFF_BR_CONTEXTS]; PLANE_TYPES],
     pub dc_sign: [[[u16; 3]; DC_SIGN_CONTEXTS]; PLANE_TYPES],
+    pub intra_ext_tx_set1_tx32: [[u16; INTRA_EXT_TX_TYPES_SET1 + 1]; INTRA_MODES],
+    pub intra_ext_tx_set2_tx32: [[u16; INTRA_EXT_TX_TYPES_SET2 + 1]; INTRA_MODES],
 }
 
 impl Default for CdfContext {
@@ -1399,6 +1409,8 @@ impl CdfContext {
             coeff_base_tx32: DEFAULT_COEFF_BASE_TX32_CDF[coeff_q_context],
             coeff_br_tx32: DEFAULT_COEFF_BR_TX32_CDF[coeff_q_context],
             dc_sign: DEFAULT_DC_SIGN_CDF[coeff_q_context],
+            intra_ext_tx_set1_tx32: DEFAULT_INTRA_EXT_TX_SET1_TX32_CDF,
+            intra_ext_tx_set2_tx32: DEFAULT_INTRA_EXT_TX_SET2_TX32_CDF,
         }
     }
 }
@@ -1464,6 +1476,14 @@ impl CdfContext {
 
     pub fn dc_sign_cdf_mut(&mut self, plane_type: usize, context: usize) -> &mut [u16] {
         &mut self.dc_sign[plane_type][context]
+    }
+
+    pub fn intra_ext_tx_set1_tx32_cdf_mut(&mut self, intra_mode: usize) -> &mut [u16] {
+        &mut self.intra_ext_tx_set1_tx32[intra_mode]
+    }
+
+    pub fn intra_ext_tx_set2_tx32_cdf_mut(&mut self, intra_mode: usize) -> &mut [u16] {
+        &mut self.intra_ext_tx_set2_tx32[intra_mode]
     }
 }
 

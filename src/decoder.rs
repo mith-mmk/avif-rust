@@ -509,6 +509,27 @@ fn emit_metadata(
                     DataMap::Ascii(format!("{tx_size:?}")),
                 )?;
             }
+            option.drawer.set_metadata(
+                "AV1 first transform tx type read",
+                DataMap::UInt(residual.tx_type_read as u64),
+            )?;
+            if let Some(set) = residual.tx_type_set {
+                option
+                    .drawer
+                    .set_metadata("AV1 first transform tx type set", DataMap::UInt(set as u64))?;
+            }
+            if let Some(symbol) = residual.tx_type_symbol {
+                option.drawer.set_metadata(
+                    "AV1 first transform tx type symbol",
+                    DataMap::UInt(symbol as u64),
+                )?;
+            }
+            if let Some(tx_type) = residual.tx_type {
+                option.drawer.set_metadata(
+                    "AV1 first transform tx type",
+                    DataMap::Ascii(format!("{tx_type:?}")),
+                )?;
+            }
             if let Some(eob_multisize) = residual.eob_multisize {
                 option.drawer.set_metadata(
                     "AV1 first transform eob multisize",
@@ -679,6 +700,66 @@ fn emit_metadata(
                 option.drawer.set_metadata(
                     "AV1 first transform first golomb value",
                     DataMap::UInt(value as u64),
+                )?;
+            }
+            if let Some(count) = residual.signed_coeff_non_zero_count {
+                option.drawer.set_metadata(
+                    "AV1 first transform signed coeff non-zero count",
+                    DataMap::UInt(count as u64),
+                )?;
+            }
+            if let Some(scan_index) = residual.first_signed_coeff_scan_index {
+                option.drawer.set_metadata(
+                    "AV1 first transform first signed coeff scan index",
+                    DataMap::UInt(scan_index as u64),
+                )?;
+            }
+            if let Some(position) = residual.first_signed_coeff_position {
+                option.drawer.set_metadata(
+                    "AV1 first transform first signed coeff position",
+                    DataMap::UInt(position as u64),
+                )?;
+            }
+            if let Some(value) = residual.first_signed_coeff_value {
+                option.drawer.set_metadata(
+                    "AV1 first transform first signed coeff value",
+                    DataMap::Ascii(value.to_string()),
+                )?;
+            }
+            if let Some(count) = residual.dequant_non_zero_count {
+                option.drawer.set_metadata(
+                    "AV1 first transform dequant non-zero count",
+                    DataMap::UInt(count as u64),
+                )?;
+            }
+            if let Some(position) = residual.first_dequant_coeff_position {
+                option.drawer.set_metadata(
+                    "AV1 first transform first dequant coeff position",
+                    DataMap::UInt(position as u64),
+                )?;
+            }
+            if let Some(value) = residual.first_dequant_coeff_value {
+                option.drawer.set_metadata(
+                    "AV1 first transform first dequant coeff value",
+                    DataMap::Ascii(value.to_string()),
+                )?;
+            }
+            if let Some(tx_type) = residual.residual_preview_tx_type {
+                option.drawer.set_metadata(
+                    "AV1 first transform residual preview tx type",
+                    DataMap::Ascii(format!("{tx_type:?}")),
+                )?;
+            }
+            if let Some(count) = residual.residual_preview_sample_count {
+                option.drawer.set_metadata(
+                    "AV1 first transform residual preview sample count",
+                    DataMap::UInt(count as u64),
+                )?;
+            }
+            if let Some(value) = residual.first_residual_preview_sample {
+                option.drawer.set_metadata(
+                    "AV1 first transform first residual preview sample",
+                    DataMap::Ascii(value.to_string()),
                 )?;
             }
             if let Some(scan_index) = residual.first_coeff_base_scan_index {
