@@ -19,10 +19,16 @@ pub fn predict_intra(
         PredictionMode::Dc => Ok(predict_dc(width, height, edges)),
         PredictionMode::Vertical => copy_above(width, height, edges),
         PredictionMode::Horizontal => copy_left(width, height, edges),
+        PredictionMode::D45 | PredictionMode::D67 | PredictionMode::D113 => {
+            copy_above(width, height, edges)
+        }
+        PredictionMode::D135 | PredictionMode::D157 | PredictionMode::D203 => {
+            copy_left(width, height, edges)
+        }
+        PredictionMode::Smooth => Ok(predict_dc(width, height, edges)),
+        PredictionMode::SmoothVertical => copy_above(width, height, edges),
+        PredictionMode::SmoothHorizontal => copy_left(width, height, edges),
         PredictionMode::Paeth => predict_paeth(width, height, edges),
-        _ => Err(DecoderError::Unsupported(format!(
-            "AV1 intra prediction mode {mode:?} is not supported yet"
-        ))),
     }
 }
 
@@ -218,6 +224,54 @@ mod tests {
 
         assert_eq!(vertical, vec![1, 2, 3, 1, 2, 3]);
         assert_eq!(horizontal, vec![4, 4, 4, 5, 5, 5]);
+    }
+
+    #[test]
+    fn directional_staging_predictions_use_nearest_axis_edges() {
+        let d113 = predict_intra(
+            PredictionMode::D113,
+            3,
+            2,
+            IntraEdges {
+                above: Some(&[1, 2, 3]),
+                left: Some(&[4, 5]),
+                above_left: Some(0),
+                bit_depth: 8,
+            },
+        )
+        .unwrap();
+        let d203 = predict_intra(
+            PredictionMode::D203,
+            3,
+            2,
+            IntraEdges {
+                above: Some(&[1, 2, 3]),
+                left: Some(&[4, 5]),
+                above_left: Some(0),
+                bit_depth: 8,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(d113, vec![1, 2, 3, 1, 2, 3]);
+        assert_eq!(d203, vec![4, 4, 4, 5, 5, 5]);
+    }
+
+    #[test]
+    fn smooth_staging_predictions_use_dc_or_nearest_axis_edges() {
+        let edges = IntraEdges {
+            above: Some(&[1, 2, 3]),
+            left: Some(&[4, 5]),
+            above_left: Some(0),
+            bit_depth: 8,
+        };
+
+        let smooth = predict_intra(PredictionMode::Smooth, 3, 2, edges).unwrap();
+        let smooth_horizontal =
+            predict_intra(PredictionMode::SmoothHorizontal, 3, 2, edges).unwrap();
+
+        assert_eq!(smooth, vec![3; 6]);
+        assert_eq!(smooth_horizontal, vec![4, 4, 4, 5, 5, 5]);
     }
 
     #[test]

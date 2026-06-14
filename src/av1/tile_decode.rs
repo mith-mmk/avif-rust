@@ -1,12 +1,16 @@
 use super::cdf::CdfContext;
-use super::decode::{FrameDecodePlan, TileDecodePlan};
+use super::decode::{FrameBuffers, FrameDecodePlan, TileDecodePlan};
 use super::entropy::EntropyDecoder;
 use super::frame::FrameHeader;
+use super::predict::{IntraEdges, predict_intra};
 use super::quant::{QuantState, dequantize_coefficients};
 use super::sequence::SequenceHeader;
 use super::syntax::{BlockSize, Partition, PredictionMode, TxType, UvPredictionMode};
 use super::tile_group::TileGroup;
-use super::transform::{TransformBlock, inverse_transform, plan_transform_blocks, zig_zag_scan};
+use super::transform::{
+    QuantizedTransform, TransformBlock, inverse_transform, plan_transform_blocks,
+    reconstruct_transform_block, zig_zag_scan,
+};
 use crate::DecoderError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,7 +50,7 @@ pub struct BlockModeProbe {
     pub bit_position_after: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResidualProbe {
     pub tile_id: u32,
     pub block_size: BlockSize,
@@ -55,6 +59,7 @@ pub struct ResidualProbe {
     pub zero_transform_count: usize,
     pub first_tx_size: Option<super::syntax::TxSize>,
     pub first_non_zero_transform_index: Option<usize>,
+    pub first_non_zero_transform: Option<TransformBlock>,
     pub first_non_zero_tx_size: Option<super::syntax::TxSize>,
     pub tx_type_read: bool,
     pub tx_type_set: Option<usize>,
@@ -108,7 +113,23 @@ pub struct ResidualProbe {
     pub first_coeff_base_reference_magnitude: Option<usize>,
     pub first_coeff_base_symbol: Option<usize>,
     pub first_coeff_base_level: Option<usize>,
+    pub first_quantized_coefficients: Option<Vec<i32>>,
     pub bit_position_after: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedTransform {
+    pub transform: TransformBlock,
+    pub tx_type: TxType,
+    pub coefficients: Vec<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedLumaBlock {
+    pub x: usize,
+    pub y: usize,
+    pub block_size: BlockSize,
+    pub transforms: Vec<DecodedTransform>,
 }
 
 pub struct TileDecoder<'a> {
@@ -128,7 +149,14 @@ impl<'a> TileDecoder<'a> {
         &mut self,
         tile: &TileDecodePlan,
     ) -> Result<PartitionProbe, DecoderError> {
-        let block_size = BlockSize::Block128x128;
+        self.read_partition(tile.tile_id, BlockSize::Block128x128)
+    }
+
+    fn read_partition(
+        &mut self,
+        tile_id: u32,
+        block_size: BlockSize,
+    ) -> Result<PartitionProbe, DecoderError> {
         let context = 0;
         let symbol = self.reader.read_symbol(
             self.cdf
@@ -140,7 +168,7 @@ impl<'a> TileDecoder<'a> {
             ))
         })?;
         Ok(PartitionProbe {
-            tile_id: tile.tile_id,
+            tile_id,
             block_size,
             context,
             symbol,
@@ -278,6 +306,7 @@ impl<'a> TileDecoder<'a> {
                 zero_transform_count: transform_count,
                 first_tx_size: first_transform.map(|transform| transform.tx_size),
                 first_non_zero_transform_index: None,
+                first_non_zero_transform: None,
                 first_non_zero_tx_size: None,
                 tx_type_read: false,
                 tx_type_set: None,
@@ -331,6 +360,7 @@ impl<'a> TileDecoder<'a> {
                 first_coeff_base_reference_magnitude: None,
                 first_coeff_base_symbol: None,
                 first_coeff_base_level: None,
+                first_quantized_coefficients: None,
                 bit_position_after: block_mode.bit_position_after,
             });
         }
@@ -344,6 +374,7 @@ impl<'a> TileDecoder<'a> {
                 zero_transform_count: 0,
                 first_tx_size: None,
                 first_non_zero_transform_index: None,
+                first_non_zero_transform: None,
                 first_non_zero_tx_size: None,
                 tx_type_read: false,
                 tx_type_set: None,
@@ -397,6 +428,7 @@ impl<'a> TileDecoder<'a> {
                 first_coeff_base_reference_magnitude: None,
                 first_coeff_base_symbol: None,
                 first_coeff_base_level: None,
+                first_quantized_coefficients: None,
                 bit_position_after: block_mode.bit_position_after,
             });
         };
@@ -478,6 +510,7 @@ impl<'a> TileDecoder<'a> {
             first_coeff_base_reference_magnitude,
             first_coeff_base_symbol,
             first_coeff_base_level,
+            first_quantized_coefficients,
         ) = if let Some(non_zero_transform) = first_non_zero_transform {
             let tx_type_probe = self.read_intra_tx_type(frame, block_mode, non_zero_transform)?;
             let eob_multisize = eob_multisize(non_zero_transform);
@@ -600,13 +633,14 @@ impl<'a> TileDecoder<'a> {
                 coeff_base_read.probe.reference_magnitude,
                 coeff_base_read.probe.symbol,
                 coeff_base_read.probe.level,
+                Some(coeff_base_read.base_levels),
             )
         } else {
             (
                 None, None, None, None, None, None, None, None, false, None, None, None, None,
                 None, None, None, None, None, None, None, None, None, None, None, None, None, None,
                 None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-                None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None,
             )
         };
 
@@ -618,6 +652,7 @@ impl<'a> TileDecoder<'a> {
             zero_transform_count,
             first_tx_size: Some(first_transform.tx_size),
             first_non_zero_transform_index,
+            first_non_zero_transform,
             first_non_zero_tx_size: first_non_zero_transform.map(|transform| transform.tx_size),
             tx_type_read,
             tx_type_set,
@@ -671,6 +706,7 @@ impl<'a> TileDecoder<'a> {
             first_coeff_base_reference_magnitude,
             first_coeff_base_symbol,
             first_coeff_base_level,
+            first_quantized_coefficients,
             bit_position_after: self.reader.bit_position(),
         })
     }
@@ -775,6 +811,54 @@ impl<'a> TileDecoder<'a> {
                 tx_type,
             })
         }
+    }
+
+    fn read_decoded_transform(
+        &mut self,
+        frame: &FrameHeader,
+        block_mode: &BlockModeProbe,
+        transform: TransformBlock,
+    ) -> Result<DecodedTransform, DecoderError> {
+        let tx_type = self
+            .read_intra_tx_type(frame, block_mode, transform)?
+            .tx_type;
+        let eob_multisize = eob_multisize(transform);
+        if eob_multisize != 6 {
+            return Err(DecoderError::Unsupported(format!(
+                "AV1 eob_pt decode for eobMultisize {eob_multisize} is not supported yet"
+            )));
+        }
+        let plane_type = usize::from(transform.plane > 0);
+        let eob_pt_symbol = self
+            .reader
+            .read_symbol(self.cdf.eob_pt_1024_cdf_mut(plane_type))?;
+        let eob_pt = eob_pt_symbol + 1;
+        let eob_base = eob_base_from_pt(eob_pt);
+        let (_, _, _, eob) = self.read_eob_extra(transform, plane_type, eob_pt, eob_base)?;
+        if transform.tx_size != super::syntax::TxSize::Tx32x32 {
+            return Err(DecoderError::Unsupported(format!(
+                "AV1 coeff_base_eob decode for {:?} is not supported yet",
+                transform.tx_size
+            )));
+        }
+        let coeff_base_eob_context =
+            coeff_base_eob_context(transform.tx_size, eob.saturating_sub(1));
+        let coeff_base_eob_symbol = self.reader.read_symbol(
+            self.cdf
+                .coeff_base_eob_tx32_cdf_mut(plane_type, coeff_base_eob_context),
+        )?;
+        let coeff_base_eob_level = coeff_base_eob_symbol + 1;
+        let coeff_base_read = self.read_regular_coeff_bases(
+            transform.tx_size,
+            plane_type,
+            eob,
+            coeff_base_eob_level,
+        )?;
+        Ok(DecodedTransform {
+            transform,
+            tx_type,
+            coefficients: coeff_base_read.base_levels,
+        })
     }
 
     fn read_regular_coeff_bases(
@@ -1042,6 +1126,430 @@ impl<'a> TileDecoder<'a> {
         }
         Ok(value - 1)
     }
+}
+
+fn decode_luma_root_block(
+    decoder: &mut TileDecoder<'_>,
+    sequence: &SequenceHeader,
+    frame: &FrameHeader,
+    tile_plan: &TileDecodePlan,
+    plan: &FrameDecodePlan,
+    buffers: &mut FrameBuffers,
+    x: usize,
+    y: usize,
+) -> Result<DecodedLumaBlock, DecoderError> {
+    let partition = decoder.read_root_partition(tile_plan)?;
+    if partition.partition != Partition::None {
+        return Err(DecoderError::Unsupported(format!(
+            "AV1 luma root block decode for partition {:?} is not supported yet",
+            partition.partition
+        )));
+    }
+
+    decode_luma_leaf_block(
+        decoder,
+        sequence,
+        frame,
+        tile_plan,
+        plan,
+        buffers,
+        partition.block_size,
+        x,
+        y,
+    )
+}
+
+fn decode_luma_leaf_block(
+    decoder: &mut TileDecoder<'_>,
+    sequence: &SequenceHeader,
+    frame: &FrameHeader,
+    tile_plan: &TileDecodePlan,
+    plan: &FrameDecodePlan,
+    buffers: &mut FrameBuffers,
+    block_size: BlockSize,
+    x: usize,
+    y: usize,
+) -> Result<DecodedLumaBlock, DecoderError> {
+    let block_mode = decoder.read_intra_frame_block_mode(sequence, frame, tile_plan, block_size)?;
+    let transforms = plan_transform_blocks(0, x, y, block_mode.block_size, plan.width, plan.height);
+    if block_mode.skip {
+        return Ok(DecodedLumaBlock {
+            x,
+            y,
+            block_size: block_mode.block_size,
+            transforms: Vec::new(),
+        });
+    }
+
+    let quant_state =
+        QuantState::from_params(&frame.quantization, sequence.color_config.bit_depth)?;
+    let mid = 1u16 << (sequence.color_config.bit_depth - 1);
+    let luma = buffers
+        .planes
+        .get_mut(0)
+        .ok_or_else(|| DecoderError::Bitstream("AV1 luma plane is missing".to_string()))?;
+    let mut decoded = Vec::new();
+    for transform in transforms {
+        let txb_skip_context = first_txb_skip_context(block_mode.block_size, transform);
+        let all_zero_symbol = decoder.reader.read_symbol(
+            decoder
+                .cdf
+                .txb_skip_cdf_mut(transform.tx_size.coeff_cdf_index(), txb_skip_context),
+        )?;
+        if all_zero_symbol != 0 {
+            continue;
+        }
+
+        let decoded_transform = decoder.read_decoded_transform(frame, &block_mode, transform)?;
+        let above = vec![mid; transform.tx_size.width()];
+        let left = vec![mid; transform.tx_size.height()];
+        let prediction = predict_intra(
+            block_mode.y_mode,
+            transform.tx_size.width(),
+            transform.tx_size.height(),
+            IntraEdges {
+                above: Some(&above),
+                left: Some(&left),
+                above_left: Some(mid),
+                bit_depth: sequence.color_config.bit_depth,
+            },
+        )?;
+        let quantized = QuantizedTransform {
+            block: decoded_transform.transform,
+            tx_type: decoded_transform.tx_type,
+            coefficients: decoded_transform.coefficients.clone(),
+        };
+        reconstruct_transform_block(
+            luma,
+            &quantized,
+            quant_state.plane(transform.plane),
+            &prediction,
+            sequence.color_config.bit_depth,
+        )?;
+        decoded.push(decoded_transform);
+    }
+
+    Ok(DecodedLumaBlock {
+        x,
+        y,
+        block_size: block_mode.block_size,
+        transforms: decoded,
+    })
+}
+
+fn decode_luma_block_tree(
+    decoder: &mut TileDecoder<'_>,
+    sequence: &SequenceHeader,
+    frame: &FrameHeader,
+    tile_plan: &TileDecodePlan,
+    plan: &FrameDecodePlan,
+    buffers: &mut FrameBuffers,
+    block_size: BlockSize,
+    x: usize,
+    y: usize,
+    block_budget: &mut usize,
+) -> Result<Vec<DecodedLumaBlock>, DecoderError> {
+    if *block_budget == 0 || x >= plan.width || y >= plan.height {
+        return Ok(Vec::new());
+    }
+    let partition = decoder.read_partition(tile_plan.tile_id, block_size)?;
+    match partition.partition {
+        Partition::None => {
+            let block = decode_luma_leaf_block(
+                decoder, sequence, frame, tile_plan, plan, buffers, block_size, x, y,
+            )?;
+            *block_budget -= 1;
+            Ok(vec![block])
+        }
+        Partition::Horizontal => {
+            let subsize = block_size.horizontal_subsize().ok_or_else(|| {
+                DecoderError::Unsupported(format!(
+                    "AV1 horizontal partition for {block_size:?} is not supported yet"
+                ))
+            })?;
+            decode_luma_partition_children(
+                decoder,
+                sequence,
+                frame,
+                tile_plan,
+                plan,
+                buffers,
+                subsize,
+                &[(x, y), (x, y + subsize.height())],
+                block_budget,
+            )
+        }
+        Partition::Vertical => {
+            let subsize = block_size.vertical_subsize().ok_or_else(|| {
+                DecoderError::Unsupported(format!(
+                    "AV1 vertical partition for {block_size:?} is not supported yet"
+                ))
+            })?;
+            decode_luma_partition_children(
+                decoder,
+                sequence,
+                frame,
+                tile_plan,
+                plan,
+                buffers,
+                subsize,
+                &[(x, y), (x + subsize.width(), y)],
+                block_budget,
+            )
+        }
+        Partition::Split => {
+            let subsize = block_size.split_subsize().ok_or_else(|| {
+                DecoderError::Unsupported(format!(
+                    "AV1 split partition for {block_size:?} is not supported yet"
+                ))
+            })?;
+            decode_luma_partition_children(
+                decoder,
+                sequence,
+                frame,
+                tile_plan,
+                plan,
+                buffers,
+                subsize,
+                &[
+                    (x, y),
+                    (x + subsize.width(), y),
+                    (x, y + subsize.height()),
+                    (x + subsize.width(), y + subsize.height()),
+                ],
+                block_budget,
+            )
+        }
+        Partition::HorizontalA => {
+            let split_subsize = block_size.split_subsize().ok_or_else(|| {
+                DecoderError::Unsupported(format!(
+                    "AV1 horizontal-a partition for {block_size:?} is not supported yet"
+                ))
+            })?;
+            let horizontal_subsize = block_size.horizontal_subsize().ok_or_else(|| {
+                DecoderError::Unsupported(format!(
+                    "AV1 horizontal-a partition tail for {block_size:?} is not supported yet"
+                ))
+            })?;
+            decode_luma_partition_runs(
+                decoder,
+                sequence,
+                frame,
+                tile_plan,
+                plan,
+                buffers,
+                &[
+                    (split_subsize, x, y),
+                    (split_subsize, x + split_subsize.width(), y),
+                    (horizontal_subsize, x, y + split_subsize.height()),
+                ],
+                block_budget,
+            )
+        }
+        Partition::HorizontalB => {
+            let horizontal_subsize = block_size.horizontal_subsize().ok_or_else(|| {
+                DecoderError::Unsupported(format!(
+                    "AV1 horizontal-b partition head for {block_size:?} is not supported yet"
+                ))
+            })?;
+            let split_subsize = block_size.split_subsize().ok_or_else(|| {
+                DecoderError::Unsupported(format!(
+                    "AV1 horizontal-b partition for {block_size:?} is not supported yet"
+                ))
+            })?;
+            decode_luma_partition_runs(
+                decoder,
+                sequence,
+                frame,
+                tile_plan,
+                plan,
+                buffers,
+                &[
+                    (horizontal_subsize, x, y),
+                    (split_subsize, x, y + horizontal_subsize.height()),
+                    (
+                        split_subsize,
+                        x + split_subsize.width(),
+                        y + horizontal_subsize.height(),
+                    ),
+                ],
+                block_budget,
+            )
+        }
+        Partition::VerticalA => {
+            let split_subsize = block_size.split_subsize().ok_or_else(|| {
+                DecoderError::Unsupported(format!(
+                    "AV1 vertical-a partition for {block_size:?} is not supported yet"
+                ))
+            })?;
+            let vertical_subsize = block_size.vertical_subsize().ok_or_else(|| {
+                DecoderError::Unsupported(format!(
+                    "AV1 vertical-a partition tail for {block_size:?} is not supported yet"
+                ))
+            })?;
+            decode_luma_partition_runs(
+                decoder,
+                sequence,
+                frame,
+                tile_plan,
+                plan,
+                buffers,
+                &[
+                    (split_subsize, x, y),
+                    (split_subsize, x, y + split_subsize.height()),
+                    (vertical_subsize, x + split_subsize.width(), y),
+                ],
+                block_budget,
+            )
+        }
+        Partition::VerticalB => {
+            let vertical_subsize = block_size.vertical_subsize().ok_or_else(|| {
+                DecoderError::Unsupported(format!(
+                    "AV1 vertical-b partition head for {block_size:?} is not supported yet"
+                ))
+            })?;
+            let split_subsize = block_size.split_subsize().ok_or_else(|| {
+                DecoderError::Unsupported(format!(
+                    "AV1 vertical-b partition for {block_size:?} is not supported yet"
+                ))
+            })?;
+            decode_luma_partition_runs(
+                decoder,
+                sequence,
+                frame,
+                tile_plan,
+                plan,
+                buffers,
+                &[
+                    (vertical_subsize, x, y),
+                    (split_subsize, x + vertical_subsize.width(), y),
+                    (
+                        split_subsize,
+                        x + vertical_subsize.width(),
+                        y + split_subsize.height(),
+                    ),
+                ],
+                block_budget,
+            )
+        }
+        Partition::Horizontal4 => {
+            let subsize = block_size.horizontal_4_subsize().ok_or_else(|| {
+                DecoderError::Unsupported(format!(
+                    "AV1 horizontal4 partition for {block_size:?} is not supported yet"
+                ))
+            })?;
+            decode_luma_partition_children(
+                decoder,
+                sequence,
+                frame,
+                tile_plan,
+                plan,
+                buffers,
+                subsize,
+                &[
+                    (x, y),
+                    (x, y + subsize.height()),
+                    (x, y + subsize.height() * 2),
+                    (x, y + subsize.height() * 3),
+                ],
+                block_budget,
+            )
+        }
+        Partition::Vertical4 => {
+            let subsize = block_size.vertical_4_subsize().ok_or_else(|| {
+                DecoderError::Unsupported(format!(
+                    "AV1 vertical4 partition for {block_size:?} is not supported yet"
+                ))
+            })?;
+            decode_luma_partition_children(
+                decoder,
+                sequence,
+                frame,
+                tile_plan,
+                plan,
+                buffers,
+                subsize,
+                &[
+                    (x, y),
+                    (x + subsize.width(), y),
+                    (x + subsize.width() * 2, y),
+                    (x + subsize.width() * 3, y),
+                ],
+                block_budget,
+            )
+        }
+    }
+}
+
+fn decode_luma_partition_children(
+    decoder: &mut TileDecoder<'_>,
+    sequence: &SequenceHeader,
+    frame: &FrameHeader,
+    tile_plan: &TileDecodePlan,
+    plan: &FrameDecodePlan,
+    buffers: &mut FrameBuffers,
+    subsize: BlockSize,
+    children: &[(usize, usize)],
+    block_budget: &mut usize,
+) -> Result<Vec<DecodedLumaBlock>, DecoderError> {
+    let mut blocks = Vec::new();
+    for &(sub_x, sub_y) in children {
+        if *block_budget == 0 {
+            return Ok(blocks);
+        }
+        match decode_luma_block_tree(
+            decoder,
+            sequence,
+            frame,
+            tile_plan,
+            plan,
+            buffers,
+            subsize,
+            sub_x,
+            sub_y,
+            block_budget,
+        ) {
+            Ok(decoded) => blocks.extend(decoded),
+            Err(DecoderError::Unsupported(_)) if !blocks.is_empty() => return Ok(blocks),
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(blocks)
+}
+
+fn decode_luma_partition_runs(
+    decoder: &mut TileDecoder<'_>,
+    sequence: &SequenceHeader,
+    frame: &FrameHeader,
+    tile_plan: &TileDecodePlan,
+    plan: &FrameDecodePlan,
+    buffers: &mut FrameBuffers,
+    children: &[(BlockSize, usize, usize)],
+    block_budget: &mut usize,
+) -> Result<Vec<DecodedLumaBlock>, DecoderError> {
+    let mut blocks = Vec::new();
+    for &(subsize, sub_x, sub_y) in children {
+        if *block_budget == 0 {
+            return Ok(blocks);
+        }
+        match decode_luma_block_tree(
+            decoder,
+            sequence,
+            frame,
+            tile_plan,
+            plan,
+            buffers,
+            subsize,
+            sub_x,
+            sub_y,
+            block_budget,
+        ) {
+            Ok(decoded) => blocks.extend(decoded),
+            Err(DecoderError::Unsupported(_)) if !blocks.is_empty() => return Ok(blocks),
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(blocks)
 }
 
 fn first_txb_skip_context(block_size: BlockSize, transform: TransformBlock) -> usize {
@@ -1491,12 +1999,205 @@ pub fn probe_first_block_residuals(
     Ok(probes)
 }
 
+pub fn decode_first_luma_transform(
+    data: &[u8],
+    tile_group: &TileGroup,
+    sequence: &SequenceHeader,
+    frame: &FrameHeader,
+    plan: &FrameDecodePlan,
+    buffers: &mut FrameBuffers,
+) -> Result<ResidualProbe, DecoderError> {
+    let quant_state =
+        QuantState::from_params(&frame.quantization, sequence.color_config.bit_depth)?;
+    let tile_payload = tile_group.tiles.first().ok_or_else(|| {
+        DecoderError::Bitstream("AV1 tile group has no tile payloads".to_string())
+    })?;
+    let end = tile_payload
+        .offset
+        .checked_add(tile_payload.len)
+        .ok_or_else(|| DecoderError::Bitstream("AV1 tile payload end overflow".to_string()))?;
+    let payload = data.get(tile_payload.offset..end).ok_or_else(|| {
+        DecoderError::NotEnoughData("AV1 tile payload extends beyond tile group".to_string())
+    })?;
+    let tile_plan = plan
+        .tiles
+        .first()
+        .ok_or_else(|| DecoderError::Bitstream("AV1 tile decode plan is missing".to_string()))?;
+    let mut decoder = TileDecoder::new(payload, frame)?;
+    let partition = decoder.read_root_partition(tile_plan)?;
+    if partition.partition != Partition::None {
+        return Err(DecoderError::Unsupported(format!(
+            "AV1 first luma transform decode for root partition {:?} is not supported yet",
+            partition.partition
+        )));
+    }
+
+    let block_mode =
+        decoder.read_intra_frame_block_mode(sequence, frame, tile_plan, partition.block_size)?;
+    let transforms = plan_transform_blocks(
+        0,
+        tile_plan.pixel_x,
+        tile_plan.pixel_y,
+        block_mode.block_size,
+        plan.width,
+        plan.height,
+    );
+    let residual = decoder.read_first_transform_residual(
+        tile_plan.tile_id,
+        frame,
+        &block_mode,
+        &transforms,
+        quant_state,
+        sequence.color_config.bit_depth,
+    )?;
+
+    if residual.skipped || residual.first_non_zero_transform.is_none() {
+        return Ok(residual);
+    }
+    let transform = residual
+        .first_non_zero_transform
+        .expect("checked first_non_zero_transform");
+    let tx_type = residual
+        .tx_type
+        .ok_or_else(|| DecoderError::Bitstream("AV1 residual tx_type is missing".to_string()))?;
+    let coefficients = residual
+        .first_quantized_coefficients
+        .as_ref()
+        .ok_or_else(|| {
+            DecoderError::Bitstream("AV1 residual quantized coefficients are missing".to_string())
+        })?;
+    let mid = 1u16 << (sequence.color_config.bit_depth - 1);
+    let above = vec![mid; transform.tx_size.width()];
+    let left = vec![mid; transform.tx_size.height()];
+    let prediction = predict_intra(
+        block_mode.y_mode,
+        transform.tx_size.width(),
+        transform.tx_size.height(),
+        IntraEdges {
+            above: Some(&above),
+            left: Some(&left),
+            above_left: Some(mid),
+            bit_depth: sequence.color_config.bit_depth,
+        },
+    )?;
+    let quantized = QuantizedTransform {
+        block: transform,
+        tx_type,
+        coefficients: coefficients.clone(),
+    };
+    let luma = buffers
+        .planes
+        .get_mut(0)
+        .ok_or_else(|| DecoderError::Bitstream("AV1 luma plane is missing".to_string()))?;
+    reconstruct_transform_block(
+        luma,
+        &quantized,
+        quant_state.plane(transform.plane),
+        &prediction,
+        sequence.color_config.bit_depth,
+    )?;
+
+    Ok(residual)
+}
+
+pub fn decode_first_luma_block(
+    data: &[u8],
+    tile_group: &TileGroup,
+    sequence: &SequenceHeader,
+    frame: &FrameHeader,
+    plan: &FrameDecodePlan,
+    buffers: &mut FrameBuffers,
+) -> Result<Vec<DecodedTransform>, DecoderError> {
+    let tile_payload = tile_group.tiles.first().ok_or_else(|| {
+        DecoderError::Bitstream("AV1 tile group has no tile payloads".to_string())
+    })?;
+    let end = tile_payload
+        .offset
+        .checked_add(tile_payload.len)
+        .ok_or_else(|| DecoderError::Bitstream("AV1 tile payload end overflow".to_string()))?;
+    let payload = data.get(tile_payload.offset..end).ok_or_else(|| {
+        DecoderError::NotEnoughData("AV1 tile payload extends beyond tile group".to_string())
+    })?;
+    let tile_plan = plan
+        .tiles
+        .first()
+        .ok_or_else(|| DecoderError::Bitstream("AV1 tile decode plan is missing".to_string()))?;
+    let mut decoder = TileDecoder::new(payload, frame)?;
+    let block = decode_luma_root_block(
+        &mut decoder,
+        sequence,
+        frame,
+        tile_plan,
+        plan,
+        buffers,
+        tile_plan.pixel_x,
+        tile_plan.pixel_y,
+    )?;
+    Ok(block.transforms)
+}
+
+pub fn decode_luma_root_blocks(
+    data: &[u8],
+    tile_group: &TileGroup,
+    sequence: &SequenceHeader,
+    frame: &FrameHeader,
+    plan: &FrameDecodePlan,
+    buffers: &mut FrameBuffers,
+    max_blocks: usize,
+) -> Result<Vec<DecodedLumaBlock>, DecoderError> {
+    let tile_payload = tile_group.tiles.first().ok_or_else(|| {
+        DecoderError::Bitstream("AV1 tile group has no tile payloads".to_string())
+    })?;
+    let end = tile_payload
+        .offset
+        .checked_add(tile_payload.len)
+        .ok_or_else(|| DecoderError::Bitstream("AV1 tile payload end overflow".to_string()))?;
+    let payload = data.get(tile_payload.offset..end).ok_or_else(|| {
+        DecoderError::NotEnoughData("AV1 tile payload extends beyond tile group".to_string())
+    })?;
+    let tile_plan = plan
+        .tiles
+        .first()
+        .ok_or_else(|| DecoderError::Bitstream("AV1 tile decode plan is missing".to_string()))?;
+    let mut decoder = TileDecoder::new(payload, frame)?;
+    let mut blocks = Vec::new();
+    let mut block_budget = max_blocks;
+    for sb_row in tile_plan.sb_row_start..tile_plan.sb_row_end {
+        for sb_col in tile_plan.sb_col_start..tile_plan.sb_col_end {
+            if block_budget == 0 {
+                return Ok(blocks);
+            }
+            let x = (sb_col as usize * plan.superblock_size).min(plan.width);
+            let y = (sb_row as usize * plan.superblock_size).min(plan.height);
+            let decoded = match decode_luma_block_tree(
+                &mut decoder,
+                sequence,
+                frame,
+                tile_plan,
+                plan,
+                buffers,
+                BlockSize::Block128x128,
+                x,
+                y,
+                &mut block_budget,
+            ) {
+                Ok(blocks) => blocks,
+                Err(DecoderError::Unsupported(_)) if !blocks.is_empty() => return Ok(blocks),
+                Err(err) => return Err(err),
+            };
+            blocks.extend(decoded);
+        }
+    }
+
+    Ok(blocks)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::av1::{
-        build_still_decode_plan, parse_frame_header, parse_sequence_header, parse_tile_group,
-        plan_transform_blocks,
+        alloc_frame_buffers, build_still_decode_plan, parse_frame_header, parse_sequence_header,
+        parse_tile_group, plan_transform_blocks,
     };
     use crate::container::parse_avif;
     use crate::obu::{ObuType, find_obu_payload};
@@ -1697,6 +2398,7 @@ mod tests {
             assert_eq!(probes[0].txb_skip_context, None);
             assert_eq!(probes[0].all_zero_symbol, None);
             assert_eq!(probes[0].first_non_zero_transform_index, None);
+            assert_eq!(probes[0].first_non_zero_transform, None);
             assert_eq!(probes[0].first_non_zero_tx_size, None);
             assert!(!probes[0].tx_type_read);
             assert_eq!(probes[0].tx_type_set, None);
@@ -1736,6 +2438,7 @@ mod tests {
             assert_eq!(probes[0].first_coeff_base_context, None);
             assert_eq!(probes[0].first_coeff_base_symbol, None);
             assert_eq!(probes[0].first_coeff_base_level, None);
+            assert_eq!(probes[0].first_quantized_coefficients, None);
         } else {
             assert!(probes[0].txb_skip_context.unwrap() <= 1);
             assert!(probes[0].all_zero_symbol.unwrap() <= 1);
@@ -1749,6 +2452,7 @@ mod tests {
                 assert_eq!(probes[0].eob_base, None);
                 assert_eq!(probes[0].eob_extra_symbol, None);
                 assert_eq!(probes[0].eob, None);
+                assert_eq!(probes[0].first_non_zero_transform, None);
                 assert!(!probes[0].tx_type_read);
                 assert_eq!(probes[0].tx_type_set, None);
                 assert_eq!(probes[0].tx_type_symbol, None);
@@ -1787,8 +2491,13 @@ mod tests {
                 assert_eq!(probes[0].first_coeff_base_context, None);
                 assert_eq!(probes[0].first_coeff_base_symbol, None);
                 assert_eq!(probes[0].first_coeff_base_level, None);
+                assert_eq!(probes[0].first_quantized_coefficients, None);
             } else {
                 assert!(probes[0].first_non_zero_transform_index.unwrap() < 16);
+                assert_eq!(
+                    probes[0].first_non_zero_transform.unwrap().tx_size,
+                    super::super::syntax::TxSize::Tx32x32
+                );
                 assert_eq!(
                     probes[0].first_non_zero_tx_size,
                     Some(super::super::syntax::TxSize::Tx32x32)
@@ -1923,11 +2632,170 @@ mod tests {
                         probes[0].first_coeff_base_symbol
                     );
                 }
+                assert_eq!(
+                    probes[0]
+                        .first_quantized_coefficients
+                        .as_ref()
+                        .unwrap()
+                        .len(),
+                    1024
+                );
             }
         }
         assert_eq!(
             probes[0].first_tx_size,
             Some(super::super::syntax::TxSize::Tx32x32)
+        );
+    }
+
+    #[test]
+    fn decodes_sample_first_luma_transform_into_frame_buffer() {
+        let data = std::fs::read(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join("samples")
+                .join("WML2Viewer.avif"),
+        )
+        .expect("sample AVIF should exist");
+        let info = parse_avif(&data).unwrap();
+        let sequence_payload =
+            find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
+                .unwrap()
+                .expect("sequence header OBU should exist");
+        let sequence = parse_sequence_header(sequence_payload).unwrap();
+        let frame_payload = find_obu_payload(&info.primary_item_payload, ObuType::Frame)
+            .unwrap()
+            .expect("frame OBU should exist");
+        let frame = parse_frame_header(frame_payload, &sequence).unwrap();
+        let tile_group = parse_tile_group(
+            frame_payload,
+            frame.uncompressed_header_bits,
+            &frame.tile_info,
+        )
+        .unwrap();
+        let plan = build_still_decode_plan(&sequence, &frame, &tile_group).unwrap();
+        let mut buffers = alloc_frame_buffers(&plan).unwrap();
+
+        let residual = decode_first_luma_transform(
+            frame_payload,
+            &tile_group,
+            &sequence,
+            &frame,
+            &plan,
+            &mut buffers,
+        )
+        .unwrap();
+
+        let transform = residual
+            .first_non_zero_transform
+            .expect("sample should have a non-zero first luma transform");
+        let plane = &buffers.planes[0];
+        let changed = (0..transform.tx_size.height()).any(|row| {
+            let start = (transform.y + row) * plane.layout.width + transform.x;
+            plane.samples[start..start + transform.tx_size.width()]
+                .iter()
+                .any(|sample| *sample != 0)
+        });
+        assert!(changed);
+    }
+
+    #[test]
+    fn decodes_sample_first_luma_block_transforms_into_frame_buffer() {
+        let data = std::fs::read(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join("samples")
+                .join("WML2Viewer.avif"),
+        )
+        .expect("sample AVIF should exist");
+        let info = parse_avif(&data).unwrap();
+        let sequence_payload =
+            find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
+                .unwrap()
+                .expect("sequence header OBU should exist");
+        let sequence = parse_sequence_header(sequence_payload).unwrap();
+        let frame_payload = find_obu_payload(&info.primary_item_payload, ObuType::Frame)
+            .unwrap()
+            .expect("frame OBU should exist");
+        let frame = parse_frame_header(frame_payload, &sequence).unwrap();
+        let tile_group = parse_tile_group(
+            frame_payload,
+            frame.uncompressed_header_bits,
+            &frame.tile_info,
+        )
+        .unwrap();
+        let plan = build_still_decode_plan(&sequence, &frame, &tile_group).unwrap();
+        let mut buffers = alloc_frame_buffers(&plan).unwrap();
+
+        let decoded = decode_first_luma_block(
+            frame_payload,
+            &tile_group,
+            &sequence,
+            &frame,
+            &plan,
+            &mut buffers,
+        )
+        .unwrap();
+
+        assert!(!decoded.is_empty());
+        assert!(
+            decoded
+                .iter()
+                .all(|transform| transform.transform.plane == 0)
+        );
+        assert!(buffers.planes[0].samples.iter().any(|sample| *sample != 0));
+    }
+
+    #[test]
+    fn decodes_sample_luma_root_block_prefix_with_split_children() {
+        let data = std::fs::read(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join("samples")
+                .join("WML2Viewer.avif"),
+        )
+        .expect("sample AVIF should exist");
+        let info = parse_avif(&data).unwrap();
+        let sequence_payload =
+            find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
+                .unwrap()
+                .expect("sequence header OBU should exist");
+        let sequence = parse_sequence_header(sequence_payload).unwrap();
+        let frame_payload = find_obu_payload(&info.primary_item_payload, ObuType::Frame)
+            .unwrap()
+            .expect("frame OBU should exist");
+        let frame = parse_frame_header(frame_payload, &sequence).unwrap();
+        let tile_group = parse_tile_group(
+            frame_payload,
+            frame.uncompressed_header_bits,
+            &frame.tile_info,
+        )
+        .unwrap();
+        let plan = build_still_decode_plan(&sequence, &frame, &tile_group).unwrap();
+        let mut buffers = alloc_frame_buffers(&plan).unwrap();
+
+        let blocks = decode_luma_root_blocks(
+            frame_payload,
+            &tile_group,
+            &sequence,
+            &frame,
+            &plan,
+            &mut buffers,
+            8,
+        )
+        .unwrap();
+
+        assert_eq!(blocks.len(), 8);
+        assert_eq!((blocks[0].x, blocks[0].y), (0, 0));
+        assert_eq!((blocks[1].x, blocks[1].y), (128, 0));
+        assert!(blocks.iter().any(|block| !block.transforms.is_empty()));
+        assert!(
+            blocks
+                .iter()
+                .any(|block| block.block_size.width() < BlockSize::Block128x128.width())
         );
     }
 
