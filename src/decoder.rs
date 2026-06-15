@@ -1,8 +1,9 @@
 use crate::av1::{
     Av1CodecConfiguration, BlockModeProbe, FrameDecodePlan, FrameHeader, PartitionProbe,
-    QuantState, ResidualProbe, SequenceHeader, TileEntropyState, TileGroup,
-    build_still_decode_plan, parse_av1_config, parse_frame_header, parse_sequence_header,
-    parse_tile_group, plan_transform_blocks, prepare_tile_entropy, probe_first_block_residuals,
+    QuantState, ResidualProbe, SequenceHeader, TileEntropyState, TileGroup, alloc_frame_buffers,
+    build_still_decode_plan, decode_luma_root_block_prefix, frame_buffers_to_rgba_8,
+    parse_av1_config, parse_frame_header, parse_sequence_header, parse_tile_group,
+    plan_transform_blocks, prepare_tile_entropy, probe_first_block_residuals,
     probe_tile_block_modes, probe_tile_partitions,
 };
 use crate::compat::{DataMap, DecodeOptions, InitOptions};
@@ -26,48 +27,31 @@ pub fn decode<B: BinaryReader>(
     reader: &mut B,
     option: &mut DecodeOptions<'_>,
 ) -> Result<(), Error> {
-    let info = parse_info(reader)?;
+    let data = read_to_end(reader)?;
+    let info = parse_avif(&data)?;
     let headers = parse_av1_headers(&info)?;
     emit_metadata(&info, Some(&headers), option)?;
+    let image = decode_still_image(&headers)?;
 
-    let width = info
-        .width
-        .ok_or_else(|| DecoderError::Bitstream("primary image width is missing".to_string()))?;
-    let height = info
-        .height
-        .ok_or_else(|| DecoderError::Bitstream("primary image height is missing".to_string()))?;
     option.drawer.init(
-        width as usize,
-        height as usize,
+        image.width,
+        image.height,
         Some(InitOptions {
             loop_count: 1,
             animation: false,
         }),
     )?;
-
-    Err(Box::new(DecoderError::Unsupported(format!(
-        "AV1 image bitstream decoding is not implemented yet (profile {} {}-bit, {:?})",
-        headers.sequence.seq_profile,
-        headers.sequence.color_config.bit_depth,
-        headers.frame.frame_type
-    ))))
+    option
+        .drawer
+        .draw(0, 0, image.width, image.height, &image.rgba, None)?;
+    option.drawer.terminate(None)?;
+    Ok(())
 }
 
 pub fn decode_bytes(data: &[u8]) -> Result<ImageBuffer, DecoderError> {
     let info = parse_avif(data)?;
     let headers = parse_av1_headers(&info)?;
-    let width = info
-        .width
-        .ok_or_else(|| DecoderError::Bitstream("primary image width is missing".to_string()))?;
-    let height = info
-        .height
-        .ok_or_else(|| DecoderError::Bitstream("primary image height is missing".to_string()))?;
-    Err(DecoderError::Unsupported(format!(
-        "AV1 image bitstream decoding is not implemented yet ({width}x{height}, profile {}, {}-bit, {:?})",
-        headers.sequence.seq_profile,
-        headers.sequence.color_config.bit_depth,
-        headers.frame.frame_type
-    )))
+    decode_still_image(&headers)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +68,7 @@ struct Av1Headers {
 struct ParsedTileGroup {
     from_frame_obu: bool,
     payload_len: usize,
+    tile_data: Vec<u8>,
     group: TileGroup,
     entropy_states: Vec<TileEntropyState>,
     partition_probes: Vec<PartitionProbe>,
@@ -143,6 +128,7 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
             ParsedTileGroup {
                 from_frame_obu: true,
                 payload_len: tile_group_payload_len,
+                tile_data: frame_payload.to_vec(),
                 group: tile_group,
                 entropy_states,
                 partition_probes: Vec::new(),
@@ -165,6 +151,7 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
             ParsedTileGroup {
                 from_frame_obu: false,
                 payload_len: tile_group_payload.len(),
+                tile_data: tile_group_payload.to_vec(),
                 group: tile_group,
                 entropy_states,
                 partition_probes: Vec::new(),
@@ -203,6 +190,23 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
         decode_plan,
         quant_state,
     })
+}
+
+fn decode_still_image(headers: &Av1Headers) -> Result<ImageBuffer, DecoderError> {
+    let mut buffers = alloc_frame_buffers(&headers.decode_plan)?;
+    let prefix = decode_luma_root_block_prefix(
+        &headers.tile_group.tile_data,
+        &headers.tile_group.group,
+        &headers.sequence,
+        &headers.frame,
+        &headers.decode_plan,
+        &mut buffers,
+        usize::MAX,
+    )?;
+    if let Some(err) = prefix.next_unsupported {
+        return Err(err);
+    }
+    frame_buffers_to_rgba_8(&buffers, &headers.sequence.color_config)
 }
 
 fn validate_av1_config(

@@ -91,6 +91,24 @@ fn ffmpeg_avif_decode_is_close_to_original_png() {
 }
 
 #[test]
+fn pure_rust_decode_returns_sample_rgba_dimensions() {
+    let avif_data =
+        std::fs::read(sample_path("WML2Viewer.avif")).expect("sample AVIF should exist");
+    let decoded = avif_rust::image_from_bytes(&avif_data).expect("AVIF should decode");
+
+    assert_eq!(decoded.width, SAMPLE_WIDTH);
+    assert_eq!(decoded.height, SAMPLE_HEIGHT);
+    assert_eq!(decoded.rgba.len(), SAMPLE_RGBA_LEN);
+    assert!(decoded.rgba.chunks_exact(4).all(|pixel| pixel[3] == 255));
+    assert!(
+        decoded
+            .rgba
+            .chunks_exact(4)
+            .any(|pixel| pixel[0] != 0 || pixel[1] != 0 || pixel[2] != 0)
+    );
+}
+
+#[test]
 #[ignore = "enable once the pure Rust AV1 image decoder returns pixels"]
 fn pure_rust_decode_matches_ffmpeg_oracle_and_original_png() {
     let avif_data =

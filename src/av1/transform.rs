@@ -180,12 +180,93 @@ pub fn inverse_transform(
     }
     match tx_type {
         TxType::DctDct => inverse_dct_2d(tx_size, dequant, bit_depth),
+        TxType::AdstDct => inverse_separable_transform(
+            tx_size,
+            dequant,
+            bit_depth,
+            Transform1d::Adst,
+            Transform1d::Dct,
+        ),
+        TxType::DctAdst => inverse_separable_transform(
+            tx_size,
+            dequant,
+            bit_depth,
+            Transform1d::Dct,
+            Transform1d::Adst,
+        ),
+        TxType::AdstAdst => inverse_separable_transform(
+            tx_size,
+            dequant,
+            bit_depth,
+            Transform1d::Adst,
+            Transform1d::Adst,
+        ),
         TxType::Identity => Ok(inverse_identity(tx_size, dequant, bit_depth)),
         TxType::VerticalDct => inverse_vertical_dct(tx_size, dequant, bit_depth),
         TxType::HorizontalDct => inverse_horizontal_dct(tx_size, dequant, bit_depth),
-        TxType::AdstDct | TxType::DctAdst | TxType::AdstAdst => Err(DecoderError::Unsupported(
-            format!("AV1 inverse transform {tx_type:?} is not supported yet"),
-        )),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Transform1d {
+    Dct,
+    Adst,
+}
+
+fn inverse_separable_transform(
+    tx_size: TxSize,
+    dequant: &[i32],
+    bit_depth: u8,
+    vertical: Transform1d,
+    horizontal: Transform1d,
+) -> Result<Vec<i32>, DecoderError> {
+    if tx_size.width() > 32 || tx_size.height() > 32 {
+        return Err(DecoderError::Unsupported(
+            "AV1 staged separable transforms larger than 32x32 are not supported yet".to_string(),
+        ));
+    }
+
+    let width = tx_size.width();
+    let height = tx_size.height();
+    let mut out = vec![0i32; width * height];
+    let residual_limit = 1i32 << (bit_depth + 7);
+
+    for y in 0..height {
+        for x in 0..width {
+            let mut sum = 0.0;
+            for v in 0..height {
+                let basis_v = inverse_1d_basis(vertical, height, y, v);
+                for u in 0..width {
+                    let basis_u = inverse_1d_basis(horizontal, width, x, u);
+                    sum += basis_v * basis_u * f64::from(dequant[v * width + u]);
+                }
+            }
+            out[y * width + x] = (sum.round() as i32).clamp(-residual_limit, residual_limit - 1);
+        }
+    }
+
+    Ok(out)
+}
+
+fn inverse_1d_basis(transform: Transform1d, len: usize, sample: usize, coeff: usize) -> f64 {
+    match transform {
+        Transform1d::Dct => {
+            let scale = (2.0 / len as f64).sqrt();
+            let alpha = if coeff == 0 {
+                1.0 / 2.0_f64.sqrt()
+            } else {
+                1.0
+            };
+            let angle =
+                ((2 * sample + 1) * coeff) as f64 * std::f64::consts::PI / (2.0 * len as f64);
+            scale * alpha * angle.cos()
+        }
+        Transform1d::Adst => {
+            let scale = (2.0 / (len + 1) as f64).sqrt();
+            let angle =
+                ((sample + 1) * (coeff + 1)) as f64 * std::f64::consts::PI / ((len + 1) as f64);
+            scale * angle.sin()
+        }
     }
 }
 
@@ -406,6 +487,20 @@ mod tests {
             residual,
             vec![8, 8, 8, 8, 16, 16, 16, 16, 0, 0, 0, 0, 0, 0, 0, 0]
         );
+    }
+
+    #[test]
+    fn adst_dct_staging_transform_outputs_finite_residuals() {
+        let mut coeffs = vec![0; TxSize::Tx4x4.sample_count()];
+        coeffs[0] = 16;
+        coeffs[1] = 8;
+        coeffs[4] = -12;
+
+        let residual = inverse_transform(TxType::AdstDct, TxSize::Tx4x4, &coeffs, 8).unwrap();
+
+        assert_eq!(residual.len(), 16);
+        assert!(residual.iter().any(|value| *value != 0));
+        assert!(residual.iter().all(|value| value.abs() < (1 << 15)));
     }
 
     #[test]

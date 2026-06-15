@@ -25,7 +25,8 @@ pub use frame::{FrameHeader, FrameType, TxMode, parse_frame_header};
 pub use predict::{IntraEdges, predict_intra};
 pub use quant::{PlaneQuant, QuantState, dequantize_coefficients};
 pub use reconstruct::{
-    add_residual_to_prediction, frame_buffers_to_identity_rgba_8, write_plane_block,
+    add_residual_to_prediction, frame_buffers_to_identity_rgba_8, frame_buffers_to_rgba_8,
+    read_intra_edges, write_plane_block,
 };
 pub use sequence::{
     ChromaSamplePosition, ColorConfig, ColorDescription, ColorRange, SequenceHeader,
@@ -35,10 +36,11 @@ pub use syntax::UvPredictionMode;
 pub use syntax::{BlockSize, Partition, PredictionMode, TxSize, TxType};
 pub use tile::TileInfo;
 pub use tile_decode::{
-    BlockModeProbe, DecodedLumaBlock, DecodedTransform, PartitionProbe, ResidualProbe, TileDecoder,
-    TileEntropyState, decode_first_luma_block, decode_first_luma_transform,
-    decode_luma_root_blocks, prepare_tile_entropy, probe_first_block_residuals,
-    probe_tile_block_modes, probe_tile_partitions,
+    BlockModeProbe, DecodedBlockPrefix, DecodedLumaBlock, DecodedTransform, PartitionProbe,
+    ResidualProbe, TileDecoder, TileEntropyState, decode_first_luma_block,
+    decode_first_luma_transform, decode_luma_root_block_prefix, decode_luma_root_blocks,
+    prepare_tile_entropy, probe_first_block_residuals, probe_tile_block_modes,
+    probe_tile_partitions,
 };
 pub use tile_group::{TileGroup, TilePayload, parse_tile_group};
 pub use transform::{
