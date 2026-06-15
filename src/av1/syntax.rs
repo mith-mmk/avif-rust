@@ -8,12 +8,16 @@ pub enum BlockSize {
     Block16x8,
     Block16x16,
     Block16x32,
+    Block16x64,
     Block32x16,
     Block32x32,
     Block32x64,
+    Block32x128,
+    Block64x16,
     Block64x32,
     Block64x64,
     Block64x128,
+    Block128x32,
     Block128x64,
     Block128x128,
 }
@@ -40,12 +44,16 @@ impl BlockSize {
             (16, 8) => Some(Self::Block16x8),
             (16, 16) => Some(Self::Block16x16),
             (16, 32) => Some(Self::Block16x32),
+            (16, 64) => Some(Self::Block16x64),
             (32, 16) => Some(Self::Block32x16),
             (32, 32) => Some(Self::Block32x32),
             (32, 64) => Some(Self::Block32x64),
+            (32, 128) => Some(Self::Block32x128),
+            (64, 16) => Some(Self::Block64x16),
             (64, 32) => Some(Self::Block64x32),
             (64, 64) => Some(Self::Block64x64),
             (64, 128) => Some(Self::Block64x128),
+            (128, 32) => Some(Self::Block128x32),
             (128, 64) => Some(Self::Block128x64),
             (128, 128) => Some(Self::Block128x128),
             _ => None,
@@ -56,10 +64,10 @@ impl BlockSize {
         match self {
             Self::Block4x4 | Self::Block4x8 => 0,
             Self::Block8x4 | Self::Block8x8 | Self::Block8x16 => 1,
-            Self::Block16x8 | Self::Block16x16 | Self::Block16x32 => 2,
-            Self::Block32x16 | Self::Block32x32 | Self::Block32x64 => 3,
-            Self::Block64x32 | Self::Block64x64 | Self::Block64x128 => 4,
-            Self::Block128x64 | Self::Block128x128 => 5,
+            Self::Block16x8 | Self::Block16x16 | Self::Block16x32 | Self::Block16x64 => 2,
+            Self::Block32x16 | Self::Block32x32 | Self::Block32x64 | Self::Block32x128 => 3,
+            Self::Block64x16 | Self::Block64x32 | Self::Block64x64 | Self::Block64x128 => 4,
+            Self::Block128x32 | Self::Block128x64 | Self::Block128x128 => 5,
         }
     }
 
@@ -67,10 +75,10 @@ impl BlockSize {
         match self {
             Self::Block4x4 | Self::Block8x4 => 0,
             Self::Block4x8 | Self::Block8x8 | Self::Block16x8 => 1,
-            Self::Block8x16 | Self::Block16x16 | Self::Block32x16 => 2,
-            Self::Block16x32 | Self::Block32x32 | Self::Block64x32 => 3,
-            Self::Block32x64 | Self::Block64x64 | Self::Block128x64 => 4,
-            Self::Block64x128 | Self::Block128x128 => 5,
+            Self::Block8x16 | Self::Block16x16 | Self::Block32x16 | Self::Block64x16 => 2,
+            Self::Block16x32 | Self::Block32x32 | Self::Block64x32 | Self::Block128x32 => 3,
+            Self::Block16x64 | Self::Block32x64 | Self::Block64x64 | Self::Block128x64 => 4,
+            Self::Block32x128 | Self::Block64x128 | Self::Block128x128 => 5,
         }
     }
 
@@ -92,8 +100,8 @@ impl BlockSize {
     }
 
     pub fn largest_supported_tx_size(self) -> TxSize {
-        let max_side = self.width().max(self.height()).min(32);
-        match max_side {
+        let side = self.width().min(self.height()).min(32);
+        match side {
             0..=4 => TxSize::Tx4x4,
             5..=8 => TxSize::Tx8x8,
             9..=16 => TxSize::Tx16x16,
@@ -102,10 +110,10 @@ impl BlockSize {
     }
 
     pub fn split_subsize(self) -> Option<Self> {
-        if self.width() != self.height() || self.width_mi_log2() == 0 {
+        if self.width_mi_log2() == 0 || self.height_mi_log2() == 0 {
             return None;
         }
-        Some(Self::square(self.width_mi_log2() - 1))
+        Self::from_dimensions(self.width() / 2, self.height() / 2)
     }
 
     pub fn horizontal_subsize(self) -> Option<Self> {
@@ -396,7 +404,10 @@ mod tests {
             Some(BlockSize::Block32x32)
         );
         assert_eq!(BlockSize::Block4x4.split_subsize(), None);
-        assert_eq!(BlockSize::Block64x32.split_subsize(), None);
+        assert_eq!(
+            BlockSize::Block64x32.split_subsize(),
+            Some(BlockSize::Block32x16)
+        );
     }
 
     #[test]
@@ -409,7 +420,10 @@ mod tests {
             BlockSize::from_dimensions(64, 128),
             Some(BlockSize::Block64x128)
         );
-        assert_eq!(BlockSize::from_dimensions(128, 32), None);
+        assert_eq!(
+            BlockSize::from_dimensions(128, 32),
+            Some(BlockSize::Block128x32)
+        );
         assert_eq!(BlockSize::from_dimensions(2, 4), None);
     }
 
@@ -439,8 +453,7 @@ mod tests {
     fn horizontal_and_vertical_4_subsize_quarters_one_axis() {
         assert_eq!(
             BlockSize::Block128x128.horizontal_4_subsize(),
-            None,
-            "128x32 is not represented by the supported MVP block-size enum"
+            Some(BlockSize::Block128x32)
         );
         assert_eq!(
             BlockSize::Block64x128.horizontal_4_subsize(),

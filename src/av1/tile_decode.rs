@@ -142,13 +142,29 @@ pub struct DecodedBlockPrefix {
 pub struct TileDecoder<'a> {
     reader: EntropyDecoder<'a>,
     cdf: CdfContext,
+    mi_cols: usize,
+    mi_rows: usize,
+    y_mode_grid: Vec<Option<usize>>,
+    skip_grid: Vec<Option<bool>>,
 }
 
 impl<'a> TileDecoder<'a> {
     pub fn new(payload: &'a [u8], frame: &FrameHeader) -> Result<Self, DecoderError> {
+        let mi_cols = (usize::try_from(frame.frame_width)
+            .map_err(|_| DecoderError::InvalidParam("AV1 frame width is too large".to_string()))?
+            + 3)
+            >> 2;
+        let mi_rows = (usize::try_from(frame.frame_height).map_err(|_| {
+            DecoderError::InvalidParam("AV1 frame height is too large".to_string())
+        })? + 3)
+            >> 2;
         Ok(Self {
             reader: EntropyDecoder::new(payload, frame.disable_cdf_update)?,
             cdf: CdfContext::new(frame.base_q_idx),
+            mi_cols,
+            mi_rows,
+            y_mode_grid: vec![None; mi_cols * mi_rows],
+            skip_grid: vec![None; mi_cols * mi_rows],
         })
     }
 
@@ -190,6 +206,8 @@ impl<'a> TileDecoder<'a> {
         frame: &FrameHeader,
         tile: &TileDecodePlan,
         block_size: BlockSize,
+        x: usize,
+        y: usize,
     ) -> Result<BlockModeProbe, DecoderError> {
         if frame.delta_q.present {
             return Err(DecoderError::Unsupported(
@@ -207,7 +225,7 @@ impl<'a> TileDecoder<'a> {
             ));
         }
 
-        let skip_context = 0;
+        let skip_context = self.skip_context(x, y);
         let skip_symbol = self
             .reader
             .read_symbol(self.cdf.skip_cdf_mut(skip_context))?;
@@ -223,8 +241,8 @@ impl<'a> TileDecoder<'a> {
             None
         };
 
-        let y_above_context = 0;
-        let y_left_context = 0;
+        let y_above_context = self.above_y_mode_context(x, y);
+        let y_left_context = self.left_y_mode_context(x, y);
         let y_mode_symbol = self.reader.read_symbol(
             self.cdf
                 .intra_frame_y_mode_cdf_mut(y_above_context, y_left_context),
@@ -269,6 +287,8 @@ impl<'a> TileDecoder<'a> {
         } else {
             (None, None, None)
         };
+        self.set_y_mode_context(x, y, block_size, intra_mode_context(y_mode));
+        self.set_skip_context(x, y, block_size, skip);
 
         Ok(BlockModeProbe {
             tile_id: tile.tile_id,
@@ -294,6 +314,80 @@ impl<'a> TileDecoder<'a> {
             .reader
             .read_symbol(self.cdf.angle_delta_cdf_mut(directional_index))?;
         Ok(symbol as i8 - 3)
+    }
+
+    fn above_y_mode_context(&self, x: usize, y: usize) -> usize {
+        if y < 4 {
+            return 0;
+        }
+        self.y_mode_at_mi(x >> 2, (y >> 2).saturating_sub(1))
+            .unwrap_or(0)
+    }
+
+    fn left_y_mode_context(&self, x: usize, y: usize) -> usize {
+        if x < 4 {
+            return 0;
+        }
+        self.y_mode_at_mi((x >> 2).saturating_sub(1), y >> 2)
+            .unwrap_or(0)
+    }
+
+    fn y_mode_at_mi(&self, mi_col: usize, mi_row: usize) -> Option<usize> {
+        if mi_col >= self.mi_cols || mi_row >= self.mi_rows {
+            return None;
+        }
+        self.y_mode_grid[mi_row * self.mi_cols + mi_col]
+    }
+
+    fn set_y_mode_context(&mut self, x: usize, y: usize, block_size: BlockSize, symbol: usize) {
+        let start_col = x >> 2;
+        let start_row = y >> 2;
+        let end_col = ((x + block_size.width()).min(self.mi_cols << 2) + 3) >> 2;
+        let end_row = ((y + block_size.height()).min(self.mi_rows << 2) + 3) >> 2;
+        for mi_row in start_row..end_row.min(self.mi_rows) {
+            for mi_col in start_col..end_col.min(self.mi_cols) {
+                self.y_mode_grid[mi_row * self.mi_cols + mi_col] = Some(symbol);
+            }
+        }
+    }
+
+    fn skip_context(&self, x: usize, y: usize) -> usize {
+        usize::from(self.above_skip_context(x, y)) + usize::from(self.left_skip_context(x, y))
+    }
+
+    fn above_skip_context(&self, x: usize, y: usize) -> bool {
+        if y < 4 {
+            return false;
+        }
+        self.skip_at_mi(x >> 2, (y >> 2).saturating_sub(1))
+            .unwrap_or(false)
+    }
+
+    fn left_skip_context(&self, x: usize, y: usize) -> bool {
+        if x < 4 {
+            return false;
+        }
+        self.skip_at_mi((x >> 2).saturating_sub(1), y >> 2)
+            .unwrap_or(false)
+    }
+
+    fn skip_at_mi(&self, mi_col: usize, mi_row: usize) -> Option<bool> {
+        if mi_col >= self.mi_cols || mi_row >= self.mi_rows {
+            return None;
+        }
+        self.skip_grid[mi_row * self.mi_cols + mi_col]
+    }
+
+    fn set_skip_context(&mut self, x: usize, y: usize, block_size: BlockSize, skip: bool) {
+        let start_col = x >> 2;
+        let start_row = y >> 2;
+        let end_col = ((x + block_size.width()).min(self.mi_cols << 2) + 3) >> 2;
+        let end_row = ((y + block_size.height()).min(self.mi_rows << 2) + 3) >> 2;
+        for mi_row in start_row..end_row.min(self.mi_rows) {
+            for mi_col in start_col..end_col.min(self.mi_cols) {
+                self.skip_grid[mi_row * self.mi_cols + mi_col] = Some(skip);
+            }
+        }
     }
 
     pub fn read_first_transform_residual(
@@ -1177,7 +1271,8 @@ fn decode_luma_leaf_block(
     x: usize,
     y: usize,
 ) -> Result<DecodedLumaBlock, DecoderError> {
-    let block_mode = decoder.read_intra_frame_block_mode(sequence, frame, tile_plan, block_size)?;
+    let block_mode =
+        decoder.read_intra_frame_block_mode(sequence, frame, tile_plan, block_size, x, y)?;
     let quant_state =
         QuantState::from_params(&frame.quantization, sequence.color_config.bit_depth)?;
     let decoded = decode_plane_block(
@@ -1189,6 +1284,7 @@ fn decode_luma_leaf_block(
         &block_mode,
         0,
         block_mode.y_mode,
+        block_mode.angle_delta_y,
         x,
         y,
         quant_state,
@@ -1212,6 +1308,7 @@ fn decode_luma_leaf_block(
             &block_mode,
             1,
             chroma_mode,
+            block_mode.angle_delta_uv,
             x,
             y,
             quant_state,
@@ -1225,6 +1322,7 @@ fn decode_luma_leaf_block(
             &block_mode,
             2,
             chroma_mode,
+            block_mode.angle_delta_uv,
             x,
             y,
             quant_state,
@@ -1248,6 +1346,7 @@ fn decode_plane_block(
     block_mode: &BlockModeProbe,
     plane_index: usize,
     prediction_mode: PredictionMode,
+    angle_delta: Option<i8>,
     x: usize,
     y: usize,
     quant_state: QuantState,
@@ -1271,13 +1370,42 @@ fn decode_plane_block(
         layout.width,
         layout.height,
     );
+    let block_width = block_mode
+        .block_size
+        .width()
+        .min(layout.width.saturating_sub(x));
+    let block_height = block_mode
+        .block_size
+        .height()
+        .min(layout.height.saturating_sub(y));
+    let block_prediction = predict_block(
+        plane,
+        prediction_mode,
+        x,
+        y,
+        block_width,
+        block_height,
+        angle_delta,
+        sequence.color_config.bit_depth,
+    )?;
     if block_mode.skip {
         for transform in &transforms {
-            write_predicted_transform(
-                plane,
-                prediction_mode,
+            let prediction = transform_prediction_from_block(
+                &block_prediction,
+                x,
+                y,
+                block_width,
                 *transform,
-                sequence.color_config.bit_depth,
+                layout.width,
+                layout.height,
+            )?;
+            write_plane_block(
+                plane,
+                transform.x,
+                transform.y,
+                transform.tx_size.width(),
+                transform.tx_size.height(),
+                &prediction,
             )?;
         }
         return Ok(Vec::new());
@@ -1292,21 +1420,35 @@ fn decode_plane_block(
                 .txb_skip_cdf_mut(transform.tx_size.coeff_cdf_index(), txb_skip_context),
         )?;
         if all_zero_symbol != 0 {
-            write_predicted_transform(
-                plane,
-                prediction_mode,
+            let prediction = transform_prediction_from_block(
+                &block_prediction,
+                x,
+                y,
+                block_width,
                 transform,
-                sequence.color_config.bit_depth,
+                layout.width,
+                layout.height,
+            )?;
+            write_plane_block(
+                plane,
+                transform.x,
+                transform.y,
+                transform.tx_size.width(),
+                transform.tx_size.height(),
+                &prediction,
             )?;
             continue;
         }
 
         let decoded_transform = decoder.read_decoded_transform(frame, &block_mode, transform)?;
-        let prediction = predict_transform(
-            plane,
-            prediction_mode,
+        let prediction = transform_prediction_from_block(
+            &block_prediction,
+            x,
+            y,
+            block_width,
             transform,
-            sequence.color_config.bit_depth,
+            layout.width,
+            layout.height,
         )?;
         let quantized = QuantizedTransform {
             block: decoded_transform.transform,
@@ -1326,24 +1468,22 @@ fn decode_plane_block(
     Ok(decoded)
 }
 
-fn predict_transform(
+fn predict_block(
     plane: &PlaneBuffer,
     prediction_mode: PredictionMode,
-    transform: TransformBlock,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    angle_delta: Option<i8>,
     bit_depth: u8,
 ) -> Result<Vec<u16>, DecoderError> {
-    let edges = read_intra_edges(
-        plane,
-        transform.x,
-        transform.y,
-        transform.tx_size.width(),
-        transform.tx_size.height(),
-        bit_depth,
-    );
+    let edges = read_intra_edges(plane, x, y, width, height, bit_depth);
     predict_intra(
         prediction_mode,
-        transform.tx_size.width(),
-        transform.tx_size.height(),
+        angle_delta,
+        width,
+        height,
         IntraEdges {
             above: Some(&edges.above),
             left: Some(&edges.left),
@@ -1353,21 +1493,40 @@ fn predict_transform(
     )
 }
 
-fn write_predicted_transform(
-    plane: &mut PlaneBuffer,
-    prediction_mode: PredictionMode,
+fn transform_prediction_from_block(
+    block_prediction: &[u16],
+    block_x: usize,
+    block_y: usize,
+    block_width: usize,
     transform: TransformBlock,
-    bit_depth: u8,
-) -> Result<(), DecoderError> {
-    let prediction = predict_transform(plane, prediction_mode, transform, bit_depth)?;
-    write_plane_block(
-        plane,
-        transform.x,
-        transform.y,
-        transform.tx_size.width(),
-        transform.tx_size.height(),
-        &prediction,
-    )
+    plane_width: usize,
+    plane_height: usize,
+) -> Result<Vec<u16>, DecoderError> {
+    if block_width == 0 {
+        return Err(DecoderError::Bitstream(
+            "AV1 block prediction width is zero".to_string(),
+        ));
+    }
+    let tx_width = transform.tx_size.width();
+    let tx_height = transform.tx_size.height();
+    let offset_x = transform.x.saturating_sub(block_x);
+    let offset_y = transform.y.saturating_sub(block_y);
+    let mut prediction = vec![0; tx_width * tx_height];
+    let clipped_width = tx_width.min(plane_width.saturating_sub(transform.x));
+    let clipped_height = tx_height.min(plane_height.saturating_sub(transform.y));
+    for row in 0..clipped_height {
+        let src_start = (offset_y + row) * block_width + offset_x;
+        let dst_start = row * tx_width;
+        let src_end = src_start + clipped_width;
+        if src_end > block_prediction.len() {
+            return Err(DecoderError::Bitstream(
+                "AV1 transform prediction exceeds block prediction".to_string(),
+            ));
+        }
+        prediction[dst_start..dst_start + clipped_width]
+            .copy_from_slice(&block_prediction[src_start..src_end]);
+    }
+    Ok(prediction)
 }
 
 fn decode_luma_block_tree(
@@ -1692,6 +1851,18 @@ fn first_txb_skip_context(block_size: BlockSize, transform: TransformBlock) -> u
         0
     } else {
         1
+    }
+}
+
+fn intra_mode_context(mode: PredictionMode) -> usize {
+    match mode {
+        PredictionMode::Dc => 0,
+        PredictionMode::Vertical => 1,
+        PredictionMode::Horizontal => 2,
+        PredictionMode::Smooth
+        | PredictionMode::SmoothVertical
+        | PredictionMode::SmoothHorizontal => 3,
+        _ => 4,
     }
 }
 
@@ -2112,6 +2283,8 @@ pub fn probe_tile_block_modes(
                 frame,
                 tile_plan,
                 partition.block_size,
+                tile_plan.pixel_x,
+                tile_plan.pixel_y,
             )?);
         }
     }
@@ -2147,6 +2320,8 @@ pub fn probe_first_block_residuals(
                 frame,
                 tile_plan,
                 partition.block_size,
+                tile_plan.pixel_x,
+                tile_plan.pixel_y,
             )?;
             let transforms =
                 plan_transform_blocks(0, 0, 0, block_mode.block_size, plan.width, plan.height);
@@ -2196,8 +2371,14 @@ pub fn decode_first_luma_transform(
         )));
     }
 
-    let block_mode =
-        decoder.read_intra_frame_block_mode(sequence, frame, tile_plan, partition.block_size)?;
+    let block_mode = decoder.read_intra_frame_block_mode(
+        sequence,
+        frame,
+        tile_plan,
+        partition.block_size,
+        tile_plan.pixel_x,
+        tile_plan.pixel_y,
+    )?;
     let transforms = plan_transform_blocks(
         0,
         tile_plan.pixel_x,
@@ -2235,6 +2416,7 @@ pub fn decode_first_luma_transform(
     let left = vec![mid; transform.tx_size.height()];
     let prediction = predict_intra(
         block_mode.y_mode,
+        block_mode.angle_delta_y,
         transform.tx_size.width(),
         transform.tx_size.height(),
         IntraEdges {
@@ -2395,32 +2577,39 @@ mod tests {
     use crate::obu::{ObuType, find_obu_payload};
 
     #[test]
-    fn writes_predicted_luma_transform_from_above_edge() {
-        let layout = crate::av1::decode::PlaneLayout {
-            plane: 0,
-            width: 4,
-            height: 4,
-            subsampling_x: 0,
-            subsampling_y: 0,
-            sample_count: 16,
-        };
-        let mut luma = PlaneBuffer {
-            layout,
-            samples: vec![0; 16],
-        };
-        luma.samples[0..4].copy_from_slice(&[10, 20, 30, 40]);
+    fn slices_transform_prediction_from_block_prediction() {
         let transform = TransformBlock {
             plane: 0,
-            x: 0,
+            x: 2,
             y: 1,
             tx_size: super::super::syntax::TxSize::Tx4x4,
         };
 
-        write_predicted_transform(&mut luma, PredictionMode::Vertical, transform, 8).unwrap();
+        let prediction = transform_prediction_from_block(
+            &[
+                1, 2, 3, 4, 5, 6, //
+                7, 8, 9, 10, 11, 12, //
+                13, 14, 15, 16, 17, 18, //
+                19, 20, 21, 22, 23, 24,
+            ],
+            0,
+            0,
+            6,
+            transform,
+            6,
+            4,
+        )
+        .unwrap();
 
-        assert_eq!(&luma.samples[4..8], &[10, 20, 30, 40]);
-        assert_eq!(&luma.samples[8..12], &[10, 20, 30, 40]);
-        assert_eq!(&luma.samples[12..16], &[10, 20, 30, 40]);
+        assert_eq!(
+            prediction,
+            vec![
+                9, 10, 11, 12, //
+                15, 16, 17, 18, //
+                21, 22, 23, 24, //
+                0, 0, 0, 0,
+            ]
+        );
     }
 
     #[test]
@@ -3061,7 +3250,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(prefix.blocks.len(), 81);
+        assert_eq!(prefix.blocks.len(), 105);
         assert_eq!(prefix.next_unsupported, None);
     }
 
