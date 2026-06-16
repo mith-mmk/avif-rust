@@ -35,6 +35,18 @@ pub fn plan_transform_blocks(
     frame_height: usize,
 ) -> Vec<TransformBlock> {
     let tx_size = block_size.largest_supported_tx_size();
+    plan_transform_blocks_with_tx_size(plane, x, y, block_size, tx_size, frame_width, frame_height)
+}
+
+pub fn plan_transform_blocks_with_tx_size(
+    plane: usize,
+    x: usize,
+    y: usize,
+    block_size: BlockSize,
+    tx_size: TxSize,
+    frame_width: usize,
+    frame_height: usize,
+) -> Vec<TransformBlock> {
     let tx_width = tx_size.width();
     let tx_height = tx_size.height();
     let block_width = block_size.width().min(frame_width.saturating_sub(x));
@@ -59,16 +71,17 @@ pub fn plan_transform_blocks(
 }
 
 pub fn zig_zag_scan(tx_size: TxSize) -> Vec<usize> {
-    let width = tx_size.width();
-    let height = tx_size.height();
-    let mut scan = Vec::with_capacity(width * height);
-    for diagonal in 0..=(width + height - 2) {
-        if diagonal % 2 == 0 {
-            let mut y = diagonal.min(height - 1);
+    let full_width = tx_size.width();
+    let scan_width = full_width.min(32);
+    let scan_height = tx_size.height().min(32);
+    let mut scan = Vec::with_capacity(scan_width * scan_height);
+    for diagonal in 0..=(scan_width + scan_height - 2) {
+        if diagonal % 2 == 1 {
+            let mut y = diagonal.min(scan_height - 1);
             let mut x = diagonal - y;
             loop {
-                if x < width && y < height {
-                    scan.push(y * width + x);
+                if x < scan_width && y < scan_height {
+                    scan.push(y * full_width + x);
                 }
                 if y == 0 {
                     break;
@@ -77,11 +90,11 @@ pub fn zig_zag_scan(tx_size: TxSize) -> Vec<usize> {
                 x += 1;
             }
         } else {
-            let mut x = diagonal.min(width - 1);
+            let mut x = diagonal.min(scan_width - 1);
             let mut y = diagonal - x;
             loop {
-                if x < width && y < height {
-                    scan.push(y * width + x);
+                if x < scan_width && y < scan_height {
+                    scan.push(y * full_width + x);
                 }
                 if x == 0 {
                     break;
@@ -98,12 +111,12 @@ pub fn coefficients_from_scan(
     tx_size: TxSize,
     scanned_coefficients: &[i32],
 ) -> Result<Vec<i32>, DecoderError> {
-    if scanned_coefficients.len() > tx_size.sample_count() {
+    let scan = zig_zag_scan(tx_size);
+    if scanned_coefficients.len() > scan.len() {
         return Err(DecoderError::InvalidParam(
             "AV1 scanned coefficient count exceeds transform size".to_string(),
         ));
     }
-    let scan = zig_zag_scan(tx_size);
     let mut coefficients = vec![0i32; tx_size.sample_count()];
     for (index, coefficient) in scanned_coefficients.iter().enumerate() {
         coefficients[scan[index]] = *coefficient;
@@ -179,7 +192,13 @@ pub fn inverse_transform(
         ));
     }
     match tx_type {
-        TxType::DctDct => inverse_dct_2d(tx_size, dequant, bit_depth),
+        TxType::DctDct => inverse_separable_transform(
+            tx_size,
+            dequant,
+            bit_depth,
+            Transform1d::Dct,
+            Transform1d::Dct,
+        ),
         TxType::AdstDct => inverse_separable_transform(
             tx_size,
             dequant,
@@ -220,7 +239,9 @@ fn inverse_separable_transform(
     vertical: Transform1d,
     horizontal: Transform1d,
 ) -> Result<Vec<i32>, DecoderError> {
-    if tx_size.width() > 32 || tx_size.height() > 32 {
+    if (tx_size.width() > 32 || tx_size.height() > 32)
+        && (vertical != Transform1d::Dct || horizontal != Transform1d::Dct)
+    {
         return Err(DecoderError::Unsupported(
             "AV1 staged separable transforms larger than 32x32 are not supported yet".to_string(),
         ));
@@ -228,24 +249,43 @@ fn inverse_separable_transform(
 
     let width = tx_size.width();
     let height = tx_size.height();
+    let horizontal_basis = inverse_1d_basis_table(horizontal, width);
+    let vertical_basis = inverse_1d_basis_table(vertical, height);
+    let mut temp = vec![0.0; width * height];
     let mut out = vec![0i32; width * height];
     let residual_limit = 1i32 << (bit_depth + 7);
+
+    for row in 0..height {
+        for x in 0..width {
+            let mut sum = 0.0;
+            for u in 0..width {
+                sum += horizontal_basis[x * width + u] * f64::from(dequant[row * width + u]);
+            }
+            temp[row * width + x] = sum;
+        }
+    }
 
     for y in 0..height {
         for x in 0..width {
             let mut sum = 0.0;
             for v in 0..height {
-                let basis_v = inverse_1d_basis(vertical, height, y, v);
-                for u in 0..width {
-                    let basis_u = inverse_1d_basis(horizontal, width, x, u);
-                    sum += basis_v * basis_u * f64::from(dequant[v * width + u]);
-                }
+                sum += vertical_basis[y * height + v] * temp[v * width + x];
             }
             out[y * width + x] = (sum.round() as i32).clamp(-residual_limit, residual_limit - 1);
         }
     }
 
     Ok(out)
+}
+
+fn inverse_1d_basis_table(transform: Transform1d, len: usize) -> Vec<f64> {
+    let mut table = vec![0.0; len * len];
+    for sample in 0..len {
+        for coeff in 0..len {
+            table[sample * len + coeff] = inverse_1d_basis(transform, len, sample, coeff);
+        }
+    }
+    table
 }
 
 fn inverse_1d_basis(transform: Transform1d, len: usize, sample: usize, coeff: usize) -> f64 {
@@ -268,49 +308,6 @@ fn inverse_1d_basis(transform: Transform1d, len: usize, sample: usize, coeff: us
             scale * angle.sin()
         }
     }
-}
-
-fn inverse_dct_2d(
-    tx_size: TxSize,
-    dequant: &[i32],
-    bit_depth: u8,
-) -> Result<Vec<i32>, DecoderError> {
-    if tx_size.width() > 32 || tx_size.height() > 32 {
-        return Err(DecoderError::Unsupported(
-            "AV1 DCT transforms larger than 32x32 are not supported yet".to_string(),
-        ));
-    }
-
-    // Floating reference path used as a narrow staging point until the exact
-    // AV1 integer inverse transforms are wired. Coefficients stay deterministic
-    // and are clipped to the same residual range as the spec process.
-    let width = tx_size.width();
-    let height = tx_size.height();
-    let mut out = vec![0i32; width * height];
-    let width_scale = (2.0 / width as f64).sqrt();
-    let height_scale = (2.0 / height as f64).sqrt();
-    let residual_limit = 1i32 << (bit_depth + 7);
-
-    for y in 0..height {
-        for x in 0..width {
-            let mut sum = 0.0;
-            for v in 0..height {
-                let alpha_v = if v == 0 { 1.0 / 2.0_f64.sqrt() } else { 1.0 };
-                let cos_v =
-                    (((2 * y + 1) * v) as f64 * std::f64::consts::PI / (2.0 * height as f64)).cos();
-                for u in 0..width {
-                    let alpha_u = if u == 0 { 1.0 / 2.0_f64.sqrt() } else { 1.0 };
-                    let cos_u = (((2 * x + 1) * u) as f64 * std::f64::consts::PI
-                        / (2.0 * width as f64))
-                        .cos();
-                    sum += alpha_u * alpha_v * f64::from(dequant[v * width + u]) * cos_u * cos_v;
-                }
-            }
-            let value = (sum * width_scale * height_scale).round() as i32;
-            out[y * width + x] = value.clamp(-residual_limit, residual_limit - 1);
-        }
-    }
-    Ok(out)
 }
 
 fn inverse_vertical_dct(
@@ -405,14 +402,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plans_128_block_as_sixteen_32_transforms() {
+    fn plans_128_block_as_four_64_transforms() {
         let blocks = plan_transform_blocks(0, 0, 0, BlockSize::Block128x128, 900, 900);
 
-        assert_eq!(blocks.len(), 16);
-        assert!(blocks.iter().all(|block| block.tx_size == TxSize::Tx32x32));
+        assert_eq!(blocks.len(), 4);
+        assert!(blocks.iter().all(|block| block.tx_size == TxSize::Tx64x64));
         assert_eq!(blocks[0].x, 0);
-        assert_eq!(blocks[15].x, 96);
-        assert_eq!(blocks[15].y, 96);
+        assert_eq!(blocks[3].x, 64);
+        assert_eq!(blocks[3].y, 64);
     }
 
     #[test]
@@ -430,7 +427,20 @@ mod tests {
 
         assert_eq!(
             scan,
-            vec![0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15]
+            vec![0, 4, 1, 2, 5, 8, 12, 9, 6, 3, 7, 10, 13, 14, 11, 15]
+        );
+    }
+
+    #[test]
+    fn tx64_scan_codes_top_left_32_square_only() {
+        let scan = zig_zag_scan(TxSize::Tx64x64);
+
+        assert_eq!(scan.len(), TxSize::Tx32x32.sample_count());
+        assert_eq!(&scan[..6], &[0, 64, 1, 2, 65, 128]);
+        assert!(
+            scan.iter()
+                .all(|position| position / TxSize::Tx64x64.width() < 32
+                    && position % TxSize::Tx64x64.width() < 32)
         );
     }
 
@@ -439,8 +449,8 @@ mod tests {
         let coefficients = coefficients_from_scan(TxSize::Tx4x4, &[1, 2, 3]).unwrap();
 
         assert_eq!(coefficients[0], 1);
-        assert_eq!(coefficients[1], 2);
-        assert_eq!(coefficients[4], 3);
+        assert_eq!(coefficients[4], 2);
+        assert_eq!(coefficients[1], 3);
         assert_eq!(coefficients.iter().filter(|value| **value != 0).count(), 3);
     }
 

@@ -2,13 +2,17 @@
 pub enum BlockSize {
     Block4x4,
     Block4x8,
+    Block4x16,
     Block8x4,
     Block8x8,
     Block8x16,
+    Block8x32,
+    Block16x4,
     Block16x8,
     Block16x16,
     Block16x32,
     Block16x64,
+    Block32x8,
     Block32x16,
     Block32x32,
     Block32x64,
@@ -38,13 +42,17 @@ impl BlockSize {
         match (width, height) {
             (4, 4) => Some(Self::Block4x4),
             (4, 8) => Some(Self::Block4x8),
+            (4, 16) => Some(Self::Block4x16),
             (8, 4) => Some(Self::Block8x4),
             (8, 8) => Some(Self::Block8x8),
             (8, 16) => Some(Self::Block8x16),
+            (8, 32) => Some(Self::Block8x32),
+            (16, 4) => Some(Self::Block16x4),
             (16, 8) => Some(Self::Block16x8),
             (16, 16) => Some(Self::Block16x16),
             (16, 32) => Some(Self::Block16x32),
             (16, 64) => Some(Self::Block16x64),
+            (32, 8) => Some(Self::Block32x8),
             (32, 16) => Some(Self::Block32x16),
             (32, 32) => Some(Self::Block32x32),
             (32, 64) => Some(Self::Block32x64),
@@ -62,10 +70,18 @@ impl BlockSize {
 
     pub fn width_mi_log2(self) -> u8 {
         match self {
-            Self::Block4x4 | Self::Block4x8 => 0,
-            Self::Block8x4 | Self::Block8x8 | Self::Block8x16 => 1,
-            Self::Block16x8 | Self::Block16x16 | Self::Block16x32 | Self::Block16x64 => 2,
-            Self::Block32x16 | Self::Block32x32 | Self::Block32x64 | Self::Block32x128 => 3,
+            Self::Block4x4 | Self::Block4x8 | Self::Block4x16 => 0,
+            Self::Block8x4 | Self::Block8x8 | Self::Block8x16 | Self::Block8x32 => 1,
+            Self::Block16x4
+            | Self::Block16x8
+            | Self::Block16x16
+            | Self::Block16x32
+            | Self::Block16x64 => 2,
+            Self::Block32x8
+            | Self::Block32x16
+            | Self::Block32x32
+            | Self::Block32x64
+            | Self::Block32x128 => 3,
             Self::Block64x16 | Self::Block64x32 | Self::Block64x64 | Self::Block64x128 => 4,
             Self::Block128x32 | Self::Block128x64 | Self::Block128x128 => 5,
         }
@@ -73,10 +89,18 @@ impl BlockSize {
 
     pub fn height_mi_log2(self) -> u8 {
         match self {
-            Self::Block4x4 | Self::Block8x4 => 0,
-            Self::Block4x8 | Self::Block8x8 | Self::Block16x8 => 1,
-            Self::Block8x16 | Self::Block16x16 | Self::Block32x16 | Self::Block64x16 => 2,
-            Self::Block16x32 | Self::Block32x32 | Self::Block64x32 | Self::Block128x32 => 3,
+            Self::Block4x4 | Self::Block8x4 | Self::Block16x4 => 0,
+            Self::Block4x8 | Self::Block8x8 | Self::Block16x8 | Self::Block32x8 => 1,
+            Self::Block4x16
+            | Self::Block8x16
+            | Self::Block16x16
+            | Self::Block32x16
+            | Self::Block64x16 => 2,
+            Self::Block8x32
+            | Self::Block16x32
+            | Self::Block32x32
+            | Self::Block64x32
+            | Self::Block128x32 => 3,
             Self::Block16x64 | Self::Block32x64 | Self::Block64x64 | Self::Block128x64 => 4,
             Self::Block32x128 | Self::Block64x128 | Self::Block128x128 => 5,
         }
@@ -99,14 +123,92 @@ impl BlockSize {
         }
     }
 
+    pub fn filter_intra_cdf_index(self) -> usize {
+        match self {
+            Self::Block4x4 => 0,
+            Self::Block4x8 => 1,
+            Self::Block8x4 => 2,
+            Self::Block8x8 => 3,
+            Self::Block8x16 => 4,
+            Self::Block16x8 => 5,
+            Self::Block16x16 => 6,
+            Self::Block16x32 => 7,
+            Self::Block32x16 => 8,
+            Self::Block32x32 => 9,
+            Self::Block32x64 => 10,
+            Self::Block64x32 => 11,
+            Self::Block64x64 => 12,
+            Self::Block64x128 => 13,
+            Self::Block128x64 => 14,
+            Self::Block128x128 => 15,
+            Self::Block4x16 => 16,
+            Self::Block16x4 => 17,
+            Self::Block8x32 => 18,
+            Self::Block32x8 => 19,
+            Self::Block16x64 => 20,
+            Self::Block64x16 => 21,
+            Self::Block32x128 => 10,
+            Self::Block128x32 => 11,
+        }
+    }
+
     pub fn largest_supported_tx_size(self) -> TxSize {
-        let side = self.width().min(self.height()).min(32);
+        let side = self.width().min(self.height()).min(64);
         match side {
             0..=4 => TxSize::Tx4x4,
             5..=8 => TxSize::Tx8x8,
             9..=16 => TxSize::Tx16x16,
-            _ => TxSize::Tx32x32,
+            17..=32 => TxSize::Tx32x32,
+            _ => TxSize::Tx64x64,
         }
+    }
+
+    pub fn signals_tx_size(self) -> bool {
+        self != Self::Block4x4
+    }
+
+    pub fn tx_size_category(self) -> usize {
+        match self {
+            Self::Block4x4 => 0,
+            Self::Block4x8 | Self::Block8x4 | Self::Block8x8 => 0,
+            Self::Block8x16
+            | Self::Block16x8
+            | Self::Block16x16
+            | Self::Block4x16
+            | Self::Block16x4 => 1,
+            Self::Block16x32
+            | Self::Block32x16
+            | Self::Block32x32
+            | Self::Block8x32
+            | Self::Block32x8 => 2,
+            _ => 3,
+        }
+    }
+
+    pub fn max_tx_size_depth(self) -> usize {
+        match self {
+            Self::Block4x4 => 0,
+            Self::Block4x8 | Self::Block8x4 | Self::Block8x8 => 1,
+            Self::Block8x16
+            | Self::Block16x8
+            | Self::Block16x16
+            | Self::Block16x32
+            | Self::Block32x16
+            | Self::Block32x32
+            | Self::Block8x32
+            | Self::Block32x8
+            | Self::Block4x16
+            | Self::Block16x4 => 2,
+            _ => 2,
+        }
+    }
+
+    pub fn tx_size_from_depth(self, depth: usize) -> TxSize {
+        let mut tx_size = self.largest_supported_tx_size();
+        for _ in 0..depth.min(self.max_tx_size_depth()) {
+            tx_size = tx_size.sub_size();
+        }
+        tx_size
     }
 
     pub fn split_subsize(self) -> Option<Self> {
@@ -350,6 +452,16 @@ impl TxSize {
             Self::Tx64x64 => 4,
         }
     }
+
+    pub fn sub_size(self) -> Self {
+        match self {
+            Self::Tx64x64 => Self::Tx32x32,
+            Self::Tx32x32 => Self::Tx16x16,
+            Self::Tx16x16 => Self::Tx8x8,
+            Self::Tx8x8 => Self::Tx4x4,
+            Self::Tx4x4 => Self::Tx4x4,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -380,10 +492,10 @@ impl TxType {
     pub fn from_intra_ext_tx_set2_symbol(symbol: usize) -> Option<Self> {
         match symbol {
             0 => Some(Self::DctDct),
-            1 => Some(Self::Identity),
-            2 => Some(Self::VerticalDct),
-            3 => Some(Self::HorizontalDct),
-            4 => Some(Self::AdstAdst),
+            1 => Some(Self::AdstDct),
+            2 => Some(Self::DctAdst),
+            3 => Some(Self::AdstAdst),
+            4 => Some(Self::Identity),
             _ => None,
         }
     }
@@ -465,5 +577,18 @@ mod tests {
         );
         assert_eq!(BlockSize::Block16x8.horizontal_4_subsize(), None);
         assert_eq!(BlockSize::Block8x16.vertical_4_subsize(), None);
+    }
+
+    #[test]
+    fn tx_size_depth_maps_to_square_tx_size() {
+        assert_eq!(BlockSize::Block8x8.tx_size_category(), 0);
+        assert_eq!(BlockSize::Block8x8.tx_size_from_depth(0), TxSize::Tx8x8);
+        assert_eq!(BlockSize::Block8x8.tx_size_from_depth(1), TxSize::Tx4x4);
+        assert_eq!(BlockSize::Block16x16.tx_size_category(), 1);
+        assert_eq!(BlockSize::Block32x32.tx_size_category(), 2);
+        assert_eq!(BlockSize::Block32x32.tx_size_from_depth(0), TxSize::Tx32x32);
+        assert_eq!(BlockSize::Block32x32.tx_size_from_depth(2), TxSize::Tx8x8);
+        assert_eq!(BlockSize::Block64x64.tx_size_category(), 3);
+        assert_eq!(BlockSize::Block64x64.tx_size_from_depth(1), TxSize::Tx32x32);
     }
 }

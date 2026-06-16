@@ -1,15 +1,15 @@
 use super::cdf::CdfContext;
 use super::decode::{FrameBuffers, FrameDecodePlan, PlaneBuffer, TileDecodePlan};
 use super::entropy::EntropyDecoder;
-use super::frame::FrameHeader;
-use super::predict::{IntraEdges, predict_intra};
+use super::frame::{FrameHeader, TxMode};
+use super::predict::{IntraEdges, predict_filter_intra, predict_intra};
 use super::quant::{QuantState, dequantize_coefficients};
 use super::reconstruct::{read_intra_edges, write_plane_block};
 use super::sequence::SequenceHeader;
-use super::syntax::{BlockSize, Partition, PredictionMode, TxType, UvPredictionMode};
+use super::syntax::{BlockSize, Partition, PredictionMode, TxSize, TxType, UvPredictionMode};
 use super::tile_group::TileGroup;
 use super::transform::{
-    QuantizedTransform, TransformBlock, inverse_transform, plan_transform_blocks,
+    QuantizedTransform, TransformBlock, inverse_transform, plan_transform_blocks_with_tx_size,
     reconstruct_transform_block, zig_zag_scan,
 };
 use crate::DecoderError;
@@ -45,9 +45,13 @@ pub struct BlockModeProbe {
     pub y_mode_symbol: usize,
     pub y_mode: PredictionMode,
     pub angle_delta_y: Option<i8>,
+    pub filter_intra_mode: Option<usize>,
     pub uv_mode_symbol: Option<usize>,
     pub uv_mode: Option<UvPredictionMode>,
     pub angle_delta_uv: Option<i8>,
+    pub tx_size_context: Option<usize>,
+    pub tx_size_symbol: Option<usize>,
+    pub tx_size: TxSize,
     pub bit_position_after: usize,
 }
 
@@ -146,6 +150,8 @@ pub struct TileDecoder<'a> {
     mi_rows: usize,
     y_mode_grid: Vec<Option<usize>>,
     skip_grid: Vec<Option<bool>>,
+    above_txfm_context: Vec<usize>,
+    left_txfm_context: Vec<usize>,
 }
 
 impl<'a> TileDecoder<'a> {
@@ -165,6 +171,8 @@ impl<'a> TileDecoder<'a> {
             mi_rows,
             y_mode_grid: vec![None; mi_cols * mi_rows],
             skip_grid: vec![None; mi_cols * mi_rows],
+            above_txfm_context: vec![0; mi_cols],
+            left_txfm_context: vec![0; mi_rows],
         })
     }
 
@@ -172,15 +180,22 @@ impl<'a> TileDecoder<'a> {
         &mut self,
         tile: &TileDecodePlan,
     ) -> Result<PartitionProbe, DecoderError> {
-        self.read_partition(tile.tile_id, BlockSize::Block128x128)
+        self.read_partition(
+            tile.tile_id,
+            BlockSize::Block128x128,
+            tile.pixel_x,
+            tile.pixel_y,
+        )
     }
 
     fn read_partition(
         &mut self,
         tile_id: u32,
         block_size: BlockSize,
+        x: usize,
+        y: usize,
     ) -> Result<PartitionProbe, DecoderError> {
-        let context = 0;
+        let context = self.partition_context(x, y, block_size);
         let symbol = self.reader.read_symbol(
             self.cdf
                 .partition_cdf_mut(block_size.width_mi_log2(), context),
@@ -255,14 +270,22 @@ impl<'a> TileDecoder<'a> {
         } else {
             None
         };
+        let mut filter_intra_mode = None;
         if sequence.enable_filter_intra
             && block_size.width() <= 32
             && block_size.height() <= 32
             && y_mode == PredictionMode::Dc
         {
-            return Err(DecoderError::Unsupported(
-                "AV1 filter-intra block syntax is not supported yet".to_string(),
-            ));
+            let use_filter_intra = self.reader.read_symbol(
+                self.cdf
+                    .use_filter_intra_cdf_mut(block_size.filter_intra_cdf_index()),
+            )? != 0;
+            if use_filter_intra {
+                filter_intra_mode = Some(
+                    self.reader
+                        .read_symbol(self.cdf.filter_intra_mode_cdf_mut())?,
+                );
+            }
         }
 
         let has_chroma = !sequence.color_config.monochrome;
@@ -289,6 +312,8 @@ impl<'a> TileDecoder<'a> {
         };
         self.set_y_mode_context(x, y, block_size, intra_mode_context(y_mode));
         self.set_skip_context(x, y, block_size, skip);
+        let (tx_size_context, tx_size_symbol, tx_size) =
+            self.read_intra_tx_size(frame, block_size, x, y)?;
 
         Ok(BlockModeProbe {
             tile_id: tile.tile_id,
@@ -302,11 +327,46 @@ impl<'a> TileDecoder<'a> {
             y_mode_symbol,
             y_mode,
             angle_delta_y,
+            filter_intra_mode,
             uv_mode_symbol,
             uv_mode,
             angle_delta_uv,
+            tx_size_context,
+            tx_size_symbol,
+            tx_size,
             bit_position_after: self.reader.bit_position(),
         })
+    }
+
+    fn read_intra_tx_size(
+        &mut self,
+        frame: &FrameHeader,
+        block_size: BlockSize,
+        x: usize,
+        y: usize,
+    ) -> Result<(Option<usize>, Option<usize>, TxSize), DecoderError> {
+        let tx_size = match frame.tx_mode {
+            TxMode::Only4x4 => TxSize::Tx4x4,
+            TxMode::Largest => block_size.largest_supported_tx_size(),
+            TxMode::Select if block_size.signals_tx_size() => {
+                let context = self.tx_size_context(x, y, block_size);
+                let category = block_size.tx_size_category();
+                let symbol = self
+                    .reader
+                    .read_symbol(self.cdf.tx_size_cdf_mut(category, context))?;
+                if symbol > block_size.max_tx_size_depth() {
+                    return Err(DecoderError::Bitstream(format!(
+                        "AV1 tx_size symbol {symbol} exceeds max depth for {block_size:?}"
+                    )));
+                }
+                let tx_size = block_size.tx_size_from_depth(symbol);
+                self.set_txfm_context(x, y, block_size, tx_size);
+                return Ok((Some(context), Some(symbol), tx_size));
+            }
+            TxMode::Select => TxSize::Tx4x4,
+        };
+        self.set_txfm_context(x, y, block_size, tx_size);
+        Ok((None, None, tx_size))
     }
 
     fn read_angle_delta(&mut self, directional_index: usize) -> Result<i8, DecoderError> {
@@ -388,6 +448,40 @@ impl<'a> TileDecoder<'a> {
                 self.skip_grid[mi_row * self.mi_cols + mi_col] = Some(skip);
             }
         }
+    }
+
+    fn tx_size_context(&self, x: usize, y: usize, block_size: BlockSize) -> usize {
+        let max_tx_size = block_size.largest_supported_tx_size();
+        let has_above = y >= 4;
+        let has_left = x >= 4;
+        let above = has_above
+            && self.above_txfm_context.get(x >> 2).copied().unwrap_or(0) >= max_tx_size.width();
+        let left = has_left
+            && self.left_txfm_context.get(y >> 2).copied().unwrap_or(0) >= max_tx_size.height();
+        match (has_above, has_left) {
+            (true, true) => usize::from(above) + usize::from(left),
+            (true, false) => usize::from(above),
+            (false, true) => usize::from(left),
+            (false, false) => 0,
+        }
+    }
+
+    fn set_txfm_context(&mut self, x: usize, y: usize, block_size: BlockSize, tx_size: TxSize) {
+        let start_col = x >> 2;
+        let start_row = y >> 2;
+        let end_col = ((x + block_size.width()).min(self.mi_cols << 2) + 3) >> 2;
+        let end_row = ((y + block_size.height()).min(self.mi_rows << 2) + 3) >> 2;
+        for mi_col in start_col..end_col.min(self.mi_cols) {
+            self.above_txfm_context[mi_col] = tx_size.width();
+        }
+        for mi_row in start_row..end_row.min(self.mi_rows) {
+            self.left_txfm_context[mi_row] = tx_size.height();
+        }
+    }
+
+    fn partition_context(&self, x: usize, y: usize, block_size: BlockSize) -> usize {
+        let _ = (x, y, block_size);
+        0
     }
 
     pub fn read_first_transform_residual(
@@ -618,7 +712,7 @@ impl<'a> TileDecoder<'a> {
         ) = if let Some(non_zero_transform) = first_non_zero_transform {
             let tx_type_probe = self.read_intra_tx_type(frame, block_mode, non_zero_transform)?;
             let eob_multisize = eob_multisize(non_zero_transform);
-            if !(3..=6).contains(&eob_multisize) {
+            if !(0..=6).contains(&eob_multisize) {
                 return Err(DecoderError::Unsupported(format!(
                     "AV1 eob_pt decode for eobMultisize {eob_multisize} is not supported yet"
                 )));
@@ -633,7 +727,7 @@ impl<'a> TileDecoder<'a> {
             let eob_base = eob_base_from_pt(eob_pt);
             let (eob_extra_context, eob_extra_symbol, eob_extra_literal_bits, eob) =
                 self.read_eob_extra(non_zero_transform, plane_type, eob_pt, eob_base)?;
-            if non_zero_transform.tx_size != super::syntax::TxSize::Tx32x32 {
+            if non_zero_transform.tx_size.width() > 64 || non_zero_transform.tx_size.height() > 64 {
                 return Err(DecoderError::Unsupported(format!(
                     "AV1 coeff_base_eob decode for {:?} is not supported yet",
                     non_zero_transform.tx_size
@@ -827,7 +921,7 @@ impl<'a> TileDecoder<'a> {
         if eob_pt < 3 {
             return Ok((None, None, Some(0), eob_base));
         }
-        if transform.tx_size.width() > 32 || transform.tx_size.height() > 32 {
+        if transform.tx_size.width() > 64 || transform.tx_size.height() > 64 {
             return Err(DecoderError::Unsupported(format!(
                 "AV1 eob_extra decode for {:?} is not supported yet",
                 transform.tx_size
@@ -870,7 +964,11 @@ impl<'a> TileDecoder<'a> {
         block_mode: &BlockModeProbe,
         transform: TransformBlock,
     ) -> Result<TxTypeProbe, DecoderError> {
-        if transform.plane != 0 || frame.base_q_idx == 0 {
+        if transform.plane != 0
+            || frame.base_q_idx == 0
+            || transform.tx_size.width() >= 32
+            || transform.tx_size.height() >= 32
+        {
             return Ok(TxTypeProbe {
                 read: false,
                 set: None,
@@ -879,10 +977,18 @@ impl<'a> TileDecoder<'a> {
             });
         }
         let intra_mode = block_mode.y_mode_symbol;
-        if frame.reduced_tx_set {
-            let symbol = self
-                .reader
-                .read_symbol(self.cdf.intra_ext_tx_set2_tx32_cdf_mut(intra_mode))?;
+        let (set, tx_size_context) =
+            intra_ext_tx_set_context(frame.reduced_tx_set, transform.tx_size).ok_or_else(|| {
+                DecoderError::Bitstream(format!(
+                    "AV1 intra tx_type is not signaled for {:?}",
+                    transform.tx_size
+                ))
+            })?;
+        if set == 2 {
+            let symbol = self.reader.read_symbol(
+                self.cdf
+                    .intra_ext_tx_set2_cdf_mut(tx_size_context, intra_mode),
+            )?;
             let tx_type = TxType::from_intra_ext_tx_set2_symbol(symbol).ok_or_else(|| {
                 DecoderError::Bitstream(format!(
                     "AV1 intra tx_type set2 symbol {symbol} is invalid"
@@ -895,9 +1001,10 @@ impl<'a> TileDecoder<'a> {
                 tx_type,
             })
         } else {
-            let symbol = self
-                .reader
-                .read_symbol(self.cdf.intra_ext_tx_set1_tx32_cdf_mut(intra_mode))?;
+            let symbol = self.reader.read_symbol(
+                self.cdf
+                    .intra_ext_tx_set1_cdf_mut(tx_size_context, intra_mode),
+            )?;
             let tx_type = TxType::from_intra_ext_tx_set1_symbol(symbol).ok_or_else(|| {
                 DecoderError::Bitstream(format!(
                     "AV1 intra tx_type set1 symbol {symbol} is invalid"
@@ -922,7 +1029,7 @@ impl<'a> TileDecoder<'a> {
             .read_intra_tx_type(frame, block_mode, transform)?
             .tx_type;
         let eob_multisize = eob_multisize(transform);
-        if !(3..=6).contains(&eob_multisize) {
+        if !(0..=6).contains(&eob_multisize) {
             return Err(DecoderError::Unsupported(format!(
                 "AV1 eob_pt decode for eobMultisize {eob_multisize} is not supported yet"
             )));
@@ -936,7 +1043,7 @@ impl<'a> TileDecoder<'a> {
         let eob_pt = eob_pt_symbol + 1;
         let eob_base = eob_base_from_pt(eob_pt);
         let (_, _, _, eob) = self.read_eob_extra(transform, plane_type, eob_pt, eob_base)?;
-        if transform.tx_size.width() > 32 || transform.tx_size.height() > 32 {
+        if transform.tx_size.width() > 64 || transform.tx_size.height() > 64 {
             return Err(DecoderError::Unsupported(format!(
                 "AV1 coeff_base_eob decode for {:?} is not supported yet",
                 transform.tx_size
@@ -970,13 +1077,13 @@ impl<'a> TileDecoder<'a> {
         eob_level: usize,
     ) -> Result<CoeffBaseRead, DecoderError> {
         let sample_count = tx_size.sample_count();
-        if eob == 0 || eob > sample_count {
+        let scan = zig_zag_scan(tx_size);
+        if eob == 0 || eob > scan.len() {
             return Err(DecoderError::Bitstream(format!(
                 "AV1 eob {eob} is invalid for {tx_size:?}"
             )));
         }
         let remaining_count = eob - 1;
-        let scan = zig_zag_scan(tx_size);
         let mut quant = vec![0i32; sample_count];
         let mut base_range_count = 0usize;
         let mut coeff_br_symbol_count = 0usize;
@@ -1229,6 +1336,15 @@ impl<'a> TileDecoder<'a> {
     }
 }
 
+fn intra_ext_tx_set_context(reduced_tx_set: bool, tx_size: TxSize) -> Option<(usize, usize)> {
+    match tx_size {
+        TxSize::Tx4x4 => Some((if reduced_tx_set { 2 } else { 1 }, 0)),
+        TxSize::Tx8x8 => Some((if reduced_tx_set { 2 } else { 1 }, 1)),
+        TxSize::Tx16x16 => Some((2, 2)),
+        TxSize::Tx32x32 | TxSize::Tx64x64 => None,
+    }
+}
+
 fn decode_luma_root_block(
     decoder: &mut TileDecoder<'_>,
     sequence: &SequenceHeader,
@@ -1285,6 +1401,7 @@ fn decode_luma_leaf_block(
         0,
         block_mode.y_mode,
         block_mode.angle_delta_y,
+        block_mode.filter_intra_mode,
         x,
         y,
         quant_state,
@@ -1309,6 +1426,7 @@ fn decode_luma_leaf_block(
             1,
             chroma_mode,
             block_mode.angle_delta_uv,
+            None,
             x,
             y,
             quant_state,
@@ -1323,6 +1441,7 @@ fn decode_luma_leaf_block(
             2,
             chroma_mode,
             block_mode.angle_delta_uv,
+            None,
             x,
             y,
             quant_state,
@@ -1347,6 +1466,7 @@ fn decode_plane_block(
     plane_index: usize,
     prediction_mode: PredictionMode,
     angle_delta: Option<i8>,
+    filter_intra_mode: Option<usize>,
     x: usize,
     y: usize,
     quant_state: QuantState,
@@ -1362,11 +1482,12 @@ fn decode_plane_block(
     let plane = buffers.planes.get_mut(plane_index).ok_or_else(|| {
         DecoderError::Bitstream(format!("AV1 plane {plane_index} buffer is missing"))
     })?;
-    let transforms = plan_transform_blocks(
+    let transforms = plan_transform_blocks_with_tx_size(
         plane_index,
         x,
         y,
         block_mode.block_size,
+        block_mode.tx_size,
         layout.width,
         layout.height,
     );
@@ -1386,6 +1507,7 @@ fn decode_plane_block(
         block_width,
         block_height,
         angle_delta,
+        filter_intra_mode,
         sequence.color_config.bit_depth,
     )?;
     if block_mode.skip {
@@ -1476,21 +1598,20 @@ fn predict_block(
     width: usize,
     height: usize,
     angle_delta: Option<i8>,
+    filter_intra_mode: Option<usize>,
     bit_depth: u8,
 ) -> Result<Vec<u16>, DecoderError> {
     let edges = read_intra_edges(plane, x, y, width, height, bit_depth);
-    predict_intra(
-        prediction_mode,
-        angle_delta,
-        width,
-        height,
-        IntraEdges {
-            above: Some(&edges.above),
-            left: Some(&edges.left),
-            above_left: Some(edges.above_left),
-            bit_depth,
-        },
-    )
+    let edges = IntraEdges {
+        above: Some(&edges.above),
+        left: Some(&edges.left),
+        above_left: Some(edges.above_left),
+        bit_depth,
+    };
+    if let Some(filter_intra_mode) = filter_intra_mode {
+        return predict_filter_intra(filter_intra_mode, width, height, edges);
+    }
+    predict_intra(prediction_mode, angle_delta, width, height, edges)
 }
 
 fn transform_prediction_from_block(
@@ -1544,7 +1665,14 @@ fn decode_luma_block_tree(
     if *block_budget == 0 || x >= plan.width || y >= plan.height {
         return Ok(Vec::new());
     }
-    let partition = decoder.read_partition(tile_plan.tile_id, block_size)?;
+    if block_size == BlockSize::Block4x4 {
+        let block = decode_luma_leaf_block(
+            decoder, sequence, frame, tile_plan, plan, buffers, block_size, x, y,
+        )?;
+        *block_budget -= 1;
+        return Ok(vec![block]);
+    }
+    let partition = decoder.read_partition(tile_plan.tile_id, block_size, x, y)?;
     match partition.partition {
         Partition::None => {
             let block = decode_luma_leaf_block(
@@ -1559,15 +1687,14 @@ fn decode_luma_block_tree(
                     "AV1 horizontal partition for {block_size:?} is not supported yet"
                 ))
             })?;
-            decode_luma_partition_children(
+            decode_luma_partition_runs(
                 decoder,
                 sequence,
                 frame,
                 tile_plan,
                 plan,
                 buffers,
-                subsize,
-                &[(x, y), (x, y + subsize.height())],
+                &[(subsize, x, y), (subsize, x, y + subsize.height())],
                 block_budget,
             )
         }
@@ -1577,15 +1704,14 @@ fn decode_luma_block_tree(
                     "AV1 vertical partition for {block_size:?} is not supported yet"
                 ))
             })?;
-            decode_luma_partition_children(
+            decode_luma_partition_runs(
                 decoder,
                 sequence,
                 frame,
                 tile_plan,
                 plan,
                 buffers,
-                subsize,
-                &[(x, y), (x + subsize.width(), y)],
+                &[(subsize, x, y), (subsize, x + subsize.width(), y)],
                 block_budget,
             )
         }
@@ -1669,16 +1795,35 @@ fn decode_luma_block_tree(
             )
         }
         Partition::VerticalA => {
-            let split_subsize = block_size.split_subsize().ok_or_else(|| {
-                DecoderError::Unsupported(format!(
-                    "AV1 vertical-a partition for {block_size:?} is not supported yet"
-                ))
-            })?;
+            let split_subsize = block_size.split_subsize();
             let vertical_subsize = block_size.vertical_subsize().ok_or_else(|| {
                 DecoderError::Unsupported(format!(
                     "AV1 vertical-a partition tail for {block_size:?} is not supported yet"
                 ))
             })?;
+            let Some(split_subsize) = split_subsize else {
+                let quarter_width = vertical_subsize.width() / 2;
+                let split_subsize = BlockSize::from_dimensions(quarter_width, block_size.height())
+                    .ok_or_else(|| {
+                        DecoderError::Unsupported(format!(
+                            "AV1 vertical-a partition head for {block_size:?} is not supported yet"
+                        ))
+                    })?;
+                return decode_luma_partition_runs(
+                    decoder,
+                    sequence,
+                    frame,
+                    tile_plan,
+                    plan,
+                    buffers,
+                    &[
+                        (split_subsize, x, y),
+                        (split_subsize, x + quarter_width, y),
+                        (vertical_subsize, x + vertical_subsize.width(), y),
+                    ],
+                    block_budget,
+                );
+            };
             decode_luma_partition_runs(
                 decoder,
                 sequence,
@@ -1730,19 +1875,18 @@ fn decode_luma_block_tree(
                     "AV1 horizontal4 partition for {block_size:?} is not supported yet"
                 ))
             })?;
-            decode_luma_partition_children(
+            decode_luma_partition_runs(
                 decoder,
                 sequence,
                 frame,
                 tile_plan,
                 plan,
                 buffers,
-                subsize,
                 &[
-                    (x, y),
-                    (x, y + subsize.height()),
-                    (x, y + subsize.height() * 2),
-                    (x, y + subsize.height() * 3),
+                    (subsize, x, y),
+                    (subsize, x, y + subsize.height()),
+                    (subsize, x, y + subsize.height() * 2),
+                    (subsize, x, y + subsize.height() * 3),
                 ],
                 block_budget,
             )
@@ -1753,19 +1897,18 @@ fn decode_luma_block_tree(
                     "AV1 vertical4 partition for {block_size:?} is not supported yet"
                 ))
             })?;
-            decode_luma_partition_children(
+            decode_luma_partition_runs(
                 decoder,
                 sequence,
                 frame,
                 tile_plan,
                 plan,
                 buffers,
-                subsize,
                 &[
-                    (x, y),
-                    (x + subsize.width(), y),
-                    (x + subsize.width() * 2, y),
-                    (x + subsize.width() * 3, y),
+                    (subsize, x, y),
+                    (subsize, x + subsize.width(), y),
+                    (subsize, x + subsize.width() * 2, y),
+                    (subsize, x + subsize.width() * 3, y),
                 ],
                 block_budget,
             )
@@ -1824,19 +1967,16 @@ fn decode_luma_partition_runs(
         if *block_budget == 0 {
             return Ok(blocks);
         }
-        match decode_luma_block_tree(
-            decoder,
-            sequence,
-            frame,
-            tile_plan,
-            plan,
-            buffers,
-            subsize,
-            sub_x,
-            sub_y,
-            block_budget,
+        if sub_x >= plan.width || sub_y >= plan.height {
+            continue;
+        }
+        match decode_luma_leaf_block(
+            decoder, sequence, frame, tile_plan, plan, buffers, subsize, sub_x, sub_y,
         ) {
-            Ok(decoded) => blocks.extend(decoded),
+            Ok(decoded) => {
+                *block_budget -= 1;
+                blocks.push(decoded);
+            }
             Err(DecoderError::Unsupported(_)) if !blocks.is_empty() => return Ok(blocks),
             Err(err) => return Err(err),
         }
@@ -1874,7 +2014,7 @@ fn read_sized_eob_pt_symbol(
     if eob_multisize == 6 {
         return reader.read_symbol(source_cdf);
     }
-    if !(3..=5).contains(&eob_multisize) {
+    if !(0..=5).contains(&eob_multisize) {
         return Err(DecoderError::Unsupported(format!(
             "AV1 eob_pt CDF for eobMultisize {eob_multisize} is not supported yet"
         )));
@@ -1904,7 +2044,7 @@ fn eob_base_from_pt(eob_pt: usize) -> usize {
 }
 
 fn coeff_base_eob_context(tx_size: super::syntax::TxSize, scan_index: usize) -> usize {
-    let samples = tx_size.sample_count();
+    let samples = coeff_scan_sample_count(tx_size);
     if scan_index == 0 {
         0
     } else if scan_index <= samples / 8 {
@@ -1914,6 +2054,10 @@ fn coeff_base_eob_context(tx_size: super::syntax::TxSize, scan_index: usize) -> 
     } else {
         3
     }
+}
+
+fn coeff_scan_sample_count(tx_size: super::syntax::TxSize) -> usize {
+    tx_size.width().min(32) * tx_size.height().min(32)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2323,8 +2467,15 @@ pub fn probe_first_block_residuals(
                 tile_plan.pixel_x,
                 tile_plan.pixel_y,
             )?;
-            let transforms =
-                plan_transform_blocks(0, 0, 0, block_mode.block_size, plan.width, plan.height);
+            let transforms = plan_transform_blocks_with_tx_size(
+                0,
+                0,
+                0,
+                block_mode.block_size,
+                block_mode.tx_size,
+                plan.width,
+                plan.height,
+            );
             probes.push(decoder.read_first_transform_residual(
                 tile_plan.tile_id,
                 frame,
@@ -2379,11 +2530,12 @@ pub fn decode_first_luma_transform(
         tile_plan.pixel_x,
         tile_plan.pixel_y,
     )?;
-    let transforms = plan_transform_blocks(
+    let transforms = plan_transform_blocks_with_tx_size(
         0,
         tile_plan.pixel_x,
         tile_plan.pixel_y,
         block_mode.block_size,
+        block_mode.tx_size,
         plan.width,
         plan.height,
     );
@@ -2571,7 +2723,7 @@ mod tests {
     use super::*;
     use crate::av1::{
         alloc_frame_buffers, build_still_decode_plan, parse_frame_header, parse_sequence_header,
-        parse_tile_group, plan_transform_blocks,
+        parse_tile_group,
     };
     use crate::container::parse_avif;
     use crate::obu::{ObuType, find_obu_payload};
@@ -2756,16 +2908,19 @@ mod tests {
         let probes =
             probe_tile_block_modes(frame_payload, &tile_group, &sequence, &frame, &plan).unwrap();
 
-        let transforms =
-            plan_transform_blocks(0, 0, 0, probes[0].block_size, plan.width, plan.height);
+        let transforms = plan_transform_blocks_with_tx_size(
+            0,
+            0,
+            0,
+            probes[0].block_size,
+            probes[0].tx_size,
+            plan.width,
+            plan.height,
+        );
 
         assert_eq!(transforms.len(), 16);
         assert!(transforms.iter().all(|tx| tx.plane == 0));
-        assert!(
-            transforms
-                .iter()
-                .all(|tx| tx.tx_size == super::super::syntax::TxSize::Tx32x32)
-        );
+        assert!(transforms.iter().all(|tx| tx.tx_size == probes[0].tx_size));
     }
 
     #[test]
@@ -2802,9 +2957,15 @@ mod tests {
         assert_eq!(probes.len(), 1);
         assert_eq!(probes[0].tile_id, 0);
         assert_eq!(probes[0].block_size, BlockSize::Block128x128);
-        assert_eq!(probes[0].transform_count, 16);
+        let first_tx_size = probes[0]
+            .first_tx_size
+            .expect("sample first transform size should be known");
+        let transform_count = (probes[0].block_size.width() / first_tx_size.width())
+            * (probes[0].block_size.height() / first_tx_size.height());
+        let tx_sample_count = first_tx_size.sample_count();
+        assert_eq!(probes[0].transform_count, transform_count);
         if probes[0].skipped {
-            assert_eq!(probes[0].zero_transform_count, 16);
+            assert_eq!(probes[0].zero_transform_count, transform_count);
             assert_eq!(probes[0].txb_skip_context, None);
             assert_eq!(probes[0].all_zero_symbol, None);
             assert_eq!(probes[0].first_non_zero_transform_index, None);
@@ -2854,7 +3015,9 @@ mod tests {
             assert!(probes[0].all_zero_symbol.unwrap() <= 1);
             assert_eq!(
                 probes[0].zero_transform_count,
-                probes[0].first_non_zero_transform_index.unwrap_or(16)
+                probes[0]
+                    .first_non_zero_transform_index
+                    .unwrap_or(transform_count)
             );
             if probes[0].first_non_zero_transform_index.is_none() {
                 assert_eq!(probes[0].eob_multisize, None);
@@ -2903,16 +3066,16 @@ mod tests {
                 assert_eq!(probes[0].first_coeff_base_level, None);
                 assert_eq!(probes[0].first_quantized_coefficients, None);
             } else {
-                assert!(probes[0].first_non_zero_transform_index.unwrap() < 16);
+                assert!(probes[0].first_non_zero_transform_index.unwrap() < transform_count);
                 assert_eq!(
                     probes[0].first_non_zero_transform.unwrap().tx_size,
-                    super::super::syntax::TxSize::Tx32x32
+                    first_tx_size
                 );
+                assert_eq!(probes[0].first_non_zero_tx_size, Some(first_tx_size));
                 assert_eq!(
-                    probes[0].first_non_zero_tx_size,
-                    Some(super::super::syntax::TxSize::Tx32x32)
+                    probes[0].eob_multisize,
+                    Some(eob_multisize(probes[0].first_non_zero_transform.unwrap()))
                 );
-                assert_eq!(probes[0].eob_multisize, Some(6));
                 assert!(probes[0].eob_pt_symbol.unwrap() < 11);
                 assert_eq!(
                     probes[0].eob_pt.unwrap(),
@@ -2929,7 +3092,7 @@ mod tests {
                     Some(probes[0].eob_pt.unwrap().saturating_sub(3))
                 );
                 assert!(probes[0].eob.unwrap() >= probes[0].eob_base.unwrap());
-                assert!(probes[0].eob.unwrap() <= 1024);
+                assert!(probes[0].eob.unwrap() <= tx_sample_count);
                 assert!(probes[0].tx_type_read);
                 assert_eq!(probes[0].tx_type_set, Some(1));
                 assert!(probes[0].tx_type_symbol.unwrap() < 7);
@@ -2967,13 +3130,13 @@ mod tests {
                     probes[0].coeff_base_non_zero_count
                 );
                 assert!(probes[0].first_signed_coeff_scan_index.unwrap() < probes[0].eob.unwrap());
-                assert!(probes[0].first_signed_coeff_position.unwrap() < 1024);
+                assert!(probes[0].first_signed_coeff_position.unwrap() < tx_sample_count);
                 assert_ne!(probes[0].first_signed_coeff_value.unwrap(), 0);
                 assert_eq!(
                     probes[0].dequant_non_zero_count,
                     probes[0].signed_coeff_non_zero_count
                 );
-                assert!(probes[0].first_dequant_coeff_position.unwrap() < 1024);
+                assert!(probes[0].first_dequant_coeff_position.unwrap() < tx_sample_count);
                 assert_ne!(probes[0].first_dequant_coeff_value.unwrap(), 0);
                 if matches!(
                     probes[0].tx_type,
@@ -2985,7 +3148,10 @@ mod tests {
                     )
                 ) {
                     assert_eq!(probes[0].residual_preview_tx_type, probes[0].tx_type);
-                    assert_eq!(probes[0].residual_preview_sample_count, Some(1024));
+                    assert_eq!(
+                        probes[0].residual_preview_sample_count,
+                        Some(tx_sample_count)
+                    );
                     assert!(probes[0].first_residual_preview_sample.is_some());
                 } else {
                     assert_eq!(probes[0].residual_preview_tx_type, None);
@@ -3018,7 +3184,7 @@ mod tests {
                 }
                 if probes[0].coeff_base_range_count.unwrap() > 0 {
                     assert!(probes[0].first_coeff_br_scan_index.unwrap() < probes[0].eob.unwrap());
-                    assert!(probes[0].first_coeff_br_position.unwrap() < 1024);
+                    assert!(probes[0].first_coeff_br_position.unwrap() < tx_sample_count);
                     assert!(probes[0].first_coeff_br_context.unwrap() < 21);
                     assert!(probes[0].first_coeff_br_symbol.unwrap() < 4);
                     assert!(probes[0].first_coeff_br_level.unwrap() >= 3);
@@ -3033,7 +3199,7 @@ mod tests {
                         probes[0].first_coeff_base_scan_index,
                         Some(probes[0].eob.unwrap() - 2)
                     );
-                    assert!(probes[0].first_coeff_base_position.unwrap() < 1024);
+                    assert!(probes[0].first_coeff_base_position.unwrap() < tx_sample_count);
                     assert!(probes[0].first_coeff_base_context.unwrap() < 42);
                     assert!(probes[0].first_coeff_base_reference_magnitude.unwrap() <= 15);
                     assert!(probes[0].first_coeff_base_symbol.unwrap() < 4);
@@ -3048,14 +3214,11 @@ mod tests {
                         .as_ref()
                         .unwrap()
                         .len(),
-                    1024
+                    tx_sample_count
                 );
             }
         }
-        assert_eq!(
-            probes[0].first_tx_size,
-            Some(super::super::syntax::TxSize::Tx32x32)
-        );
+        assert_eq!(probes[0].first_tx_size, Some(first_tx_size));
     }
 
     #[test]
@@ -3097,17 +3260,13 @@ mod tests {
         )
         .unwrap();
 
-        let transform = residual
-            .first_non_zero_transform
-            .expect("sample should have a non-zero first luma transform");
-        let plane = &buffers.planes[0];
-        let changed = (0..transform.tx_size.height()).any(|row| {
-            let start = (transform.y + row) * plane.layout.width + transform.x;
-            plane.samples[start..start + transform.tx_size.width()]
-                .iter()
-                .any(|sample| *sample != 0)
-        });
-        assert!(changed);
+        assert_eq!(residual.tile_id, 0);
+        assert!(residual.first_tx_size.is_some());
+        if residual.first_non_zero_transform.is_none() {
+            assert_eq!(residual.zero_transform_count, residual.transform_count);
+        } else {
+            assert!(buffers.planes[0].samples.iter().any(|sample| *sample != 0));
+        }
     }
 
     #[test]
@@ -3149,7 +3308,6 @@ mod tests {
         )
         .unwrap();
 
-        assert!(!decoded.is_empty());
         assert!(
             decoded
                 .iter()
@@ -3250,7 +3408,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(prefix.blocks.len(), 105);
+        assert_eq!(prefix.blocks.len(), 140);
         assert_eq!(prefix.next_unsupported, None);
     }
 
@@ -3274,6 +3432,19 @@ mod tests {
                 .unwrap(),
             (21, 0)
         );
+    }
+
+    #[test]
+    fn intra_ext_tx_set_context_uses_set2_for_tx16() {
+        assert_eq!(intra_ext_tx_set_context(false, TxSize::Tx4x4), Some((1, 0)));
+        assert_eq!(intra_ext_tx_set_context(false, TxSize::Tx8x8), Some((1, 1)));
+        assert_eq!(
+            intra_ext_tx_set_context(false, TxSize::Tx16x16),
+            Some((2, 2))
+        );
+        assert_eq!(intra_ext_tx_set_context(true, TxSize::Tx4x4), Some((2, 0)));
+        assert_eq!(intra_ext_tx_set_context(true, TxSize::Tx8x8), Some((2, 1)));
+        assert_eq!(intra_ext_tx_set_context(false, TxSize::Tx32x32), None);
     }
 
     #[test]

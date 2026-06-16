@@ -35,6 +35,132 @@ pub fn predict_intra(
     }
 }
 
+pub fn predict_filter_intra(
+    mode: usize,
+    width: usize,
+    height: usize,
+    edges: IntraEdges<'_>,
+) -> Result<Vec<u16>, DecoderError> {
+    if mode >= FILTER_INTRA_TAPS.len() {
+        return Err(DecoderError::Bitstream(format!(
+            "AV1 filter-intra mode {mode} is invalid"
+        )));
+    }
+    if width > 32 || height > 32 {
+        return Err(DecoderError::Unsupported(format!(
+            "AV1 filter-intra prediction larger than 32x32 is not supported yet: {width}x{height}"
+        )));
+    }
+    let above = edges.above.ok_or_else(|| {
+        DecoderError::Bitstream("AV1 filter-intra prediction requires above edge".to_string())
+    })?;
+    let left = edges.left.ok_or_else(|| {
+        DecoderError::Bitstream("AV1 filter-intra prediction requires left edge".to_string())
+    })?;
+    if above.is_empty() || left.is_empty() {
+        return Err(DecoderError::NotEnoughData(
+            "AV1 filter-intra edges are empty".to_string(),
+        ));
+    }
+
+    let mut buffer = [[0u16; 33]; 33];
+    let above_left = edges.above_left.unwrap_or(1u16 << (edges.bit_depth - 1));
+    buffer[0][0] = above_left;
+    for column in 0..width {
+        buffer[0][column + 1] = edge_sample(above, column);
+    }
+    for row in 0..height {
+        buffer[row + 1][0] = edge_sample(left, row);
+    }
+
+    for row in (1..=height).step_by(2) {
+        for column in (1..=width).step_by(4) {
+            let p0 = buffer[row - 1][column - 1];
+            let p1 = buffer[row - 1][column];
+            let p2 = buffer[row - 1][(column + 1).min(width)];
+            let p3 = buffer[row - 1][(column + 2).min(width)];
+            let p4 = buffer[row - 1][(column + 3).min(width)];
+            let p5 = buffer[row][column - 1];
+            let p6 = buffer[(row + 1).min(height)][column - 1];
+            for k in 0..8 {
+                let out_row = row + (k >> 2);
+                let out_column = column + (k & 0x03);
+                if out_row > height || out_column > width {
+                    continue;
+                }
+                let taps = FILTER_INTRA_TAPS[mode][k];
+                let prediction = i32::from(taps[0]) * i32::from(p0)
+                    + i32::from(taps[1]) * i32::from(p1)
+                    + i32::from(taps[2]) * i32::from(p2)
+                    + i32::from(taps[3]) * i32::from(p3)
+                    + i32::from(taps[4]) * i32::from(p4)
+                    + i32::from(taps[5]) * i32::from(p5)
+                    + i32::from(taps[6]) * i32::from(p6);
+                buffer[out_row][out_column] = clip1_signed((prediction + 8) >> 4, edges.bit_depth);
+            }
+        }
+    }
+
+    let mut out = Vec::with_capacity(width * height);
+    for row in 0..height {
+        out.extend_from_slice(&buffer[row + 1][1..=width]);
+    }
+    Ok(out)
+}
+
+const FILTER_INTRA_TAPS: [[[i8; 8]; 8]; 5] = [
+    [
+        [-6, 10, 0, 0, 0, 12, 0, 0],
+        [-5, 2, 10, 0, 0, 9, 0, 0],
+        [-3, 1, 1, 10, 0, 7, 0, 0],
+        [-3, 1, 1, 2, 10, 5, 0, 0],
+        [-4, 6, 0, 0, 0, 2, 12, 0],
+        [-3, 2, 6, 0, 0, 2, 9, 0],
+        [-3, 2, 2, 6, 0, 2, 7, 0],
+        [-3, 1, 2, 2, 6, 3, 5, 0],
+    ],
+    [
+        [-10, 16, 0, 0, 0, 10, 0, 0],
+        [-6, 0, 16, 0, 0, 6, 0, 0],
+        [-4, 0, 0, 16, 0, 4, 0, 0],
+        [-2, 0, 0, 0, 16, 2, 0, 0],
+        [-10, 16, 0, 0, 0, 0, 10, 0],
+        [-6, 0, 16, 0, 0, 0, 6, 0],
+        [-4, 0, 0, 16, 0, 0, 4, 0],
+        [-2, 0, 0, 0, 16, 0, 2, 0],
+    ],
+    [
+        [-8, 8, 0, 0, 0, 16, 0, 0],
+        [-8, 0, 8, 0, 0, 16, 0, 0],
+        [-8, 0, 0, 8, 0, 16, 0, 0],
+        [-8, 0, 0, 0, 8, 16, 0, 0],
+        [-4, 4, 0, 0, 0, 0, 16, 0],
+        [-4, 0, 4, 0, 0, 0, 16, 0],
+        [-4, 0, 0, 4, 0, 0, 16, 0],
+        [-4, 0, 0, 0, 4, 0, 16, 0],
+    ],
+    [
+        [-2, 8, 0, 0, 0, 10, 0, 0],
+        [-1, 3, 8, 0, 0, 6, 0, 0],
+        [-1, 2, 3, 8, 0, 4, 0, 0],
+        [0, 1, 2, 3, 8, 2, 0, 0],
+        [-1, 4, 0, 0, 0, 3, 10, 0],
+        [-1, 3, 4, 0, 0, 4, 6, 0],
+        [-1, 2, 3, 4, 0, 4, 4, 0],
+        [-1, 2, 2, 3, 4, 3, 3, 0],
+    ],
+    [
+        [-12, 14, 0, 0, 0, 14, 0, 0],
+        [-10, 0, 14, 0, 0, 12, 0, 0],
+        [-9, 0, 0, 14, 0, 11, 0, 0],
+        [-8, 0, 0, 0, 14, 10, 0, 0],
+        [-10, 12, 0, 0, 0, 0, 14, 0],
+        [-9, 1, 12, 0, 0, 0, 12, 0],
+        [-8, 0, 0, 12, 0, 1, 11, 0],
+        [-7, 0, 0, 1, 12, 1, 9, 0],
+    ],
+];
+
 fn predict_dc(width: usize, height: usize, edges: IntraEdges<'_>) -> Vec<u16> {
     let value = match (edges.left, edges.above) {
         (Some(left), Some(above)) => {
@@ -330,6 +456,10 @@ fn clip1(value: u32, bit_depth: u8) -> u16 {
     value.min((1u32 << bit_depth) - 1) as u16
 }
 
+fn clip1_signed(value: i32, bit_depth: u8) -> u16 {
+    value.clamp(0, (1i32 << bit_depth) - 1) as u16
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,6 +500,25 @@ mod tests {
         .unwrap();
 
         assert_eq!(pred, vec![35; 8]);
+    }
+
+    #[test]
+    fn filter_intra_predicts_from_above_and_left_edges() {
+        let pred = predict_filter_intra(
+            0,
+            4,
+            2,
+            IntraEdges {
+                above: Some(&[10, 20, 30, 40]),
+                left: Some(&[50, 60]),
+                above_left: Some(5),
+                bit_depth: 8,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(pred.len(), 8);
+        assert!(pred.iter().any(|value| *value != pred[0]));
     }
 
     #[test]

@@ -3,9 +3,12 @@ pub const SKIP_CONTEXTS: usize = 3;
 pub const INTRA_MODES: usize = 13;
 pub const INTRA_MODE_CONTEXTS: usize = 5;
 pub const BLOCK_SIZE_GROUPS: usize = 4;
+pub const FILTER_INTRA_BLOCK_CONTEXTS: usize = 22;
 pub const DIRECTIONAL_MODES: usize = 8;
+pub const FILTER_INTRA_MODES: usize = 5;
 pub const COEFF_CDF_Q_CONTEXTS: usize = 4;
 pub const TX_SIZE_CONTEXTS: usize = 5;
+pub const TX_SIZE_SIGNAL_CONTEXTS: usize = 3;
 pub const TXB_SKIP_CONTEXTS: usize = 13;
 pub const PLANE_TYPES: usize = 2;
 pub const COEFF_BR_CONTEXTS: usize = 21;
@@ -13,11 +16,110 @@ pub const DC_SIGN_CONTEXTS: usize = 3;
 pub const INTRA_EXT_TX_TYPES_SET1: usize = 7;
 pub const INTRA_EXT_TX_TYPES_SET2: usize = 5;
 
-pub const DEFAULT_INTRA_EXT_TX_SET1_TX32_CDF: [[u16; INTRA_EXT_TX_TYPES_SET1 + 1]; INTRA_MODES] =
+pub const DEFAULT_INTRA_EXT_TX_SET1_CDF: [[[u16; INTRA_EXT_TX_TYPES_SET1 + 1]; INTRA_MODES]; 2] = [
+    [
+        [1535, 8035, 9461, 12751, 23467, 27825, 32768, 0],
+        [564, 3335, 9709, 10870, 18143, 28094, 32768, 0],
+        [672, 3247, 3676, 11982, 19415, 23127, 32768, 0],
+        [5279, 13885, 15487, 18044, 23527, 30252, 32768, 0],
+        [4423, 6074, 7985, 10416, 25693, 29298, 32768, 0],
+        [1486, 4241, 9460, 10662, 16456, 27694, 32768, 0],
+        [439, 2838, 3522, 6737, 18058, 23754, 32768, 0],
+        [1190, 4233, 4855, 11670, 20281, 24377, 32768, 0],
+        [1045, 4312, 8647, 10159, 18644, 29335, 32768, 0],
+        [202, 3734, 4747, 7298, 17127, 24016, 32768, 0],
+        [447, 4312, 6819, 8884, 16010, 23858, 32768, 0],
+        [277, 4369, 5255, 8905, 16465, 22271, 32768, 0],
+        [3409, 5436, 10599, 15599, 19687, 24040, 32768, 0],
+    ],
+    [
+        [1870, 13742, 14530, 16498, 23770, 27698, 32768, 0],
+        [326, 8796, 14632, 15079, 19272, 27486, 32768, 0],
+        [484, 7576, 7712, 14443, 19159, 22591, 32768, 0],
+        [1126, 15340, 15895, 17023, 20896, 30279, 32768, 0],
+        [655, 4854, 5249, 5913, 22099, 27138, 32768, 0],
+        [1299, 6458, 8885, 9290, 14851, 25497, 32768, 0],
+        [311, 5295, 5552, 6885, 16107, 22672, 32768, 0],
+        [883, 8059, 8270, 11258, 17289, 21549, 32768, 0],
+        [741, 7580, 9318, 10345, 16688, 29046, 32768, 0],
+        [110, 7406, 7915, 9195, 16041, 23329, 32768, 0],
+        [363, 7974, 9357, 10673, 15629, 24474, 32768, 0],
+        [153, 7647, 8112, 9936, 15307, 19996, 32768, 0],
+        [3511, 6332, 11165, 15335, 19323, 23594, 32768, 0],
+    ],
+];
+
+pub const DEFAULT_INTRA_EXT_TX_SET1_STAGING_CDF: [[u16; INTRA_EXT_TX_TYPES_SET1 + 1]; INTRA_MODES] =
     [[4681, 9362, 14043, 18725, 23406, 28087, 32768, 0]; INTRA_MODES];
 
-pub const DEFAULT_INTRA_EXT_TX_SET2_TX32_CDF: [[u16; INTRA_EXT_TX_TYPES_SET2 + 1]; INTRA_MODES] =
-    [[6554, 13107, 19661, 26214, 32768, 0]; INTRA_MODES];
+pub const DEFAULT_INTRA_EXT_TX_SET2_CDF: [[[u16; INTRA_EXT_TX_TYPES_SET2 + 1]; INTRA_MODES]; 3] = [
+    [[6554, 13107, 19661, 26214, 32768, 0]; INTRA_MODES],
+    [[6554, 13107, 19661, 26214, 32768, 0]; INTRA_MODES],
+    [
+        [1127, 12814, 22772, 27483, 32768, 0],
+        [145, 6761, 11980, 26667, 32768, 0],
+        [362, 5887, 11678, 16725, 32768, 0],
+        [385, 15213, 18587, 30693, 32768, 0],
+        [25, 2914, 23134, 27903, 32768, 0],
+        [60, 4470, 11749, 23991, 32768, 0],
+        [37, 3332, 14511, 21448, 32768, 0],
+        [157, 6320, 13036, 17439, 32768, 0],
+        [119, 6719, 12906, 29396, 32768, 0],
+        [47, 5537, 12576, 21499, 32768, 0],
+        [269, 6076, 11258, 23115, 32768, 0],
+        [83, 5615, 12001, 17228, 32768, 0],
+        [1968, 5556, 12023, 18547, 32768, 0],
+    ],
+];
+
+pub const DEFAULT_USE_FILTER_INTRA_CDF: [[u16; 3]; FILTER_INTRA_BLOCK_CONTEXTS] = [
+    [4621, 32768, 0],
+    [6743, 32768, 0],
+    [5893, 32768, 0],
+    [7866, 32768, 0],
+    [12551, 32768, 0],
+    [9394, 32768, 0],
+    [12408, 32768, 0],
+    [14301, 32768, 0],
+    [12756, 32768, 0],
+    [22343, 32768, 0],
+    [16384, 32768, 0],
+    [16384, 32768, 0],
+    [16384, 32768, 0],
+    [16384, 32768, 0],
+    [16384, 32768, 0],
+    [16384, 32768, 0],
+    [12770, 32768, 0],
+    [10368, 32768, 0],
+    [20229, 32768, 0],
+    [18101, 32768, 0],
+    [16384, 32768, 0],
+    [16384, 32768, 0],
+];
+
+pub const DEFAULT_FILTER_INTRA_MODE_CDF: [u16; FILTER_INTRA_MODES + 1] =
+    [8949, 12776, 17211, 29558, 32768, 0];
+
+pub const DEFAULT_TX_SIZE_CAT0_CDF: [[u16; 3]; TX_SIZE_SIGNAL_CONTEXTS] =
+    [[19968, 32768, 0], [19968, 32768, 0], [24320, 32768, 0]];
+
+pub const DEFAULT_TX_SIZE_CAT1_CDF: [[u16; 4]; TX_SIZE_SIGNAL_CONTEXTS] = [
+    [12272, 30172, 32768, 0],
+    [12272, 30172, 32768, 0],
+    [18677, 30848, 32768, 0],
+];
+
+pub const DEFAULT_TX_SIZE_CAT2_CDF: [[u16; 4]; TX_SIZE_SIGNAL_CONTEXTS] = [
+    [12986, 15180, 32768, 0],
+    [12986, 15180, 32768, 0],
+    [24302, 25602, 32768, 0],
+];
+
+pub const DEFAULT_TX_SIZE_CAT3_CDF: [[u16; 4]; TX_SIZE_SIGNAL_CONTEXTS] = [
+    [5782, 11475, 32768, 0],
+    [5782, 11475, 32768, 0],
+    [16803, 22759, 32768, 0],
+];
 
 pub const DEFAULT_DC_SIGN_CDF: [[[[u16; 3]; DC_SIGN_CONTEXTS]; PLANE_TYPES]; COEFF_CDF_Q_CONTEXTS] = [
     [
@@ -1370,7 +1472,13 @@ pub struct CdfContext {
     pub intra_frame_y_mode: [[[u16; INTRA_MODES + 1]; INTRA_MODE_CONTEXTS]; INTRA_MODE_CONTEXTS],
     pub y_mode: [[u16; INTRA_MODES + 1]; BLOCK_SIZE_GROUPS],
     pub uv_mode_cfl_not_allowed: [[u16; INTRA_MODES + 1]; INTRA_MODES],
+    pub use_filter_intra: [[u16; 3]; FILTER_INTRA_BLOCK_CONTEXTS],
+    pub filter_intra_mode: [u16; FILTER_INTRA_MODES + 1],
     pub angle_delta: [[u16; 8]; DIRECTIONAL_MODES],
+    pub tx_size_cat0: [[u16; 3]; TX_SIZE_SIGNAL_CONTEXTS],
+    pub tx_size_cat1: [[u16; 4]; TX_SIZE_SIGNAL_CONTEXTS],
+    pub tx_size_cat2: [[u16; 4]; TX_SIZE_SIGNAL_CONTEXTS],
+    pub tx_size_cat3: [[u16; 4]; TX_SIZE_SIGNAL_CONTEXTS],
     pub txb_skip: [[[u16; 3]; TXB_SKIP_CONTEXTS]; TX_SIZE_CONTEXTS],
     pub eob_pt_1024: [[u16; 12]; PLANE_TYPES],
     pub eob_extra_tx32: [[[u16; 3]; 9]; PLANE_TYPES],
@@ -1378,8 +1486,9 @@ pub struct CdfContext {
     pub coeff_base_tx32: [[[u16; 5]; 42]; PLANE_TYPES],
     pub coeff_br_tx32: [[[u16; 5]; COEFF_BR_CONTEXTS]; PLANE_TYPES],
     pub dc_sign: [[[u16; 3]; DC_SIGN_CONTEXTS]; PLANE_TYPES],
-    pub intra_ext_tx_set1_tx32: [[u16; INTRA_EXT_TX_TYPES_SET1 + 1]; INTRA_MODES],
-    pub intra_ext_tx_set2_tx32: [[u16; INTRA_EXT_TX_TYPES_SET2 + 1]; INTRA_MODES],
+    pub intra_ext_tx_set1: [[[u16; INTRA_EXT_TX_TYPES_SET1 + 1]; INTRA_MODES]; 2],
+    pub intra_ext_tx_set1_staging: [[u16; INTRA_EXT_TX_TYPES_SET1 + 1]; INTRA_MODES],
+    pub intra_ext_tx_set2: [[[u16; INTRA_EXT_TX_TYPES_SET2 + 1]; INTRA_MODES]; 3],
 }
 
 impl Default for CdfContext {
@@ -1401,7 +1510,13 @@ impl CdfContext {
             intra_frame_y_mode: DEFAULT_INTRA_FRAME_Y_MODE_CDF,
             y_mode: DEFAULT_Y_MODE_CDF,
             uv_mode_cfl_not_allowed: DEFAULT_UV_MODE_CFL_NOT_ALLOWED_CDF,
+            use_filter_intra: DEFAULT_USE_FILTER_INTRA_CDF,
+            filter_intra_mode: DEFAULT_FILTER_INTRA_MODE_CDF,
             angle_delta: DEFAULT_ANGLE_DELTA_CDF,
+            tx_size_cat0: DEFAULT_TX_SIZE_CAT0_CDF,
+            tx_size_cat1: DEFAULT_TX_SIZE_CAT1_CDF,
+            tx_size_cat2: DEFAULT_TX_SIZE_CAT2_CDF,
+            tx_size_cat3: DEFAULT_TX_SIZE_CAT3_CDF,
             txb_skip: DEFAULT_TXB_SKIP_CDF[coeff_q_context],
             eob_pt_1024: DEFAULT_EOB_PT_1024_CDF[coeff_q_context],
             eob_extra_tx32: DEFAULT_EOB_EXTRA_TX32_CDF[coeff_q_context],
@@ -1409,8 +1524,9 @@ impl CdfContext {
             coeff_base_tx32: DEFAULT_COEFF_BASE_TX32_CDF[coeff_q_context],
             coeff_br_tx32: DEFAULT_COEFF_BR_TX32_CDF[coeff_q_context],
             dc_sign: DEFAULT_DC_SIGN_CDF[coeff_q_context],
-            intra_ext_tx_set1_tx32: DEFAULT_INTRA_EXT_TX_SET1_TX32_CDF,
-            intra_ext_tx_set2_tx32: DEFAULT_INTRA_EXT_TX_SET2_TX32_CDF,
+            intra_ext_tx_set1: DEFAULT_INTRA_EXT_TX_SET1_CDF,
+            intra_ext_tx_set1_staging: DEFAULT_INTRA_EXT_TX_SET1_STAGING_CDF,
+            intra_ext_tx_set2: DEFAULT_INTRA_EXT_TX_SET2_CDF,
         }
     }
 }
@@ -1446,8 +1562,25 @@ impl CdfContext {
         &mut self.uv_mode_cfl_not_allowed[y_mode_symbol]
     }
 
+    pub fn use_filter_intra_cdf_mut(&mut self, block_size_index: usize) -> &mut [u16] {
+        &mut self.use_filter_intra[block_size_index]
+    }
+
+    pub fn filter_intra_mode_cdf_mut(&mut self) -> &mut [u16] {
+        &mut self.filter_intra_mode
+    }
+
     pub fn angle_delta_cdf_mut(&mut self, directional_index: usize) -> &mut [u16] {
         &mut self.angle_delta[directional_index]
+    }
+
+    pub fn tx_size_cdf_mut(&mut self, category: usize, context: usize) -> &mut [u16] {
+        match category {
+            0 => &mut self.tx_size_cat0[context],
+            1 => &mut self.tx_size_cat1[context],
+            2 => &mut self.tx_size_cat2[context],
+            _ => &mut self.tx_size_cat3[context],
+        }
     }
 
     pub fn txb_skip_cdf_mut(&mut self, tx_size_context: usize, context: usize) -> &mut [u16] {
@@ -1478,12 +1611,28 @@ impl CdfContext {
         &mut self.dc_sign[plane_type][context]
     }
 
-    pub fn intra_ext_tx_set1_tx32_cdf_mut(&mut self, intra_mode: usize) -> &mut [u16] {
-        &mut self.intra_ext_tx_set1_tx32[intra_mode]
+    pub fn intra_ext_tx_set1_cdf_mut(
+        &mut self,
+        tx_size_context: usize,
+        intra_mode: usize,
+    ) -> &mut [u16] {
+        &mut self.intra_ext_tx_set1[tx_size_context][intra_mode]
     }
 
-    pub fn intra_ext_tx_set2_tx32_cdf_mut(&mut self, intra_mode: usize) -> &mut [u16] {
-        &mut self.intra_ext_tx_set2_tx32[intra_mode]
+    pub fn intra_ext_tx_set2_cdf_mut(
+        &mut self,
+        tx_size_context: usize,
+        intra_mode: usize,
+    ) -> &mut [u16] {
+        &mut self.intra_ext_tx_set2[tx_size_context][intra_mode]
+    }
+
+    pub fn intra_ext_tx_set1_staging_cdf_mut(&mut self, intra_mode: usize) -> &mut [u16] {
+        &mut self.intra_ext_tx_set1_staging[intra_mode]
+    }
+
+    pub fn intra_ext_tx_set2_staging_cdf_mut(&mut self, intra_mode: usize) -> &mut [u16] {
+        &mut self.intra_ext_tx_set2[0][intra_mode]
     }
 }
 
@@ -1528,6 +1677,11 @@ mod tests {
         assert_eq!(context.coeff_br_tx32[1][20][3], 32768);
         assert_eq!(context.dc_sign[0][0][1], 32768);
         assert_eq!(context.dc_sign[1][2][1], 32768);
+        assert_eq!(context.intra_ext_tx_set1[0][0][6], 32768);
+        assert_eq!(context.intra_ext_tx_set1[1][12][6], 32768);
+        assert_eq!(context.intra_ext_tx_set1_staging[0][6], 32768);
+        assert_eq!(context.intra_ext_tx_set2[0][0][4], 32768);
+        assert_eq!(context.intra_ext_tx_set2[2][12][4], 32768);
     }
 
     #[test]

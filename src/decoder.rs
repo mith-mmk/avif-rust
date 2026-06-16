@@ -3,7 +3,7 @@ use crate::av1::{
     QuantState, ResidualProbe, SequenceHeader, TileEntropyState, TileGroup, alloc_frame_buffers,
     build_still_decode_plan, decode_luma_root_block_prefix, frame_buffers_to_rgba_8,
     parse_av1_config, parse_frame_header, parse_sequence_header, parse_tile_group,
-    plan_transform_blocks, prepare_tile_entropy, probe_first_block_residuals,
+    plan_transform_blocks_with_tx_size, prepare_tile_entropy, probe_first_block_residuals,
     probe_tile_block_modes, probe_tile_partitions,
 };
 use crate::compat::{DataMap, DecodeOptions, InitOptions};
@@ -349,6 +349,14 @@ fn emit_metadata(
             DataMap::UInt(frame_header.base_q_idx as u64),
         )?;
         option.drawer.set_metadata(
+            "AV1 tx mode",
+            DataMap::Ascii(format!("{:?}", frame_header.tx_mode)),
+        )?;
+        option.drawer.set_metadata(
+            "AV1 reduced tx set",
+            DataMap::UInt(frame_header.reduced_tx_set as u64),
+        )?;
+        option.drawer.set_metadata(
             "AV1 y dc quant",
             DataMap::UInt(headers.quant_state.y.dc as u64),
         )?;
@@ -457,11 +465,12 @@ fn emit_metadata(
                     .drawer
                     .set_metadata("AV1 first block cdef idx", DataMap::UInt(cdef_idx as u64))?;
             }
-            let first_block_transforms = plan_transform_blocks(
+            let first_block_transforms = plan_transform_blocks_with_tx_size(
                 0,
                 0,
                 0,
                 block_mode.block_size,
+                block_mode.tx_size,
                 headers.decode_plan.width,
                 headers.decode_plan.height,
             );

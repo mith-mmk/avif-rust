@@ -710,6 +710,8 @@ mod tests {
         assert_eq!(header.tile_info.context_update_tile_id, 0);
         assert_eq!(header.tile_info.mi_col_starts, &[0, 226]);
         assert_eq!(header.tile_info.mi_row_starts, &[0, 226]);
+        assert_eq!(header.tx_mode, TxMode::Select);
+        assert!(!header.reduced_tx_set);
         assert!(header.uncompressed_header_bits > 0);
         assert!(header.payload_after_header_offset < frame_payload.len());
     }

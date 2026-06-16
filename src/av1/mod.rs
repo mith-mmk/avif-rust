@@ -45,6 +45,6 @@ pub use tile_decode::{
 pub use tile_group::{TileGroup, TilePayload, parse_tile_group};
 pub use transform::{
     QuantizedTransform, ReconstructedTransform, TransformBlock, coefficients_from_scan,
-    inverse_transform, plan_transform_blocks, reconstruct_transform_block,
-    zero_quantized_transform, zig_zag_scan,
+    inverse_transform, plan_transform_blocks, plan_transform_blocks_with_tx_size,
+    reconstruct_transform_block, zero_quantized_transform, zig_zag_scan,
 };
