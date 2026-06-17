@@ -245,6 +245,35 @@ impl BlockSize {
         }
         Self::from_dimensions(self.width() / 4, self.height())
     }
+
+    pub fn partition_contexts(self) -> (u8, u8) {
+        match self {
+            Self::Block4x4 => (31, 31),
+            Self::Block4x8 => (31, 30),
+            Self::Block8x4 => (30, 31),
+            Self::Block8x8 => (30, 30),
+            Self::Block8x16 => (30, 28),
+            Self::Block16x8 => (28, 30),
+            Self::Block16x16 => (28, 28),
+            Self::Block16x32 => (28, 24),
+            Self::Block32x16 => (24, 28),
+            Self::Block32x32 => (24, 24),
+            Self::Block32x64 => (24, 16),
+            Self::Block64x32 => (16, 24),
+            Self::Block64x64 => (16, 16),
+            Self::Block64x128 => (16, 0),
+            Self::Block128x64 => (0, 16),
+            Self::Block128x128 => (0, 0),
+            Self::Block4x16 => (31, 28),
+            Self::Block16x4 => (28, 31),
+            Self::Block8x32 => (30, 24),
+            Self::Block32x8 => (24, 30),
+            Self::Block16x64 => (28, 16),
+            Self::Block64x16 => (16, 28),
+            Self::Block32x128 => (24, 0),
+            Self::Block128x32 => (0, 24),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -276,10 +305,10 @@ impl Partition {
                 1 => Some(Self::Horizontal),
                 2 => Some(Self::Vertical),
                 3 => Some(Self::Split),
-                4 => Some(Self::Horizontal4),
-                5 => Some(Self::Vertical4),
-                6 => Some(Self::HorizontalA),
-                7 => Some(Self::VerticalA),
+                4 => Some(Self::HorizontalA),
+                5 => Some(Self::HorizontalB),
+                6 => Some(Self::VerticalA),
+                7 => Some(Self::VerticalB),
                 _ => None,
             },
             _ => match symbol {
@@ -537,6 +566,31 @@ mod tests {
             Some(BlockSize::Block128x32)
         );
         assert_eq!(BlockSize::from_dimensions(2, 4), None);
+    }
+
+    #[test]
+    fn partition_context_lookup_matches_av1_table() {
+        assert_eq!(BlockSize::Block4x4.partition_contexts(), (31, 31));
+        assert_eq!(BlockSize::Block16x32.partition_contexts(), (28, 24));
+        assert_eq!(BlockSize::Block64x128.partition_contexts(), (16, 0));
+        assert_eq!(BlockSize::Block128x32.partition_contexts(), (0, 24));
+    }
+
+    #[test]
+    fn block128_partition_symbols_exclude_four_way_partitions() {
+        assert_eq!(
+            Partition::from_symbol(BlockSize::Block128x128, 4),
+            Some(Partition::HorizontalA)
+        );
+        assert_eq!(
+            Partition::from_symbol(BlockSize::Block128x128, 5),
+            Some(Partition::HorizontalB)
+        );
+        assert_eq!(
+            Partition::from_symbol(BlockSize::Block128x128, 7),
+            Some(Partition::VerticalB)
+        );
+        assert_eq!(Partition::from_symbol(BlockSize::Block128x128, 8), None);
     }
 
     #[test]

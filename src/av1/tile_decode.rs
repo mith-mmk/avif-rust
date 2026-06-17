@@ -150,6 +150,9 @@ pub struct TileDecoder<'a> {
     mi_rows: usize,
     y_mode_grid: Vec<Option<usize>>,
     skip_grid: Vec<Option<bool>>,
+    above_partition_context: Vec<u8>,
+    left_partition_context: Vec<u8>,
+    cdef_transmitted: [bool; 4],
     above_txfm_context: Vec<usize>,
     left_txfm_context: Vec<usize>,
 }
@@ -171,6 +174,9 @@ impl<'a> TileDecoder<'a> {
             mi_rows,
             y_mode_grid: vec![None; mi_cols * mi_rows],
             skip_grid: vec![None; mi_cols * mi_rows],
+            above_partition_context: vec![0; mi_cols],
+            left_partition_context: vec![0; mi_rows],
+            cdef_transmitted: [false; 4],
             above_txfm_context: vec![0; mi_cols],
             left_txfm_context: vec![0; mi_rows],
         })
@@ -180,33 +186,60 @@ impl<'a> TileDecoder<'a> {
         &mut self,
         tile: &TileDecodePlan,
     ) -> Result<PartitionProbe, DecoderError> {
-        self.read_partition(
-            tile.tile_id,
-            BlockSize::Block128x128,
-            tile.pixel_x,
-            tile.pixel_y,
-        )
+        self.read_partition(tile, BlockSize::Block128x128, tile.pixel_x, tile.pixel_y)
     }
 
     fn read_partition(
         &mut self,
-        tile_id: u32,
+        tile: &TileDecodePlan,
         block_size: BlockSize,
         x: usize,
         y: usize,
     ) -> Result<PartitionProbe, DecoderError> {
-        let context = self.partition_context(x, y, block_size);
-        let symbol = self.reader.read_symbol(
-            self.cdf
-                .partition_cdf_mut(block_size.width_mi_log2(), context),
-        )?;
-        let partition = Partition::from_symbol(block_size, symbol).ok_or_else(|| {
-            DecoderError::Bitstream(format!(
-                "AV1 partition symbol {symbol} is invalid for {block_size:?}"
-            ))
-        })?;
+        let context = self.partition_context(tile, x, y, block_size);
+        let half_mi = block_size.width() / 8;
+        let mi_col = x >> 2;
+        let mi_row = y >> 2;
+        let has_rows = mi_row + half_mi < tile.mi_row_end as usize;
+        let has_cols = mi_col + half_mi < tile.mi_col_end as usize;
+        let (symbol, partition) = if !has_rows && !has_cols {
+            (3, Partition::Split)
+        } else if has_rows && has_cols {
+            let symbol = self.reader.read_symbol(
+                self.cdf
+                    .partition_cdf_mut(block_size.width_mi_log2(), context),
+            )?;
+            let partition = Partition::from_symbol(block_size, symbol).ok_or_else(|| {
+                DecoderError::Bitstream(format!(
+                    "AV1 partition symbol {symbol} is invalid for {block_size:?}"
+                ))
+            })?;
+            (symbol, partition)
+        } else {
+            if block_size.width() <= 8 {
+                return Err(DecoderError::Bitstream(format!(
+                    "AV1 edge partition reached invalid block size {block_size:?}"
+                )));
+            }
+            let source = self
+                .cdf
+                .partition_cdf_mut(block_size.width_mi_log2(), context)
+                .to_vec();
+            let mut cdf = restricted_partition_cdf(&source, has_rows);
+            let symbol = self.reader.read_symbol(&mut cdf)?;
+            let partition = if symbol == 0 {
+                if has_rows {
+                    Partition::Vertical
+                } else {
+                    Partition::Horizontal
+                }
+            } else {
+                Partition::Split
+            };
+            (partition_symbol(partition), partition)
+        };
         Ok(PartitionProbe {
-            tile_id,
+            tile_id: tile.tile_id,
             block_size,
             context,
             symbol,
@@ -245,16 +278,7 @@ impl<'a> TileDecoder<'a> {
             .reader
             .read_symbol(self.cdf.skip_cdf_mut(skip_context))?;
         let skip = skip_symbol != 0;
-        let cdef_idx = if !skip && frame.cdef.enabled && !frame.allow_intrabc && frame.cdef.bits > 0
-        {
-            Some(
-                self.reader
-                    .read_literal(frame.cdef.bits as usize)
-                    .map_err(|err| DecoderError::Bitstream(format!("AV1 cdef_idx: {err}")))?,
-            )
-        } else {
-            None
-        };
+        let cdef_idx = self.read_cdef_index(sequence, frame, skip, x, y)?;
 
         let y_above_context = self.above_y_mode_context(x, y);
         let y_left_context = self.left_y_mode_context(x, y);
@@ -265,7 +289,8 @@ impl<'a> TileDecoder<'a> {
         let y_mode = PredictionMode::from_intra_symbol(y_mode_symbol).ok_or_else(|| {
             DecoderError::Bitstream(format!("AV1 y_mode symbol {y_mode_symbol} is invalid"))
         })?;
-        let angle_delta_y = if y_mode.is_directional() {
+        let use_angle_delta = block_size.width() >= 8 && block_size.height() >= 8;
+        let angle_delta_y = if use_angle_delta && y_mode.is_directional() {
             Some(self.read_angle_delta(y_mode.directional_index().unwrap())?)
         } else {
             None
@@ -301,7 +326,7 @@ impl<'a> TileDecoder<'a> {
                     "AV1 CFL chroma prediction is not supported yet".to_string(),
                 ));
             }
-            let angle_delta = if uv_mode.is_directional() {
+            let angle_delta = if use_angle_delta && uv_mode.is_directional() {
                 Some(self.read_angle_delta(uv_mode.directional_index().unwrap())?)
             } else {
                 None
@@ -313,7 +338,7 @@ impl<'a> TileDecoder<'a> {
         self.set_y_mode_context(x, y, block_size, intra_mode_context(y_mode));
         self.set_skip_context(x, y, block_size, skip);
         let (tx_size_context, tx_size_symbol, tx_size) =
-            self.read_intra_tx_size(frame, block_size, x, y)?;
+            self.read_intra_tx_size(frame, block_size, skip, x, y)?;
 
         Ok(BlockModeProbe {
             tile_id: tile.tile_id,
@@ -342,13 +367,14 @@ impl<'a> TileDecoder<'a> {
         &mut self,
         frame: &FrameHeader,
         block_size: BlockSize,
+        skip: bool,
         x: usize,
         y: usize,
     ) -> Result<(Option<usize>, Option<usize>, TxSize), DecoderError> {
         let tx_size = match frame.tx_mode {
             TxMode::Only4x4 => TxSize::Tx4x4,
             TxMode::Largest => block_size.largest_supported_tx_size(),
-            TxMode::Select if block_size.signals_tx_size() => {
+            TxMode::Select if block_size.signals_tx_size() && !skip => {
                 let context = self.tx_size_context(x, y, block_size);
                 let category = block_size.tx_size_category();
                 let symbol = self
@@ -367,6 +393,43 @@ impl<'a> TileDecoder<'a> {
         };
         self.set_txfm_context(x, y, block_size, tx_size);
         Ok((None, None, tx_size))
+    }
+
+    fn read_cdef_index(
+        &mut self,
+        sequence: &SequenceHeader,
+        frame: &FrameHeader,
+        skip: bool,
+        x: usize,
+        y: usize,
+    ) -> Result<Option<u32>, DecoderError> {
+        if !frame.cdef.enabled || frame.allow_intrabc {
+            return Ok(None);
+        }
+        let superblock_mi = if sequence.use_128x128_superblock {
+            32
+        } else {
+            16
+        };
+        let mi_col = x >> 2;
+        let mi_row = y >> 2;
+        if mi_col % superblock_mi == 0 && mi_row % superblock_mi == 0 {
+            self.cdef_transmitted = [false; 4];
+        }
+        let index = if sequence.use_128x128_superblock {
+            usize::from((mi_col & 16) != 0) + usize::from((mi_row & 16) != 0) * 2
+        } else {
+            0
+        };
+        if self.cdef_transmitted[index] || skip {
+            return Ok(None);
+        }
+        let value = self
+            .reader
+            .read_literal(frame.cdef.bits as usize)
+            .map_err(|err| DecoderError::Bitstream(format!("AV1 cdef_idx: {err}")))?;
+        self.cdef_transmitted[index] = true;
+        Ok(Some(value))
     }
 
     fn read_angle_delta(&mut self, directional_index: usize) -> Result<i8, DecoderError> {
@@ -479,9 +542,115 @@ impl<'a> TileDecoder<'a> {
         }
     }
 
-    fn partition_context(&self, x: usize, y: usize, block_size: BlockSize) -> usize {
-        let _ = (x, y, block_size);
-        0
+    fn partition_context(
+        &self,
+        tile: &TileDecodePlan,
+        x: usize,
+        y: usize,
+        block_size: BlockSize,
+    ) -> usize {
+        let mi_col = x >> 2;
+        let mi_row = y >> 2;
+        let above = if mi_row <= tile.mi_row_start as usize {
+            0
+        } else {
+            self.above_partition_context
+                .get(mi_col)
+                .copied()
+                .unwrap_or(0)
+        };
+        let left = if mi_col <= tile.mi_col_start as usize {
+            0
+        } else {
+            self.left_partition_context
+                .get(mi_row)
+                .copied()
+                .unwrap_or(0)
+        };
+        partition_plane_context(above, left, block_size)
+    }
+
+    fn update_partition_context(
+        &mut self,
+        x: usize,
+        y: usize,
+        subsize: BlockSize,
+        context_size: BlockSize,
+    ) {
+        let mi_col = x >> 2;
+        let mi_row = y >> 2;
+        let width_mi = context_size.width() >> 2;
+        let height_mi = context_size.height() >> 2;
+        let (above, left) = subsize.partition_contexts();
+        for context in self
+            .above_partition_context
+            .iter_mut()
+            .skip(mi_col)
+            .take(width_mi)
+        {
+            *context = above;
+        }
+        for context in self
+            .left_partition_context
+            .iter_mut()
+            .skip(mi_row)
+            .take(height_mi)
+        {
+            *context = left;
+        }
+    }
+
+    fn update_ext_partition_context(
+        &mut self,
+        x: usize,
+        y: usize,
+        block_size: BlockSize,
+        partition: Partition,
+    ) -> Result<(), DecoderError> {
+        if block_size.width() < 8 || block_size.height() < 8 {
+            return Ok(());
+        }
+        let split = block_size.split_subsize().ok_or_else(|| {
+            DecoderError::Bitstream(format!(
+                "AV1 partition context split size is missing for {block_size:?}"
+            ))
+        })?;
+        let half = block_size.width() / 2;
+        match partition {
+            Partition::Split if block_size != BlockSize::Block8x8 => {}
+            Partition::Split | Partition::None => {
+                let subsize = partition_subsize(block_size, partition)?;
+                self.update_partition_context(x, y, subsize, block_size);
+            }
+            Partition::Horizontal
+            | Partition::Vertical
+            | Partition::Horizontal4
+            | Partition::Vertical4 => {
+                let subsize = partition_subsize(block_size, partition)?;
+                self.update_partition_context(x, y, subsize, block_size);
+            }
+            Partition::HorizontalA => {
+                let subsize = partition_subsize(block_size, partition)?;
+                self.update_partition_context(x, y, split, subsize);
+                self.update_partition_context(x, y + half, subsize, subsize);
+            }
+            Partition::HorizontalB => {
+                let subsize = partition_subsize(block_size, partition)?;
+                self.update_partition_context(x, y, subsize, subsize);
+                self.update_partition_context(x, y + half, split, subsize);
+            }
+            Partition::VerticalA => {
+                let subsize = partition_subsize(block_size, partition)?;
+                self.update_partition_context(x, y, split, subsize);
+                self.update_partition_context(x + half, y, subsize, subsize);
+            }
+            Partition::VerticalB => {
+                let subsize = partition_subsize(block_size, partition)?;
+                self.update_partition_context(x, y, subsize, subsize);
+                self.update_partition_context(x + half, y, split, subsize);
+            }
+        }
+        Ok(())
     }
 
     pub fn read_first_transform_residual(
@@ -1672,8 +1841,10 @@ fn decode_luma_block_tree(
         *block_budget -= 1;
         return Ok(vec![block]);
     }
-    let partition = decoder.read_partition(tile_plan.tile_id, block_size, x, y)?;
-    match partition.partition {
+    let partition = decoder
+        .read_partition(tile_plan, block_size, x, y)?
+        .partition;
+    let decoded = match partition {
         Partition::None => {
             let block = decode_luma_leaf_block(
                 decoder, sequence, frame, tile_plan, plan, buffers, block_size, x, y,
@@ -1795,35 +1966,16 @@ fn decode_luma_block_tree(
             )
         }
         Partition::VerticalA => {
-            let split_subsize = block_size.split_subsize();
+            let split_subsize = block_size.split_subsize().ok_or_else(|| {
+                DecoderError::Unsupported(format!(
+                    "AV1 vertical-a partition head for {block_size:?} is not supported yet"
+                ))
+            })?;
             let vertical_subsize = block_size.vertical_subsize().ok_or_else(|| {
                 DecoderError::Unsupported(format!(
                     "AV1 vertical-a partition tail for {block_size:?} is not supported yet"
                 ))
             })?;
-            let Some(split_subsize) = split_subsize else {
-                let quarter_width = vertical_subsize.width() / 2;
-                let split_subsize = BlockSize::from_dimensions(quarter_width, block_size.height())
-                    .ok_or_else(|| {
-                        DecoderError::Unsupported(format!(
-                            "AV1 vertical-a partition head for {block_size:?} is not supported yet"
-                        ))
-                    })?;
-                return decode_luma_partition_runs(
-                    decoder,
-                    sequence,
-                    frame,
-                    tile_plan,
-                    plan,
-                    buffers,
-                    &[
-                        (split_subsize, x, y),
-                        (split_subsize, x + quarter_width, y),
-                        (vertical_subsize, x + vertical_subsize.width(), y),
-                    ],
-                    block_budget,
-                );
-            };
             decode_luma_partition_runs(
                 decoder,
                 sequence,
@@ -1913,7 +2065,9 @@ fn decode_luma_block_tree(
                 block_budget,
             )
         }
-    }
+    }?;
+    decoder.update_ext_partition_context(x, y, block_size, partition)?;
+    Ok(decoded)
 }
 
 fn decode_luma_partition_children(
@@ -1982,6 +2136,69 @@ fn decode_luma_partition_runs(
         }
     }
     Ok(blocks)
+}
+
+fn partition_subsize(
+    block_size: BlockSize,
+    partition: Partition,
+) -> Result<BlockSize, DecoderError> {
+    let subsize = match partition {
+        Partition::None => Some(block_size),
+        Partition::Horizontal | Partition::HorizontalA | Partition::HorizontalB => {
+            block_size.horizontal_subsize()
+        }
+        Partition::Vertical | Partition::VerticalA | Partition::VerticalB => {
+            block_size.vertical_subsize()
+        }
+        Partition::Split => block_size.split_subsize(),
+        Partition::Horizontal4 => block_size.horizontal_4_subsize(),
+        Partition::Vertical4 => block_size.vertical_4_subsize(),
+    };
+    subsize.ok_or_else(|| {
+        DecoderError::Bitstream(format!(
+            "AV1 partition {partition:?} has no subsize for {block_size:?}"
+        ))
+    })
+}
+
+fn partition_symbol(partition: Partition) -> usize {
+    match partition {
+        Partition::None => 0,
+        Partition::Horizontal => 1,
+        Partition::Vertical => 2,
+        Partition::Split => 3,
+        Partition::HorizontalA => 4,
+        Partition::HorizontalB => 5,
+        Partition::VerticalA => 6,
+        Partition::VerticalB => 7,
+        Partition::Horizontal4 => 8,
+        Partition::Vertical4 => 9,
+    }
+}
+
+fn partition_plane_context(above: u8, left: u8, block_size: BlockSize) -> usize {
+    let bit = block_size.width_mi_log2().saturating_sub(1);
+    usize::from((above >> bit) & 1) + usize::from((left >> bit) & 1) * 2
+}
+
+fn restricted_partition_cdf(source: &[u16], has_rows: bool) -> [u16; 3] {
+    let symbols = source.len().saturating_sub(1);
+    let alike = if has_rows {
+        [1usize, 3, 4, 5, 6, 8]
+    } else {
+        [2usize, 3, 4, 6, 7, 9]
+    };
+    let alike_probability = alike
+        .into_iter()
+        .filter(|symbol| *symbol < symbols)
+        .map(|symbol| cdf_symbol_probability(source, symbol))
+        .sum::<u16>();
+    [32768u16.saturating_sub(alike_probability), 32768, 0]
+}
+
+fn cdf_symbol_probability(cdf: &[u16], symbol: usize) -> u16 {
+    let lower = if symbol == 0 { 0 } else { cdf[symbol - 1] };
+    cdf[symbol].saturating_sub(lower)
 }
 
 fn first_txb_skip_context(block_size: BlockSize, transform: TransformBlock) -> usize {
@@ -3369,7 +3586,7 @@ mod tests {
     }
 
     #[test]
-    fn decodes_sample_luma_prefix_reports_next_unsupported_after_adst() {
+    fn decodes_all_sample_blocks_without_unsupported_syntax() {
         let data = std::fs::read(
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .parent()
@@ -3408,7 +3625,13 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(prefix.blocks.len(), 140);
+        assert_eq!(prefix.blocks.len(), 2075);
+        assert!(
+            buffers
+                .planes
+                .iter()
+                .all(|plane| { plane.samples.iter().any(|sample| *sample != 0) })
+        );
         assert_eq!(prefix.next_unsupported, None);
     }
 

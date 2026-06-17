@@ -2,7 +2,7 @@
 name = "avif-rust"
 version = "0.0.1"
 edition = "2024"
-description = "Pure Rust AVIF container parser and decoder scaffolding"
+description = "Experimental pure Rust AVIF container and AV1 still-image decoder"
 keywords = ["avif", "av1", "image", "decoder", "codec"]
 categories = ["multimedia::images", "encoding"]
 license = "MIT"

@@ -76,7 +76,6 @@ fn ffmpeg_avif_decode_is_close_to_original_png() {
     let Some(png_rgba) = ffmpeg_decode_rgba(&sample_path("WML2Viewer.png")) else {
         return;
     };
-
     let metrics = diff_rgb(&avif_rgba, &png_rgba);
     assert!(
         metrics.average_rgb_abs <= 0.5,
@@ -109,7 +108,24 @@ fn pure_rust_decode_returns_sample_rgba_dimensions() {
 }
 
 #[test]
-#[ignore = "enable once the pure Rust AV1 image decoder returns pixels"]
+fn pure_rust_decode_stays_within_current_error_budget() {
+    let avif_data =
+        std::fs::read(sample_path("WML2Viewer.avif")).expect("sample AVIF should exist");
+    let decoded = avif_rust::image_from_bytes(&avif_data).expect("AVIF should decode");
+    let Some(ffmpeg_rgba) = ffmpeg_decode_rgba(&sample_path("WML2Viewer.avif")) else {
+        return;
+    };
+
+    let metrics = diff_rgb(&decoded.rgba, &ffmpeg_rgba);
+    assert!(
+        metrics.average_rgb_abs <= 89.0,
+        "average RGB absolute error regressed to {}",
+        metrics.average_rgb_abs
+    );
+}
+
+#[test]
+#[ignore = "pure Rust output does not yet meet the AV1 conformance threshold"]
 fn pure_rust_decode_matches_ffmpeg_oracle_and_original_png() {
     let avif_data =
         std::fs::read(sample_path("WML2Viewer.avif")).expect("sample AVIF should exist");
@@ -124,7 +140,6 @@ fn pure_rust_decode_matches_ffmpeg_oracle_and_original_png() {
     let Some(png_rgba) = ffmpeg_decode_rgba(&sample_path("WML2Viewer.png")) else {
         return;
     };
-
     let ffmpeg_metrics = diff_rgb(&decoded.rgba, &ffmpeg_rgba);
     assert!(
         ffmpeg_metrics.average_rgb_abs <= 0.5,

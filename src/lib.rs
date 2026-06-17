@@ -23,8 +23,8 @@ pub use image::ImageBuffer;
 
 /// Decodes a still AVIF image from memory into an RGBA buffer.
 ///
-/// This API is reserved for the full AV1 image decoder. The container parser is
-/// available through [`parse_info`].
+/// The decoder currently targets 8-bit, full-resolution GBR still images.
+/// Unsupported AV1 tools are reported through [`DecoderError::Unsupported`].
 pub fn image_from_bytes(data: &[u8]) -> Result<ImageBuffer, DecoderError> {
     decoder::decode_bytes(data)
 }

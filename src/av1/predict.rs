@@ -309,13 +309,32 @@ fn predict_smooth(
     height: usize,
     edges: IntraEdges<'_>,
 ) -> Result<Vec<u16>, DecoderError> {
-    let vertical = predict_smooth_vertical(width, height, edges)?;
-    let horizontal = predict_smooth_horizontal(width, height, edges)?;
-    Ok(vertical
-        .iter()
-        .zip(horizontal.iter())
-        .map(|(a, b)| avg2(*a, *b))
-        .collect())
+    let above = edges.above.ok_or_else(|| {
+        DecoderError::Bitstream("AV1 smooth prediction requires above edge".to_string())
+    })?;
+    let left = edges.left.ok_or_else(|| {
+        DecoderError::Bitstream("AV1 smooth prediction requires left edge".to_string())
+    })?;
+    if above.len() < width || left.len() < height {
+        return Err(DecoderError::NotEnoughData(
+            "AV1 smooth edges are shorter than prediction block".to_string(),
+        ));
+    }
+    let weights_x = smooth_weights(width)?;
+    let weights_y = smooth_weights(height)?;
+    let bottom = left[height - 1];
+    let right = above[width - 1];
+    let mut out = Vec::with_capacity(width * height);
+    for y in 0..height {
+        for x in 0..width {
+            let sum = u32::from(weights_y[y]) * u32::from(above[x])
+                + (256 - u32::from(weights_y[y])) * u32::from(bottom)
+                + u32::from(weights_x[x]) * u32::from(left[y])
+                + (256 - u32::from(weights_x[x])) * u32::from(right);
+            out.push(((sum + 256) >> 9) as u16);
+        }
+    }
+    Ok(out)
 }
 
 fn predict_smooth_vertical(
@@ -338,10 +357,11 @@ fn predict_smooth_vertical(
             "AV1 smooth vertical edges are shorter than prediction block".to_string(),
         ));
     }
-    let bottom = left[height.saturating_sub(1).min(left.len() - 1)];
+    let weights = smooth_weights(height)?;
+    let bottom = left[height - 1];
     let mut out = Vec::with_capacity(width * height);
     for y in 0..height {
-        let weight = smooth_weight(y, height);
+        let weight = weights[y];
         for top in above.iter().take(width) {
             out.push(weighted_avg(*top, bottom, weight));
         }
@@ -369,11 +389,12 @@ fn predict_smooth_horizontal(
             "AV1 smooth horizontal edges are shorter than prediction block".to_string(),
         ));
     }
-    let right = above[width.saturating_sub(1).min(above.len() - 1)];
+    let weights = smooth_weights(width)?;
+    let right = above[width - 1];
     let mut out = Vec::with_capacity(width * height);
     for left_value in left.iter().take(height) {
         for x in 0..width {
-            let weight = smooth_weight(x, width);
+            let weight = weights[x];
             out.push(weighted_avg(*left_value, right, weight));
         }
     }
@@ -436,12 +457,29 @@ fn avg2(a: u16, b: u16) -> u16 {
     ((u32::from(a) + u32::from(b) + 1) >> 1) as u16
 }
 
-fn smooth_weight(index: usize, len: usize) -> u16 {
-    if len <= 1 {
-        return 255;
-    }
-    let remaining = len - 1 - index.min(len - 1);
-    ((remaining * 255 + ((len - 1) >> 1)) / (len - 1)) as u16
+const SMOOTH_WEIGHTS: [u16; 124] = [
+    255, 149, 85, 64, 255, 197, 146, 105, 73, 50, 37, 32, 255, 225, 196, 170, 145, 123, 102, 84,
+    68, 54, 43, 33, 26, 20, 17, 16, 255, 240, 225, 210, 196, 182, 169, 157, 145, 133, 122, 111,
+    101, 92, 83, 74, 66, 59, 52, 45, 39, 34, 29, 25, 21, 17, 14, 12, 10, 9, 8, 8, 255, 248, 240,
+    233, 225, 218, 210, 203, 196, 189, 182, 176, 169, 163, 156, 150, 144, 138, 133, 127, 121, 116,
+    111, 106, 101, 96, 91, 86, 82, 77, 73, 69, 65, 61, 57, 54, 50, 47, 44, 41, 38, 35, 32, 29, 27,
+    25, 22, 20, 18, 16, 15, 13, 12, 10, 9, 8, 7, 6, 6, 5, 5, 4, 4, 4,
+];
+
+fn smooth_weights(len: usize) -> Result<&'static [u16], DecoderError> {
+    let offset = match len {
+        4 => 0,
+        8 => 4,
+        16 => 12,
+        32 => 28,
+        64 => 60,
+        _ => {
+            return Err(DecoderError::Unsupported(format!(
+                "AV1 smooth prediction block dimension {len} is not supported"
+            )));
+        }
+    };
+    Ok(&SMOOTH_WEIGHTS[offset..offset + len])
 }
 
 fn weighted_avg(primary: u16, secondary: u16, primary_weight: u16) -> u16 {
@@ -590,18 +628,29 @@ mod tests {
     #[test]
     fn smooth_predictions_blend_toward_far_edges() {
         let edges = IntraEdges {
-            above: Some(&[1, 2, 3]),
-            left: Some(&[4, 5]),
+            above: Some(&[10, 20, 30, 40]),
+            left: Some(&[50, 60, 70, 80]),
             above_left: Some(0),
             bit_depth: 8,
         };
 
-        let smooth = predict_intra(PredictionMode::Smooth, None, 3, 2, edges).unwrap();
+        let smooth = predict_intra(PredictionMode::Smooth, None, 4, 4, edges).unwrap();
         let smooth_horizontal =
-            predict_intra(PredictionMode::SmoothHorizontal, None, 3, 2, edges).unwrap();
+            predict_intra(PredictionMode::SmoothHorizontal, None, 4, 4, edges).unwrap();
 
-        assert_eq!(smooth, vec![3, 3, 3, 5, 5, 4]);
-        assert_eq!(smooth_horizontal, vec![4, 4, 3, 5, 4, 3]);
+        assert_eq!(
+            smooth,
+            vec![
+                30, 33, 37, 41, 50, 48, 49, 51, 63, 59, 57, 57, 71, 64, 60, 60
+            ]
+        );
+        assert_eq!(
+            smooth_horizontal,
+            vec![
+                50, 46, 43, 43, 60, 52, 47, 45, 70, 57, 50, 48, 80, 63, 53, 50
+            ]
+        );
+        assert_eq!(smooth_weights(64).unwrap()[63], 4);
     }
 
     #[test]
