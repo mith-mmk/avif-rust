@@ -118,7 +118,7 @@ fn pure_rust_decode_stays_within_current_error_budget() {
 
     let metrics = diff_rgb(&decoded.rgba, &ffmpeg_rgba);
     assert!(
-        metrics.average_rgb_abs <= 89.0,
+        metrics.average_rgb_abs <= 73.0,
         "average RGB absolute error regressed to {}",
         metrics.average_rgb_abs
     );

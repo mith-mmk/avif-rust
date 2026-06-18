@@ -2,7 +2,9 @@ use super::cdf::CdfContext;
 use super::decode::{FrameBuffers, FrameDecodePlan, PlaneBuffer, TileDecodePlan};
 use super::entropy::EntropyDecoder;
 use super::frame::{FrameHeader, TxMode};
-use super::predict::{IntraEdges, predict_filter_intra, predict_intra};
+use super::predict::{
+    IntraEdges, predict_filter_intra, predict_intra, predict_intra_with_edge_filter,
+};
 use super::quant::{QuantState, dequantize_coefficients};
 use super::reconstruct::{read_intra_edges, write_plane_block};
 use super::sequence::SequenceHeader;
@@ -1660,35 +1662,19 @@ fn decode_plane_block(
         layout.width,
         layout.height,
     );
-    let block_width = block_mode
-        .block_size
-        .width()
-        .min(layout.width.saturating_sub(x));
-    let block_height = block_mode
-        .block_size
-        .height()
-        .min(layout.height.saturating_sub(y));
-    let block_prediction = predict_block(
-        plane,
-        prediction_mode,
-        x,
-        y,
-        block_width,
-        block_height,
-        angle_delta,
-        filter_intra_mode,
-        sequence.color_config.bit_depth,
-    )?;
     if block_mode.skip {
         for transform in &transforms {
-            let prediction = transform_prediction_from_block(
-                &block_prediction,
-                x,
-                y,
-                block_width,
-                *transform,
-                layout.width,
-                layout.height,
+            let prediction = predict_block(
+                plane,
+                prediction_mode,
+                transform.x,
+                transform.y,
+                transform.tx_size.width(),
+                transform.tx_size.height(),
+                angle_delta,
+                filter_intra_mode,
+                sequence.color_config.bit_depth,
+                sequence.enable_intra_edge_filter,
             )?;
             write_plane_block(
                 plane,
@@ -1711,14 +1697,17 @@ fn decode_plane_block(
                 .txb_skip_cdf_mut(transform.tx_size.coeff_cdf_index(), txb_skip_context),
         )?;
         if all_zero_symbol != 0 {
-            let prediction = transform_prediction_from_block(
-                &block_prediction,
-                x,
-                y,
-                block_width,
-                transform,
-                layout.width,
-                layout.height,
+            let prediction = predict_block(
+                plane,
+                prediction_mode,
+                transform.x,
+                transform.y,
+                transform.tx_size.width(),
+                transform.tx_size.height(),
+                angle_delta,
+                filter_intra_mode,
+                sequence.color_config.bit_depth,
+                sequence.enable_intra_edge_filter,
             )?;
             write_plane_block(
                 plane,
@@ -1732,14 +1721,17 @@ fn decode_plane_block(
         }
 
         let decoded_transform = decoder.read_decoded_transform(frame, &block_mode, transform)?;
-        let prediction = transform_prediction_from_block(
-            &block_prediction,
-            x,
-            y,
-            block_width,
-            transform,
-            layout.width,
-            layout.height,
+        let prediction = predict_block(
+            plane,
+            prediction_mode,
+            transform.x,
+            transform.y,
+            transform.tx_size.width(),
+            transform.tx_size.height(),
+            angle_delta,
+            filter_intra_mode,
+            sequence.color_config.bit_depth,
+            sequence.enable_intra_edge_filter,
         )?;
         let quantized = QuantizedTransform {
             block: decoded_transform.transform,
@@ -1769,54 +1761,48 @@ fn predict_block(
     angle_delta: Option<i8>,
     filter_intra_mode: Option<usize>,
     bit_depth: u8,
+    enable_intra_edge_filter: bool,
 ) -> Result<Vec<u16>, DecoderError> {
-    let edges = read_intra_edges(plane, x, y, width, height, bit_depth);
-    let edges = IntraEdges {
-        above: Some(&edges.above),
-        left: Some(&edges.left),
-        above_left: Some(edges.above_left),
-        bit_depth,
+    let mut edges = read_intra_edges(plane, x, y, width, height, bit_depth);
+    let midpoint = 1u16 << (bit_depth - 1);
+    let above_left = match (edges.above_available, edges.left_available) {
+        (true, true) => edges.above_left,
+        (true, false) => edges.above[0],
+        (false, true) => edges.left[0],
+        (false, false) => midpoint,
+    };
+    if !edges.above_available && edges.left_available {
+        edges.above.fill(edges.left[0]);
+    }
+    if !edges.left_available && edges.above_available {
+        edges.left.fill(edges.above[0]);
+    }
+    let edges = if prediction_mode == PredictionMode::Dc && filter_intra_mode.is_none() {
+        IntraEdges {
+            above: edges.above_available.then_some(edges.above.as_slice()),
+            left: edges.left_available.then_some(edges.left.as_slice()),
+            above_left: Some(above_left),
+            bit_depth,
+        }
+    } else {
+        IntraEdges {
+            above: Some(&edges.above),
+            left: Some(&edges.left),
+            above_left: Some(above_left),
+            bit_depth,
+        }
     };
     if let Some(filter_intra_mode) = filter_intra_mode {
         return predict_filter_intra(filter_intra_mode, width, height, edges);
     }
-    predict_intra(prediction_mode, angle_delta, width, height, edges)
-}
-
-fn transform_prediction_from_block(
-    block_prediction: &[u16],
-    block_x: usize,
-    block_y: usize,
-    block_width: usize,
-    transform: TransformBlock,
-    plane_width: usize,
-    plane_height: usize,
-) -> Result<Vec<u16>, DecoderError> {
-    if block_width == 0 {
-        return Err(DecoderError::Bitstream(
-            "AV1 block prediction width is zero".to_string(),
-        ));
-    }
-    let tx_width = transform.tx_size.width();
-    let tx_height = transform.tx_size.height();
-    let offset_x = transform.x.saturating_sub(block_x);
-    let offset_y = transform.y.saturating_sub(block_y);
-    let mut prediction = vec![0; tx_width * tx_height];
-    let clipped_width = tx_width.min(plane_width.saturating_sub(transform.x));
-    let clipped_height = tx_height.min(plane_height.saturating_sub(transform.y));
-    for row in 0..clipped_height {
-        let src_start = (offset_y + row) * block_width + offset_x;
-        let dst_start = row * tx_width;
-        let src_end = src_start + clipped_width;
-        if src_end > block_prediction.len() {
-            return Err(DecoderError::Bitstream(
-                "AV1 transform prediction exceeds block prediction".to_string(),
-            ));
-        }
-        prediction[dst_start..dst_start + clipped_width]
-            .copy_from_slice(&block_prediction[src_start..src_end]);
-    }
-    Ok(prediction)
+    predict_intra_with_edge_filter(
+        prediction_mode,
+        angle_delta,
+        width,
+        height,
+        edges,
+        enable_intra_edge_filter,
+    )
 }
 
 fn decode_luma_block_tree(
@@ -2946,37 +2932,42 @@ mod tests {
     use crate::obu::{ObuType, find_obu_payload};
 
     #[test]
-    fn slices_transform_prediction_from_block_prediction() {
-        let transform = TransformBlock {
+    fn transform_prediction_reads_reconstructed_neighbor() {
+        let layout = super::super::decode::PlaneLayout {
             plane: 0,
-            x: 2,
-            y: 1,
-            tx_size: super::super::syntax::TxSize::Tx4x4,
+            width: 8,
+            height: 4,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 32,
         };
+        let mut samples = vec![0; 32];
+        for (row, value) in [10, 20, 30, 40].into_iter().enumerate() {
+            samples[row * 8 + 3] = value;
+        }
+        let plane = PlaneBuffer { layout, samples };
 
-        let prediction = transform_prediction_from_block(
-            &[
-                1, 2, 3, 4, 5, 6, //
-                7, 8, 9, 10, 11, 12, //
-                13, 14, 15, 16, 17, 18, //
-                19, 20, 21, 22, 23, 24,
-            ],
-            0,
-            0,
-            6,
-            transform,
-            6,
+        let prediction = predict_block(
+            &plane,
+            PredictionMode::Horizontal,
             4,
+            0,
+            4,
+            4,
+            None,
+            None,
+            8,
+            false,
         )
         .unwrap();
 
         assert_eq!(
             prediction,
             vec![
-                9, 10, 11, 12, //
-                15, 16, 17, 18, //
-                21, 22, 23, 24, //
-                0, 0, 0, 0,
+                10, 10, 10, 10, //
+                20, 20, 20, 20, //
+                30, 30, 30, 30, //
+                40, 40, 40, 40,
             ]
         );
     }

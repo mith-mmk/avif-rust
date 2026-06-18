@@ -16,6 +16,17 @@ pub fn predict_intra(
     height: usize,
     edges: IntraEdges<'_>,
 ) -> Result<Vec<u16>, DecoderError> {
+    predict_intra_with_edge_filter(mode, angle_delta, width, height, edges, false)
+}
+
+pub(crate) fn predict_intra_with_edge_filter(
+    mode: PredictionMode,
+    angle_delta: Option<i8>,
+    width: usize,
+    height: usize,
+    edges: IntraEdges<'_>,
+    enable_intra_edge_filter: bool,
+) -> Result<Vec<u16>, DecoderError> {
     match mode {
         PredictionMode::Dc => Ok(predict_dc(width, height, edges)),
         PredictionMode::Vertical => copy_above(width, height, edges),
@@ -25,9 +36,14 @@ pub fn predict_intra(
         | PredictionMode::D113
         | PredictionMode::D135
         | PredictionMode::D157
-        | PredictionMode::D203 => {
-            predict_directional(mode, angle_delta.unwrap_or(0), width, height, edges)
-        }
+        | PredictionMode::D203 => predict_directional(
+            mode,
+            angle_delta.unwrap_or(0),
+            width,
+            height,
+            edges,
+            enable_intra_edge_filter,
+        ),
         PredictionMode::Smooth => predict_smooth(width, height, edges),
         PredictionMode::SmoothVertical => predict_smooth_vertical(width, height, edges),
         PredictionMode::SmoothHorizontal => predict_smooth_horizontal(width, height, edges),
@@ -246,6 +262,7 @@ fn predict_directional(
     width: usize,
     height: usize,
     edges: IntraEdges<'_>,
+    enable_intra_edge_filter: bool,
 ) -> Result<Vec<u16>, DecoderError> {
     let above = edges.above.ok_or_else(|| {
         DecoderError::Bitstream("AV1 directional intra prediction requires above edge".to_string())
@@ -259,50 +276,238 @@ fn predict_directional(
         ));
     }
     let above_left = edges.above_left.unwrap_or(above[0]);
-    let delta = angle_delta.clamp(-3, 3);
-    let mut out = Vec::with_capacity(width * height);
-    for y in 0..height {
-        for x in 0..width {
-            let adjusted_x = shifted_index(x, delta);
-            let adjusted_y = shifted_index(y, delta);
-            let value = match mode {
-                PredictionMode::D45 => edge_sample(above, adjusted_x + y + 1),
-                PredictionMode::D67 => {
-                    let primary = edge_sample(above, adjusted_x + ((y + 1) >> 1));
-                    let secondary = edge_sample(above, adjusted_x + y + 1);
-                    avg2(primary, secondary)
-                }
-                PredictionMode::D113 => {
-                    if adjusted_x + 1 >= y {
-                        edge_sample(above, adjusted_x + 1 - y)
-                    } else {
-                        edge_sample(left, y - adjusted_x - 2)
-                    }
-                }
-                PredictionMode::D135 => {
-                    if adjusted_x == adjusted_y {
-                        above_left
-                    } else if adjusted_x > adjusted_y {
-                        edge_sample(above, adjusted_x - adjusted_y - 1)
-                    } else {
-                        edge_sample(left, adjusted_y - adjusted_x - 1)
-                    }
-                }
-                PredictionMode::D157 => {
-                    if adjusted_y + 1 >= x {
-                        edge_sample(left, adjusted_y + 1 - x)
-                    } else {
-                        edge_sample(above, x - adjusted_y - 2)
-                    }
-                }
-                PredictionMode::D203 => edge_sample(left, x + adjusted_y + 1),
-                _ => unreachable!(),
+    let base_angle = directional_base_angle(mode).ok_or_else(|| {
+        DecoderError::InvalidParam(format!("AV1 mode {mode:?} is not directional"))
+    })?;
+    let angle = base_angle + i32::from(angle_delta.clamp(-3, 3)) * 3;
+    let dx = directional_dx(angle);
+    let dy = directional_dy(angle);
+
+    if angle == 90 {
+        return copy_above(width, height, edges);
+    }
+    if angle == 180 {
+        return copy_left(width, height, edges);
+    }
+
+    let edge_len = width + height;
+    let above = DirectionalEdge::new(
+        above,
+        above_left,
+        edge_len,
+        use_directional_edge_upsample(width, height, angle - 90, enable_intra_edge_filter),
+        edges.bit_depth,
+    );
+    let left = DirectionalEdge::new(
+        left,
+        above_left,
+        edge_len,
+        use_directional_edge_upsample(height, width, angle - 180, enable_intra_edge_filter),
+        edges.bit_depth,
+    );
+
+    if angle < 90 {
+        Ok(predict_directional_zone1(width, height, &above, dx))
+    } else if angle < 180 {
+        Ok(predict_directional_zone2(
+            width, height, &above, &left, dx, dy,
+        ))
+    } else {
+        Ok(predict_directional_zone3(width, height, &left, dy))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DirectionalEdge {
+    samples: Vec<u16>,
+    offset: i32,
+    upsampled: bool,
+}
+
+impl DirectionalEdge {
+    fn new(source: &[u16], corner: u16, len: usize, upsampled: bool, bit_depth: u8) -> Self {
+        let mut edge = source.to_vec();
+        edge.resize(len, *source.last().unwrap_or(&corner));
+        if !upsampled {
+            let mut samples = Vec::with_capacity(edge.len() + 1);
+            samples.push(corner);
+            samples.extend_from_slice(&edge);
+            return Self {
+                samples,
+                offset: 1,
+                upsampled: false,
             };
-            out.push(value);
+        }
+
+        let mut input = Vec::with_capacity(edge.len() + 3);
+        input.extend_from_slice(&[corner, corner]);
+        input.extend_from_slice(&edge);
+        input.push(*edge.last().unwrap_or(&corner));
+        let mut samples = Vec::with_capacity(edge.len() * 2 + 1);
+        samples.push(corner);
+        for index in 0..edge.len() {
+            let interpolated = -i32::from(input[index])
+                + 9 * i32::from(input[index + 1])
+                + 9 * i32::from(input[index + 2])
+                - i32::from(input[index + 3]);
+            samples.push(clip1_signed((interpolated + 8) >> 4, bit_depth));
+            samples.push(edge[index]);
+        }
+        Self {
+            samples,
+            offset: 2,
+            upsampled: true,
         }
     }
-    Ok(out)
+
+    fn sample(&self, index: i32) -> u16 {
+        let position =
+            (index + self.offset).clamp(0, self.samples.len().saturating_sub(1) as i32) as usize;
+        self.samples[position]
+    }
 }
+
+fn use_directional_edge_upsample(
+    first_size: usize,
+    second_size: usize,
+    delta: i32,
+    enabled: bool,
+) -> bool {
+    let distance = delta.abs();
+    enabled && distance != 0 && distance < 40 && first_size + second_size <= 16
+}
+
+fn predict_directional_zone1(
+    width: usize,
+    height: usize,
+    above: &DirectionalEdge,
+    dx: i32,
+) -> Vec<u16> {
+    let upsample = i32::from(above.upsampled);
+    let max_base = ((width + height - 1) as i32) << upsample;
+    let frac_bits = 6 - upsample;
+    let base_increment = 1 << upsample;
+    let mut out = vec![0; width * height];
+    for row in 0..height {
+        let x = (row as i32 + 1) * dx;
+        let mut base = x >> frac_bits;
+        let shift = (((x << upsample) & 0x3f) >> 1) as u32;
+        for column in 0..width {
+            out[row * width + column] = if base < max_base {
+                directional_interpolate(above.sample(base), above.sample(base + 1), shift)
+            } else {
+                above.sample(max_base)
+            };
+            base += base_increment;
+        }
+    }
+    out
+}
+
+fn predict_directional_zone2(
+    width: usize,
+    height: usize,
+    above: &DirectionalEdge,
+    left: &DirectionalEdge,
+    dx: i32,
+    dy: i32,
+) -> Vec<u16> {
+    let mut out = vec![0; width * height];
+    for row in 0..height {
+        for column in 0..width {
+            let x = ((column as i32) << 6) - (row as i32 + 1) * dx;
+            let above_upsample = i32::from(above.upsampled);
+            let base_x = x >> (6 - above_upsample);
+            out[row * width + column] = if base_x >= -(1 << above_upsample) {
+                directional_interpolate(
+                    above.sample(base_x),
+                    above.sample(base_x + 1),
+                    (((x << above_upsample) & 0x3f) >> 1) as u32,
+                )
+            } else {
+                let y = ((row as i32) << 6) - (column as i32 + 1) * dy;
+                let left_upsample = i32::from(left.upsampled);
+                let base_y = y >> (6 - left_upsample);
+                directional_interpolate(
+                    left.sample(base_y),
+                    left.sample(base_y + 1),
+                    (((y << left_upsample) & 0x3f) >> 1) as u32,
+                )
+            };
+        }
+    }
+    out
+}
+
+fn predict_directional_zone3(
+    width: usize,
+    height: usize,
+    left: &DirectionalEdge,
+    dy: i32,
+) -> Vec<u16> {
+    let upsample = i32::from(left.upsampled);
+    let max_base = ((width + height - 1) as i32) << upsample;
+    let frac_bits = 6 - upsample;
+    let base_increment = 1 << upsample;
+    let mut out = vec![0; width * height];
+    for column in 0..width {
+        let y = (column as i32 + 1) * dy;
+        let mut base = y >> frac_bits;
+        let shift = (((y << upsample) & 0x3f) >> 1) as u32;
+        for row in 0..height {
+            out[row * width + column] = if base < max_base {
+                directional_interpolate(left.sample(base), left.sample(base + 1), shift)
+            } else {
+                left.sample(max_base)
+            };
+            base += base_increment;
+        }
+    }
+    out
+}
+
+fn directional_interpolate(first: u16, second: u16, shift: u32) -> u16 {
+    ((u32::from(first) * (32 - shift) + u32::from(second) * shift + 16) >> 5) as u16
+}
+
+fn directional_base_angle(mode: PredictionMode) -> Option<i32> {
+    match mode {
+        PredictionMode::D45 => Some(45),
+        PredictionMode::D67 => Some(67),
+        PredictionMode::D113 => Some(113),
+        PredictionMode::D135 => Some(135),
+        PredictionMode::D157 => Some(157),
+        PredictionMode::D203 => Some(203),
+        _ => None,
+    }
+}
+
+fn directional_dx(angle: i32) -> i32 {
+    if angle < 90 {
+        DIRECTIONAL_DERIVATIVE[angle as usize]
+    } else if angle < 180 {
+        DIRECTIONAL_DERIVATIVE[(180 - angle) as usize]
+    } else {
+        1
+    }
+}
+
+fn directional_dy(angle: i32) -> i32 {
+    if angle > 90 && angle < 180 {
+        DIRECTIONAL_DERIVATIVE[(angle - 90) as usize]
+    } else if angle > 180 {
+        DIRECTIONAL_DERIVATIVE[(270 - angle) as usize]
+    } else {
+        1
+    }
+}
+
+const DIRECTIONAL_DERIVATIVE: [i32; 90] = [
+    0, 0, 0, 1023, 0, 0, 547, 0, 0, 372, 0, 0, 0, 0, 273, 0, 0, 215, 0, 0, 178, 0, 0, 151, 0, 0,
+    132, 0, 0, 116, 0, 0, 102, 0, 0, 0, 90, 0, 0, 80, 0, 0, 71, 0, 0, 64, 0, 0, 57, 0, 0, 51, 0, 0,
+    45, 0, 0, 0, 40, 0, 0, 35, 0, 0, 31, 0, 0, 27, 0, 0, 23, 0, 0, 19, 0, 0, 15, 0, 0, 0, 0, 11, 0,
+    0, 7, 0, 0, 3, 0, 0,
+];
 
 fn predict_smooth(
     width: usize,
@@ -445,18 +650,6 @@ fn edge_sample(edge: &[u16], index: usize) -> u16 {
     edge[index.min(edge.len() - 1)]
 }
 
-fn shifted_index(index: usize, delta: i8) -> usize {
-    if delta >= 0 {
-        index.saturating_add(delta as usize)
-    } else {
-        index.saturating_sub((-delta) as usize)
-    }
-}
-
-fn avg2(a: u16, b: u16) -> u16 {
-    ((u32::from(a) + u32::from(b) + 1) >> 1) as u16
-}
-
 const SMOOTH_WEIGHTS: [u16; 124] = [
     255, 149, 85, 64, 255, 197, 146, 105, 73, 50, 37, 32, 255, 225, 196, 170, 145, 123, 102, 84,
     68, 54, 43, 33, 26, 20, 17, 16, 255, 240, 225, 210, 196, 182, 169, 157, 145, 133, 122, 111,
@@ -594,6 +787,19 @@ mod tests {
 
     #[test]
     fn directional_predictions_follow_diagonal_edges() {
+        let d45 = predict_intra(
+            PredictionMode::D45,
+            None,
+            3,
+            2,
+            IntraEdges {
+                above: Some(&[1, 2, 3]),
+                left: Some(&[4, 5]),
+                above_left: Some(0),
+                bit_depth: 8,
+            },
+        )
+        .unwrap();
         let d113 = predict_intra(
             PredictionMode::D113,
             None,
@@ -621,8 +827,46 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(d113, vec![2, 3, 3, 1, 2, 3]);
-        assert_eq!(d203, vec![5, 5, 5, 5, 5, 5]);
+        assert_eq!(d45, vec![2, 3, 3, 3, 3, 3]);
+        assert_eq!(d113, vec![1, 2, 3, 0, 1, 2]);
+        assert_eq!(d203, vec![4, 5, 5, 5, 5, 5]);
+    }
+
+    #[test]
+    fn directional_angle_delta_uses_three_degree_steps() {
+        let edges = IntraEdges {
+            above: Some(&[0, 100, 0, 200]),
+            left: Some(&[0, 0, 0, 0]),
+            above_left: Some(0),
+            bit_depth: 8,
+        };
+
+        let base = predict_intra(PredictionMode::D45, Some(0), 4, 4, edges).unwrap();
+        let plus_three = predict_intra(PredictionMode::D45, Some(1), 4, 4, edges).unwrap();
+
+        assert_eq!(base[0], 100);
+        assert_eq!(plus_three[0], 88);
+    }
+
+    #[test]
+    fn directional_edge_upsample_matches_aom_four_tap_filter() {
+        let edge = DirectionalEdge::new(&[10, 20, 30, 40], 0, 4, true, 8);
+
+        assert!(edge.upsampled);
+        assert_eq!(edge.sample(-2), 0);
+        assert_eq!(edge.sample(-1), 4);
+        assert_eq!(edge.sample(0), 10);
+        assert_eq!(edge.sample(1), 15);
+        assert_eq!(edge.sample(2), 20);
+        assert_eq!(edge.sample(3), 25);
+    }
+
+    #[test]
+    fn directional_edge_upsample_follows_aom_size_and_angle_limits() {
+        assert!(use_directional_edge_upsample(4, 4, -23, true));
+        assert!(!use_directional_edge_upsample(8, 16, -23, true));
+        assert!(!use_directional_edge_upsample(4, 4, -40, true));
+        assert!(!use_directional_edge_upsample(4, 4, -23, false));
     }
 
     #[test]

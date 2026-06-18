@@ -7,6 +7,8 @@ pub struct OwnedIntraEdges {
     pub above: Vec<u16>,
     pub left: Vec<u16>,
     pub above_left: u16,
+    pub above_available: bool,
+    pub left_available: bool,
 }
 
 pub fn add_residual_to_prediction(
@@ -64,21 +66,24 @@ pub fn read_intra_edges(
     bit_depth: u8,
 ) -> OwnedIntraEdges {
     let mid = 1u16 << (bit_depth - 1);
-    let mut above = Vec::with_capacity(width);
-    let mut left = Vec::with_capacity(height);
+    let above_available = y > 0 && plane.layout.width > 0;
+    let left_available = x > 0 && plane.layout.height > 0;
+    let directional_edge_len = width + height;
+    let mut above = Vec::with_capacity(directional_edge_len);
+    let mut left = Vec::with_capacity(directional_edge_len);
 
-    for dx in 0..width {
-        if y == 0 || plane.layout.width == 0 {
-            above.push(mid);
+    for dx in 0..directional_edge_len {
+        if !above_available {
+            above.push(mid - 1);
         } else {
             let sample_x = (x + dx).min(plane.layout.width - 1);
             above.push(plane.samples[(y - 1) * plane.layout.width + sample_x]);
         }
     }
 
-    for dy in 0..height {
-        if x == 0 || plane.layout.height == 0 {
-            left.push(mid);
+    for dy in 0..directional_edge_len {
+        if !left_available {
+            left.push(mid + 1);
         } else {
             let sample_y = (y + dy).min(plane.layout.height - 1);
             left.push(plane.samples[sample_y * plane.layout.width + x - 1]);
@@ -95,6 +100,8 @@ pub fn read_intra_edges(
         above,
         left,
         above_left,
+        above_available,
+        left_available,
     }
 }
 
@@ -207,7 +214,7 @@ mod tests {
     }
 
     #[test]
-    fn read_intra_edges_uses_reconstructed_neighbors_and_midpoint_at_frame_edge() {
+    fn read_intra_edges_tracks_availability_and_frame_edge_defaults() {
         let layout = PlaneLayout {
             plane: 0,
             width: 4,
@@ -223,15 +230,19 @@ mod tests {
 
         let inner = read_intra_edges(&plane, 1, 2, 2, 2, 8);
 
-        assert_eq!(inner.above, vec![5, 6]);
-        assert_eq!(inner.left, vec![8, 12]);
+        assert_eq!(inner.above, vec![5, 6, 7, 7]);
+        assert_eq!(inner.left, vec![8, 12, 12, 12]);
         assert_eq!(inner.above_left, 4);
+        assert!(inner.above_available);
+        assert!(inner.left_available);
 
         let frame_edge = read_intra_edges(&plane, 0, 0, 2, 2, 8);
 
-        assert_eq!(frame_edge.above, vec![128, 128]);
-        assert_eq!(frame_edge.left, vec![128, 128]);
+        assert_eq!(frame_edge.above, vec![127, 127, 127, 127]);
+        assert_eq!(frame_edge.left, vec![129, 129, 129, 129]);
         assert_eq!(frame_edge.above_left, 128);
+        assert!(!frame_edge.above_available);
+        assert!(!frame_edge.left_available);
     }
 
     #[test]
