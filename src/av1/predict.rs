@@ -16,7 +16,7 @@ pub fn predict_intra(
     height: usize,
     edges: IntraEdges<'_>,
 ) -> Result<Vec<u16>, DecoderError> {
-    predict_intra_with_edge_filter(mode, angle_delta, width, height, edges, false)
+    predict_intra_with_edge_filter(mode, angle_delta, width, height, edges, false, false)
 }
 
 pub(crate) fn predict_intra_with_edge_filter(
@@ -26,6 +26,7 @@ pub(crate) fn predict_intra_with_edge_filter(
     height: usize,
     edges: IntraEdges<'_>,
     enable_intra_edge_filter: bool,
+    smooth_neighbour: bool,
 ) -> Result<Vec<u16>, DecoderError> {
     match mode {
         PredictionMode::Dc => Ok(predict_dc(width, height, edges)),
@@ -43,6 +44,7 @@ pub(crate) fn predict_intra_with_edge_filter(
             height,
             edges,
             enable_intra_edge_filter,
+            smooth_neighbour,
         ),
         PredictionMode::Smooth => predict_smooth(width, height, edges),
         PredictionMode::SmoothVertical => predict_smooth_vertical(width, height, edges),
@@ -263,6 +265,7 @@ fn predict_directional(
     height: usize,
     edges: IntraEdges<'_>,
     enable_intra_edge_filter: bool,
+    smooth_neighbour: bool,
 ) -> Result<Vec<u16>, DecoderError> {
     let above = edges.above.ok_or_else(|| {
         DecoderError::Bitstream("AV1 directional intra prediction requires above edge".to_string())
@@ -275,7 +278,7 @@ fn predict_directional(
             "AV1 directional edges are empty".to_string(),
         ));
     }
-    let above_left = edges.above_left.unwrap_or(above[0]);
+    let mut above_left = edges.above_left.unwrap_or(above[0]);
     let base_angle = directional_base_angle(mode).ok_or_else(|| {
         DecoderError::InvalidParam(format!("AV1 mode {mode:?} is not directional"))
     })?;
@@ -291,18 +294,51 @@ fn predict_directional(
     }
 
     let edge_len = width + height;
+    let mut above = extended_edge(above, above_left, edge_len);
+    let mut left = extended_edge(left, above_left, edge_len);
+    if enable_intra_edge_filter && angle != 90 && angle != 180 {
+        if angle > 90 && angle < 180 && width + height >= 24 {
+            above_left = filter_intra_edge_corner(above_left, above[0], left[0]);
+        }
+        if angle < 180 {
+            filter_intra_edge_with_corner(
+                &mut above,
+                above_left,
+                intra_edge_filter_strength(width, height, angle - 90, smooth_neighbour),
+            );
+        }
+        if angle > 90 {
+            filter_intra_edge_with_corner(
+                &mut left,
+                above_left,
+                intra_edge_filter_strength(height, width, angle - 180, smooth_neighbour),
+            );
+        }
+    }
     let above = DirectionalEdge::new(
-        above,
+        &above,
         above_left,
         edge_len,
-        use_directional_edge_upsample(width, height, angle - 90, enable_intra_edge_filter),
+        use_directional_edge_upsample(
+            width,
+            height,
+            angle - 90,
+            enable_intra_edge_filter,
+            smooth_neighbour,
+        ),
         edges.bit_depth,
     );
     let left = DirectionalEdge::new(
-        left,
+        &left,
         above_left,
         edge_len,
-        use_directional_edge_upsample(height, width, angle - 180, enable_intra_edge_filter),
+        use_directional_edge_upsample(
+            height,
+            width,
+            angle - 180,
+            enable_intra_edge_filter,
+            smooth_neighbour,
+        ),
         edges.bit_depth,
     );
 
@@ -315,6 +351,96 @@ fn predict_directional(
     } else {
         Ok(predict_directional_zone3(width, height, &left, dy))
     }
+}
+
+fn extended_edge(source: &[u16], corner: u16, len: usize) -> Vec<u16> {
+    let mut edge = source.to_vec();
+    edge.resize(len, *source.last().unwrap_or(&corner));
+    edge
+}
+
+fn intra_edge_filter_strength(
+    first_size: usize,
+    second_size: usize,
+    delta: i32,
+    smooth_neighbour: bool,
+) -> usize {
+    let distance = delta.abs();
+    let total_size = first_size + second_size;
+    if smooth_neighbour {
+        if total_size <= 8 {
+            if distance >= 64 {
+                2
+            } else {
+                usize::from(distance >= 40)
+            }
+        } else if total_size <= 16 {
+            if distance >= 48 {
+                2
+            } else {
+                usize::from(distance >= 20)
+            }
+        } else if total_size <= 24 {
+            usize::from(distance >= 4) * 3
+        } else {
+            usize::from(distance >= 1) * 3
+        }
+    } else if total_size <= 8 {
+        usize::from(distance >= 56)
+    } else if total_size <= 16 {
+        usize::from(distance >= 40)
+    } else if total_size <= 24 {
+        if distance >= 32 {
+            3
+        } else if distance >= 16 {
+            2
+        } else {
+            usize::from(distance >= 8)
+        }
+    } else if total_size <= 32 {
+        if distance >= 32 {
+            3
+        } else if distance >= 4 {
+            2
+        } else {
+            usize::from(distance >= 1)
+        }
+    } else {
+        usize::from(distance >= 1) * 3
+    }
+}
+
+fn filter_intra_edge_with_corner(edge: &mut [u16], corner: u16, strength: usize) {
+    if strength == 0 || edge.is_empty() {
+        return;
+    }
+    let mut samples = Vec::with_capacity(edge.len() + 1);
+    samples.push(corner);
+    samples.extend_from_slice(edge);
+    filter_intra_edge(&mut samples, strength);
+    edge.copy_from_slice(&samples[1..]);
+}
+
+fn filter_intra_edge(edge: &mut [u16], strength: usize) {
+    const KERNELS: [[i32; 5]; 3] = [[0, 4, 8, 4, 0], [0, 5, 6, 5, 0], [2, 4, 4, 4, 2]];
+    if strength == 0 || edge.len() < 2 {
+        return;
+    }
+    let source = edge.to_vec();
+    let kernel = &KERNELS[strength.min(KERNELS.len()) - 1];
+    for (index, output) in edge.iter_mut().enumerate().skip(1) {
+        let mut sum = 0i32;
+        for (tap, weight) in kernel.iter().enumerate() {
+            let source_index =
+                (index as isize + tap as isize - 2).clamp(0, source.len() as isize - 1) as usize;
+            sum += i32::from(source[source_index]) * weight;
+        }
+        *output = ((sum + 8) >> 4) as u16;
+    }
+}
+
+fn filter_intra_edge_corner(corner: u16, above: u16, left: u16) -> u16 {
+    ((5 * u32::from(left) + 6 * u32::from(corner) + 5 * u32::from(above) + 8) >> 4) as u16
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -372,9 +498,11 @@ fn use_directional_edge_upsample(
     second_size: usize,
     delta: i32,
     enabled: bool,
+    smooth_neighbour: bool,
 ) -> bool {
     let distance = delta.abs();
-    enabled && distance != 0 && distance < 40 && first_size + second_size <= 16
+    let size_limit = if smooth_neighbour { 8 } else { 16 };
+    enabled && distance != 0 && distance < 40 && first_size + second_size <= size_limit
 }
 
 fn predict_directional_zone1(
@@ -863,10 +991,68 @@ mod tests {
 
     #[test]
     fn directional_edge_upsample_follows_aom_size_and_angle_limits() {
-        assert!(use_directional_edge_upsample(4, 4, -23, true));
-        assert!(!use_directional_edge_upsample(8, 16, -23, true));
-        assert!(!use_directional_edge_upsample(4, 4, -40, true));
-        assert!(!use_directional_edge_upsample(4, 4, -23, false));
+        assert!(use_directional_edge_upsample(4, 4, -23, true, false));
+        assert!(!use_directional_edge_upsample(8, 16, -23, true, false));
+        assert!(!use_directional_edge_upsample(4, 4, -40, true, false));
+        assert!(!use_directional_edge_upsample(4, 4, -23, false, false));
+        assert!(!use_directional_edge_upsample(8, 8, -23, true, true));
+        assert!(use_directional_edge_upsample(4, 4, -23, true, true));
+    }
+
+    #[test]
+    fn directional_zone1_reads_upsampled_half_positions() {
+        let edge = DirectionalEdge::new(&[10, 20, 30, 40, 50, 60, 70, 80], 0, 8, true, 8);
+        let prediction = predict_directional_zone1(4, 2, &edge, 32);
+
+        assert_eq!(prediction, vec![15, 25, 35, 45, 20, 30, 40, 50]);
+    }
+
+    #[test]
+    fn directional_zone2_supports_upsampled_negative_indices() {
+        let above = DirectionalEdge::new(&[10, 20, 30, 40], 4, 4, true, 8);
+        let left = DirectionalEdge::new(&[50, 60, 70, 80], 4, 4, true, 8);
+        let prediction = predict_directional_zone2(2, 2, &above, &left, 64, 64);
+
+        assert_eq!(above.sample(-2), 4);
+        assert_eq!(above.sample(-1), 6);
+        assert_eq!(prediction, vec![4, 10, 50, 4]);
+    }
+
+    #[test]
+    fn directional_zone3_reads_upsampled_half_positions() {
+        let edge = DirectionalEdge::new(&[10, 20, 30, 40, 50, 60, 70, 80], 0, 8, true, 8);
+        let prediction = predict_directional_zone3(2, 4, &edge, 32);
+
+        assert_eq!(prediction, vec![15, 20, 25, 30, 35, 40, 45, 50]);
+    }
+
+    #[test]
+    fn intra_edge_filter_strength_matches_aom_thresholds() {
+        assert_eq!(intra_edge_filter_strength(4, 4, 55, false), 0);
+        assert_eq!(intra_edge_filter_strength(4, 4, 56, false), 1);
+        assert_eq!(intra_edge_filter_strength(16, 8, 8, false), 1);
+        assert_eq!(intra_edge_filter_strength(16, 8, 16, false), 2);
+        assert_eq!(intra_edge_filter_strength(16, 8, 32, false), 3);
+        assert_eq!(intra_edge_filter_strength(4, 4, 39, true), 0);
+        assert_eq!(intra_edge_filter_strength(4, 4, 40, true), 1);
+        assert_eq!(intra_edge_filter_strength(4, 4, 64, true), 2);
+    }
+
+    #[test]
+    fn intra_edge_filter_uses_aom_five_tap_kernels() {
+        let source = [10, 20, 50, 90, 130];
+        let mut strength_one = source;
+        let mut strength_two = source;
+        let mut strength_three = source;
+
+        filter_intra_edge(&mut strength_one, 1);
+        filter_intra_edge(&mut strength_two, 2);
+        filter_intra_edge(&mut strength_three, 3);
+
+        assert_eq!(strength_one, [10, 25, 53, 90, 120]);
+        assert_eq!(strength_two, [10, 26, 53, 90, 118]);
+        assert_eq!(strength_three, [10, 33, 58, 86, 110]);
+        assert_eq!(filter_intra_edge_corner(40, 80, 20), 46);
     }
 
     #[test]

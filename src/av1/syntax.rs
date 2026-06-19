@@ -379,6 +379,13 @@ impl PredictionMode {
         )
     }
 
+    pub fn is_smooth(self) -> bool {
+        matches!(
+            self,
+            Self::Smooth | Self::SmoothVertical | Self::SmoothHorizontal
+        )
+    }
+
     pub fn directional_index(self) -> Option<usize> {
         match self {
             Self::Vertical => Some(0),

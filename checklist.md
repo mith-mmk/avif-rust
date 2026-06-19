@@ -34,7 +34,7 @@ git -c safe.directory=C:/Users/misir/OneDrive/source/wmprojects/wml2/avif -C avi
 
 Current FFmpeg oracle metric for `WML2Viewer.avif`:
 
-- Average RGB absolute error: approximately `72.9483`.
+- Average RGB absolute error: approximately `72.8084`.
 - The active regression ceiling is `73.0` in `avif/tests/ffmpeg_conformance.rs`.
 - The strict conformance test remains ignored because the target is `<= 0.5` average RGB error.
 
@@ -47,10 +47,10 @@ Current FFmpeg oracle metric for `WML2Viewer.avif`:
   - Type-0 condition: angle delta is non-zero, absolute delta is below 40, and the two block dimensions sum to at most 16.
   - Use the AOM four-tap interpolation: `(-a + 9*b + 9*c - d + 8) >> 4`.
   - Support the `p[-2]`, `p[-1]`, `p[0...]` indexing required by directional zones.
-- [ ] Parse or derive the intra-edge filter type used for each plane.
-- [ ] Implement AOM intra-edge filter strength selection and 5-tap kernels.
-- [ ] Implement corner filtering when both edges are needed and the transform dimensions sum to at least 24.
-- [ ] Add unit tests for upsampled zone 1, zone 2 negative indices and zone 3.
+- [x] Derive the intra-edge filter type for each plane from neighbouring luma/UV smooth modes.
+- [x] Implement AOM intra-edge filter strength selection and 5-tap kernels for filter type 0.
+- [x] Implement corner filtering when both edges are needed and the transform dimensions sum to at least 24.
+- [x] Add unit tests for upsampled zone 1, zone 2 negative indices and zone 3.
 - [ ] Re-run the FFmpeg metric and only keep changes that preserve syntax correctness and improve or explain the oracle result.
 
 Relevant AOM reference files:

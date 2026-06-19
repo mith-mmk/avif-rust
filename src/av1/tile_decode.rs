@@ -47,10 +47,12 @@ pub struct BlockModeProbe {
     pub y_mode_symbol: usize,
     pub y_mode: PredictionMode,
     pub angle_delta_y: Option<i8>,
+    pub y_smooth_neighbour: bool,
     pub filter_intra_mode: Option<usize>,
     pub uv_mode_symbol: Option<usize>,
     pub uv_mode: Option<UvPredictionMode>,
     pub angle_delta_uv: Option<i8>,
+    pub uv_smooth_neighbour: bool,
     pub tx_size_context: Option<usize>,
     pub tx_size_symbol: Option<usize>,
     pub tx_size: TxSize,
@@ -151,6 +153,8 @@ pub struct TileDecoder<'a> {
     mi_cols: usize,
     mi_rows: usize,
     y_mode_grid: Vec<Option<usize>>,
+    y_smooth_grid: Vec<Option<bool>>,
+    uv_smooth_grid: Vec<Option<bool>>,
     skip_grid: Vec<Option<bool>>,
     above_partition_context: Vec<u8>,
     left_partition_context: Vec<u8>,
@@ -175,6 +179,8 @@ impl<'a> TileDecoder<'a> {
             mi_cols,
             mi_rows,
             y_mode_grid: vec![None; mi_cols * mi_rows],
+            y_smooth_grid: vec![None; mi_cols * mi_rows],
+            uv_smooth_grid: vec![None; mi_cols * mi_rows],
             skip_grid: vec![None; mi_cols * mi_rows],
             above_partition_context: vec![0; mi_cols],
             left_partition_context: vec![0; mi_rows],
@@ -337,7 +343,16 @@ impl<'a> TileDecoder<'a> {
         } else {
             (None, None, None)
         };
+        let y_smooth_neighbour = self.has_smooth_intra_neighbour(0, x, y);
+        let uv_smooth_neighbour = self.has_smooth_intra_neighbour(1, x, y);
         self.set_y_mode_context(x, y, block_size, intra_mode_context(y_mode));
+        self.set_smooth_context(
+            x,
+            y,
+            block_size,
+            y_mode.is_smooth(),
+            matches!(uv_mode, Some(UvPredictionMode::Intra(mode)) if mode.is_smooth()),
+        );
         self.set_skip_context(x, y, block_size, skip);
         let (tx_size_context, tx_size_symbol, tx_size) =
             self.read_intra_tx_size(frame, block_size, skip, x, y)?;
@@ -354,10 +369,12 @@ impl<'a> TileDecoder<'a> {
             y_mode_symbol,
             y_mode,
             angle_delta_y,
+            y_smooth_neighbour,
             filter_intra_mode,
             uv_mode_symbol,
             uv_mode,
             angle_delta_uv,
+            uv_smooth_neighbour,
             tx_size_context,
             tx_size_symbol,
             tx_size,
@@ -465,15 +482,52 @@ impl<'a> TileDecoder<'a> {
     }
 
     fn set_y_mode_context(&mut self, x: usize, y: usize, block_size: BlockSize, symbol: usize) {
-        let start_col = x >> 2;
-        let start_row = y >> 2;
-        let end_col = ((x + block_size.width()).min(self.mi_cols << 2) + 3) >> 2;
-        let end_row = ((y + block_size.height()).min(self.mi_rows << 2) + 3) >> 2;
-        for mi_row in start_row..end_row.min(self.mi_rows) {
-            for mi_col in start_col..end_col.min(self.mi_cols) {
-                self.y_mode_grid[mi_row * self.mi_cols + mi_col] = Some(symbol);
-            }
-        }
+        fill_mi_grid(
+            &mut self.y_mode_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            symbol,
+        );
+    }
+
+    fn set_smooth_context(
+        &mut self,
+        x: usize,
+        y: usize,
+        block_size: BlockSize,
+        y_smooth: bool,
+        uv_smooth: bool,
+    ) {
+        fill_mi_grid(
+            &mut self.y_smooth_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            y_smooth,
+        );
+        fill_mi_grid(
+            &mut self.uv_smooth_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            uv_smooth,
+        );
+    }
+
+    fn has_smooth_intra_neighbour(&self, plane: usize, x: usize, y: usize) -> bool {
+        let grid = if plane == 0 {
+            &self.y_smooth_grid
+        } else {
+            &self.uv_smooth_grid
+        };
+        has_smooth_neighbour(grid, self.mi_cols, self.mi_rows, x, y)
     }
 
     fn skip_context(&self, x: usize, y: usize) -> usize {
@@ -1573,6 +1627,7 @@ fn decode_luma_leaf_block(
         block_mode.y_mode,
         block_mode.angle_delta_y,
         block_mode.filter_intra_mode,
+        block_mode.y_smooth_neighbour,
         x,
         y,
         quant_state,
@@ -1598,6 +1653,7 @@ fn decode_luma_leaf_block(
             chroma_mode,
             block_mode.angle_delta_uv,
             None,
+            block_mode.uv_smooth_neighbour,
             x,
             y,
             quant_state,
@@ -1613,6 +1669,7 @@ fn decode_luma_leaf_block(
             chroma_mode,
             block_mode.angle_delta_uv,
             None,
+            block_mode.uv_smooth_neighbour,
             x,
             y,
             quant_state,
@@ -1638,6 +1695,7 @@ fn decode_plane_block(
     prediction_mode: PredictionMode,
     angle_delta: Option<i8>,
     filter_intra_mode: Option<usize>,
+    smooth_neighbour: bool,
     x: usize,
     y: usize,
     quant_state: QuantState,
@@ -1675,6 +1733,7 @@ fn decode_plane_block(
                 filter_intra_mode,
                 sequence.color_config.bit_depth,
                 sequence.enable_intra_edge_filter,
+                smooth_neighbour,
             )?;
             write_plane_block(
                 plane,
@@ -1708,6 +1767,7 @@ fn decode_plane_block(
                 filter_intra_mode,
                 sequence.color_config.bit_depth,
                 sequence.enable_intra_edge_filter,
+                smooth_neighbour,
             )?;
             write_plane_block(
                 plane,
@@ -1732,6 +1792,7 @@ fn decode_plane_block(
             filter_intra_mode,
             sequence.color_config.bit_depth,
             sequence.enable_intra_edge_filter,
+            smooth_neighbour,
         )?;
         let quantized = QuantizedTransform {
             block: decoded_transform.transform,
@@ -1762,6 +1823,7 @@ fn predict_block(
     filter_intra_mode: Option<usize>,
     bit_depth: u8,
     enable_intra_edge_filter: bool,
+    smooth_neighbour: bool,
 ) -> Result<Vec<u16>, DecoderError> {
     let mut edges = read_intra_edges(plane, x, y, width, height, bit_depth);
     let midpoint = 1u16 << (bit_depth - 1);
@@ -1802,6 +1864,7 @@ fn predict_block(
         height,
         edges,
         enable_intra_edge_filter,
+        smooth_neighbour,
     )
 }
 
@@ -2206,6 +2269,53 @@ fn intra_mode_context(mode: PredictionMode) -> usize {
         | PredictionMode::SmoothVertical
         | PredictionMode::SmoothHorizontal => 3,
         _ => 4,
+    }
+}
+
+fn smooth_mode_at(
+    grid: &[Option<bool>],
+    mi_cols: usize,
+    mi_rows: usize,
+    mi_col: usize,
+    mi_row: usize,
+) -> bool {
+    if mi_col >= mi_cols || mi_row >= mi_rows {
+        return false;
+    }
+    grid[mi_row * mi_cols + mi_col].unwrap_or(false)
+}
+
+fn has_smooth_neighbour(
+    grid: &[Option<bool>],
+    mi_cols: usize,
+    mi_rows: usize,
+    x: usize,
+    y: usize,
+) -> bool {
+    let mi_col = x >> 2;
+    let mi_row = y >> 2;
+    let above = y >= 4 && smooth_mode_at(grid, mi_cols, mi_rows, mi_col, mi_row - 1);
+    let left = x >= 4 && smooth_mode_at(grid, mi_cols, mi_rows, mi_col - 1, mi_row);
+    above || left
+}
+
+fn fill_mi_grid<T: Copy>(
+    grid: &mut [Option<T>],
+    mi_cols: usize,
+    mi_rows: usize,
+    x: usize,
+    y: usize,
+    block_size: BlockSize,
+    value: T,
+) {
+    let start_col = x >> 2;
+    let start_row = y >> 2;
+    let end_col = ((x + block_size.width()).min(mi_cols << 2) + 3) >> 2;
+    let end_row = ((y + block_size.height()).min(mi_rows << 2) + 3) >> 2;
+    for mi_row in start_row..end_row.min(mi_rows) {
+        for mi_col in start_col..end_col.min(mi_cols) {
+            grid[mi_row * mi_cols + mi_col] = Some(value);
+        }
     }
 }
 
@@ -2932,6 +3042,18 @@ mod tests {
     use crate::obu::{ObuType, find_obu_payload};
 
     #[test]
+    fn smooth_mode_grid_tracks_above_and_left_neighbours() {
+        let mut grid = vec![None; 16];
+        fill_mi_grid(&mut grid, 4, 4, 4, 4, BlockSize::Block8x8, true);
+
+        assert!(has_smooth_neighbour(&grid, 4, 4, 4, 12));
+        assert!(has_smooth_neighbour(&grid, 4, 4, 12, 4));
+        assert!(!has_smooth_neighbour(&grid, 4, 4, 0, 0));
+        assert!(PredictionMode::Smooth.is_smooth());
+        assert!(!PredictionMode::Vertical.is_smooth());
+    }
+
+    #[test]
     fn transform_prediction_reads_reconstructed_neighbor() {
         let layout = super::super::decode::PlaneLayout {
             plane: 0,
@@ -2957,6 +3079,7 @@ mod tests {
             None,
             None,
             8,
+            false,
             false,
         )
         .unwrap();
