@@ -34,8 +34,8 @@ git -c safe.directory=C:/Users/misir/OneDrive/source/wmprojects/wml2/avif -C avi
 
 Current FFmpeg oracle metric for `WML2Viewer.avif`:
 
-- Average RGB absolute error: approximately `72.8084`.
-- The active regression ceiling is `73.0` in `avif/tests/ffmpeg_conformance.rs`.
+- Average RGB absolute error: approximately `71.0573`.
+- The active regression ceiling is `71.1` in `avif/tests/ffmpeg_conformance.rs`.
 - The strict conformance test remains ignored because the target is `<= 0.5` average RGB error.
 
 ## Next tasks, in priority order
@@ -64,7 +64,9 @@ Relevant AOM reference files:
 - [ ] Replace floating-point orthonormal DCT/ADST with AV1 staged integer inverse transforms.
 - [ ] Implement normative stage ranges, cosine constants, half-butterfly rounding and row/column shifts.
 - [ ] Cover `DCT_DCT`, `ADST_DCT`, `DCT_ADST`, `ADST_ADST`, identity, vertical DCT and horizontal DCT.
-- [ ] Verify 4x4 first, then 8x8, 16x16, 32x32 and 64x64.
+- [x] Verify 4x4 DCT, ADST and identity stages against AOM integer rounding.
+- [x] Verify 8x8 DCT, ADST and identity stages against AOM integer rounding.
+- [ ] Verify 16x16, 32x32 and 64x64.
 - [ ] Add known-vector tests derived from the AOM reference implementation.
 - [ ] Avoid accepting output solely because dimensions and alpha are correct; validate pixel values against FFmpeg.
 

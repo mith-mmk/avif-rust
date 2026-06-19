@@ -191,6 +191,12 @@ pub fn inverse_transform(
             "AV1 dequant coefficient count does not match transform size".to_string(),
         ));
     }
+    if tx_size == TxSize::Tx4x4 {
+        return Ok(inverse_transform_4x4(tx_type, dequant, bit_depth));
+    }
+    if tx_size == TxSize::Tx8x8 {
+        return Ok(inverse_transform_8x8(tx_type, dequant, bit_depth));
+    }
     match tx_type {
         TxType::DctDct => inverse_separable_transform(
             tx_size,
@@ -225,6 +231,275 @@ pub fn inverse_transform(
         TxType::HorizontalDct => inverse_horizontal_dct(tx_size, dequant, bit_depth),
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StagedTransform {
+    Dct,
+    Adst,
+    Identity,
+}
+
+fn inverse_transform_4x4(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> Vec<i32> {
+    let (vertical, horizontal) = staged_transform_pair(tx_type);
+    let row_range = if bit_depth == 10 { 18 } else { 16 };
+    let mut intermediate = [0i32; 16];
+    for row in 0..4 {
+        let input =
+            std::array::from_fn(|column| clamp_signed(dequant[row * 4 + column], bit_depth + 8));
+        let output = inverse_staged_4(horizontal, input, row_range);
+        intermediate[row * 4..row * 4 + 4].copy_from_slice(&output);
+    }
+
+    let residual_limit = 1i32 << (bit_depth + 7);
+    let mut output = vec![0i32; 16];
+    for column in 0..4 {
+        let input = std::array::from_fn(|row| clamp_signed(intermediate[row * 4 + column], 16));
+        let transformed = inverse_staged_4(vertical, input, 16);
+        for row in 0..4 {
+            output[row * 4 + column] =
+                round2_signed(transformed[row], 4).clamp(-residual_limit, residual_limit - 1);
+        }
+    }
+    output
+}
+
+fn inverse_staged_4(transform: StagedTransform, input: [i32; 4], range: u8) -> [i32; 4] {
+    match transform {
+        StagedTransform::Dct => inverse_dct4(input, range),
+        StagedTransform::Adst => inverse_adst4(input),
+        StagedTransform::Identity => {
+            input.map(|value| round_shift_i64(i64::from(value) * NEW_SQRT2, NEW_SQRT2_BITS) as i32)
+        }
+    }
+}
+
+fn inverse_transform_8x8(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> Vec<i32> {
+    let (vertical, horizontal) = staged_transform_pair(tx_type);
+    let row_range = if bit_depth == 10 { 18 } else { 16 };
+    let mut intermediate = [0i32; 64];
+    for row in 0..8 {
+        let input =
+            std::array::from_fn(|column| clamp_signed(dequant[row * 8 + column], bit_depth + 8));
+        let transformed = inverse_staged_8(horizontal, input, row_range);
+        for column in 0..8 {
+            intermediate[row * 8 + column] = round2_signed(transformed[column], 1);
+        }
+    }
+
+    let residual_limit = 1i32 << (bit_depth + 7);
+    let mut output = vec![0i32; 64];
+    for column in 0..8 {
+        let input = std::array::from_fn(|row| clamp_signed(intermediate[row * 8 + column], 16));
+        let transformed = inverse_staged_8(vertical, input, 16);
+        for row in 0..8 {
+            output[row * 8 + column] =
+                round2_signed(transformed[row], 4).clamp(-residual_limit, residual_limit - 1);
+        }
+    }
+    output
+}
+
+fn staged_transform_pair(tx_type: TxType) -> (StagedTransform, StagedTransform) {
+    match tx_type {
+        TxType::DctDct => (StagedTransform::Dct, StagedTransform::Dct),
+        TxType::AdstDct => (StagedTransform::Adst, StagedTransform::Dct),
+        TxType::DctAdst => (StagedTransform::Dct, StagedTransform::Adst),
+        TxType::AdstAdst => (StagedTransform::Adst, StagedTransform::Adst),
+        TxType::Identity => (StagedTransform::Identity, StagedTransform::Identity),
+        TxType::VerticalDct => (StagedTransform::Dct, StagedTransform::Identity),
+        TxType::HorizontalDct => (StagedTransform::Identity, StagedTransform::Dct),
+    }
+}
+
+fn inverse_staged_8(transform: StagedTransform, input: [i32; 8], range: u8) -> [i32; 8] {
+    match transform {
+        StagedTransform::Dct => inverse_dct8(input, range),
+        StagedTransform::Adst => inverse_adst8(input, range),
+        StagedTransform::Identity => input.map(|value| value.saturating_mul(2)),
+    }
+}
+
+fn inverse_dct8(input: [i32; 8], range: u8) -> [i32; 8] {
+    const COS_BIT: u8 = 12;
+    let s2 = [
+        input[0],
+        input[4],
+        input[2],
+        input[6],
+        half_btf(cospi(56), input[1], -cospi(8), input[7], COS_BIT),
+        half_btf(cospi(24), input[5], -cospi(40), input[3], COS_BIT),
+        half_btf(cospi(40), input[5], cospi(24), input[3], COS_BIT),
+        half_btf(cospi(8), input[1], cospi(56), input[7], COS_BIT),
+    ];
+    let s3 = [
+        half_btf(cospi(32), s2[0], cospi(32), s2[1], COS_BIT),
+        half_btf(cospi(32), s2[0], -cospi(32), s2[1], COS_BIT),
+        half_btf(cospi(48), s2[2], -cospi(16), s2[3], COS_BIT),
+        half_btf(cospi(16), s2[2], cospi(48), s2[3], COS_BIT),
+        clamp_signed(s2[4] + s2[5], range),
+        clamp_signed(s2[4] - s2[5], range),
+        clamp_signed(-s2[6] + s2[7], range),
+        clamp_signed(s2[6] + s2[7], range),
+    ];
+    let s4 = [
+        clamp_signed(s3[0] + s3[3], range),
+        clamp_signed(s3[1] + s3[2], range),
+        clamp_signed(s3[1] - s3[2], range),
+        clamp_signed(s3[0] - s3[3], range),
+        s3[4],
+        half_btf(-cospi(32), s3[5], cospi(32), s3[6], COS_BIT),
+        half_btf(cospi(32), s3[5], cospi(32), s3[6], COS_BIT),
+        s3[7],
+    ];
+    [
+        clamp_signed(s4[0] + s4[7], range),
+        clamp_signed(s4[1] + s4[6], range),
+        clamp_signed(s4[2] + s4[5], range),
+        clamp_signed(s4[3] + s4[4], range),
+        clamp_signed(s4[3] - s4[4], range),
+        clamp_signed(s4[2] - s4[5], range),
+        clamp_signed(s4[1] - s4[6], range),
+        clamp_signed(s4[0] - s4[7], range),
+    ]
+}
+
+fn inverse_adst8(input: [i32; 8], range: u8) -> [i32; 8] {
+    const COS_BIT: u8 = 12;
+    let r = [
+        input[7], input[0], input[5], input[2], input[3], input[4], input[1], input[6],
+    ];
+    let s2 = [
+        half_btf(cospi(4), r[0], cospi(60), r[1], COS_BIT),
+        half_btf(cospi(60), r[0], -cospi(4), r[1], COS_BIT),
+        half_btf(cospi(20), r[2], cospi(44), r[3], COS_BIT),
+        half_btf(cospi(44), r[2], -cospi(20), r[3], COS_BIT),
+        half_btf(cospi(36), r[4], cospi(28), r[5], COS_BIT),
+        half_btf(cospi(28), r[4], -cospi(36), r[5], COS_BIT),
+        half_btf(cospi(52), r[6], cospi(12), r[7], COS_BIT),
+        half_btf(cospi(12), r[6], -cospi(52), r[7], COS_BIT),
+    ];
+    let s3 = [
+        clamp_signed(s2[0] + s2[4], range),
+        clamp_signed(s2[1] + s2[5], range),
+        clamp_signed(s2[2] + s2[6], range),
+        clamp_signed(s2[3] + s2[7], range),
+        clamp_signed(s2[0] - s2[4], range),
+        clamp_signed(s2[1] - s2[5], range),
+        clamp_signed(s2[2] - s2[6], range),
+        clamp_signed(s2[3] - s2[7], range),
+    ];
+    let s4 = [
+        s3[0],
+        s3[1],
+        s3[2],
+        s3[3],
+        half_btf(cospi(16), s3[4], cospi(48), s3[5], COS_BIT),
+        half_btf(cospi(48), s3[4], -cospi(16), s3[5], COS_BIT),
+        half_btf(-cospi(48), s3[6], cospi(16), s3[7], COS_BIT),
+        half_btf(cospi(16), s3[6], cospi(48), s3[7], COS_BIT),
+    ];
+    let s5 = [
+        clamp_signed(s4[0] + s4[2], range),
+        clamp_signed(s4[1] + s4[3], range),
+        clamp_signed(s4[0] - s4[2], range),
+        clamp_signed(s4[1] - s4[3], range),
+        clamp_signed(s4[4] + s4[6], range),
+        clamp_signed(s4[5] + s4[7], range),
+        clamp_signed(s4[4] - s4[6], range),
+        clamp_signed(s4[5] - s4[7], range),
+    ];
+    let s6 = [
+        s5[0],
+        s5[1],
+        half_btf(cospi(32), s5[2], cospi(32), s5[3], COS_BIT),
+        half_btf(cospi(32), s5[2], -cospi(32), s5[3], COS_BIT),
+        s5[4],
+        s5[5],
+        half_btf(cospi(32), s5[6], cospi(32), s5[7], COS_BIT),
+        half_btf(cospi(32), s5[6], -cospi(32), s5[7], COS_BIT),
+    ];
+    [s6[0], -s6[4], s6[6], -s6[2], s6[3], -s6[7], s6[5], -s6[1]]
+}
+
+fn cospi(index: usize) -> i32 {
+    const VALUES: [i32; 15] = [
+        4076, 4017, 3920, 3784, 3612, 3406, 3166, 2896, 2598, 2276, 1931, 1567, 1189, 799, 401,
+    ];
+    VALUES[index / 4 - 1]
+}
+
+fn inverse_dct4(input: [i32; 4], range: u8) -> [i32; 4] {
+    const COSPI_16: i32 = 3784;
+    const COSPI_32: i32 = 2896;
+    const COSPI_48: i32 = 1567;
+    const COS_BIT: u8 = 12;
+
+    let stage2 = [
+        half_btf(COSPI_32, input[0], COSPI_32, input[2], COS_BIT),
+        half_btf(COSPI_32, input[0], -COSPI_32, input[2], COS_BIT),
+        half_btf(COSPI_48, input[1], -COSPI_16, input[3], COS_BIT),
+        half_btf(COSPI_16, input[1], COSPI_48, input[3], COS_BIT),
+    ];
+    [
+        clamp_signed(stage2[0] + stage2[3], range),
+        clamp_signed(stage2[1] + stage2[2], range),
+        clamp_signed(stage2[1] - stage2[2], range),
+        clamp_signed(stage2[0] - stage2[3], range),
+    ]
+}
+
+fn inverse_adst4(input: [i32; 4]) -> [i32; 4] {
+    const SINPI_1_9: i64 = 1321;
+    const SINPI_2_9: i64 = 2482;
+    const SINPI_3_9: i64 = 3344;
+    const SINPI_4_9: i64 = 3803;
+    const SIN_BIT: u8 = 12;
+
+    if input.iter().all(|value| *value == 0) {
+        return [0; 4];
+    }
+    let x0 = i64::from(input[0]);
+    let x1 = i64::from(input[1]);
+    let x2 = i64::from(input[2]);
+    let x3 = i64::from(input[3]);
+    let mut s0 = SINPI_1_9 * x0 + SINPI_4_9 * x2 + SINPI_2_9 * x3;
+    let mut s1 = SINPI_2_9 * x0 - SINPI_1_9 * x2 - SINPI_4_9 * x3;
+    let s3 = SINPI_3_9 * x1;
+    let s2 = SINPI_3_9 * (x0 - x2 + x3);
+    s0 += s3;
+    s1 += s3;
+    [
+        round_shift_i64(s0, SIN_BIT) as i32,
+        round_shift_i64(s1, SIN_BIT) as i32,
+        round_shift_i64(s2, SIN_BIT) as i32,
+        round_shift_i64(s0 + s1 - 3 * s3, SIN_BIT) as i32,
+    ]
+}
+
+fn half_btf(weight0: i32, input0: i32, weight1: i32, input1: i32, bits: u8) -> i32 {
+    round_shift_i64(
+        i64::from(weight0) * i64::from(input0) + i64::from(weight1) * i64::from(input1),
+        bits,
+    ) as i32
+}
+
+fn clamp_signed(value: i32, bits: u8) -> i32 {
+    let limit = 1i32 << (bits - 1);
+    value.clamp(-limit, limit - 1)
+}
+
+fn round_shift_i64(value: i64, bits: u8) -> i64 {
+    if bits == 0 {
+        value
+    } else if value >= 0 {
+        (value + (1i64 << (bits - 1))) >> bits
+    } else {
+        -((-value + (1i64 << (bits - 1))) >> bits)
+    }
+}
+
+const NEW_SQRT2: i64 = 5793;
+const NEW_SQRT2_BITS: u8 = 12;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Transform1d {
@@ -461,14 +736,38 @@ mod tests {
 
         let residual = inverse_transform(TxType::DctDct, TxSize::Tx4x4, &coeffs, 8).unwrap();
 
-        assert_eq!(residual, vec![4; 16]);
+        assert_eq!(residual, vec![1; 16]);
+    }
+
+    #[test]
+    fn staged_4_point_vectors_match_aom_integer_rounding() {
+        let input = [16, -8, 4, 2];
+
+        assert_eq!(inverse_dct4(input, 16), [7, 3, 13, 21]);
+        assert_eq!(inverse_adst4(input), [4, 0, 11, 23]);
+    }
+
+    #[test]
+    fn staged_8_point_vectors_match_aom_integer_rounding() {
+        assert_eq!(inverse_dct8([32, 0, 0, 0, 0, 0, 0, 0], 16), [23; 8]);
+        assert_eq!(
+            inverse_adst8([32, 0, 0, 0, 0, 0, 0, 0], 16),
+            [3, 9, 16, 21, 25, 28, 31, 32]
+        );
+
+        let mut coefficients = vec![0; TxSize::Tx8x8.sample_count()];
+        coefficients[0] = 32;
+        assert_eq!(
+            inverse_transform(TxType::DctDct, TxSize::Tx8x8, &coefficients, 8).unwrap(),
+            vec![1; 64]
+        );
     }
 
     #[test]
     fn identity_transform_rounds_and_clips() {
         let residual = inverse_transform(TxType::Identity, TxSize::Tx4x4, &[64; 16], 8).unwrap();
 
-        assert_eq!(residual, vec![4; 16]);
+        assert_eq!(residual, vec![8; 16]);
     }
 
     #[test]
@@ -481,7 +780,7 @@ mod tests {
 
         assert_eq!(
             residual,
-            vec![8, 16, 0, 0, 8, 16, 0, 0, 8, 16, 0, 0, 8, 16, 0, 0]
+            vec![1, 2, 0, 0, 1, 2, 0, 0, 1, 2, 0, 0, 1, 2, 0, 0]
         );
     }
 
@@ -495,7 +794,7 @@ mod tests {
 
         assert_eq!(
             residual,
-            vec![8, 8, 8, 8, 16, 16, 16, 16, 0, 0, 0, 0, 0, 0, 0, 0]
+            vec![1, 1, 1, 1, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0]
         );
     }
 
@@ -549,7 +848,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.non_zero_coefficients, 16);
-        assert_eq!(plane.samples, vec![116; 16]);
+        assert_eq!(plane.samples, vec![132; 16]);
     }
 
     #[test]
