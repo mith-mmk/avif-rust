@@ -87,6 +87,8 @@ Likely high-impact file: `avif/src/av1/transform.rs`.
   - The required audit found that filter-intra blocks must select the tx CDF mode through AOM's `[DC,V,H,D157,DC]` mapping; applying this only as part of the complete normative path avoids retaining a mixed entropy model.
   - Completed together: filter-intra tx-CDF mode mapping, normative `av1_ext_tx_inv` subset mapping, directional scan selection, and 1D base/br context wiring. Partial combinations desynchronised entropy state; the complete set reduced average RGB error to `69.4847` and deterministically changed the decoded sample block count from the old non-normative `2075` snapshot to `1997`.
 - [ ] Audit EOB, coefficient-base, base-range, sign and Golomb decoding against the specification.
+  - EOB offset reconstruction, base-range rounds and Golomb coding were checked against AOM `decodetxb.c`.
+  - Added the normative 20-bit coefficient magnitude clamp after Golomb extension; DC-sign neighbour context and transform-size-specific coefficient CDF selection remain to audit.
 - [ ] Audit coefficient contexts for all transform sizes, especially 32x32 and 64x64.
 - [ ] Confirm dequantisation shifts and clipping for each transform size.
 - [ ] Compare decoded coefficient vectors against a reference decoder for small test streams.

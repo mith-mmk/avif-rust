@@ -1537,6 +1537,7 @@ impl<'a> TileDecoder<'a> {
                     first_golomb_value = Some(golomb);
                 }
             }
+            level = clamp_coefficient_level(level);
 
             levels[position] = if sign { -(level as i32) } else { level as i32 };
         }
@@ -2573,6 +2574,11 @@ const BR_CDF_SIZE: usize = 4;
 const COEFF_BR_CDF_ROUNDS: usize = COEFF_BASE_RANGE / (BR_CDF_SIZE - 1);
 const MAX_BASE_BR_RANGE: usize = NUM_BASE_LEVELS + COEFF_BASE_RANGE + 1;
 const BR_LEVEL_CAP: usize = COEFF_BASE_RANGE + NUM_BASE_LEVELS + 1;
+const COEFFICIENT_LEVEL_MASK: usize = (1 << 20) - 1;
+
+fn clamp_coefficient_level(level: usize) -> usize {
+    level & COEFFICIENT_LEVEL_MASK
+}
 const MAG_REF_OFFSET_WITH_TX_CLASS_2D: [(usize, usize); 3] = [(0, 1), (1, 0), (1, 1)];
 const SIG_REF_DIFF_OFFSET_2D: [(usize, usize); 5] = [(0, 1), (1, 0), (1, 1), (0, 2), (2, 0)];
 const COEFF_BASE_CTX_OFFSET_SQUARE: [[[usize; 5]; 5]; 5] = [
@@ -3972,5 +3978,13 @@ mod tests {
             coeff_br_context_1d(tx_size, TxType::HorizontalDct, 8, &quant).unwrap(),
             15
         );
+    }
+
+    #[test]
+    fn coefficient_level_is_clamped_to_av1_twenty_bit_range() {
+        assert_eq!(clamp_coefficient_level(0), 0);
+        assert_eq!(clamp_coefficient_level(COEFFICIENT_LEVEL_MASK), 0x0f_ffff);
+        assert_eq!(clamp_coefficient_level(1 << 20), 0);
+        assert_eq!(clamp_coefficient_level((1 << 20) + 7), 7);
     }
 }
