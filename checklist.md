@@ -67,6 +67,7 @@ Relevant AOM reference files:
 - [x] Verify 4x4 DCT, ADST and identity stages against AOM integer rounding.
 - [x] Verify 8x8 DCT, ADST and identity stages against AOM integer rounding.
 - [ ] Verify 16x16, 32x32 and 64x64.
+  - IDCT16 matches AOM integer vectors in isolation, but enabling it currently regresses the sample metric to `72.6303`; audit 16x16 scan/dequant before enabling it.
 - [ ] Add known-vector tests derived from the AOM reference implementation.
 - [ ] Avoid accepting output solely because dimensions and alpha are correct; validate pixel values against FFmpeg.
 
@@ -75,6 +76,7 @@ Likely high-impact file: `avif/src/av1/transform.rs`.
 ### 3. Audit coefficient decoding and scan order
 
 - [ ] Replace the generic zig-zag scan with AV1 scan tables selected by transform size/type.
+  - AOM mrow/mcol tables are implemented and unit-tested, but enabling them regresses the sample to `72.8957`; audit `ext_tx` symbol-to-type subset mapping before wiring them into coefficient decode.
 - [ ] Audit EOB, coefficient-base, base-range, sign and Golomb decoding against the specification.
 - [ ] Audit coefficient contexts for all transform sizes, especially 32x32 and 64x64.
 - [ ] Confirm dequantisation shifts and clipping for each transform size.

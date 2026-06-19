@@ -107,11 +107,27 @@ pub fn zig_zag_scan(tx_size: TxSize) -> Vec<usize> {
     scan
 }
 
+pub fn coefficient_scan(tx_size: TxSize, tx_type: TxType) -> Vec<usize> {
+    let width = tx_size.width();
+    let scan_width = width.min(32);
+    let scan_height = tx_size.height().min(32);
+    match tx_type {
+        TxType::VerticalDct => (0..scan_width)
+            .flat_map(|column| (0..scan_height).map(move |row| row * width + column))
+            .collect(),
+        TxType::HorizontalDct => (0..scan_height)
+            .flat_map(|row| (0..scan_width).map(move |column| row * width + column))
+            .collect(),
+        _ => zig_zag_scan(tx_size),
+    }
+}
+
 pub fn coefficients_from_scan(
     tx_size: TxSize,
+    tx_type: TxType,
     scanned_coefficients: &[i32],
 ) -> Result<Vec<i32>, DecoderError> {
-    let scan = zig_zag_scan(tx_size);
+    let scan = coefficient_scan(tx_size, tx_type);
     if scanned_coefficients.len() > scan.len() {
         return Err(DecoderError::InvalidParam(
             "AV1 scanned coefficient count exceeds transform size".to_string(),
@@ -428,6 +444,148 @@ fn cospi(index: usize) -> i32 {
     VALUES[index / 4 - 1]
 }
 
+#[cfg(test)]
+fn inverse_transform_16x16(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> Vec<i32> {
+    let (vertical, horizontal) = staged_transform_pair(tx_type);
+    let mut temp = vec![0i32; 256];
+    for row in 0..16 {
+        let input = std::array::from_fn(|x| clamp_signed(dequant[row * 16 + x], bit_depth + 8));
+        let values = inverse_staged_16(horizontal, input, 16);
+        for x in 0..16 {
+            temp[row * 16 + x] = round2_signed(values[x], 2);
+        }
+    }
+    let limit = 1i32 << (bit_depth + 7);
+    let mut out = vec![0i32; 256];
+    for x in 0..16 {
+        let input = std::array::from_fn(|y| clamp_signed(temp[y * 16 + x], 16));
+        let values = inverse_staged_16(vertical, input, 16);
+        for y in 0..16 {
+            out[y * 16 + x] = round2_signed(values[y], 4).clamp(-limit, limit - 1);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+fn inverse_staged_16(transform: StagedTransform, input: [i32; 16], range: u8) -> [i32; 16] {
+    match transform {
+        StagedTransform::Dct => inverse_dct16(input, range),
+        StagedTransform::Identity => {
+            input.map(|v| round_shift_i64(i64::from(v) * NEW_SQRT2 * 2, NEW_SQRT2_BITS) as i32)
+        }
+        StagedTransform::Adst => {
+            unreachable!("16-point ADST is routed through the compatibility path")
+        }
+    }
+}
+
+#[cfg(test)]
+fn inverse_dct16(i: [i32; 16], r: u8) -> [i32; 16] {
+    const B: u8 = 12;
+    let p = [
+        i[0], i[8], i[4], i[12], i[2], i[10], i[6], i[14], i[1], i[9], i[5], i[13], i[3], i[11],
+        i[7], i[15],
+    ];
+    let a = [
+        p[0],
+        p[1],
+        p[2],
+        p[3],
+        p[4],
+        p[5],
+        p[6],
+        p[7],
+        half_btf(cospi(60), p[8], -cospi(4), p[15], B),
+        half_btf(cospi(28), p[9], -cospi(36), p[14], B),
+        half_btf(cospi(44), p[10], -cospi(20), p[13], B),
+        half_btf(cospi(12), p[11], -cospi(52), p[12], B),
+        half_btf(cospi(52), p[11], cospi(12), p[12], B),
+        half_btf(cospi(20), p[10], cospi(44), p[13], B),
+        half_btf(cospi(36), p[9], cospi(28), p[14], B),
+        half_btf(cospi(4), p[8], cospi(60), p[15], B),
+    ];
+    let b = [
+        a[0],
+        a[1],
+        a[2],
+        a[3],
+        half_btf(cospi(56), a[4], -cospi(8), a[7], B),
+        half_btf(cospi(24), a[5], -cospi(40), a[6], B),
+        half_btf(cospi(40), a[5], cospi(24), a[6], B),
+        half_btf(cospi(8), a[4], cospi(56), a[7], B),
+        clamp_signed(a[8] + a[9], r),
+        clamp_signed(a[8] - a[9], r),
+        clamp_signed(-a[10] + a[11], r),
+        clamp_signed(a[10] + a[11], r),
+        clamp_signed(a[12] + a[13], r),
+        clamp_signed(a[12] - a[13], r),
+        clamp_signed(-a[14] + a[15], r),
+        clamp_signed(a[14] + a[15], r),
+    ];
+    let c = [
+        half_btf(cospi(32), b[0], cospi(32), b[1], B),
+        half_btf(cospi(32), b[0], -cospi(32), b[1], B),
+        half_btf(cospi(48), b[2], -cospi(16), b[3], B),
+        half_btf(cospi(16), b[2], cospi(48), b[3], B),
+        clamp_signed(b[4] + b[5], r),
+        clamp_signed(b[4] - b[5], r),
+        clamp_signed(-b[6] + b[7], r),
+        clamp_signed(b[6] + b[7], r),
+        b[8],
+        half_btf(-cospi(16), b[9], cospi(48), b[14], B),
+        half_btf(-cospi(48), b[10], -cospi(16), b[13], B),
+        b[11],
+        b[12],
+        half_btf(-cospi(16), b[10], cospi(48), b[13], B),
+        half_btf(cospi(48), b[9], cospi(16), b[14], B),
+        b[15],
+    ];
+    let d = [
+        clamp_signed(c[0] + c[3], r),
+        clamp_signed(c[1] + c[2], r),
+        clamp_signed(c[1] - c[2], r),
+        clamp_signed(c[0] - c[3], r),
+        c[4],
+        half_btf(-cospi(32), c[5], cospi(32), c[6], B),
+        half_btf(cospi(32), c[5], cospi(32), c[6], B),
+        c[7],
+        clamp_signed(c[8] + c[11], r),
+        clamp_signed(c[9] + c[10], r),
+        clamp_signed(c[9] - c[10], r),
+        clamp_signed(c[8] - c[11], r),
+        clamp_signed(-c[12] + c[15], r),
+        clamp_signed(-c[13] + c[14], r),
+        clamp_signed(c[13] + c[14], r),
+        clamp_signed(c[12] + c[15], r),
+    ];
+    let e = [
+        clamp_signed(d[0] + d[7], r),
+        clamp_signed(d[1] + d[6], r),
+        clamp_signed(d[2] + d[5], r),
+        clamp_signed(d[3] + d[4], r),
+        clamp_signed(d[3] - d[4], r),
+        clamp_signed(d[2] - d[5], r),
+        clamp_signed(d[1] - d[6], r),
+        clamp_signed(d[0] - d[7], r),
+        d[8],
+        d[9],
+        half_btf(-cospi(32), d[10], cospi(32), d[13], B),
+        half_btf(-cospi(32), d[11], cospi(32), d[12], B),
+        half_btf(cospi(32), d[11], cospi(32), d[12], B),
+        half_btf(cospi(32), d[10], cospi(32), d[13], B),
+        d[14],
+        d[15],
+    ];
+    std::array::from_fn(|x| {
+        if x < 8 {
+            clamp_signed(e[x] + e[15 - x], r)
+        } else {
+            clamp_signed(e[15 - x] - e[x], r)
+        }
+    })
+}
+
 fn inverse_dct4(input: [i32; 4], range: u8) -> [i32; 4] {
     const COSPI_16: i32 = 3784;
     const COSPI_32: i32 = 2896;
@@ -721,12 +879,25 @@ mod tests {
 
     #[test]
     fn coefficients_from_scan_places_values_in_raster_slots() {
-        let coefficients = coefficients_from_scan(TxSize::Tx4x4, &[1, 2, 3]).unwrap();
+        let coefficients =
+            coefficients_from_scan(TxSize::Tx4x4, TxType::DctDct, &[1, 2, 3]).unwrap();
 
         assert_eq!(coefficients[0], 1);
         assert_eq!(coefficients[4], 2);
         assert_eq!(coefficients[1], 3);
         assert_eq!(coefficients.iter().filter(|value| **value != 0).count(), 3);
+    }
+
+    #[test]
+    fn directional_dct_scans_match_aom_mrow_and_mcol_orders() {
+        assert_eq!(
+            &coefficient_scan(TxSize::Tx4x4, TxType::VerticalDct)[..8],
+            &[0, 4, 8, 12, 1, 5, 9, 13]
+        );
+        assert_eq!(
+            &coefficient_scan(TxSize::Tx4x4, TxType::HorizontalDct)[..8],
+            &[0, 1, 2, 3, 4, 5, 6, 7]
+        );
     }
 
     #[test]
@@ -760,6 +931,20 @@ mod tests {
         assert_eq!(
             inverse_transform(TxType::DctDct, TxSize::Tx8x8, &coefficients, 8).unwrap(),
             vec![1; 64]
+        );
+    }
+
+    #[test]
+    fn staged_16_point_dct_matches_aom_integer_rounding() {
+        assert_eq!(
+            inverse_dct16([64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 16),
+            [45; 16]
+        );
+        let mut coefficients = vec![0; TxSize::Tx16x16.sample_count()];
+        coefficients[0] = 64;
+        assert_eq!(
+            inverse_transform_16x16(TxType::DctDct, &coefficients, 8),
+            vec![1; 256]
         );
     }
 
