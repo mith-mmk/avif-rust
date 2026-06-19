@@ -2618,6 +2618,58 @@ fn coeff_base_context_2d(
     Ok((context_delta + offset, magnitude))
 }
 
+#[cfg(test)]
+fn coeff_base_context_1d(
+    tx_size: super::syntax::TxSize,
+    tx_type: TxType,
+    position: usize,
+    quant: &[i32],
+) -> Result<(usize, usize), DecoderError> {
+    if quant.len() != tx_size.sample_count() || position >= quant.len() {
+        return Err(DecoderError::InvalidParam(
+            "AV1 1D coeff_base context input is invalid".to_string(),
+        ));
+    }
+    let width = tx_size.width();
+    let height = tx_size.height();
+    let row = position / width;
+    let col = position % width;
+    let offsets: [(usize, usize); 5] = match tx_type {
+        TxType::VerticalDct => [(0, 1), (1, 0), (0, 2), (0, 3), (0, 4)],
+        TxType::HorizontalDct => [(0, 1), (1, 0), (2, 0), (3, 0), (4, 0)],
+        _ => {
+            return Err(DecoderError::InvalidParam(
+                "AV1 1D coeff_base context requires a directional transform".to_string(),
+            ));
+        }
+    };
+    let magnitude = offsets
+        .into_iter()
+        .filter_map(|(dy, dx)| {
+            let y = row + dy;
+            let x = col + dx;
+            (y < height && x < width).then(|| quant[y * width + x].unsigned_abs().min(3) as usize)
+        })
+        .sum::<usize>();
+    if position == 0 {
+        return Ok((0, magnitude));
+    }
+    let delta = ((magnitude + 1) >> 1).min(4);
+    let axis = if tx_type == TxType::HorizontalDct {
+        row
+    } else {
+        col
+    };
+    let offset = if axis == 0 {
+        26
+    } else if axis == 1 {
+        31
+    } else {
+        36
+    };
+    Ok((offset + delta, magnitude))
+}
+
 fn coeff_br_context_2d(
     tx_size: super::syntax::TxSize,
     position: usize,
@@ -2655,6 +2707,52 @@ fn coeff_br_context_2d(
         Ok(magnitude_context + 7)
     } else {
         Ok(magnitude_context + 14)
+    }
+}
+
+#[cfg(test)]
+fn coeff_br_context_1d(
+    tx_size: super::syntax::TxSize,
+    tx_type: TxType,
+    position: usize,
+    quant: &[i32],
+) -> Result<usize, DecoderError> {
+    if quant.len() != tx_size.sample_count() || position >= quant.len() {
+        return Err(DecoderError::InvalidParam(
+            "AV1 1D coeff_br context input is invalid".to_string(),
+        ));
+    }
+    let width = tx_size.width();
+    let height = tx_size.height();
+    let row = position / width;
+    let col = position % width;
+    let offsets = match tx_type {
+        TxType::VerticalDct => [(0, 1), (1, 0), (0, 2)],
+        TxType::HorizontalDct => [(0, 1), (1, 0), (2, 0)],
+        _ => {
+            return Err(DecoderError::InvalidParam(
+                "AV1 1D coeff_br context requires a directional transform".to_string(),
+            ));
+        }
+    };
+    let magnitude = offsets
+        .into_iter()
+        .filter_map(|(dy, dx)| {
+            let y = row + dy;
+            let x = col + dx;
+            (y < height && x < width)
+                .then(|| (quant[y * width + x].unsigned_abs() as usize).min(BR_LEVEL_CAP))
+        })
+        .sum::<usize>();
+    let delta = ((magnitude + 1) >> 1).min(6);
+    if position == 0 {
+        Ok(delta)
+    } else if (tx_type == TxType::HorizontalDct && row == 0)
+        || (tx_type == TxType::VerticalDct && col == 0)
+    {
+        Ok(delta + 7)
+    } else {
+        Ok(delta + 14)
     }
 }
 
@@ -3807,6 +3905,31 @@ mod tests {
         assert_eq!(
             coeff_br_context_2d(super::super::syntax::TxSize::Tx32x32, 4 * 32 + 4, &quant).unwrap(),
             14
+        );
+    }
+
+    #[test]
+    fn directional_coefficient_contexts_follow_aom_1d_axes() {
+        let tx_size = super::super::syntax::TxSize::Tx8x8;
+        let mut quant = vec![0; tx_size.sample_count()];
+        quant[2] = 3;
+        quant[16] = 2;
+
+        assert_eq!(
+            coeff_base_context_1d(tx_size, TxType::VerticalDct, 1, &quant).unwrap(),
+            (33, 3)
+        );
+        assert_eq!(
+            coeff_base_context_1d(tx_size, TxType::HorizontalDct, 0, &quant).unwrap(),
+            (0, 2)
+        );
+        assert_eq!(
+            coeff_br_context_1d(tx_size, TxType::VerticalDct, 0, &quant).unwrap(),
+            2
+        );
+        assert_eq!(
+            coeff_br_context_1d(tx_size, TxType::HorizontalDct, 8, &quant).unwrap(),
+            15
         );
     }
 }

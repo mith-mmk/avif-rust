@@ -78,6 +78,8 @@ Likely high-impact file: `avif/src/av1/transform.rs`.
 
 - [ ] Replace the generic zig-zag scan with AV1 scan tables selected by transform size/type.
   - AOM mrow/mcol tables are implemented and unit-tested, but enabling them regresses the sample to `72.8957`; audit `ext_tx` symbol-to-type subset mapping before wiring them into coefficient decode.
+  - AOM mapping is set1=`IDTX,DCT_DCT,V_DCT,H_DCT,ADST_ADST,ADST_DCT,DCT_ADST`, set2=`IDTX,DCT_DCT,ADST_ADST,ADST_DCT,DCT_ADST`. Applying mapping and scan together regresses to `82.0004`, indicating coefficient context decoding must be fixed first.
+  - AOM 1D base/br context neighbour axes and offsets for `V_DCT`/`H_DCT` are implemented and unit-tested; entropy decode wiring remains.
 - [ ] Audit EOB, coefficient-base, base-range, sign and Golomb decoding against the specification.
 - [ ] Audit coefficient contexts for all transform sizes, especially 32x32 and 64x64.
 - [ ] Confirm dequantisation shifts and clipping for each transform size.
