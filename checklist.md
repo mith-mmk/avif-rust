@@ -52,7 +52,9 @@ Current FFmpeg oracle metric for `WML2Viewer.avif`:
 - [x] Implement AOM intra-edge filter strength selection and 5-tap kernels for filter type 0.
 - [x] Implement corner filtering when both edges are needed and the transform dimensions sum to at least 24.
 - [x] Add unit tests for upsampled zone 1, zone 2 negative indices and zone 3.
-- [ ] Re-run the FFmpeg metric and only keep changes that preserve syntax correctness and improve or explain the oracle result.
+- [x] Re-run the FFmpeg metric and only keep changes that preserve syntax correctness and improve or explain the oracle result.
+  - Tracking reconstructed pixels and extending only through available samples was syntax-correct, but regressed average RGB error from `71.0573` to `87.6718`; the runtime wiring was reverted.
+  - This indicates that directional-edge correctness is currently masked by upstream coefficient/transform errors. Revisit availability after coefficient entropy and scan order are stable.
 
 Relevant AOM reference files:
 
@@ -80,6 +82,9 @@ Likely high-impact file: `avif/src/av1/transform.rs`.
   - AOM mrow/mcol tables are implemented and unit-tested, but enabling them regresses the sample to `72.8957`; audit `ext_tx` symbol-to-type subset mapping before wiring them into coefficient decode.
   - AOM mapping is set1=`IDTX,DCT_DCT,V_DCT,H_DCT,ADST_ADST,ADST_DCT,DCT_ADST`, set2=`IDTX,DCT_DCT,ADST_ADST,ADST_DCT,DCT_ADST`. Applying mapping and scan together regresses to `82.0004`, indicating coefficient context decoding must be fixed first.
   - AOM 1D base/br context neighbour axes and offsets for `V_DCT`/`H_DCT` are implemented and unit-tested; entropy decode wiring remains.
+  - Normative ext-tx mapping alone preserved block traversal but regressed average RGB error to `71.5238`.
+  - Normative mapping plus 1D contexts changed the decoded block count from `2075` to `1347`; adding directional scan changed it to `2338`. All runtime wiring was reverted.
+  - Before retrying the combined wiring, audit the ext-tx CDF/set selection and the coefficient padded-level/raster coordinate layout against AOM `txb_common.h`; do not update the expected block count.
 - [ ] Audit EOB, coefficient-base, base-range, sign and Golomb decoding against the specification.
 - [ ] Audit coefficient contexts for all transform sizes, especially 32x32 and 64x64.
 - [ ] Confirm dequantisation shifts and clipping for each transform size.
