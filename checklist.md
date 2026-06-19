@@ -8,6 +8,7 @@
 - Parent-side integration changes currently exist in `wml2/tests/avif_decode.rs`.
 - The decoder currently targets 8-bit, full-resolution GBR still AVIF images. It is not generally AV1-conformant yet.
 - `samples/WML2Viewer.avif` and `samples/WML2Viewer.png` are the current oracle pair.
+- see also samples `https://github.com/link-u/avif-sample-images`
 
 When Git rejects the nested repository as dubious ownership, use:
 
