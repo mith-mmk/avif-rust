@@ -514,24 +514,24 @@ pub enum TxType {
 impl TxType {
     pub fn from_intra_ext_tx_set1_symbol(symbol: usize) -> Option<Self> {
         match symbol {
-            0 => Some(Self::DctDct),
-            1 => Some(Self::AdstDct),
-            2 => Some(Self::DctAdst),
-            3 => Some(Self::AdstAdst),
-            4 => Some(Self::Identity),
-            5 => Some(Self::VerticalDct),
-            6 => Some(Self::HorizontalDct),
+            0 => Some(Self::Identity),
+            1 => Some(Self::DctDct),
+            2 => Some(Self::VerticalDct),
+            3 => Some(Self::HorizontalDct),
+            4 => Some(Self::AdstAdst),
+            5 => Some(Self::AdstDct),
+            6 => Some(Self::DctAdst),
             _ => None,
         }
     }
 
     pub fn from_intra_ext_tx_set2_symbol(symbol: usize) -> Option<Self> {
         match symbol {
-            0 => Some(Self::DctDct),
-            1 => Some(Self::AdstDct),
-            2 => Some(Self::DctAdst),
-            3 => Some(Self::AdstAdst),
-            4 => Some(Self::Identity),
+            0 => Some(Self::Identity),
+            1 => Some(Self::DctDct),
+            2 => Some(Self::AdstAdst),
+            3 => Some(Self::AdstDct),
+            4 => Some(Self::DctAdst),
             _ => None,
         }
     }
@@ -651,5 +651,26 @@ mod tests {
         assert_eq!(BlockSize::Block32x32.tx_size_from_depth(2), TxSize::Tx8x8);
         assert_eq!(BlockSize::Block64x64.tx_size_category(), 3);
         assert_eq!(BlockSize::Block64x64.tx_size_from_depth(1), TxSize::Tx32x32);
+    }
+
+    #[test]
+    fn intra_ext_tx_symbols_follow_av1_inverse_tables() {
+        assert_eq!(
+            TxType::from_intra_ext_tx_set1_symbol(0),
+            Some(TxType::Identity)
+        );
+        assert_eq!(
+            TxType::from_intra_ext_tx_set1_symbol(2),
+            Some(TxType::VerticalDct)
+        );
+        assert_eq!(
+            TxType::from_intra_ext_tx_set1_symbol(6),
+            Some(TxType::DctAdst)
+        );
+        assert_eq!(
+            TxType::from_intra_ext_tx_set2_symbol(2),
+            Some(TxType::AdstAdst)
+        );
+        assert_eq!(TxType::from_intra_ext_tx_set2_symbol(5), None);
     }
 }

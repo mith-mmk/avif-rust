@@ -35,8 +35,8 @@ git -c safe.directory=C:/Users/misir/OneDrive/source/wmprojects/wml2/avif -C avi
 
 Current FFmpeg oracle metric for `WML2Viewer.avif`:
 
-- Average RGB absolute error: approximately `71.0573`.
-- The active regression ceiling is `71.1` in `avif/tests/ffmpeg_conformance.rs`.
+- Average RGB absolute error: approximately `69.4847`.
+- The active regression ceiling is `69.6` in `avif/tests/ffmpeg_conformance.rs`.
 - The strict conformance test remains ignored because the target is `<= 0.5` average RGB error.
 
 ## Next tasks, in priority order
@@ -78,13 +78,14 @@ Likely high-impact file: `avif/src/av1/transform.rs`.
 
 ### 3. Audit coefficient decoding and scan order
 
-- [ ] Replace the generic zig-zag scan with AV1 scan tables selected by transform size/type.
+- [x] Replace the generic zig-zag scan with AV1 scan tables selected by transform size/type.
   - AOM mrow/mcol tables are implemented and unit-tested, but enabling them regresses the sample to `72.8957`; audit `ext_tx` symbol-to-type subset mapping before wiring them into coefficient decode.
   - AOM mapping is set1=`IDTX,DCT_DCT,V_DCT,H_DCT,ADST_ADST,ADST_DCT,DCT_ADST`, set2=`IDTX,DCT_DCT,ADST_ADST,ADST_DCT,DCT_ADST`. Applying mapping and scan together regresses to `82.0004`, indicating coefficient context decoding must be fixed first.
   - AOM 1D base/br context neighbour axes and offsets for `V_DCT`/`H_DCT` are implemented and unit-tested; entropy decode wiring remains.
   - Normative ext-tx mapping alone preserved block traversal but regressed average RGB error to `71.5238`.
   - Normative mapping plus 1D contexts changed the decoded block count from `2075` to `1347`; adding directional scan changed it to `2338`. All runtime wiring was reverted.
-  - Before retrying the combined wiring, audit the ext-tx CDF/set selection and the coefficient padded-level/raster coordinate layout against AOM `txb_common.h`; do not update the expected block count.
+  - The required audit found that filter-intra blocks must select the tx CDF mode through AOM's `[DC,V,H,D157,DC]` mapping; applying this only as part of the complete normative path avoids retaining a mixed entropy model.
+  - Completed together: filter-intra tx-CDF mode mapping, normative `av1_ext_tx_inv` subset mapping, directional scan selection, and 1D base/br context wiring. Partial combinations desynchronised entropy state; the complete set reduced average RGB error to `69.4847` and deterministically changed the decoded sample block count from the old non-normative `2075` snapshot to `1997`.
 - [ ] Audit EOB, coefficient-base, base-range, sign and Golomb decoding against the specification.
 - [ ] Audit coefficient contexts for all transform sizes, especially 32x32 and 64x64.
 - [ ] Confirm dequantisation shifts and clipping for each transform size.

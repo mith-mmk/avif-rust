@@ -11,8 +11,8 @@ use super::sequence::SequenceHeader;
 use super::syntax::{BlockSize, Partition, PredictionMode, TxSize, TxType, UvPredictionMode};
 use super::tile_group::TileGroup;
 use super::transform::{
-    QuantizedTransform, TransformBlock, inverse_transform, plan_transform_blocks_with_tx_size,
-    reconstruct_transform_block, zig_zag_scan,
+    QuantizedTransform, TransformBlock, coefficient_scan, inverse_transform,
+    plan_transform_blocks_with_tx_size, reconstruct_transform_block,
 };
 use crate::DecoderError;
 
@@ -967,6 +967,7 @@ impl<'a> TileDecoder<'a> {
             let coeff_base_eob_level = coeff_base_eob_symbol + 1;
             let coeff_base_read = self.read_regular_coeff_bases(
                 non_zero_transform.tx_size,
+                tx_type_probe.tx_type,
                 plane_type,
                 eob,
                 coeff_base_eob_level,
@@ -1201,7 +1202,11 @@ impl<'a> TileDecoder<'a> {
                 tx_type: TxType::DctDct,
             });
         }
-        let intra_mode = block_mode.y_mode_symbol;
+        let intra_mode = block_mode
+            .filter_intra_mode
+            .map(filter_intra_mode_to_tx_cdf_mode)
+            .transpose()?
+            .unwrap_or(block_mode.y_mode_symbol);
         let (set, tx_size_context) =
             intra_ext_tx_set_context(frame.reduced_tx_set, transform.tx_size).ok_or_else(|| {
                 DecoderError::Bitstream(format!(
@@ -1283,6 +1288,7 @@ impl<'a> TileDecoder<'a> {
         let coeff_base_eob_level = coeff_base_eob_symbol + 1;
         let coeff_base_read = self.read_regular_coeff_bases(
             transform.tx_size,
+            tx_type,
             plane_type,
             eob,
             coeff_base_eob_level,
@@ -1297,12 +1303,13 @@ impl<'a> TileDecoder<'a> {
     fn read_regular_coeff_bases(
         &mut self,
         tx_size: super::syntax::TxSize,
+        tx_type: TxType,
         plane_type: usize,
         eob: usize,
         eob_level: usize,
     ) -> Result<CoeffBaseRead, DecoderError> {
         let sample_count = tx_size.sample_count();
-        let scan = zig_zag_scan(tx_size);
+        let scan = coefficient_scan(tx_size, tx_type);
         if eob == 0 || eob > scan.len() {
             return Err(DecoderError::Bitstream(format!(
                 "AV1 eob {eob} is invalid for {tx_size:?}"
@@ -1317,6 +1324,7 @@ impl<'a> TileDecoder<'a> {
         let eob_position = scan[eob - 1];
         let eob_level = self.read_coeff_br_range(
             tx_size,
+            tx_type,
             plane_type,
             eob - 1,
             eob_position,
@@ -1360,7 +1368,12 @@ impl<'a> TileDecoder<'a> {
 
         for scan_index in (0..eob - 1).rev() {
             let position = scan[scan_index];
-            let (context, reference_magnitude) = coeff_base_context_2d(tx_size, position, &quant)?;
+            let (context, reference_magnitude) = match tx_type {
+                TxType::VerticalDct | TxType::HorizontalDct => {
+                    coeff_base_context_1d(tx_size, tx_type, position, &quant)?
+                }
+                _ => coeff_base_context_2d(tx_size, position, &quant)?,
+            };
             if context >= 42 {
                 return Err(DecoderError::Unsupported(format!(
                     "AV1 coeff_base decode for Tx32x32 context {context} is not supported yet"
@@ -1371,6 +1384,7 @@ impl<'a> TileDecoder<'a> {
                 .read_symbol(self.cdf.coeff_base_tx32_cdf_mut(plane_type, context))?;
             let level = self.read_coeff_br_range(
                 tx_size,
+                tx_type,
                 plane_type,
                 scan_index,
                 position,
@@ -1420,6 +1434,7 @@ impl<'a> TileDecoder<'a> {
     fn read_coeff_br_range(
         &mut self,
         tx_size: super::syntax::TxSize,
+        tx_type: TxType,
         plane_type: usize,
         scan_index: usize,
         position: usize,
@@ -1435,7 +1450,12 @@ impl<'a> TileDecoder<'a> {
         *base_range_count += 1;
         let mut level = base_level;
         for _ in 0..COEFF_BR_CDF_ROUNDS {
-            let context = coeff_br_context_2d(tx_size, position, quant)?;
+            let context = match tx_type {
+                TxType::VerticalDct | TxType::HorizontalDct => {
+                    coeff_br_context_1d(tx_size, tx_type, position, quant)?
+                }
+                _ => coeff_br_context_2d(tx_size, position, quant)?,
+            };
             let symbol = self
                 .reader
                 .read_symbol(self.cdf.coeff_br_tx32_cdf_mut(plane_type, context))?;
@@ -1567,6 +1587,19 @@ fn intra_ext_tx_set_context(reduced_tx_set: bool, tx_size: TxSize) -> Option<(us
         TxSize::Tx8x8 => Some((if reduced_tx_set { 2 } else { 1 }, 1)),
         TxSize::Tx16x16 => Some((2, 2)),
         TxSize::Tx32x32 | TxSize::Tx64x64 => None,
+    }
+}
+
+fn filter_intra_mode_to_tx_cdf_mode(filter_intra_mode: usize) -> Result<usize, DecoderError> {
+    match filter_intra_mode {
+        0 => Ok(0),
+        1 => Ok(1),
+        2 => Ok(2),
+        3 => Ok(6),
+        4 => Ok(0),
+        _ => Err(DecoderError::Bitstream(format!(
+            "AV1 filter intra mode {filter_intra_mode} is invalid"
+        ))),
     }
 }
 
@@ -2618,7 +2651,6 @@ fn coeff_base_context_2d(
     Ok((context_delta + offset, magnitude))
 }
 
-#[cfg(test)]
 fn coeff_base_context_1d(
     tx_size: super::syntax::TxSize,
     tx_type: TxType,
@@ -2710,7 +2742,6 @@ fn coeff_br_context_2d(
     }
 }
 
-#[cfg(test)]
 fn coeff_br_context_1d(
     tx_size: super::syntax::TxSize,
     tx_type: TxType,
@@ -3837,7 +3868,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(prefix.blocks.len(), 2075);
+        assert_eq!(prefix.blocks.len(), 1997);
         assert!(
             buffers
                 .planes
@@ -3880,6 +3911,16 @@ mod tests {
         assert_eq!(intra_ext_tx_set_context(true, TxSize::Tx4x4), Some((2, 0)));
         assert_eq!(intra_ext_tx_set_context(true, TxSize::Tx8x8), Some((2, 1)));
         assert_eq!(intra_ext_tx_set_context(false, TxSize::Tx32x32), None);
+    }
+
+    #[test]
+    fn filter_intra_mode_selects_normative_tx_cdf_mode() {
+        assert_eq!(filter_intra_mode_to_tx_cdf_mode(0).unwrap(), 0);
+        assert_eq!(filter_intra_mode_to_tx_cdf_mode(1).unwrap(), 1);
+        assert_eq!(filter_intra_mode_to_tx_cdf_mode(2).unwrap(), 2);
+        assert_eq!(filter_intra_mode_to_tx_cdf_mode(3).unwrap(), 6);
+        assert_eq!(filter_intra_mode_to_tx_cdf_mode(4).unwrap(), 0);
+        assert!(filter_intra_mode_to_tx_cdf_mode(5).is_err());
     }
 
     #[test]
