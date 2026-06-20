@@ -65,6 +65,8 @@ This is the current highest-priority implementation block. Entropy components th
 - [x] Verify 8x8 DCT/ADST/identity vectors.
 - [ ] Verify all supported 16x16 transform types.
   - [x] Route 16x16 DCT_DCT through the staged integer transform and verify its AOM rounding vector.
+  - [x] Port AOM's 16-point IADST and route ADST, identity and directional 16x16 types through integer stages.
+  - [x] Add independent AOM vectors for 16-point IADST and identity outputs.
 - [ ] Verify all supported 32x32 transform types.
 - [ ] Verify 64x64 DCT and coded top-left coefficient limits.
 - [ ] Add reference vectors for every enabled transform type/size pair.
@@ -115,6 +117,7 @@ These measurements document incomplete combinations; they are not acceptance cri
 - The previous retained sample path decoded `1997` blocks with average RGB absolute error about `69.4847` against FFmpeg.
 - Integrating size/class-specific EOB CDFs, size-specific coefficient CDFs and complete neighbour txb state atomically produces a deterministic `915`-block traversal and improves average RGB absolute error to about `67.0337`; this is the current retained path.
 - Enabling the AOM-vector-verified 16x16 integer DCT changes the sample average RGB error to about `74.4911`; it remains enabled because the single sample is diagnostic rather than the conformance oracle.
+- Routing all 16x16 transform types through integer DCT/IADST/identity stages changes the diagnostic sample error to about `75.8173`.
 - Normative ext-tx mapping alone produced `71.5238`; mapping plus incomplete 1D contexts changed block traversal to `1347`.
 - Directional scan/context combinations produced `72.8957` and `82.0004` before the complete retained scan/mapping subset was wired.
 - DC-sign neighbour contexts alone changed `1997` blocks to `1976` and produced `77.1615`.

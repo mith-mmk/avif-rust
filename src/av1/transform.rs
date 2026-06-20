@@ -213,7 +213,7 @@ pub fn inverse_transform(
     if tx_size == TxSize::Tx8x8 {
         return Ok(inverse_transform_8x8(tx_type, dequant, bit_depth));
     }
-    if tx_size == TxSize::Tx16x16 && tx_type == TxType::DctDct {
+    if tx_size == TxSize::Tx16x16 {
         return Ok(inverse_transform_16x16(tx_type, dequant, bit_depth));
     }
     match tx_type {
@@ -441,10 +441,14 @@ fn inverse_adst8(input: [i32; 8], range: u8) -> [i32; 8] {
 }
 
 fn cospi(index: usize) -> i32 {
-    const VALUES: [i32; 15] = [
-        4076, 4017, 3920, 3784, 3612, 3406, 3166, 2896, 2598, 2276, 1931, 1567, 1189, 799, 401,
+    const VALUES: [i32; 64] = [
+        4096, 4095, 4091, 4085, 4076, 4065, 4052, 4036, 4017, 3996, 3973, 3948, 3920, 3889, 3857,
+        3822, 3784, 3745, 3703, 3659, 3612, 3564, 3513, 3461, 3406, 3349, 3290, 3229, 3166, 3102,
+        3035, 2967, 2896, 2824, 2751, 2675, 2598, 2520, 2440, 2359, 2276, 2191, 2106, 2019, 1931,
+        1842, 1751, 1660, 1567, 1474, 1380, 1285, 1189, 1092, 995, 897, 799, 700, 601, 501, 401,
+        301, 201, 101,
     ];
-    VALUES[index / 4 - 1]
+    VALUES[index]
 }
 
 fn inverse_transform_16x16(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> Vec<i32> {
@@ -475,10 +479,135 @@ fn inverse_staged_16(transform: StagedTransform, input: [i32; 16], range: u8) ->
         StagedTransform::Identity => {
             input.map(|v| round_shift_i64(i64::from(v) * NEW_SQRT2 * 2, NEW_SQRT2_BITS) as i32)
         }
-        StagedTransform::Adst => {
-            unreachable!("16-point ADST is routed through the compatibility path")
-        }
+        StagedTransform::Adst => inverse_adst16(input, range),
     }
+}
+
+fn inverse_adst16(i: [i32; 16], r: u8) -> [i32; 16] {
+    const B: u8 = 12;
+    let p = [
+        i[15], i[0], i[13], i[2], i[11], i[4], i[9], i[6], i[7], i[8], i[5], i[10], i[3], i[12],
+        i[1], i[14],
+    ];
+    let a = [
+        half_btf(cospi(2), p[0], cospi(62), p[1], B),
+        half_btf(cospi(62), p[0], -cospi(2), p[1], B),
+        half_btf(cospi(10), p[2], cospi(54), p[3], B),
+        half_btf(cospi(54), p[2], -cospi(10), p[3], B),
+        half_btf(cospi(18), p[4], cospi(46), p[5], B),
+        half_btf(cospi(46), p[4], -cospi(18), p[5], B),
+        half_btf(cospi(26), p[6], cospi(38), p[7], B),
+        half_btf(cospi(38), p[6], -cospi(26), p[7], B),
+        half_btf(cospi(34), p[8], cospi(30), p[9], B),
+        half_btf(cospi(30), p[8], -cospi(34), p[9], B),
+        half_btf(cospi(42), p[10], cospi(22), p[11], B),
+        half_btf(cospi(22), p[10], -cospi(42), p[11], B),
+        half_btf(cospi(50), p[12], cospi(14), p[13], B),
+        half_btf(cospi(14), p[12], -cospi(50), p[13], B),
+        half_btf(cospi(58), p[14], cospi(6), p[15], B),
+        half_btf(cospi(6), p[14], -cospi(58), p[15], B),
+    ];
+    let b: [i32; 16] = std::array::from_fn(|x| {
+        if x < 8 {
+            clamp_signed(a[x] + a[x + 8], r)
+        } else {
+            clamp_signed(a[x - 8] - a[x], r)
+        }
+    });
+    let c = [
+        b[0],
+        b[1],
+        b[2],
+        b[3],
+        b[4],
+        b[5],
+        b[6],
+        b[7],
+        half_btf(cospi(8), b[8], cospi(56), b[9], B),
+        half_btf(cospi(56), b[8], -cospi(8), b[9], B),
+        half_btf(cospi(40), b[10], cospi(24), b[11], B),
+        half_btf(cospi(24), b[10], -cospi(40), b[11], B),
+        half_btf(-cospi(56), b[12], cospi(8), b[13], B),
+        half_btf(cospi(8), b[12], cospi(56), b[13], B),
+        half_btf(-cospi(24), b[14], cospi(40), b[15], B),
+        half_btf(cospi(40), b[14], cospi(24), b[15], B),
+    ];
+    let d = [
+        clamp_signed(c[0] + c[4], r),
+        clamp_signed(c[1] + c[5], r),
+        clamp_signed(c[2] + c[6], r),
+        clamp_signed(c[3] + c[7], r),
+        clamp_signed(c[0] - c[4], r),
+        clamp_signed(c[1] - c[5], r),
+        clamp_signed(c[2] - c[6], r),
+        clamp_signed(c[3] - c[7], r),
+        clamp_signed(c[8] + c[12], r),
+        clamp_signed(c[9] + c[13], r),
+        clamp_signed(c[10] + c[14], r),
+        clamp_signed(c[11] + c[15], r),
+        clamp_signed(c[8] - c[12], r),
+        clamp_signed(c[9] - c[13], r),
+        clamp_signed(c[10] - c[14], r),
+        clamp_signed(c[11] - c[15], r),
+    ];
+    let e = [
+        d[0],
+        d[1],
+        d[2],
+        d[3],
+        half_btf(cospi(16), d[4], cospi(48), d[5], B),
+        half_btf(cospi(48), d[4], -cospi(16), d[5], B),
+        half_btf(-cospi(48), d[6], cospi(16), d[7], B),
+        half_btf(cospi(16), d[6], cospi(48), d[7], B),
+        d[8],
+        d[9],
+        d[10],
+        d[11],
+        half_btf(cospi(16), d[12], cospi(48), d[13], B),
+        half_btf(cospi(48), d[12], -cospi(16), d[13], B),
+        half_btf(-cospi(48), d[14], cospi(16), d[15], B),
+        half_btf(cospi(16), d[14], cospi(48), d[15], B),
+    ];
+    let f = [
+        clamp_signed(e[0] + e[2], r),
+        clamp_signed(e[1] + e[3], r),
+        clamp_signed(e[0] - e[2], r),
+        clamp_signed(e[1] - e[3], r),
+        clamp_signed(e[4] + e[6], r),
+        clamp_signed(e[5] + e[7], r),
+        clamp_signed(e[4] - e[6], r),
+        clamp_signed(e[5] - e[7], r),
+        clamp_signed(e[8] + e[10], r),
+        clamp_signed(e[9] + e[11], r),
+        clamp_signed(e[8] - e[10], r),
+        clamp_signed(e[9] - e[11], r),
+        clamp_signed(e[12] + e[14], r),
+        clamp_signed(e[13] + e[15], r),
+        clamp_signed(e[12] - e[14], r),
+        clamp_signed(e[13] - e[15], r),
+    ];
+    let g = [
+        f[0],
+        f[1],
+        half_btf(cospi(32), f[2], cospi(32), f[3], B),
+        half_btf(cospi(32), f[2], -cospi(32), f[3], B),
+        f[4],
+        f[5],
+        half_btf(cospi(32), f[6], cospi(32), f[7], B),
+        half_btf(cospi(32), f[6], -cospi(32), f[7], B),
+        f[8],
+        f[9],
+        half_btf(cospi(32), f[10], cospi(32), f[11], B),
+        half_btf(cospi(32), f[10], -cospi(32), f[11], B),
+        f[12],
+        f[13],
+        half_btf(cospi(32), f[14], cospi(32), f[15], B),
+        half_btf(cospi(32), f[14], -cospi(32), f[15], B),
+    ];
+    [
+        g[0], -g[8], g[12], -g[4], g[6], -g[14], g[10], -g[2], g[3], -g[11], g[15], -g[7], g[5],
+        -g[13], g[9], -g[1],
+    ]
 }
 
 fn inverse_dct16(i: [i32; 16], r: u8) -> [i32; 16] {
@@ -946,6 +1075,62 @@ mod tests {
             inverse_transform(TxType::DctDct, TxSize::Tx16x16, &coefficients, 8).unwrap(),
             vec![1; 256]
         );
+    }
+
+    #[test]
+    fn staged_16_point_iadst_matches_aom_reference_vectors() {
+        assert_eq!(
+            inverse_adst16([64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 20),
+            [
+                3, 10, 15, 22, 27, 33, 37, 43, 47, 52, 54, 58, 60, 62, 63, 64
+            ]
+        );
+        assert_eq!(
+            inverse_adst16([64, -17, 9, 0, 3, -5, 0, 2, -1, 0, 4, -3, 0, 1, -2, 6], 20,),
+            [9, 4, 16, 12, 26, 13, 22, 18, 31, 42, 61, 43, 67, 74, 83, 97]
+        );
+    }
+
+    #[test]
+    fn staged_16_point_identity_matches_aom_reference_vectors() {
+        assert_eq!(
+            inverse_staged_16(
+                StagedTransform::Identity,
+                [64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                20,
+            ),
+            [181, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        );
+        assert_eq!(
+            inverse_staged_16(
+                StagedTransform::Identity,
+                [64, -17, 9, 0, 3, -5, 0, 2, -1, 0, 4, -3, 0, 1, -2, 6],
+                20,
+            ),
+            [181, -48, 25, 0, 8, -14, 0, 6, -3, 0, 11, -8, 0, 3, -6, 17]
+        );
+    }
+
+    #[test]
+    fn tx16_routes_all_supported_types_through_integer_stages() {
+        let mut coefficients = vec![0; TxSize::Tx16x16.sample_count()];
+        coefficients[0] = 64;
+        coefficients[1] = -17;
+        coefficients[16] = 23;
+
+        for tx_type in [
+            TxType::DctDct,
+            TxType::AdstDct,
+            TxType::DctAdst,
+            TxType::AdstAdst,
+            TxType::Identity,
+            TxType::VerticalDct,
+            TxType::HorizontalDct,
+        ] {
+            let residual = inverse_transform(tx_type, TxSize::Tx16x16, &coefficients, 8).unwrap();
+            assert_eq!(residual.len(), 256);
+            assert!(residual.iter().all(|value| value.abs() < (1 << 15)));
+        }
     }
 
     #[test]
