@@ -90,6 +90,7 @@ Likely high-impact file: `avif/src/av1/transform.rs`.
   - EOB offset reconstruction, base-range rounds and Golomb coding were checked against AOM `decodetxb.c`.
   - Added the normative 20-bit coefficient magnitude clamp after Golomb extension; DC-sign neighbour context and transform-size-specific coefficient CDF selection remain to audit.
   - Enabling DC-sign neighbour contexts alone changed the sample block count from `1997` to `1976` and regressed average RGB error to `77.1615`; the runtime wiring was reverted. Implement transform-size-specific coefficient CDFs and full txb contexts before retrying it.
+  - Selecting AOM coefficient CDF tables by transform size alone changed the sample block count from `1997` to `2629` and regressed average RGB error to `70.7998`; the generated tables and runtime wiring were reverted. Integrate this together with the complete txb skip/DC-sign context model rather than as an isolated change.
 - [ ] Audit coefficient contexts for all transform sizes, especially 32x32 and 64x64.
 - [x] Confirm dequantisation shifts and clipping for each transform size.
   - 4x4/8x8/16x16 use no dequant shift, 32x32 divides by 2, and 64x64 divides by 4 before the signed bit-depth clamp.
