@@ -158,4 +158,14 @@ mod tests {
         assert_eq!(dequant[1], -24);
         assert_eq!(dequant[2], (1 << 15) - 1);
     }
+
+    #[test]
+    fn dequantize_applies_large_transform_shift() {
+        let quant = [4, -8];
+        let plane = PlaneQuant { dc: 8, ac: 4 };
+
+        assert_eq!(dequantize_coefficients(&quant, plane, 8, 1), [32, -32]);
+        assert_eq!(dequantize_coefficients(&quant, plane, 8, 2), [16, -16]);
+        assert_eq!(dequantize_coefficients(&quant, plane, 8, 4), [8, -8]);
+    }
 }

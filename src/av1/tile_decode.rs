@@ -2579,6 +2579,7 @@ const COEFFICIENT_LEVEL_MASK: usize = (1 << 20) - 1;
 fn clamp_coefficient_level(level: usize) -> usize {
     level & COEFFICIENT_LEVEL_MASK
 }
+
 const MAG_REF_OFFSET_WITH_TX_CLASS_2D: [(usize, usize); 3] = [(0, 1), (1, 0), (1, 1)];
 const SIG_REF_DIFF_OFFSET_2D: [(usize, usize); 5] = [(0, 1), (1, 0), (1, 1), (0, 2), (2, 0)];
 const COEFF_BASE_CTX_OFFSET_SQUARE: [[[usize; 5]; 5]; 5] = [
