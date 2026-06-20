@@ -1,3 +1,10 @@
+use super::coeff_cdfs::{
+    DEFAULT_COEFF_BASE_CDF, DEFAULT_COEFF_BASE_EOB_CDF, DEFAULT_COEFF_BR_CDF,
+    DEFAULT_EOB_EXTRA_CDF, DEFAULT_EOB_PT_16_CDF, DEFAULT_EOB_PT_32_CDF, DEFAULT_EOB_PT_64_CDF,
+    DEFAULT_EOB_PT_128_CDF, DEFAULT_EOB_PT_256_CDF, DEFAULT_EOB_PT_512_CDF,
+    DEFAULT_EOB_PT_1024_CDF as GENERATED_EOB_PT_1024_CDF,
+};
+
 pub const PARTITION_CONTEXTS: usize = 4;
 pub const SKIP_CONTEXTS: usize = 3;
 pub const INTRA_MODES: usize = 13;
@@ -514,6 +521,7 @@ pub const DEFAULT_TXB_SKIP_CDF: [[[[u16; 3]; TXB_SKIP_CONTEXTS]; TX_SIZE_CONTEXT
     ],
 ];
 
+#[allow(dead_code)] // Superseded by class-aware generated EOB tables; retained until cdf.rs is split.
 pub const DEFAULT_EOB_PT_1024_CDF: [[[u16; 12]; PLANE_TYPES]; COEFF_CDF_Q_CONTEXTS] = [
     [
         [
@@ -549,6 +557,7 @@ pub const DEFAULT_EOB_PT_1024_CDF: [[[u16; 12]; PLANE_TYPES]; COEFF_CDF_Q_CONTEX
     ],
 ];
 
+#[allow(dead_code)] // Superseded by the generated all-size table; retained until cdf.rs is split.
 pub const DEFAULT_EOB_EXTRA_TX32_CDF: [[[[u16; 3]; 9]; PLANE_TYPES]; COEFF_CDF_Q_CONTEXTS] = [
     [
         [
@@ -648,6 +657,7 @@ pub const DEFAULT_EOB_EXTRA_TX32_CDF: [[[[u16; 3]; 9]; PLANE_TYPES]; COEFF_CDF_Q
     ],
 ];
 
+#[allow(dead_code)] // Superseded by the generated all-size table; retained until cdf.rs is split.
 pub const DEFAULT_COEFF_BASE_EOB_TX32_CDF: [[[[u16; 4]; 4]; PLANE_TYPES]; COEFF_CDF_Q_CONTEXTS] = [
     [
         [
@@ -707,6 +717,7 @@ pub const DEFAULT_COEFF_BASE_EOB_TX32_CDF: [[[[u16; 4]; 4]; PLANE_TYPES]; COEFF_
     ],
 ];
 
+#[allow(dead_code)] // Superseded by the generated all-size table; retained until cdf.rs is split.
 pub const DEFAULT_COEFF_BASE_TX32_CDF: [[[[u16; 5]; 42]; PLANE_TYPES]; COEFF_CDF_Q_CONTEXTS] = [
     [
         [
@@ -1070,6 +1081,7 @@ pub const DEFAULT_COEFF_BASE_TX32_CDF: [[[[u16; 5]; 42]; PLANE_TYPES]; COEFF_CDF
     ],
 ];
 
+#[allow(dead_code)] // Superseded by the generated all-size table; retained until cdf.rs is split.
 pub const DEFAULT_COEFF_BR_TX32_CDF: [[[[u16; 5]; COEFF_BR_CONTEXTS]; PLANE_TYPES];
     COEFF_CDF_Q_CONTEXTS] = [
     [
@@ -1480,11 +1492,17 @@ pub struct CdfContext {
     pub tx_size_cat2: [[u16; 4]; TX_SIZE_SIGNAL_CONTEXTS],
     pub tx_size_cat3: [[u16; 4]; TX_SIZE_SIGNAL_CONTEXTS],
     pub txb_skip: [[[u16; 3]; TXB_SKIP_CONTEXTS]; TX_SIZE_CONTEXTS],
-    pub eob_pt_1024: [[u16; 12]; PLANE_TYPES],
-    pub eob_extra_tx32: [[[u16; 3]; 9]; PLANE_TYPES],
-    pub coeff_base_eob_tx32: [[[u16; 4]; 4]; PLANE_TYPES],
-    pub coeff_base_tx32: [[[u16; 5]; 42]; PLANE_TYPES],
-    pub coeff_br_tx32: [[[u16; 5]; COEFF_BR_CONTEXTS]; PLANE_TYPES],
+    pub eob_pt_16: [[[u16; 6]; 2]; PLANE_TYPES],
+    pub eob_pt_32: [[[u16; 7]; 2]; PLANE_TYPES],
+    pub eob_pt_64: [[[u16; 8]; 2]; PLANE_TYPES],
+    pub eob_pt_128: [[[u16; 9]; 2]; PLANE_TYPES],
+    pub eob_pt_256: [[[u16; 10]; 2]; PLANE_TYPES],
+    pub eob_pt_512: [[[u16; 11]; 2]; PLANE_TYPES],
+    pub eob_pt_1024: [[[u16; 12]; 2]; PLANE_TYPES],
+    pub eob_extra: [[[[u16; 3]; 9]; PLANE_TYPES]; TX_SIZE_CONTEXTS],
+    pub coeff_base_eob: [[[[u16; 4]; 4]; PLANE_TYPES]; TX_SIZE_CONTEXTS],
+    pub coeff_base: [[[[u16; 5]; 42]; PLANE_TYPES]; TX_SIZE_CONTEXTS],
+    pub coeff_br: [[[[u16; 5]; COEFF_BR_CONTEXTS]; PLANE_TYPES]; TX_SIZE_CONTEXTS],
     pub dc_sign: [[[u16; 3]; DC_SIGN_CONTEXTS]; PLANE_TYPES],
     pub intra_ext_tx_set1: [[[u16; INTRA_EXT_TX_TYPES_SET1 + 1]; INTRA_MODES]; 2],
     pub intra_ext_tx_set1_staging: [[u16; INTRA_EXT_TX_TYPES_SET1 + 1]; INTRA_MODES],
@@ -1518,11 +1536,17 @@ impl CdfContext {
             tx_size_cat2: DEFAULT_TX_SIZE_CAT2_CDF,
             tx_size_cat3: DEFAULT_TX_SIZE_CAT3_CDF,
             txb_skip: DEFAULT_TXB_SKIP_CDF[coeff_q_context],
-            eob_pt_1024: DEFAULT_EOB_PT_1024_CDF[coeff_q_context],
-            eob_extra_tx32: DEFAULT_EOB_EXTRA_TX32_CDF[coeff_q_context],
-            coeff_base_eob_tx32: DEFAULT_COEFF_BASE_EOB_TX32_CDF[coeff_q_context],
-            coeff_base_tx32: DEFAULT_COEFF_BASE_TX32_CDF[coeff_q_context],
-            coeff_br_tx32: DEFAULT_COEFF_BR_TX32_CDF[coeff_q_context],
+            eob_pt_16: DEFAULT_EOB_PT_16_CDF[coeff_q_context],
+            eob_pt_32: DEFAULT_EOB_PT_32_CDF[coeff_q_context],
+            eob_pt_64: DEFAULT_EOB_PT_64_CDF[coeff_q_context],
+            eob_pt_128: DEFAULT_EOB_PT_128_CDF[coeff_q_context],
+            eob_pt_256: DEFAULT_EOB_PT_256_CDF[coeff_q_context],
+            eob_pt_512: DEFAULT_EOB_PT_512_CDF[coeff_q_context],
+            eob_pt_1024: GENERATED_EOB_PT_1024_CDF[coeff_q_context],
+            eob_extra: DEFAULT_EOB_EXTRA_CDF[coeff_q_context],
+            coeff_base_eob: DEFAULT_COEFF_BASE_EOB_CDF[coeff_q_context],
+            coeff_base: DEFAULT_COEFF_BASE_CDF[coeff_q_context],
+            coeff_br: DEFAULT_COEFF_BR_CDF[coeff_q_context],
             dc_sign: DEFAULT_DC_SIGN_CDF[coeff_q_context],
             intra_ext_tx_set1: DEFAULT_INTRA_EXT_TX_SET1_CDF,
             intra_ext_tx_set1_staging: DEFAULT_INTRA_EXT_TX_SET1_STAGING_CDF,
@@ -1587,24 +1611,57 @@ impl CdfContext {
         &mut self.txb_skip[tx_size_context][context]
     }
 
-    pub fn eob_pt_1024_cdf_mut(&mut self, plane_type: usize) -> &mut [u16] {
-        &mut self.eob_pt_1024[plane_type]
+    pub fn eob_pt_cdf_mut(
+        &mut self,
+        eob_multisize: usize,
+        plane_type: usize,
+        tx_class_context: usize,
+    ) -> &mut [u16] {
+        match eob_multisize {
+            0 => &mut self.eob_pt_16[plane_type][tx_class_context],
+            1 => &mut self.eob_pt_32[plane_type][tx_class_context],
+            2 => &mut self.eob_pt_64[plane_type][tx_class_context],
+            3 => &mut self.eob_pt_128[plane_type][tx_class_context],
+            4 => &mut self.eob_pt_256[plane_type][tx_class_context],
+            5 => &mut self.eob_pt_512[plane_type][tx_class_context],
+            _ => &mut self.eob_pt_1024[plane_type][tx_class_context],
+        }
     }
 
-    pub fn eob_extra_tx32_cdf_mut(&mut self, plane_type: usize, context: usize) -> &mut [u16] {
-        &mut self.eob_extra_tx32[plane_type][context]
+    pub fn eob_extra_cdf_mut(
+        &mut self,
+        tx_size_context: usize,
+        plane_type: usize,
+        context: usize,
+    ) -> &mut [u16] {
+        &mut self.eob_extra[tx_size_context][plane_type][context]
     }
 
-    pub fn coeff_base_eob_tx32_cdf_mut(&mut self, plane_type: usize, context: usize) -> &mut [u16] {
-        &mut self.coeff_base_eob_tx32[plane_type][context]
+    pub fn coeff_base_eob_cdf_mut(
+        &mut self,
+        tx_size_context: usize,
+        plane_type: usize,
+        context: usize,
+    ) -> &mut [u16] {
+        &mut self.coeff_base_eob[tx_size_context][plane_type][context]
     }
 
-    pub fn coeff_base_tx32_cdf_mut(&mut self, plane_type: usize, context: usize) -> &mut [u16] {
-        &mut self.coeff_base_tx32[plane_type][context]
+    pub fn coeff_base_cdf_mut(
+        &mut self,
+        tx_size_context: usize,
+        plane_type: usize,
+        context: usize,
+    ) -> &mut [u16] {
+        &mut self.coeff_base[tx_size_context][plane_type][context]
     }
 
-    pub fn coeff_br_tx32_cdf_mut(&mut self, plane_type: usize, context: usize) -> &mut [u16] {
-        &mut self.coeff_br_tx32[plane_type][context]
+    pub fn coeff_br_cdf_mut(
+        &mut self,
+        tx_size_context: usize,
+        plane_type: usize,
+        context: usize,
+    ) -> &mut [u16] {
+        &mut self.coeff_br[tx_size_context.min(3)][plane_type][context]
     }
 
     pub fn dc_sign_cdf_mut(&mut self, plane_type: usize, context: usize) -> &mut [u16] {
@@ -1665,16 +1722,16 @@ mod tests {
         assert_eq!(context.angle_delta[0][6], 32768);
         assert_eq!(context.txb_skip[0][0][1], 32768);
         assert_eq!(context.txb_skip[4][12][1], 32768);
-        assert_eq!(context.eob_pt_1024[0][10], 32768);
-        assert_eq!(context.eob_pt_1024[1][10], 32768);
-        assert_eq!(context.eob_extra_tx32[0][0][1], 32768);
-        assert_eq!(context.eob_extra_tx32[1][8][1], 32768);
-        assert_eq!(context.coeff_base_eob_tx32[0][0][2], 32768);
-        assert_eq!(context.coeff_base_eob_tx32[1][3][2], 32768);
-        assert_eq!(context.coeff_base_tx32[0][22][3], 32768);
-        assert_eq!(context.coeff_base_tx32[1][22][3], 32768);
-        assert_eq!(context.coeff_br_tx32[0][0][3], 32768);
-        assert_eq!(context.coeff_br_tx32[1][20][3], 32768);
+        assert_eq!(context.eob_pt_16[0][0][4], 32768);
+        assert_eq!(context.eob_pt_1024[1][1][10], 32768);
+        assert_eq!(context.eob_extra[0][0][0][1], 32768);
+        assert_eq!(context.eob_extra[4][1][8][1], 32768);
+        assert_eq!(context.coeff_base_eob[0][0][0][2], 32768);
+        assert_eq!(context.coeff_base_eob[4][1][3][2], 32768);
+        assert_eq!(context.coeff_base[0][0][22][3], 32768);
+        assert_eq!(context.coeff_base[4][1][22][3], 32768);
+        assert_eq!(context.coeff_br[0][0][0][3], 32768);
+        assert_eq!(context.coeff_br[4][1][20][3], 32768);
         assert_eq!(context.dc_sign[0][0][1], 32768);
         assert_eq!(context.dc_sign[1][2][1], 32768);
         assert_eq!(context.intra_ext_tx_set1[0][0][6], 32768);
@@ -1701,63 +1758,77 @@ mod tests {
         assert_eq!(CdfContext::new(21).txb_skip[0][0], [30371, 32768, 0]);
         assert_eq!(CdfContext::new(61).txb_skip[0][0], [29614, 32768, 0]);
         assert_eq!(CdfContext::new(121).txb_skip[0][0], [26887, 32768, 0]);
-        assert_eq!(CdfContext::new(20).eob_pt_1024[0][0], 393);
-        assert_eq!(CdfContext::new(21).eob_pt_1024[0][0], 696);
-        assert_eq!(CdfContext::new(61).eob_pt_1024[0][0], 2784);
-        assert_eq!(CdfContext::new(121).eob_pt_1024[0][0], 6698);
-        assert_eq!(CdfContext::new(20).eob_extra_tx32[0][0], [27399, 32768, 0]);
-        assert_eq!(CdfContext::new(21).eob_extra_tx32[0][0], [25991, 32768, 0]);
-        assert_eq!(CdfContext::new(61).eob_extra_tx32[0][0], [23312, 32768, 0]);
-        assert_eq!(CdfContext::new(121).eob_extra_tx32[0][0], [21442, 32768, 0]);
+        assert_eq!(CdfContext::new(20).eob_pt_1024[0][0][0], 393);
+        assert_eq!(CdfContext::new(21).eob_pt_1024[0][0][0], 696);
+        assert_eq!(CdfContext::new(61).eob_pt_1024[0][0][0], 2784);
+        assert_eq!(CdfContext::new(121).eob_pt_1024[0][0][0], 6698);
+        assert_eq!(CdfContext::new(20).eob_extra[3][0][0], [27399, 32768, 0]);
+        assert_eq!(CdfContext::new(21).eob_extra[3][0][0], [25991, 32768, 0]);
+        assert_eq!(CdfContext::new(61).eob_extra[3][0][0], [23312, 32768, 0]);
+        assert_eq!(CdfContext::new(121).eob_extra[3][0][0], [21442, 32768, 0]);
         assert_eq!(
-            CdfContext::new(20).coeff_base_eob_tx32[0][0],
+            CdfContext::new(20).coeff_base_eob[3][0][0],
             [1787, 2532, 32768, 0]
         );
         assert_eq!(
-            CdfContext::new(21).coeff_base_eob_tx32[0][0],
+            CdfContext::new(21).coeff_base_eob[3][0][0],
             [1044, 2257, 32768, 0]
         );
         assert_eq!(
-            CdfContext::new(61).coeff_base_eob_tx32[0][0],
+            CdfContext::new(61).coeff_base_eob[3][0][0],
             [2809, 19301, 32768, 0]
         );
         assert_eq!(
-            CdfContext::new(121).coeff_base_eob_tx32[0][0],
+            CdfContext::new(121).coeff_base_eob[3][0][0],
             [24647, 30463, 32768, 0]
         );
         assert_eq!(
-            CdfContext::new(20).coeff_base_tx32[0][22],
+            CdfContext::new(20).coeff_base[3][0][22],
             [23352, 31766, 32545, 32768, 0]
         );
         assert_eq!(
-            CdfContext::new(21).coeff_base_tx32[0][22],
+            CdfContext::new(21).coeff_base[3][0][22],
             [21638, 31487, 32503, 32768, 0]
         );
         assert_eq!(
-            CdfContext::new(61).coeff_base_tx32[0][22],
+            CdfContext::new(61).coeff_base[3][0][22],
             [20666, 31373, 32497, 32768, 0]
         );
         assert_eq!(
-            CdfContext::new(121).coeff_base_tx32[0][22],
+            CdfContext::new(121).coeff_base[3][0][22],
             [20618, 31487, 32544, 32768, 0]
         );
         assert_eq!(
-            CdfContext::new(20).coeff_br_tx32[0][0],
+            CdfContext::new(20).coeff_br[3][0][0],
             [2331, 3662, 5244, 32768, 0]
         );
         assert_eq!(
-            CdfContext::new(21).coeff_br_tx32[0][0],
+            CdfContext::new(21).coeff_br[3][0][0],
             [5705, 10930, 15725, 32768, 0]
         );
         assert_eq!(
-            CdfContext::new(61).coeff_br_tx32[0][0],
+            CdfContext::new(61).coeff_br[3][0][0],
             [9040, 14786, 18360, 32768, 0]
         );
         assert_eq!(
-            CdfContext::new(121).coeff_br_tx32[0][0],
+            CdfContext::new(121).coeff_br[3][0][0],
             [12162, 18785, 22648, 32768, 0]
         );
         assert_eq!(CdfContext::new(20).dc_sign[0][0], [16000, 32768, 0]);
         assert_eq!(CdfContext::new(121).dc_sign[1][2], [17280, 32768, 0]);
+    }
+
+    #[test]
+    fn eob_point_cdfs_select_size_and_transform_class() {
+        let mut context = CdfContext::new(20);
+
+        assert_eq!(context.eob_pt_cdf_mut(0, 0, 0).len(), 6);
+        assert_eq!(context.eob_pt_cdf_mut(1, 0, 0).len(), 7);
+        assert_eq!(context.eob_pt_cdf_mut(2, 0, 0).len(), 8);
+        assert_eq!(context.eob_pt_cdf_mut(3, 0, 0).len(), 9);
+        assert_eq!(context.eob_pt_cdf_mut(4, 0, 0).len(), 10);
+        assert_eq!(context.eob_pt_cdf_mut(5, 0, 0).len(), 11);
+        assert_eq!(context.eob_pt_cdf_mut(6, 0, 0).len(), 12);
+        assert_ne!(context.eob_pt_16[0][0], context.eob_pt_16[0][1]);
     }
 }

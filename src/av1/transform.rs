@@ -213,6 +213,9 @@ pub fn inverse_transform(
     if tx_size == TxSize::Tx8x8 {
         return Ok(inverse_transform_8x8(tx_type, dequant, bit_depth));
     }
+    if tx_size == TxSize::Tx16x16 && tx_type == TxType::DctDct {
+        return Ok(inverse_transform_16x16(tx_type, dequant, bit_depth));
+    }
     match tx_type {
         TxType::DctDct => inverse_separable_transform(
             tx_size,
@@ -444,7 +447,6 @@ fn cospi(index: usize) -> i32 {
     VALUES[index / 4 - 1]
 }
 
-#[cfg(test)]
 fn inverse_transform_16x16(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> Vec<i32> {
     let (vertical, horizontal) = staged_transform_pair(tx_type);
     let mut temp = vec![0i32; 256];
@@ -467,7 +469,6 @@ fn inverse_transform_16x16(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> V
     out
 }
 
-#[cfg(test)]
 fn inverse_staged_16(transform: StagedTransform, input: [i32; 16], range: u8) -> [i32; 16] {
     match transform {
         StagedTransform::Dct => inverse_dct16(input, range),
@@ -480,7 +481,6 @@ fn inverse_staged_16(transform: StagedTransform, input: [i32; 16], range: u8) ->
     }
 }
 
-#[cfg(test)]
 fn inverse_dct16(i: [i32; 16], r: u8) -> [i32; 16] {
     const B: u8 = 12;
     let p = [
@@ -943,7 +943,7 @@ mod tests {
         let mut coefficients = vec![0; TxSize::Tx16x16.sample_count()];
         coefficients[0] = 64;
         assert_eq!(
-            inverse_transform_16x16(TxType::DctDct, &coefficients, 8),
+            inverse_transform(TxType::DctDct, TxSize::Tx16x16, &coefficients, 8).unwrap(),
             vec![1; 256]
         );
     }

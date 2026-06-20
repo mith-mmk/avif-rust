@@ -1,5 +1,6 @@
 mod bitstream;
 mod cdf;
+mod coeff_cdfs;
 mod config;
 mod decode;
 mod entropy;

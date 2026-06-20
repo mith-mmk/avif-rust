@@ -1,130 +1,128 @@
-# AVIF decoder implementation checklist
+# Pure Rust AVIF/AV1 decoder implementation checklist
 
-## Repository layout and current state
+## Purpose and completion target
 
-- Parent repository: `wml2`, branch `v0.0.24`.
-- Decoder repository: `avif/`, an independently managed nested Git repository on branch `master`.
-- The parent `.gitignore` intentionally ignores `/avif/`; inspect and commit decoder changes from inside `avif/`.
-- Parent-side integration changes currently exist in `wml2/tests/avif_decode.rs`.
-- The decoder currently targets 8-bit, full-resolution GBR still AVIF images. It is not generally AV1-conformant yet.
-- `samples/WML2Viewer.avif` and `samples/WML2Viewer.png` are the current oracle pair.
-- see also samples `https://github.com/link-u/avif-sample-images`
+The goal is to provide `wml2` with a practical still-image AVIF decoder while implementing the AVIF container and AV1 decoding path in pure Rust.
 
-When Git rejects the nested repository as dubious ownership, use:
+- Do not delegate AVIF or AV1 decoding to native libraries or external decoder crates.
+- General-purpose Rust dependencies are allowed when they do not implement AVIF/AV1 decoding.
+- Preserve Windows, Linux, macOS and Wasm builds.
+- Prioritise specification accuracy, malformed-input safety, then performance.
+- Treat `samples/WML2Viewer.avif` as one regression sample, not as the implementation target.
+- Validate normative changes against specification vectors, coefficient/plane output and a conformance corpus. Do not reject a normative change solely because one incomplete decode path temporarily produces a worse RGB metric.
 
-```powershell
-git -c safe.directory=C:/Users/misir/OneDrive/source/wmprojects/wml2/avif -C avif status --short --branch
-```
+Initial still-image completion requires:
 
-## Completed in the current implementation
+- 8/10/12-bit AV1 intra decoding.
+- Monochrome, 4:2:0, 4:2:2, 4:4:4 and identity GBR layouts.
+- Multiple tiles and tile groups.
+- Alpha auxiliary items, image grids, `clap`, `irot` and `imir` composition.
+- High-precision decoded planes plus SDR RGBA8/RGBA16 conversion.
+- Explicit `Unsupported` errors for HDR/ICC display conversion until colour management is implemented.
 
-- [x] ISO BMFF/AVIF primary item parsing.
-- [x] AV1 sequence, frame, tile-group and basic entropy parsing for the sample.
-- [x] Full sample block-tree traversal without unsupported syntax.
-- [x] Luma and full-resolution chroma reconstruction paths.
-- [x] Callback integration with `wml2` (`init`, `draw`, metadata and `terminate`).
-- [x] AVIF feature-gating tests for both enabled and disabled builds.
-- [x] AOM smooth-prediction weights and rounding.
-- [x] Directional prediction zone 1/2/3 fixed-point interpolation.
-- [x] Directional angle deltas interpreted as three-degree steps.
-- [x] Prediction generated per transform block so reconstructed neighbours are visible to later transforms.
-- [x] Frame-edge defaults use AV1 values: above `base - 1`, left `base + 1`, corner `base`.
-- [x] Missing above/left references are completed from the available side where required.
-- [x] Directional reference arrays collect additional top-right and bottom-left frame samples.
-- [x] Type-0 directional edge upsampling uses the AOM four-tap interpolation and signed edge indices.
+AVIF sequences, encoding, HDR tone mapping and ICC application are later milestones.
 
-Current FFmpeg oracle metric for `WML2Viewer.avif`:
+## Repository and validation rules
 
-- Average RGB absolute error: approximately `69.4847`.
-- The active regression ceiling is `69.6` in `avif/tests/ffmpeg_conformance.rs`.
-- The strict conformance test remains ignored because the target is `<= 0.5` average RGB error.
+- `avif/` is an independently managed nested repository.
+- Keep external corpus files in ignored `test_data/`; record source, licence and SHA-256 in a reproducible fetch script.
+- Keep temporary/generated diagnostics under ignored `.test*` paths and remove them after use.
+- FFmpeg/libaom may be used only as test oracles, never as runtime dependencies.
+- Preserve the existing callback API and optional `wml2` `avif` feature.
 
-## Next tasks, in priority order
+## 1. Conformance harness and architecture
 
-### 1. Finish directional reference-edge processing
+- [ ] Replace the single-sample average-error gate with layered conformance checks.
+  - [ ] Syntax/CDF/context known-vector tests derived from the AV1 specification or AOM.
+  - [ ] Exact decoded Y/U/V/alpha plane comparison for supported streams.
+  - [ ] SDR RGBA8/RGBA16 comparison with maximum per-channel error of 1.
+  - [ ] Keep `WML2Viewer.avif` as a normal regression case until exact plane fixtures are available.
+- [ ] Add a reproducible corpus fetch/verification command for `test_data/`.
+- [ ] Split oversized decode code by responsibility: block syntax, coefficient entropy, reconstruction state and diagnostics.
+- [ ] Move tests out of implementation modules as files are split.
 
-- [ ] Complete partition-aware availability checks for extended top-right and bottom-left samples.
-- [x] Implement type-0 `av1_use_intra_edge_upsample` behaviour.
-  - Type-0 condition: angle delta is non-zero, absolute delta is below 40, and the two block dimensions sum to at most 16.
-  - Use the AOM four-tap interpolation: `(-a + 9*b + 9*c - d + 8) >> 4`.
-  - Support the `p[-2]`, `p[-1]`, `p[0...]` indexing required by directional zones.
-- [x] Derive the intra-edge filter type for each plane from neighbouring luma/UV smooth modes.
-- [x] Implement AOM intra-edge filter strength selection and 5-tap kernels for filter type 0.
-- [x] Implement corner filtering when both edges are needed and the transform dimensions sum to at least 24.
-- [x] Add unit tests for upsampled zone 1, zone 2 negative indices and zone 3.
-- [x] Re-run the FFmpeg metric and only keep changes that preserve syntax correctness and improve or explain the oracle result.
-  - Tracking reconstructed pixels and extending only through available samples was syntax-correct, but regressed average RGB error from `71.0573` to `87.6718`; the runtime wiring was reverted.
-  - This indicates that directional-edge correctness is currently masked by upstream coefficient/transform errors. Revisit availability after coefficient entropy and scan order are stable.
+## 2. AV1 entropy and coefficient decoding
 
-Relevant AOM reference files:
+This is the current highest-priority implementation block. Entropy components that share decoder state must be integrated together rather than enabled independently.
 
-- `av1/common/reconintra.c`
-- `av1/common/reconintra.h`
-- `av1/common/blockd.h`
+- [x] Integrate transform-size-specific EOB and coefficient CDFs for 4x4 through 64x64, including EOB transform-class selection.
+- [x] Integrate per-plane above/left transform-block entropy state.
+- [x] Select luma/chroma `txb_skip` contexts from neighbouring levels and plane/block geometry.
+- [x] Select DC-sign contexts from neighbouring DC signs.
+- [x] Propagate capped coefficient level and DC sign after every zero/non-zero transform block.
+- [ ] Verify EOB, base, base-EOB, base-range, sign and Golomb decoding as one state machine.
+- [ ] Compare decoded coefficient vectors against reference output before relying on final RGB metrics.
+- [x] Implement normative ext-tx subset mapping, filter-intra tx mode mapping, directional scan selection and 1D coefficient contexts.
+- [x] Apply the normative 20-bit coefficient magnitude clamp after Golomb extension.
+- [x] Confirm dequant shifts: 4/8/16 no shift, 32 divide by 2, 64 divide by 4.
+- [x] Add unit-tested AOM `get_txb_ctx` equivalents for skip selection, DC-sign aggregation and entropy-state propagation.
 
-### 2. Replace approximate inverse transforms
+## 3. Integer inverse transforms
 
-- [ ] Replace floating-point orthonormal DCT/ADST with AV1 staged integer inverse transforms.
-- [ ] Implement normative stage ranges, cosine constants, half-butterfly rounding and row/column shifts.
-- [ ] Cover `DCT_DCT`, `ADST_DCT`, `DCT_ADST`, `ADST_ADST`, identity, vertical DCT and horizontal DCT.
-- [x] Verify 4x4 DCT, ADST and identity stages against AOM integer rounding.
-- [x] Verify 8x8 DCT, ADST and identity stages against AOM integer rounding.
-- [ ] Verify 16x16, 32x32 and 64x64.
-  - IDCT16 matches AOM integer vectors in isolation, but enabling it currently regresses the sample metric to `72.6303`; audit 16x16 scan/dequant before enabling it.
-- [ ] Add known-vector tests derived from the AOM reference implementation.
-- [ ] Avoid accepting output solely because dimensions and alpha are correct; validate pixel values against FFmpeg.
+- [ ] Remove floating-point transform fallbacks.
+- [ ] Implement normative staged integer transforms, stage ranges, cosine constants and row/column shifts.
+- [x] Verify 4x4 DCT/ADST/identity vectors.
+- [x] Verify 8x8 DCT/ADST/identity vectors.
+- [ ] Verify all supported 16x16 transform types.
+  - [x] Route 16x16 DCT_DCT through the staged integer transform and verify its AOM rounding vector.
+- [ ] Verify all supported 32x32 transform types.
+- [ ] Verify 64x64 DCT and coded top-left coefficient limits.
+- [ ] Add reference vectors for every enabled transform type/size pair.
 
-Likely high-impact file: `avif/src/av1/transform.rs`.
+## 4. Prediction and reconstruction pipeline
 
-### 3. Audit coefficient decoding and scan order
+- [x] Implement smooth prediction weights and directional zone interpolation.
+- [x] Implement directional angle deltas and type-0 edge upsampling.
+- [x] Implement intra-edge filters and corner filtering.
+- [ ] Complete partition-aware top-right and bottom-left availability.
+- [ ] Implement deblocking.
+- [ ] Implement CDEF.
+- [ ] Implement loop restoration.
+- [ ] Implement super-resolution.
+- [ ] Implement film grain when signalled for still images.
+- [ ] Verify normative reconstruction/filter order.
 
-- [x] Replace the generic zig-zag scan with AV1 scan tables selected by transform size/type.
-  - AOM mrow/mcol tables are implemented and unit-tested, but enabling them regresses the sample to `72.8957`; audit `ext_tx` symbol-to-type subset mapping before wiring them into coefficient decode.
-  - AOM mapping is set1=`IDTX,DCT_DCT,V_DCT,H_DCT,ADST_ADST,ADST_DCT,DCT_ADST`, set2=`IDTX,DCT_DCT,ADST_ADST,ADST_DCT,DCT_ADST`. Applying mapping and scan together regresses to `82.0004`, indicating coefficient context decoding must be fixed first.
-  - AOM 1D base/br context neighbour axes and offsets for `V_DCT`/`H_DCT` are implemented and unit-tested; entropy decode wiring remains.
-  - Normative ext-tx mapping alone preserved block traversal but regressed average RGB error to `71.5238`.
-  - Normative mapping plus 1D contexts changed the decoded block count from `2075` to `1347`; adding directional scan changed it to `2338`. All runtime wiring was reverted.
-  - The required audit found that filter-intra blocks must select the tx CDF mode through AOM's `[DC,V,H,D157,DC]` mapping; applying this only as part of the complete normative path avoids retaining a mixed entropy model.
-  - Completed together: filter-intra tx-CDF mode mapping, normative `av1_ext_tx_inv` subset mapping, directional scan selection, and 1D base/br context wiring. Partial combinations desynchronised entropy state; the complete set reduced average RGB error to `69.4847` and deterministically changed the decoded sample block count from the old non-normative `2075` snapshot to `1997`.
-- [ ] Audit EOB, coefficient-base, base-range, sign and Golomb decoding against the specification.
-  - EOB offset reconstruction, base-range rounds and Golomb coding were checked against AOM `decodetxb.c`.
-  - Added the normative 20-bit coefficient magnitude clamp after Golomb extension; DC-sign neighbour context and transform-size-specific coefficient CDF selection remain to audit.
-  - Enabling DC-sign neighbour contexts alone changed the sample block count from `1997` to `1976` and regressed average RGB error to `77.1615`; the runtime wiring was reverted. Implement transform-size-specific coefficient CDFs and full txb contexts before retrying it.
-  - Selecting AOM coefficient CDF tables by transform size alone changed the sample block count from `1997` to `2629` and regressed average RGB error to `70.7998`; the generated tables and runtime wiring were reverted. Integrate this together with the complete txb skip/DC-sign context model rather than as an isolated change.
-- [ ] Audit coefficient contexts for all transform sizes, especially 32x32 and 64x64.
-- [x] Confirm dequantisation shifts and clipping for each transform size.
-  - 4x4/8x8/16x16 use no dequant shift, 32x32 divides by 2, and 64x64 divides by 4 before the signed bit-depth clamp.
-- [ ] Compare decoded coefficient vectors against a reference decoder for small test streams.
+## 5. Formats, colour and AVIF composition
 
-### 4. Complete reconstruction filters
+- [ ] Decode monochrome frames.
+- [ ] Decode 4:2:0 and honour chroma sample position.
+- [ ] Decode 4:2:2 and honour chroma sample position.
+- [ ] Decode 4:4:4 and identity GBR.
+- [ ] Support 8/10/12-bit quantisation and reconstruction.
+- [ ] Add a public high-precision decoded-frame API.
+  - [ ] Expose u16 source planes, dimensions, stride, bit depth and pixel layout.
+  - [ ] Preserve CICP, raw ICC and alpha-premultiplication metadata.
+  - [ ] Provide straight-alpha `to_rgba8()` and `to_rgba16()` conversion methods.
+- [ ] Implement SDR nclx range/matrix conversion.
+- [ ] Return explicit `Unsupported` for RGBA conversion requiring unimplemented HDR/ICC colour management.
+- [ ] Parse and compose alpha auxiliary items.
+- [ ] Parse and compose grid items.
+- [ ] Apply `clap`, then `irot`, then `imir`.
+- [ ] Support multiple tiles and tile groups.
 
-- [ ] Implement CDEF when enabled by the frame.
-- [ ] Implement loop restoration when enabled.
-- [ ] Implement super-resolution upscaling.
-- [ ] Ensure filter order matches AV1 reconstruction order.
+## 6. Safety and performance
 
-### 5. Expand supported AVIF/AV1 formats
+- [ ] Add malformed/truncated container, OBU and entropy-stream tests.
+- [ ] Check all dimensions, offsets, allocations and arithmetic for overflow and resource limits.
+- [ ] Add fuzz targets for container boxes, OBU headers, frame headers and tile entropy.
+- [ ] Optimise allocations only after conformance and safety gates pass.
+- [ ] Add SIMD/parallel paths only with scalar equivalence tests and Wasm-compatible fallbacks.
 
-- [ ] YUV-to-RGBA conversion for non-identity matrix coefficients.
-- [ ] 4:2:0 and 4:2:2 chroma subsampling with correct chroma sample positions.
-- [ ] Monochrome images.
-- [ ] 10-bit and 12-bit decode/output conversion.
-- [ ] Alpha auxiliary items and AVIF item-property associations.
-- [ ] Multiple tiles and tile groups.
-- [ ] Additional still-frame header tools currently returning `Unsupported`.
-- [ ] AVIF sequences/animation only after still-image conformance is stable.
+## Diagnostic history
 
-### 6. Conformance corpus and fuzzing
+These measurements document incomplete combinations; they are not acceptance criteria.
 
-- [ ] Add small, redistributable AVIF samples under `test_data` only; keep `test_data` ignored.
-- [ ] Cover each prediction mode, transform type/size, quantiser range and chroma layout.
-- [ ] Add malformed-container and truncated-OBU regression tests.
-- [ ] Fuzz container, OBU, frame-header and tile entropy parsers.
-- [ ] Keep external test artifacts and generated diagnostics under `.test*` and remove them after use.
+- The previous retained sample path decoded `1997` blocks with average RGB absolute error about `69.4847` against FFmpeg.
+- Integrating size/class-specific EOB CDFs, size-specific coefficient CDFs and complete neighbour txb state atomically produces a deterministic `915`-block traversal and improves average RGB absolute error to about `67.0337`; this is the current retained path.
+- Enabling the AOM-vector-verified 16x16 integer DCT changes the sample average RGB error to about `74.4911`; it remains enabled because the single sample is diagnostic rather than the conformance oracle.
+- Normative ext-tx mapping alone produced `71.5238`; mapping plus incomplete 1D contexts changed block traversal to `1347`.
+- Directional scan/context combinations produced `72.8957` and `82.0004` before the complete retained scan/mapping subset was wired.
+- DC-sign neighbour contexts alone changed `1997` blocks to `1976` and produced `77.1615`.
+- Size-specific coefficient CDFs alone changed `1997` blocks to `2629` and produced `70.7998`.
+- Neighbour `txb_skip` plus DC-sign state without size-specific coefficient CDFs changed `1997` blocks to `1734` and produced `81.8257`.
+- These results require the size-specific coefficient CDFs and full transform-block neighbour state to land atomically.
 
-## Required validation commands
-
-From the parent repository:
+## Required validation
 
 ```powershell
 cargo fmt --all
@@ -132,31 +130,18 @@ cargo test -p avif-rust
 cargo test -p wml2 --test avif_decode
 cargo test -p wml2 --test avif_decode --features avif
 cargo test --workspace
+cargo check --target wasm32-unknown-unknown -p avif-rust
+cargo check --target wasm32-unknown-unknown -p wml2 --features avif
 git diff --check
 git -c safe.directory=C:/Users/misir/OneDrive/source/wmprojects/wml2/avif -C avif diff --check
 ```
 
-To print the current strict FFmpeg comparison result:
+## Release gate
 
-```powershell
-cargo test -p avif-rust --test ffmpeg_conformance pure_rust_decode_matches_ffmpeg_oracle_and_original_png -- --ignored --nocapture
-```
-
-The strict test is expected to fail until pixel conformance is reached. Record the numeric error before and after each reconstruction change.
-
-## Completion criteria for the initial decoder
-
-- [ ] Strict sample comparison passes with average RGB absolute error `<= 0.5` and maximum error within the test threshold.
-- [ ] No ignored AVIF conformance test remains for supported input classes.
-- [ ] `cargo test --workspace` passes.
-- [ ] AVIF-enabled and AVIF-disabled `wml2` builds both pass integration tests.
-- [ ] Unsupported AV1 tools return explicit errors instead of partial or misleading successful images.
+- [ ] Supported corpus plane output matches the reference decoder exactly.
+- [ ] SDR RGBA output stays within one code value per channel.
+- [ ] No ignored conformance test remains for the documented supported subset.
+- [ ] Native workspace and Wasm checks pass.
+- [ ] AVIF-enabled and AVIF-disabled `wml2` integration tests pass.
+- [ ] Unsupported tools and colour-management cases fail explicitly instead of returning misleading images.
 - [ ] `wml2/todo.md` is checked off only after the supported subset and limitations are documented.
-
-## Guardrails
-
-- Do not add native `libaom`, `dav1d` or FFmpeg as runtime decoder dependencies; FFmpeg is an optional test oracle only.
-- Do not weaken the pixel-error regression ceiling to make tests pass.
-- Do not mark AVIF complete based only on successful callbacks or non-zero pixels.
-- Preserve the parent repository's optional `avif` feature behaviour.
-- Keep temporary files and browser/server profiles under `.test*`, ensure they are ignored, and clean them after use.

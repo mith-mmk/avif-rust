@@ -147,6 +147,18 @@ pub struct DecodedBlockPrefix {
     pub next_unsupported: Option<DecoderError>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TxbContext {
+    skip: usize,
+    dc_sign: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PlaneEntropyContexts {
+    above: Vec<u8>,
+    left: Vec<u8>,
+}
+
 pub struct TileDecoder<'a> {
     reader: EntropyDecoder<'a>,
     cdf: CdfContext,
@@ -161,6 +173,7 @@ pub struct TileDecoder<'a> {
     cdef_transmitted: [bool; 4],
     above_txfm_context: Vec<usize>,
     left_txfm_context: Vec<usize>,
+    plane_entropy_contexts: [PlaneEntropyContexts; 3],
 }
 
 impl<'a> TileDecoder<'a> {
@@ -187,7 +200,21 @@ impl<'a> TileDecoder<'a> {
             cdef_transmitted: [false; 4],
             above_txfm_context: vec![0; mi_cols],
             left_txfm_context: vec![0; mi_rows],
+            plane_entropy_contexts: std::array::from_fn(|_| PlaneEntropyContexts {
+                above: vec![0; mi_cols],
+                left: vec![0; mi_rows],
+            }),
         })
+    }
+
+    fn txb_context(&self, block_size: BlockSize, transform: TransformBlock) -> TxbContext {
+        let contexts = &self.plane_entropy_contexts[transform.plane];
+        txb_context(block_size, transform, &contexts.above, &contexts.left)
+    }
+
+    fn set_txb_entropy_context(&mut self, transform: TransformBlock, value: u8) {
+        let contexts = &mut self.plane_entropy_contexts[transform.plane];
+        set_txb_entropy_context(transform, value, &mut contexts.above, &mut contexts.left);
     }
 
     pub fn read_root_partition(
@@ -721,6 +748,9 @@ impl<'a> TileDecoder<'a> {
         let transform_count = transforms.len();
         let first_transform = transforms.first().copied();
         if block_mode.skip {
+            for transform in transforms.iter().copied() {
+                self.set_txb_entropy_context(transform, 0);
+            }
             return Ok(ResidualProbe {
                 tile_id,
                 block_size: block_mode.block_size,
@@ -862,24 +892,27 @@ impl<'a> TileDecoder<'a> {
         let mut zero_transform_count = 0usize;
         let mut first_non_zero_transform = None;
         let mut first_non_zero_transform_index = None;
+        let mut first_non_zero_txb_context = None;
 
         for (index, transform) in transforms.iter().copied().enumerate() {
-            let txb_skip_context = first_txb_skip_context(block_mode.block_size, transform);
+            let txb_context = self.txb_context(block_mode.block_size, transform);
             let all_zero_symbol = self.reader.read_symbol(
                 self.cdf
-                    .txb_skip_cdf_mut(transform.tx_size.coeff_cdf_index(), txb_skip_context),
+                    .txb_skip_cdf_mut(transform.tx_size.coeff_cdf_index(), txb_context.skip),
             )?;
             if index == 0 {
-                first_txb_skip_context_value = Some(txb_skip_context);
+                first_txb_skip_context_value = Some(txb_context.skip);
                 first_all_zero_symbol = Some(all_zero_symbol);
                 first_transform_all_zero = all_zero_symbol != 0;
             }
             if all_zero_symbol != 0 {
+                self.set_txb_entropy_context(transform, 0);
                 zero_transform_count += 1;
                 continue;
             }
             first_non_zero_transform = Some(transform);
             first_non_zero_transform_index = Some(index);
+            first_non_zero_txb_context = Some(txb_context);
             break;
         }
 
@@ -943,11 +976,11 @@ impl<'a> TileDecoder<'a> {
                 )));
             }
             let plane_type = usize::from(non_zero_transform.plane > 0);
-            let eob_pt_symbol = read_sized_eob_pt_symbol(
-                &mut self.reader,
-                self.cdf.eob_pt_1024_cdf_mut(plane_type),
+            let eob_pt_symbol = self.reader.read_symbol(self.cdf.eob_pt_cdf_mut(
                 eob_multisize,
-            )?;
+                plane_type,
+                eob_tx_class_context(tx_type_probe.tx_type),
+            ))?;
             let eob_pt = eob_pt_symbol + 1;
             let eob_base = eob_base_from_pt(eob_pt);
             let (eob_extra_context, eob_extra_symbol, eob_extra_literal_bits, eob) =
@@ -960,10 +993,12 @@ impl<'a> TileDecoder<'a> {
             }
             let coeff_base_eob_context =
                 coeff_base_eob_context(non_zero_transform.tx_size, eob.saturating_sub(1));
-            let coeff_base_eob_symbol = self.reader.read_symbol(
-                self.cdf
-                    .coeff_base_eob_tx32_cdf_mut(plane_type, coeff_base_eob_context),
-            )?;
+            let coeff_base_eob_symbol =
+                self.reader.read_symbol(self.cdf.coeff_base_eob_cdf_mut(
+                    non_zero_transform.tx_size.coeff_cdf_index(),
+                    plane_type,
+                    coeff_base_eob_context,
+                ))?;
             let coeff_base_eob_level = coeff_base_eob_symbol + 1;
             let coeff_base_read = self.read_regular_coeff_bases(
                 non_zero_transform.tx_size,
@@ -971,7 +1006,14 @@ impl<'a> TileDecoder<'a> {
                 plane_type,
                 eob,
                 coeff_base_eob_level,
+                first_non_zero_txb_context
+                    .expect("non-zero transform should retain its txb context")
+                    .dc_sign,
             )?;
+            self.set_txb_entropy_context(
+                non_zero_transform,
+                coefficient_entropy_context(&coeff_base_read.base_levels),
+            );
             debug_assert_eq!(
                 coeff_base_read.base_levels.len(),
                 non_zero_transform.tx_size.sample_count()
@@ -1155,9 +1197,11 @@ impl<'a> TileDecoder<'a> {
         }
 
         let context = eob_pt - 3;
-        let eob_extra_symbol = self
-            .reader
-            .read_symbol(self.cdf.eob_extra_tx32_cdf_mut(plane_type, context))?;
+        let eob_extra_symbol = self.reader.read_symbol(self.cdf.eob_extra_cdf_mut(
+            transform.tx_size.coeff_cdf_index(),
+            plane_type,
+            context,
+        ))?;
         let mut eob = eob_base;
         let eob_shift = eob_pt - 3;
         if eob_extra_symbol != 0 {
@@ -1254,6 +1298,7 @@ impl<'a> TileDecoder<'a> {
         frame: &FrameHeader,
         block_mode: &BlockModeProbe,
         transform: TransformBlock,
+        dc_sign_context: usize,
     ) -> Result<DecodedTransform, DecoderError> {
         let tx_type = self
             .read_intra_tx_type(frame, block_mode, transform)?
@@ -1265,11 +1310,11 @@ impl<'a> TileDecoder<'a> {
             )));
         }
         let plane_type = usize::from(transform.plane > 0);
-        let eob_pt_symbol = read_sized_eob_pt_symbol(
-            &mut self.reader,
-            self.cdf.eob_pt_1024_cdf_mut(plane_type),
+        let eob_pt_symbol = self.reader.read_symbol(self.cdf.eob_pt_cdf_mut(
             eob_multisize,
-        )?;
+            plane_type,
+            eob_tx_class_context(tx_type),
+        ))?;
         let eob_pt = eob_pt_symbol + 1;
         let eob_base = eob_base_from_pt(eob_pt);
         let (_, _, _, eob) = self.read_eob_extra(transform, plane_type, eob_pt, eob_base)?;
@@ -1281,10 +1326,11 @@ impl<'a> TileDecoder<'a> {
         }
         let coeff_base_eob_context =
             coeff_base_eob_context(transform.tx_size, eob.saturating_sub(1));
-        let coeff_base_eob_symbol = self.reader.read_symbol(
-            self.cdf
-                .coeff_base_eob_tx32_cdf_mut(plane_type, coeff_base_eob_context),
-        )?;
+        let coeff_base_eob_symbol = self.reader.read_symbol(self.cdf.coeff_base_eob_cdf_mut(
+            transform.tx_size.coeff_cdf_index(),
+            plane_type,
+            coeff_base_eob_context,
+        ))?;
         let coeff_base_eob_level = coeff_base_eob_symbol + 1;
         let coeff_base_read = self.read_regular_coeff_bases(
             transform.tx_size,
@@ -1292,6 +1338,7 @@ impl<'a> TileDecoder<'a> {
             plane_type,
             eob,
             coeff_base_eob_level,
+            dc_sign_context,
         )?;
         Ok(DecodedTransform {
             transform,
@@ -1307,6 +1354,7 @@ impl<'a> TileDecoder<'a> {
         plane_type: usize,
         eob: usize,
         eob_level: usize,
+        dc_sign_context: usize,
     ) -> Result<CoeffBaseRead, DecoderError> {
         let sample_count = tx_size.sample_count();
         let scan = coefficient_scan(tx_size, tx_type);
@@ -1337,8 +1385,14 @@ impl<'a> TileDecoder<'a> {
         quant[eob_position] = eob_level as i32;
         if remaining_count == 0 {
             let non_zero_count = coeff_base_non_zero_count(&quant);
-            let signs =
-                self.read_coeff_signs_and_golomb(tx_size, plane_type, eob, &scan, &mut quant)?;
+            let signs = self.read_coeff_signs_and_golomb(
+                tx_size,
+                plane_type,
+                dc_sign_context,
+                eob,
+                &scan,
+                &mut quant,
+            )?;
             let signed_non_zero_count = coeff_base_non_zero_count(&quant);
             let first_signed_coeff = first_signed_coeff(eob, &scan, &quant)?;
             return Ok(CoeffBaseRead {
@@ -1379,9 +1433,11 @@ impl<'a> TileDecoder<'a> {
                     "AV1 coeff_base decode for Tx32x32 context {context} is not supported yet"
                 )));
             }
-            let symbol = self
-                .reader
-                .read_symbol(self.cdf.coeff_base_tx32_cdf_mut(plane_type, context))?;
+            let symbol = self.reader.read_symbol(self.cdf.coeff_base_cdf_mut(
+                tx_size.coeff_cdf_index(),
+                plane_type,
+                context,
+            ))?;
             let level = self.read_coeff_br_range(
                 tx_size,
                 tx_type,
@@ -1405,8 +1461,14 @@ impl<'a> TileDecoder<'a> {
         let (scan_index, position, context, reference_magnitude, symbol) =
             first.expect("remaining_count > 0 should decode at least one coeff_base");
         let non_zero_count = coeff_base_non_zero_count(&quant);
-        let signs =
-            self.read_coeff_signs_and_golomb(tx_size, plane_type, eob, &scan, &mut quant)?;
+        let signs = self.read_coeff_signs_and_golomb(
+            tx_size,
+            plane_type,
+            dc_sign_context,
+            eob,
+            &scan,
+            &mut quant,
+        )?;
         let signed_non_zero_count = coeff_base_non_zero_count(&quant);
         let first_signed_coeff = first_signed_coeff(eob, &scan, &quant)?;
         Ok(CoeffBaseRead {
@@ -1456,9 +1518,11 @@ impl<'a> TileDecoder<'a> {
                 }
                 _ => coeff_br_context_2d(tx_size, position, quant)?,
             };
-            let symbol = self
-                .reader
-                .read_symbol(self.cdf.coeff_br_tx32_cdf_mut(plane_type, context))?;
+            let symbol = self.reader.read_symbol(self.cdf.coeff_br_cdf_mut(
+                tx_size.coeff_cdf_index(),
+                plane_type,
+                context,
+            ))?;
             level += symbol;
             *coeff_br_symbol_count += 1;
             if first_coeff_br.is_none() {
@@ -1481,6 +1545,7 @@ impl<'a> TileDecoder<'a> {
         &mut self,
         _tx_size: super::syntax::TxSize,
         plane_type: usize,
+        dc_sign_cdf_context: usize,
         eob: usize,
         scan: &[usize],
         levels: &mut [i32],
@@ -1508,7 +1573,7 @@ impl<'a> TileDecoder<'a> {
             }
 
             let sign = if scan_index == 0 {
-                let context = 0;
+                let context = dc_sign_cdf_context;
                 let symbol = self
                     .reader
                     .read_symbol(self.cdf.dc_sign_cdf_mut(plane_type, context))?;
@@ -1756,6 +1821,7 @@ fn decode_plane_block(
     );
     if block_mode.skip {
         for transform in &transforms {
+            decoder.set_txb_entropy_context(*transform, 0);
             let prediction = predict_block(
                 plane,
                 prediction_mode,
@@ -1783,13 +1849,14 @@ fn decode_plane_block(
 
     let mut decoded = Vec::new();
     for transform in transforms {
-        let txb_skip_context = first_txb_skip_context(block_mode.block_size, transform);
+        let txb_context = decoder.txb_context(block_mode.block_size, transform);
         let all_zero_symbol = decoder.reader.read_symbol(
             decoder
                 .cdf
-                .txb_skip_cdf_mut(transform.tx_size.coeff_cdf_index(), txb_skip_context),
+                .txb_skip_cdf_mut(transform.tx_size.coeff_cdf_index(), txb_context.skip),
         )?;
         if all_zero_symbol != 0 {
+            decoder.set_txb_entropy_context(transform, 0);
             let prediction = predict_block(
                 plane,
                 prediction_mode,
@@ -1814,7 +1881,12 @@ fn decode_plane_block(
             continue;
         }
 
-        let decoded_transform = decoder.read_decoded_transform(frame, &block_mode, transform)?;
+        let decoded_transform =
+            decoder.read_decoded_transform(frame, &block_mode, transform, txb_context.dc_sign)?;
+        decoder.set_txb_entropy_context(
+            transform,
+            coefficient_entropy_context(&decoded_transform.coefficients),
+        );
         let prediction = predict_block(
             plane,
             prediction_mode,
@@ -2284,13 +2356,113 @@ fn cdf_symbol_probability(cdf: &[u16], symbol: usize) -> u16 {
     cdf[symbol].saturating_sub(lower)
 }
 
-fn first_txb_skip_context(block_size: BlockSize, transform: TransformBlock) -> usize {
-    if block_size.width() == transform.tx_size.width()
-        && block_size.height() == transform.tx_size.height()
-    {
-        0
+const COEFF_CONTEXT_BITS: u8 = 3;
+const COEFF_CONTEXT_MASK: u8 = (1 << COEFF_CONTEXT_BITS) - 1;
+const TXB_SKIP_CONTEXTS: [[usize; 5]; 5] = [
+    [1, 2, 2, 2, 3],
+    [2, 4, 4, 4, 5],
+    [2, 4, 4, 4, 5],
+    [2, 4, 4, 4, 5],
+    [3, 5, 5, 5, 6],
+];
+
+fn txb_context(
+    block_size: BlockSize,
+    transform: TransformBlock,
+    above: &[u8],
+    left: &[u8],
+) -> TxbContext {
+    let col = transform.x >> 2;
+    let row = transform.y >> 2;
+    let width_units = transform.tx_size.width() >> 2;
+    let height_units = transform.tx_size.height() >> 2;
+    let above_contexts = above
+        .get(col..col.saturating_add(width_units).min(above.len()))
+        .unwrap_or(&[]);
+    let left_contexts = left
+        .get(row..row.saturating_add(height_units).min(left.len()))
+        .unwrap_or(&[]);
+
+    let dc_sign_sum = above_contexts
+        .iter()
+        .chain(left_contexts)
+        .map(|value| match value >> COEFF_CONTEXT_BITS {
+            1 => -1,
+            2 => 1,
+            _ => 0,
+        })
+        .sum::<i32>();
+    let dc_sign = match dc_sign_sum.cmp(&0) {
+        std::cmp::Ordering::Less => 1,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => 2,
+    };
+
+    let skip = if transform.plane == 0 {
+        if block_size.width() == transform.tx_size.width()
+            && block_size.height() == transform.tx_size.height()
+        {
+            0
+        } else {
+            let top = above_contexts
+                .iter()
+                .fold(0, |value, context| value | context)
+                & COEFF_CONTEXT_MASK;
+            let left = left_contexts
+                .iter()
+                .fold(0, |value, context| value | context)
+                & COEFF_CONTEXT_MASK;
+            TXB_SKIP_CONTEXTS[usize::from(top.min(4))][usize::from(left.min(4))]
+        }
     } else {
-        1
+        let base = usize::from(above_contexts.iter().any(|value| *value != 0))
+            + usize::from(left_contexts.iter().any(|value| *value != 0));
+        let offset = if block_size.width() * block_size.height()
+            > transform.tx_size.width() * transform.tx_size.height()
+        {
+            10
+        } else {
+            7
+        };
+        base + offset
+    };
+
+    TxbContext { skip, dc_sign }
+}
+
+fn coefficient_entropy_context(coefficients: &[i32]) -> u8 {
+    let mut context = coefficients
+        .iter()
+        .map(|coefficient| coefficient.unsigned_abs() as u64)
+        .sum::<u64>()
+        .min(u64::from(COEFF_CONTEXT_MASK)) as u8;
+    if let Some(dc) = coefficients.first() {
+        if *dc < 0 {
+            context |= 1 << COEFF_CONTEXT_BITS;
+        } else if *dc > 0 {
+            context += 2 << COEFF_CONTEXT_BITS;
+        }
+    }
+    context
+}
+
+fn set_txb_entropy_context(
+    transform: TransformBlock,
+    value: u8,
+    above: &mut [u8],
+    left: &mut [u8],
+) {
+    let col = transform.x >> 2;
+    let row = transform.y >> 2;
+    let width_units = transform.tx_size.width() >> 2;
+    let height_units = transform.tx_size.height() >> 2;
+    let above_end = col.saturating_add(width_units).min(above.len());
+    if let Some(contexts) = above.get_mut(col..above_end) {
+        contexts.fill(value);
+    }
+    let left_end = row.saturating_add(height_units).min(left.len());
+    if let Some(contexts) = left.get_mut(row..left_end) {
+        contexts.fill(value);
     }
 }
 
@@ -2353,29 +2525,11 @@ fn fill_mi_grid<T: Copy>(
     }
 }
 
-fn read_sized_eob_pt_symbol(
-    reader: &mut EntropyDecoder<'_>,
-    source_cdf: &mut [u16],
-    eob_multisize: usize,
-) -> Result<usize, DecoderError> {
-    if eob_multisize == 6 {
-        return reader.read_symbol(source_cdf);
-    }
-    if !(0..=5).contains(&eob_multisize) {
-        return Err(DecoderError::Unsupported(format!(
-            "AV1 eob_pt CDF for eobMultisize {eob_multisize} is not supported yet"
-        )));
-    }
-    let symbol_count = eob_multisize + 5;
-    if source_cdf.len() < symbol_count + 1 {
-        return Err(DecoderError::InvalidParam(
-            "AV1 source eob_pt CDF is shorter than requested transform size".to_string(),
-        ));
-    }
-    let mut sized_cdf = source_cdf[..symbol_count + 1].to_vec();
-    sized_cdf[symbol_count - 1] = 1 << 15;
-    sized_cdf[symbol_count] = source_cdf[source_cdf.len() - 1];
-    reader.read_symbol(&mut sized_cdf)
+fn eob_tx_class_context(tx_type: TxType) -> usize {
+    usize::from(matches!(
+        tx_type,
+        TxType::VerticalDct | TxType::HorizontalDct
+    ))
 }
 
 fn eob_multisize(transform: TransformBlock) -> usize {
@@ -3875,7 +4029,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(prefix.blocks.len(), 1997);
+        assert_eq!(prefix.blocks.len(), 915);
         assert!(
             buffers
                 .planes
@@ -3905,6 +4059,90 @@ mod tests {
                 .unwrap(),
             (21, 0)
         );
+    }
+
+    #[test]
+    fn txb_context_uses_neighbor_levels_and_dc_signs() {
+        let transform = TransformBlock {
+            plane: 0,
+            x: 4,
+            y: 4,
+            tx_size: TxSize::Tx4x4,
+        };
+        let mut above = vec![0; 8];
+        let mut left = vec![0; 8];
+
+        assert_eq!(
+            txb_context(BlockSize::Block8x8, transform, &above, &left),
+            TxbContext {
+                skip: 1,
+                dc_sign: 0
+            }
+        );
+
+        above[1] = 4 | (2 << COEFF_CONTEXT_BITS);
+        left[1] = 2 | (1 << COEFF_CONTEXT_BITS);
+        assert_eq!(
+            txb_context(BlockSize::Block8x8, transform, &above, &left),
+            TxbContext {
+                skip: 5,
+                dc_sign: 0
+            }
+        );
+
+        left[1] = 0;
+        assert_eq!(
+            txb_context(BlockSize::Block8x8, transform, &above, &left),
+            TxbContext {
+                skip: 3,
+                dc_sign: 2
+            }
+        );
+    }
+
+    #[test]
+    fn chroma_txb_skip_context_uses_non_zero_neighbors_and_block_area() {
+        let transform = TransformBlock {
+            plane: 1,
+            x: 0,
+            y: 0,
+            tx_size: TxSize::Tx4x4,
+        };
+        assert_eq!(
+            txb_context(BlockSize::Block4x4, transform, &[1], &[0]).skip,
+            8
+        );
+        assert_eq!(
+            txb_context(BlockSize::Block8x8, transform, &[1], &[1]).skip,
+            12
+        );
+    }
+
+    #[test]
+    fn coefficient_entropy_context_caps_level_and_encodes_dc_sign() {
+        assert_eq!(coefficient_entropy_context(&[0, 0]), 0);
+        assert_eq!(coefficient_entropy_context(&[2, 3]), 5 | 16);
+        assert_eq!(coefficient_entropy_context(&[-10, 4]), 7 | 8);
+
+        let transform = TransformBlock {
+            plane: 0,
+            x: 4,
+            y: 8,
+            tx_size: TxSize::Tx8x8,
+        };
+        let mut above = vec![0; 8];
+        let mut left = vec![0; 8];
+        set_txb_entropy_context(transform, 23, &mut above, &mut left);
+        assert_eq!(&above[1..3], &[23, 23]);
+        assert_eq!(&left[2..4], &[23, 23]);
+    }
+
+    #[test]
+    fn eob_context_distinguishes_2d_and_directional_transforms() {
+        assert_eq!(eob_tx_class_context(TxType::DctDct), 0);
+        assert_eq!(eob_tx_class_context(TxType::Identity), 0);
+        assert_eq!(eob_tx_class_context(TxType::VerticalDct), 1);
+        assert_eq!(eob_tx_class_context(TxType::HorizontalDct), 1);
     }
 
     #[test]
