@@ -1594,7 +1594,7 @@ impl<'a> TileDecoder<'a> {
             sign_count += 1;
 
             if level >= MAX_BASE_BR_RANGE {
-                let golomb = self.read_golomb()?;
+                let golomb = read_golomb(&mut self.reader)?;
                 level += golomb;
                 golomb_count += 1;
                 if first_golomb_scan_index.is_none() {
@@ -1618,33 +1618,33 @@ impl<'a> TileDecoder<'a> {
             first_golomb_value,
         })
     }
+}
 
-    fn read_golomb(&mut self) -> Result<usize, DecoderError> {
-        let mut value = 1usize;
-        let mut length = 0usize;
-        loop {
-            length += 1;
-            if length > 20 {
-                return Err(DecoderError::Bitstream(
-                    "AV1 coeff golomb length exceeds 20 bits".to_string(),
-                ));
-            }
-            let bit = self.reader.read_literal(1).map_err(|err| {
-                DecoderError::Bitstream(format!("AV1 coeff_golomb_prefix: {err}"))
-            })?;
-            if bit != 0 {
-                break;
-            }
+fn read_golomb(reader: &mut EntropyDecoder<'_>) -> Result<usize, DecoderError> {
+    let mut value = 1usize;
+    let mut length = 0usize;
+    loop {
+        length += 1;
+        if length > 20 {
+            return Err(DecoderError::Bitstream(
+                "AV1 coeff golomb length exceeds 20 bits".to_string(),
+            ));
         }
-        for _ in 0..length - 1 {
-            value <<= 1;
-            value |=
-                self.reader.read_literal(1).map_err(|err| {
-                    DecoderError::Bitstream(format!("AV1 coeff_golomb_suffix: {err}"))
-                })? as usize;
+        let bit = reader
+            .read_literal(1)
+            .map_err(|err| DecoderError::Bitstream(format!("AV1 coeff_golomb_prefix: {err}")))?;
+        if bit != 0 {
+            break;
         }
-        Ok(value - 1)
     }
+    for _ in 0..length - 1 {
+        value <<= 1;
+        value |= reader
+            .read_literal(1)
+            .map_err(|err| DecoderError::Bitstream(format!("AV1 coeff_golomb_suffix: {err}")))?
+            as usize;
+    }
+    Ok(value - 1)
 }
 
 fn intra_ext_tx_set_context(reduced_tx_set: bool, tx_size: TxSize) -> Option<(usize, usize)> {
@@ -2733,6 +2733,10 @@ const COEFFICIENT_LEVEL_MASK: usize = (1 << 20) - 1;
 fn clamp_coefficient_level(level: usize) -> usize {
     level & COEFFICIENT_LEVEL_MASK
 }
+
+#[cfg(test)]
+#[path = "tests/tile_decode_coeff.rs"]
+mod coeff_tests;
 
 const MAG_REF_OFFSET_WITH_TX_CLASS_2D: [(usize, usize); 3] = [(0, 1), (1, 0), (1, 1)];
 const SIG_REF_DIFF_OFFSET_2D: [(usize, usize); 5] = [(0, 1), (1, 0), (1, 1), (0, 2), (2, 0)];
