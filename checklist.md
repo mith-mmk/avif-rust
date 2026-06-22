@@ -50,9 +50,9 @@ This is the current highest-priority implementation block. Entropy components th
 - [x] Select luma/chroma `txb_skip` contexts from neighbouring levels and plane/block geometry.
 - [x] Select DC-sign contexts from neighbouring DC signs.
 - [x] Propagate capped coefficient level and DC sign after every zero/non-zero transform block.
-- [ ] Verify EOB, base, base-EOB, base-range, sign and Golomb decoding as one state machine.
+- [x] Verify EOB, base, base-EOB, base-range, sign and Golomb decoding as one state machine.
   - [x] Freeze AOM-bitwriter Golomb payload vectors and EOB group-start vectors.
-  - [ ] Add a scripted full coefficient-token transcript covering every phase and context transition.
+  - [x] Add a scripted full coefficient-token transcript covering every phase and context transition.
 - [ ] Compare decoded coefficient vectors against reference output before relying on final RGB metrics.
 - [x] Implement normative ext-tx subset mapping, filter-intra tx mode mapping, directional scan selection and 1D coefficient contexts.
 - [x] Apply the normative 20-bit coefficient magnitude clamp after Golomb extension.

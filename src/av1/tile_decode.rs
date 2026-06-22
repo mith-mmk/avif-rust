@@ -16,6 +16,10 @@ use super::transform::{
 };
 use crate::DecoderError;
 
+mod coefficient;
+
+use coefficient::{CoefficientRead, EntropyCoefficientSource, decode_coefficients};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TileEntropyState {
     pub tile_id: u32,
@@ -969,47 +973,16 @@ impl<'a> TileDecoder<'a> {
             first_quantized_coefficients,
         ) = if let Some(non_zero_transform) = first_non_zero_transform {
             let tx_type_probe = self.read_intra_tx_type(frame, block_mode, non_zero_transform)?;
-            let eob_multisize = eob_multisize(non_zero_transform);
-            if !(0..=6).contains(&eob_multisize) {
-                return Err(DecoderError::Unsupported(format!(
-                    "AV1 eob_pt decode for eobMultisize {eob_multisize} is not supported yet"
-                )));
-            }
             let plane_type = usize::from(non_zero_transform.plane > 0);
-            let eob_pt_symbol = self.reader.read_symbol(self.cdf.eob_pt_cdf_mut(
-                eob_multisize,
-                plane_type,
-                eob_tx_class_context(tx_type_probe.tx_type),
-            ))?;
-            let eob_pt = eob_pt_symbol + 1;
-            let eob_base = eob_base_from_pt(eob_pt);
-            let (eob_extra_context, eob_extra_symbol, eob_extra_literal_bits, eob) =
-                self.read_eob_extra(non_zero_transform, plane_type, eob_pt, eob_base)?;
-            if non_zero_transform.tx_size.width() > 64 || non_zero_transform.tx_size.height() > 64 {
-                return Err(DecoderError::Unsupported(format!(
-                    "AV1 coeff_base_eob decode for {:?} is not supported yet",
-                    non_zero_transform.tx_size
-                )));
-            }
-            let coeff_base_eob_context =
-                coeff_base_eob_context(non_zero_transform.tx_size, eob.saturating_sub(1));
-            let coeff_base_eob_symbol =
-                self.reader.read_symbol(self.cdf.coeff_base_eob_cdf_mut(
-                    non_zero_transform.tx_size.coeff_cdf_index(),
-                    plane_type,
-                    coeff_base_eob_context,
-                ))?;
-            let coeff_base_eob_level = coeff_base_eob_symbol + 1;
-            let coeff_base_read = self.read_regular_coeff_bases(
+            let coefficient_read = self.read_coefficient_state(
                 non_zero_transform.tx_size,
                 tx_type_probe.tx_type,
                 plane_type,
-                eob,
-                coeff_base_eob_level,
                 first_non_zero_txb_context
                     .expect("non-zero transform should retain its txb context")
                     .dc_sign,
             )?;
+            let coeff_base_read = coefficient_read.base;
             self.set_txb_entropy_context(
                 non_zero_transform,
                 coefficient_entropy_context(&coeff_base_read.base_levels),
@@ -1042,21 +1015,21 @@ impl<'a> TileDecoder<'a> {
                 tx_type_probe.tx_type,
             )?;
             (
-                Some(eob_multisize),
-                Some(eob_pt_symbol),
-                Some(eob_pt),
-                Some(eob_base),
-                eob_extra_context,
-                eob_extra_symbol,
-                eob_extra_literal_bits,
-                Some(eob),
+                Some(coefficient_read.eob_multisize),
+                Some(coefficient_read.eob_pt_symbol),
+                Some(coefficient_read.eob_pt),
+                Some(coefficient_read.eob_base),
+                coefficient_read.eob_extra_context,
+                coefficient_read.eob_extra_symbol,
+                Some(coefficient_read.eob_extra_literal_bits),
+                Some(coefficient_read.eob),
                 tx_type_probe.read,
                 tx_type_probe.set,
                 tx_type_probe.symbol,
                 Some(tx_type_probe.tx_type),
-                Some(coeff_base_eob_context),
-                Some(coeff_base_eob_symbol),
-                Some(coeff_base_eob_level),
+                Some(coefficient_read.coeff_base_eob_context),
+                Some(coefficient_read.coeff_base_eob_symbol),
+                Some(coefficient_read.coeff_base_eob_level),
                 Some(coeff_base_read.probe.remaining_count),
                 Some(coeff_base_read.probe.decoded_count),
                 Some(coeff_base_read.non_zero_count),
@@ -1179,55 +1152,6 @@ impl<'a> TileDecoder<'a> {
         })
     }
 
-    fn read_eob_extra(
-        &mut self,
-        transform: TransformBlock,
-        plane_type: usize,
-        eob_pt: usize,
-        eob_base: usize,
-    ) -> Result<(Option<usize>, Option<usize>, Option<usize>, usize), DecoderError> {
-        if eob_pt < 3 {
-            return Ok((None, None, Some(0), eob_base));
-        }
-        if transform.tx_size.width() > 64 || transform.tx_size.height() > 64 {
-            return Err(DecoderError::Unsupported(format!(
-                "AV1 eob_extra decode for {:?} is not supported yet",
-                transform.tx_size
-            )));
-        }
-
-        let context = eob_pt - 3;
-        let eob_extra_symbol = self.reader.read_symbol(self.cdf.eob_extra_cdf_mut(
-            transform.tx_size.coeff_cdf_index(),
-            plane_type,
-            context,
-        ))?;
-        let mut eob = eob_base;
-        let eob_shift = eob_pt - 3;
-        if eob_extra_symbol != 0 {
-            eob += 1usize << eob_shift;
-        }
-
-        let literal_bits = eob_pt.saturating_sub(3);
-        for index in 0..literal_bits {
-            let shift = literal_bits - 1 - index;
-            let bit = self
-                .reader
-                .read_literal(1)
-                .map_err(|err| DecoderError::Bitstream(format!("AV1 eob_extra_bit: {err}")))?;
-            if bit != 0 {
-                eob += 1usize << shift;
-            }
-        }
-
-        Ok((
-            Some(context),
-            Some(eob_extra_symbol),
-            Some(literal_bits),
-            eob,
-        ))
-    }
-
     fn read_intra_tx_type(
         &mut self,
         frame: &FrameHeader,
@@ -1303,348 +1227,26 @@ impl<'a> TileDecoder<'a> {
         let tx_type = self
             .read_intra_tx_type(frame, block_mode, transform)?
             .tx_type;
-        let eob_multisize = eob_multisize(transform);
-        if !(0..=6).contains(&eob_multisize) {
-            return Err(DecoderError::Unsupported(format!(
-                "AV1 eob_pt decode for eobMultisize {eob_multisize} is not supported yet"
-            )));
-        }
         let plane_type = usize::from(transform.plane > 0);
-        let eob_pt_symbol = self.reader.read_symbol(self.cdf.eob_pt_cdf_mut(
-            eob_multisize,
-            plane_type,
-            eob_tx_class_context(tx_type),
-        ))?;
-        let eob_pt = eob_pt_symbol + 1;
-        let eob_base = eob_base_from_pt(eob_pt);
-        let (_, _, _, eob) = self.read_eob_extra(transform, plane_type, eob_pt, eob_base)?;
-        if transform.tx_size.width() > 64 || transform.tx_size.height() > 64 {
-            return Err(DecoderError::Unsupported(format!(
-                "AV1 coeff_base_eob decode for {:?} is not supported yet",
-                transform.tx_size
-            )));
-        }
-        let coeff_base_eob_context =
-            coeff_base_eob_context(transform.tx_size, eob.saturating_sub(1));
-        let coeff_base_eob_symbol = self.reader.read_symbol(self.cdf.coeff_base_eob_cdf_mut(
-            transform.tx_size.coeff_cdf_index(),
-            plane_type,
-            coeff_base_eob_context,
-        ))?;
-        let coeff_base_eob_level = coeff_base_eob_symbol + 1;
-        let coeff_base_read = self.read_regular_coeff_bases(
-            transform.tx_size,
-            tx_type,
-            plane_type,
-            eob,
-            coeff_base_eob_level,
-            dc_sign_context,
-        )?;
+        let coefficient_read =
+            self.read_coefficient_state(transform.tx_size, tx_type, plane_type, dc_sign_context)?;
         Ok(DecodedTransform {
             transform,
             tx_type,
-            coefficients: coeff_base_read.base_levels,
+            coefficients: coefficient_read.base.base_levels,
         })
     }
 
-    fn read_regular_coeff_bases(
+    fn read_coefficient_state(
         &mut self,
-        tx_size: super::syntax::TxSize,
+        tx_size: TxSize,
         tx_type: TxType,
         plane_type: usize,
-        eob: usize,
-        eob_level: usize,
         dc_sign_context: usize,
-    ) -> Result<CoeffBaseRead, DecoderError> {
-        let sample_count = tx_size.sample_count();
-        let scan = coefficient_scan(tx_size, tx_type);
-        if eob == 0 || eob > scan.len() {
-            return Err(DecoderError::Bitstream(format!(
-                "AV1 eob {eob} is invalid for {tx_size:?}"
-            )));
-        }
-        let remaining_count = eob - 1;
-        let mut quant = vec![0i32; sample_count];
-        let mut base_range_count = 0usize;
-        let mut coeff_br_symbol_count = 0usize;
-        let mut first_coeff_br = None;
-
-        let eob_position = scan[eob - 1];
-        let eob_level = self.read_coeff_br_range(
-            tx_size,
-            tx_type,
-            plane_type,
-            eob - 1,
-            eob_position,
-            eob_level,
-            &quant,
-            &mut base_range_count,
-            &mut coeff_br_symbol_count,
-            &mut first_coeff_br,
-        )?;
-        quant[eob_position] = eob_level as i32;
-        if remaining_count == 0 {
-            let non_zero_count = coeff_base_non_zero_count(&quant);
-            let signs = self.read_coeff_signs_and_golomb(
-                tx_size,
-                plane_type,
-                dc_sign_context,
-                eob,
-                &scan,
-                &mut quant,
-            )?;
-            let signed_non_zero_count = coeff_base_non_zero_count(&quant);
-            let first_signed_coeff = first_signed_coeff(eob, &scan, &quant)?;
-            return Ok(CoeffBaseRead {
-                probe: CoeffBaseProbe {
-                    remaining_count,
-                    decoded_count: 0,
-                    scan_index: None,
-                    position: None,
-                    context: None,
-                    reference_magnitude: None,
-                    symbol: None,
-                    level: None,
-                },
-                base_levels: quant,
-                non_zero_count,
-                base_range_count,
-                coeff_br_symbol_count,
-                first_coeff_br,
-                signs,
-                signed_non_zero_count,
-                first_signed_coeff,
-            });
-        }
-
-        let mut first = None;
-        let mut decoded_count = 0usize;
-
-        for scan_index in (0..eob - 1).rev() {
-            let position = scan[scan_index];
-            let (context, reference_magnitude) = match tx_type {
-                TxType::VerticalDct | TxType::HorizontalDct => {
-                    coeff_base_context_1d(tx_size, tx_type, position, &quant)?
-                }
-                _ => coeff_base_context_2d(tx_size, position, &quant)?,
-            };
-            if context >= 42 {
-                return Err(DecoderError::Unsupported(format!(
-                    "AV1 coeff_base decode for Tx32x32 context {context} is not supported yet"
-                )));
-            }
-            let symbol = self.reader.read_symbol(self.cdf.coeff_base_cdf_mut(
-                tx_size.coeff_cdf_index(),
-                plane_type,
-                context,
-            ))?;
-            let level = self.read_coeff_br_range(
-                tx_size,
-                tx_type,
-                plane_type,
-                scan_index,
-                position,
-                symbol,
-                &quant,
-                &mut base_range_count,
-                &mut coeff_br_symbol_count,
-                &mut first_coeff_br,
-            )?;
-            quant[position] = level as i32;
-            decoded_count += 1;
-
-            if first.is_none() {
-                first = Some((scan_index, position, context, reference_magnitude, symbol));
-            }
-        }
-
-        let (scan_index, position, context, reference_magnitude, symbol) =
-            first.expect("remaining_count > 0 should decode at least one coeff_base");
-        let non_zero_count = coeff_base_non_zero_count(&quant);
-        let signs = self.read_coeff_signs_and_golomb(
-            tx_size,
-            plane_type,
-            dc_sign_context,
-            eob,
-            &scan,
-            &mut quant,
-        )?;
-        let signed_non_zero_count = coeff_base_non_zero_count(&quant);
-        let first_signed_coeff = first_signed_coeff(eob, &scan, &quant)?;
-        Ok(CoeffBaseRead {
-            probe: CoeffBaseProbe {
-                remaining_count,
-                decoded_count,
-                scan_index: Some(scan_index),
-                position: Some(position),
-                context: Some(context),
-                reference_magnitude: Some(reference_magnitude),
-                symbol: Some(symbol),
-                level: Some(symbol),
-            },
-            base_levels: quant,
-            non_zero_count,
-            base_range_count,
-            coeff_br_symbol_count,
-            first_coeff_br,
-            signs,
-            signed_non_zero_count,
-            first_signed_coeff,
-        })
+    ) -> Result<CoefficientRead, DecoderError> {
+        let mut source = EntropyCoefficientSource::new(&mut self.reader, &mut self.cdf);
+        decode_coefficients(&mut source, tx_size, tx_type, plane_type, dc_sign_context)
     }
-
-    fn read_coeff_br_range(
-        &mut self,
-        tx_size: super::syntax::TxSize,
-        tx_type: TxType,
-        plane_type: usize,
-        scan_index: usize,
-        position: usize,
-        base_level: usize,
-        quant: &[i32],
-        base_range_count: &mut usize,
-        coeff_br_symbol_count: &mut usize,
-        first_coeff_br: &mut Option<CoeffBrProbe>,
-    ) -> Result<usize, DecoderError> {
-        if base_level <= NUM_BASE_LEVELS {
-            return Ok(base_level);
-        }
-        *base_range_count += 1;
-        let mut level = base_level;
-        for _ in 0..COEFF_BR_CDF_ROUNDS {
-            let context = match tx_type {
-                TxType::VerticalDct | TxType::HorizontalDct => {
-                    coeff_br_context_1d(tx_size, tx_type, position, quant)?
-                }
-                _ => coeff_br_context_2d(tx_size, position, quant)?,
-            };
-            let symbol = self.reader.read_symbol(self.cdf.coeff_br_cdf_mut(
-                tx_size.coeff_cdf_index(),
-                plane_type,
-                context,
-            ))?;
-            level += symbol;
-            *coeff_br_symbol_count += 1;
-            if first_coeff_br.is_none() {
-                *first_coeff_br = Some(CoeffBrProbe {
-                    scan_index,
-                    position,
-                    context,
-                    symbol,
-                    level_after_symbol: level,
-                });
-            }
-            if symbol < BR_CDF_SIZE - 1 {
-                break;
-            }
-        }
-        Ok(level)
-    }
-
-    fn read_coeff_signs_and_golomb(
-        &mut self,
-        _tx_size: super::syntax::TxSize,
-        plane_type: usize,
-        dc_sign_cdf_context: usize,
-        eob: usize,
-        scan: &[usize],
-        levels: &mut [i32],
-    ) -> Result<CoeffSignRead, DecoderError> {
-        if eob == 0 || eob > scan.len() {
-            return Err(DecoderError::InvalidParam(
-                "AV1 coefficient sign eob exceeds scan".to_string(),
-            ));
-        }
-
-        let mut sign_count = 0usize;
-        let mut dc_sign_context = None;
-        let mut dc_sign_symbol = None;
-        let mut first_ac_sign_scan_index = None;
-        let mut first_ac_sign_bit = None;
-        let mut golomb_count = 0usize;
-        let mut first_golomb_scan_index = None;
-        let mut first_golomb_value = None;
-
-        for scan_index in 0..eob {
-            let position = scan[scan_index];
-            let mut level = levels[position].unsigned_abs() as usize;
-            if level == 0 {
-                continue;
-            }
-
-            let sign = if scan_index == 0 {
-                let context = dc_sign_cdf_context;
-                let symbol = self
-                    .reader
-                    .read_symbol(self.cdf.dc_sign_cdf_mut(plane_type, context))?;
-                dc_sign_context = Some(context);
-                dc_sign_symbol = Some(symbol);
-                symbol != 0
-            } else {
-                let bit =
-                    self.reader.read_literal(1).map_err(|err| {
-                        DecoderError::Bitstream(format!("AV1 coeff_sign_bit: {err}"))
-                    })? as usize;
-                if first_ac_sign_scan_index.is_none() {
-                    first_ac_sign_scan_index = Some(scan_index);
-                    first_ac_sign_bit = Some(bit);
-                }
-                bit != 0
-            };
-            sign_count += 1;
-
-            if level >= MAX_BASE_BR_RANGE {
-                let golomb = read_golomb(&mut self.reader)?;
-                level += golomb;
-                golomb_count += 1;
-                if first_golomb_scan_index.is_none() {
-                    first_golomb_scan_index = Some(scan_index);
-                    first_golomb_value = Some(golomb);
-                }
-            }
-            level = clamp_coefficient_level(level);
-
-            levels[position] = if sign { -(level as i32) } else { level as i32 };
-        }
-
-        Ok(CoeffSignRead {
-            sign_count,
-            dc_sign_context,
-            dc_sign_symbol,
-            first_ac_sign_scan_index,
-            first_ac_sign_bit,
-            golomb_count,
-            first_golomb_scan_index,
-            first_golomb_value,
-        })
-    }
-}
-
-fn read_golomb(reader: &mut EntropyDecoder<'_>) -> Result<usize, DecoderError> {
-    let mut value = 1usize;
-    let mut length = 0usize;
-    loop {
-        length += 1;
-        if length > 20 {
-            return Err(DecoderError::Bitstream(
-                "AV1 coeff golomb length exceeds 20 bits".to_string(),
-            ));
-        }
-        let bit = reader
-            .read_literal(1)
-            .map_err(|err| DecoderError::Bitstream(format!("AV1 coeff_golomb_prefix: {err}")))?;
-        if bit != 0 {
-            break;
-        }
-    }
-    for _ in 0..length - 1 {
-        value <<= 1;
-        value |= reader
-            .read_literal(1)
-            .map_err(|err| DecoderError::Bitstream(format!("AV1 coeff_golomb_suffix: {err}")))?
-            as usize;
-    }
-    Ok(value - 1)
 }
 
 fn intra_ext_tx_set_context(reduced_tx_set: bool, tx_size: TxSize) -> Option<(usize, usize)> {
@@ -2532,6 +2134,7 @@ fn eob_tx_class_context(tx_type: TxType) -> usize {
     ))
 }
 
+#[cfg(test)]
 fn eob_multisize(transform: TransformBlock) -> usize {
     usize::from(transform.tx_size.width_log2().min(5) + transform.tx_size.height_log2().min(5) - 4)
 }
