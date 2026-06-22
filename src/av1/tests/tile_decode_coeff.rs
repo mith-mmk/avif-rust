@@ -229,3 +229,20 @@ fn scripted_transcript_covers_full_coefficient_state_machine() {
         vec![-1, 2, -1, 0, 0, 0, 0, 0, 20, 0, 0, 0, 0, 0, 0, 0]
     );
 }
+
+#[test]
+fn aom_encoded_payload_decodes_to_reference_coefficient_vector() {
+    // Generated with AOM's default q-context-0 CDFs and aom_write_symbol/bit.
+    let payload = [27, 150, 246, 92, 224];
+    let mut reader = EntropyDecoder::new(&payload, false).unwrap();
+    let mut cdf = CdfContext::new(20);
+    let mut source = EntropyCoefficientSource::new(&mut reader, &mut cdf);
+
+    let decoded = decode_coefficients(&mut source, TxSize::Tx4x4, TxType::DctDct, 0, 2).unwrap();
+
+    assert_eq!(decoded.eob, 6);
+    assert_eq!(
+        decoded.base.base_levels,
+        vec![-1, 2, -1, 0, 0, 0, 0, 0, 20, 0, 0, 0, 0, 0, 0, 0]
+    );
+}

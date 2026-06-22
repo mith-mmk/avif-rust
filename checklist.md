@@ -53,7 +53,9 @@ This is the current highest-priority implementation block. Entropy components th
 - [x] Verify EOB, base, base-EOB, base-range, sign and Golomb decoding as one state machine.
   - [x] Freeze AOM-bitwriter Golomb payload vectors and EOB group-start vectors.
   - [x] Add a scripted full coefficient-token transcript covering every phase and context transition.
-- [ ] Compare decoded coefficient vectors against reference output before relying on final RGB metrics.
+- [x] Compare decoded coefficient vectors against an AOM-CDF/bitwriter reference payload before relying on final RGB metrics.
+  - [x] Decode the AOM-produced arithmetic payload to the exact 4x4 quantized coefficient vector, including base-range, signs and Golomb extension.
+- [ ] Align block syntax and transform-block traversal with the AOM sample oracle before adding full-sample coefficient fixtures.
 - [x] Implement normative ext-tx subset mapping, filter-intra tx mode mapping, directional scan selection and 1D coefficient contexts.
 - [x] Apply the normative 20-bit coefficient magnitude clamp after Golomb extension.
 - [x] Confirm dequant shifts: 4/8/16 no shift, 32 divide by 2, 64 divide by 4.
@@ -120,6 +122,7 @@ These measurements document incomplete combinations; they are not acceptance cri
 - Integrating size/class-specific EOB CDFs, size-specific coefficient CDFs and complete neighbour txb state atomically produces a deterministic `915`-block traversal and improves average RGB absolute error to about `67.0337`; this is the current retained path.
 - Enabling the AOM-vector-verified 16x16 integer DCT changes the sample average RGB error to about `74.4911`; it remains enabled because the single sample is diagnostic rather than the conformance oracle.
 - Routing all 16x16 transform types through integer DCT/IADST/identity stages changes the diagnostic sample error to about `75.8173`.
+- Direct AOM coefficient instrumentation shows the sample starts with a non-zero 64x64 luma DC coefficient (`-468`), while the current Rust traversal first reaches a non-zero luma transform later in the frame; this identifies block syntax/traversal as an upstream conformance blocker rather than a coefficient-state-machine failure.
 - Normative ext-tx mapping alone produced `71.5238`; mapping plus incomplete 1D contexts changed block traversal to `1347`.
 - Directional scan/context combinations produced `72.8957` and `82.0004` before the complete retained scan/mapping subset was wired.
 - DC-sign neighbour contexts alone changed `1997` blocks to `1976` and produced `77.1615`.
