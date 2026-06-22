@@ -208,6 +208,19 @@ pub const DEFAULT_PARTITION_W128_CDF: [[u16; 9]; PARTITION_CONTEXTS] = [
 
 pub const DEFAULT_SKIP_CDF: [[u16; 3]; SKIP_CONTEXTS] =
     [[31671, 32768, 0], [16515, 32768, 0], [4576, 32768, 0]];
+pub const DEFAULT_SWITCHABLE_RESTORE_CDF: [u16; 4] = [9413, 22581, 32768, 0];
+pub const DEFAULT_WIENER_RESTORE_CDF: [u16; 3] = [11570, 32768, 0];
+pub const DEFAULT_SGRPROJ_RESTORE_CDF: [u16; 3] = [16855, 32768, 0];
+pub const DEFAULT_PALETTE_Y_MODE_CDF: [[[u16; 3]; 3]; 7] = [
+    [[31676, 32768, 0], [3419, 32768, 0], [1261, 32768, 0]],
+    [[31912, 32768, 0], [2859, 32768, 0], [980, 32768, 0]],
+    [[31823, 32768, 0], [3400, 32768, 0], [781, 32768, 0]],
+    [[32030, 32768, 0], [3561, 32768, 0], [904, 32768, 0]],
+    [[32309, 32768, 0], [7337, 32768, 0], [1462, 32768, 0]],
+    [[32265, 32768, 0], [4015, 32768, 0], [1521, 32768, 0]],
+    [[32450, 32768, 0], [7946, 32768, 0], [129, 32768, 0]],
+];
+pub const DEFAULT_PALETTE_UV_MODE_CDF: [[u16; 3]; 2] = [[32461, 32768, 0], [21488, 32768, 0]];
 
 pub const DEFAULT_TXB_SKIP_CDF: [[[[u16; 3]; TXB_SKIP_CONTEXTS]; TX_SIZE_CONTEXTS];
     COEFF_CDF_Q_CONTEXTS] = [
@@ -1481,6 +1494,11 @@ pub struct CdfContext {
     pub partition_w64: [[u16; 11]; PARTITION_CONTEXTS],
     pub partition_w128: [[u16; 9]; PARTITION_CONTEXTS],
     pub skip: [[u16; 3]; SKIP_CONTEXTS],
+    pub switchable_restore: [u16; 4],
+    pub wiener_restore: [u16; 3],
+    pub sgrproj_restore: [u16; 3],
+    pub palette_y_mode: [[[u16; 3]; 3]; 7],
+    pub palette_uv_mode: [[u16; 3]; 2],
     pub intra_frame_y_mode: [[[u16; INTRA_MODES + 1]; INTRA_MODE_CONTEXTS]; INTRA_MODE_CONTEXTS],
     pub y_mode: [[u16; INTRA_MODES + 1]; BLOCK_SIZE_GROUPS],
     pub uv_mode_cfl_not_allowed: [[u16; INTRA_MODES + 1]; INTRA_MODES],
@@ -1525,6 +1543,11 @@ impl CdfContext {
             partition_w64: DEFAULT_PARTITION_W64_CDF,
             partition_w128: DEFAULT_PARTITION_W128_CDF,
             skip: DEFAULT_SKIP_CDF,
+            switchable_restore: DEFAULT_SWITCHABLE_RESTORE_CDF,
+            wiener_restore: DEFAULT_WIENER_RESTORE_CDF,
+            sgrproj_restore: DEFAULT_SGRPROJ_RESTORE_CDF,
+            palette_y_mode: DEFAULT_PALETTE_Y_MODE_CDF,
+            palette_uv_mode: DEFAULT_PALETTE_UV_MODE_CDF,
             intra_frame_y_mode: DEFAULT_INTRA_FRAME_Y_MODE_CDF,
             y_mode: DEFAULT_Y_MODE_CDF,
             uv_mode_cfl_not_allowed: DEFAULT_UV_MODE_CFL_NOT_ALLOWED_CDF,
@@ -1568,6 +1591,30 @@ impl CdfContext {
 
     pub fn skip_cdf_mut(&mut self, context: usize) -> &mut [u16] {
         &mut self.skip[context]
+    }
+
+    pub fn switchable_restore_cdf_mut(&mut self) -> &mut [u16] {
+        &mut self.switchable_restore
+    }
+
+    pub fn wiener_restore_cdf_mut(&mut self) -> &mut [u16] {
+        &mut self.wiener_restore
+    }
+
+    pub fn sgrproj_restore_cdf_mut(&mut self) -> &mut [u16] {
+        &mut self.sgrproj_restore
+    }
+
+    pub fn palette_y_mode_cdf_mut(
+        &mut self,
+        block_size_context: usize,
+        neighbour_context: usize,
+    ) -> &mut [u16] {
+        &mut self.palette_y_mode[block_size_context][neighbour_context]
+    }
+
+    pub fn palette_uv_mode_cdf_mut(&mut self, y_palette_context: usize) -> &mut [u16] {
+        &mut self.palette_uv_mode[y_palette_context]
     }
 
     pub fn intra_frame_y_mode_cdf_mut(

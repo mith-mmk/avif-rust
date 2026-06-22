@@ -616,7 +616,13 @@ fn parse_lr_params(
     let mut uses_lr = false;
     let mut lr_type = [0u8; 3];
     for plane in 0..planes {
-        let plane_lr_type = reader.read_bits(2, "lr_type")? as u8;
+        let plane_lr_type = match reader.read_bits(2, "lr_type")? {
+            0 => 0,
+            1 => 3,
+            2 => 1,
+            3 => 2,
+            _ => unreachable!("two-bit restoration type"),
+        };
         lr_type[plane] = plane_lr_type;
         uses_lr |= plane_lr_type != 0;
     }

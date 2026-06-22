@@ -165,8 +165,13 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
     let quant_state =
         QuantState::from_params(&frame.quantization, sequence.color_config.bit_depth)?;
     let mut tile_group_payload = tile_group_payload;
-    tile_group_payload.partition_probes =
-        probe_tile_partitions(tile_data, &tile_group_payload.group, &frame, &decode_plan)?;
+    tile_group_payload.partition_probes = probe_tile_partitions(
+        tile_data,
+        &tile_group_payload.group,
+        &sequence,
+        &frame,
+        &decode_plan,
+    )?;
     tile_group_payload.block_mode_probes = probe_tile_block_modes(
         tile_data,
         &tile_group_payload.group,

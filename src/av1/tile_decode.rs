@@ -1,7 +1,7 @@
 use super::cdf::CdfContext;
 use super::decode::{FrameBuffers, FrameDecodePlan, PlaneBuffer, TileDecodePlan};
 use super::entropy::EntropyDecoder;
-use super::frame::{FrameHeader, TxMode};
+use super::frame::{FrameHeader, RestorationParams, TxMode};
 use super::predict::{
     IntraEdges, predict_filter_intra, predict_intra, predict_intra_with_edge_filter,
 };
@@ -178,6 +178,9 @@ pub struct TileDecoder<'a> {
     above_txfm_context: Vec<usize>,
     left_txfm_context: Vec<usize>,
     plane_entropy_contexts: [PlaneEntropyContexts; 3],
+    restoration: RestorationParams,
+    wiener_refs: [[[i16; 3]; 2]; 3],
+    sgrproj_refs: [[i16; 2]; 3],
 }
 
 impl<'a> TileDecoder<'a> {
@@ -208,6 +211,9 @@ impl<'a> TileDecoder<'a> {
                 above: vec![0; mi_cols],
                 left: vec![0; mi_rows],
             }),
+            restoration: frame.restoration,
+            wiener_refs: [[[3, -7, 15]; 2]; 3],
+            sgrproj_refs: [[-32, 31]; 3],
         })
     }
 
@@ -224,8 +230,188 @@ impl<'a> TileDecoder<'a> {
     pub fn read_root_partition(
         &mut self,
         tile: &TileDecodePlan,
+        sequence: &SequenceHeader,
     ) -> Result<PartitionProbe, DecoderError> {
+        self.read_restoration_units(sequence, tile.pixel_x, tile.pixel_y)?;
         self.read_partition(tile, BlockSize::Block128x128, tile.pixel_x, tile.pixel_y)
+    }
+
+    fn read_first_leaf_partition(
+        &mut self,
+        tile: &TileDecodePlan,
+        sequence: &SequenceHeader,
+    ) -> Result<PartitionProbe, DecoderError> {
+        let mut probe = self.read_root_partition(tile, sequence)?;
+        loop {
+            match probe.partition {
+                Partition::None => return Ok(probe),
+                Partition::Split => {
+                    let subsize = probe.block_size.split_subsize().ok_or_else(|| {
+                        DecoderError::Bitstream(format!(
+                            "AV1 cannot split first leaf block {:?}",
+                            probe.block_size
+                        ))
+                    })?;
+                    probe = self.read_partition(tile, subsize, tile.pixel_x, tile.pixel_y)?;
+                }
+                partition => {
+                    return Err(DecoderError::Unsupported(format!(
+                        "AV1 first-leaf traversal for partition {partition:?} is not supported yet"
+                    )));
+                }
+            }
+        }
+    }
+
+    fn read_restoration_units(
+        &mut self,
+        sequence: &SequenceHeader,
+        x: usize,
+        y: usize,
+    ) -> Result<(), DecoderError> {
+        if !self.restoration.uses_lr {
+            return Ok(());
+        }
+        let superblock_size = if sequence.use_128x128_superblock {
+            128
+        } else {
+            64
+        };
+        let unit_size = superblock_size << self.restoration.unit_shift;
+        if x % unit_size != 0 || y % unit_size != 0 {
+            return Ok(());
+        }
+
+        let planes = if sequence.color_config.monochrome {
+            1
+        } else {
+            3
+        };
+        for plane in 0..planes {
+            let restoration_type = match self.restoration.lr_type[plane] {
+                0 => continue,
+                1 => usize::from(self.reader.read_symbol(self.cdf.wiener_restore_cdf_mut())? != 0),
+                2 => {
+                    let enabled = self
+                        .reader
+                        .read_symbol(self.cdf.sgrproj_restore_cdf_mut())?
+                        != 0;
+                    if enabled { 2 } else { 0 }
+                }
+                3 => self
+                    .reader
+                    .read_symbol(self.cdf.switchable_restore_cdf_mut())?,
+                value => {
+                    return Err(DecoderError::Bitstream(format!(
+                        "AV1 restoration type {value} is invalid"
+                    )));
+                }
+            };
+            match restoration_type {
+                0 => {}
+                1 => self.read_wiener_filter(plane)?,
+                2 => self.read_sgrproj_filter(plane)?,
+                value => {
+                    return Err(DecoderError::Bitstream(format!(
+                        "AV1 switchable restoration symbol {value} is invalid"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn read_wiener_filter(&mut self, plane: usize) -> Result<(), DecoderError> {
+        const BITS: [usize; 3] = [4, 5, 6];
+        const SUBEXP_K: [usize; 3] = [1, 2, 3];
+        const MIN: [i16; 3] = [-5, -23, -17];
+        let first_tap = usize::from(plane > 0);
+        for direction in 0..2 {
+            for tap in first_tap..3 {
+                let n = 1usize << BITS[tap];
+                let reference = usize::try_from(self.wiener_refs[plane][direction][tap] - MIN[tap])
+                    .map_err(|_| {
+                        DecoderError::Bitstream("AV1 Wiener reference is invalid".to_string())
+                    })?;
+                let value = self.read_primitive_refsubexpfin(n, SUBEXP_K[tap], reference)?;
+                self.wiener_refs[plane][direction][tap] = i16::try_from(value).map_err(|_| {
+                    DecoderError::Bitstream("AV1 Wiener tap exceeds i16".to_string())
+                })? + MIN[tap];
+            }
+        }
+        Ok(())
+    }
+
+    fn read_sgrproj_filter(&mut self, plane: usize) -> Result<(), DecoderError> {
+        const MIN: [i16; 2] = [-96, -32];
+        const MAX: [i16; 2] = [31, 95];
+        let index = self.reader.read_literal(4)? as usize;
+        let read_value = |decoder: &mut Self, coefficient: usize| -> Result<i16, DecoderError> {
+            let reference =
+                usize::try_from(decoder.sgrproj_refs[plane][coefficient] - MIN[coefficient])
+                    .map_err(|_| {
+                        DecoderError::Bitstream("AV1 SGRPROJ reference is invalid".to_string())
+                    })?;
+            let value = decoder.read_primitive_refsubexpfin(128, 4, reference)?;
+            Ok(i16::try_from(value).map_err(|_| {
+                DecoderError::Bitstream("AV1 SGRPROJ coefficient exceeds i16".to_string())
+            })? + MIN[coefficient])
+        };
+        if (10..=13).contains(&index) {
+            self.sgrproj_refs[plane][0] = 0;
+            self.sgrproj_refs[plane][1] = read_value(self, 1)?;
+        } else if index >= 14 {
+            self.sgrproj_refs[plane][0] = read_value(self, 0)?;
+            self.sgrproj_refs[plane][1] = (128 - self.sgrproj_refs[plane][0]).clamp(MIN[1], MAX[1]);
+        } else {
+            self.sgrproj_refs[plane][0] = read_value(self, 0)?;
+            self.sgrproj_refs[plane][1] = read_value(self, 1)?;
+        }
+        Ok(())
+    }
+
+    fn read_primitive_refsubexpfin(
+        &mut self,
+        n: usize,
+        k: usize,
+        reference: usize,
+    ) -> Result<usize, DecoderError> {
+        let value = self.read_primitive_subexpfin(n, k)?;
+        Ok(inv_recenter_finite_nonneg(n, reference, value))
+    }
+
+    fn read_primitive_subexpfin(&mut self, n: usize, k: usize) -> Result<usize, DecoderError> {
+        let mut index = 0usize;
+        let mut mk = 0usize;
+        loop {
+            let bits = if index == 0 { k } else { k + index - 1 };
+            let step = 1usize << bits;
+            if n <= mk + 3 * step {
+                return self.read_primitive_quniform(n - mk).map(|value| value + mk);
+            }
+            if self.reader.read_literal(1)? == 0 {
+                return self
+                    .reader
+                    .read_literal(bits)
+                    .map(|value| value as usize + mk);
+            }
+            index += 1;
+            mk += step;
+        }
+    }
+
+    fn read_primitive_quniform(&mut self, n: usize) -> Result<usize, DecoderError> {
+        if n <= 1 {
+            return Ok(0);
+        }
+        let bits = usize::BITS as usize - n.leading_zeros() as usize;
+        let threshold = (1usize << bits) - n;
+        let value = self.reader.read_literal(bits - 1)? as usize;
+        if value < threshold {
+            Ok(value)
+        } else {
+            Ok((value << 1) - threshold + self.reader.read_literal(1)? as usize)
+        }
     }
 
     fn read_partition(
@@ -334,24 +520,6 @@ impl<'a> TileDecoder<'a> {
         } else {
             None
         };
-        let mut filter_intra_mode = None;
-        if sequence.enable_filter_intra
-            && block_size.width() <= 32
-            && block_size.height() <= 32
-            && y_mode == PredictionMode::Dc
-        {
-            let use_filter_intra = self.reader.read_symbol(
-                self.cdf
-                    .use_filter_intra_cdf_mut(block_size.filter_intra_cdf_index()),
-            )? != 0;
-            if use_filter_intra {
-                filter_intra_mode = Some(
-                    self.reader
-                        .read_symbol(self.cdf.filter_intra_mode_cdf_mut())?,
-                );
-            }
-        }
-
         let has_chroma = !sequence.color_config.monochrome;
         let (uv_mode_symbol, uv_mode, angle_delta_uv) = if has_chroma {
             let uv_symbol = self
@@ -374,6 +542,24 @@ impl<'a> TileDecoder<'a> {
         } else {
             (None, None, None)
         };
+        self.read_palette_mode_info(frame, block_size, y_mode, uv_mode)?;
+        let mut filter_intra_mode = None;
+        if sequence.enable_filter_intra
+            && block_size.width() <= 32
+            && block_size.height() <= 32
+            && y_mode == PredictionMode::Dc
+        {
+            let use_filter_intra = self.reader.read_symbol(
+                self.cdf
+                    .use_filter_intra_cdf_mut(block_size.filter_intra_cdf_index()),
+            )? != 0;
+            if use_filter_intra {
+                filter_intra_mode = Some(
+                    self.reader
+                        .read_symbol(self.cdf.filter_intra_mode_cdf_mut())?,
+                );
+            }
+        }
         let y_smooth_neighbour = self.has_smooth_intra_neighbour(0, x, y);
         let uv_smooth_neighbour = self.has_smooth_intra_neighbour(1, x, y);
         self.set_y_mode_context(x, y, block_size, intra_mode_context(y_mode));
@@ -443,6 +629,48 @@ impl<'a> TileDecoder<'a> {
         };
         self.set_txfm_context(x, y, block_size, tx_size);
         Ok((None, None, tx_size))
+    }
+
+    fn read_palette_mode_info(
+        &mut self,
+        frame: &FrameHeader,
+        block_size: BlockSize,
+        y_mode: PredictionMode,
+        uv_mode: Option<UvPredictionMode>,
+    ) -> Result<(), DecoderError> {
+        if !frame.allow_screen_content_tools
+            || block_size.width() < 8
+            || block_size.height() < 8
+            || block_size.width() > 64
+            || block_size.height() > 64
+        {
+            return Ok(());
+        }
+        let area_log2 = block_size.width().ilog2() as usize + block_size.height().ilog2() as usize;
+        let block_size_context = area_log2.saturating_sub(6).min(6);
+        if y_mode == PredictionMode::Dc {
+            let selected = self
+                .reader
+                .read_symbol(self.cdf.palette_y_mode_cdf_mut(block_size_context, 0))?
+                != 0;
+            if selected {
+                return Err(DecoderError::Unsupported(
+                    "AV1 luma palette blocks are not supported yet".to_string(),
+                ));
+            }
+        }
+        if uv_mode == Some(UvPredictionMode::Intra(PredictionMode::Dc)) {
+            let selected = self
+                .reader
+                .read_symbol(self.cdf.palette_uv_mode_cdf_mut(0))?
+                != 0;
+            if selected {
+                return Err(DecoderError::Unsupported(
+                    "AV1 chroma palette blocks are not supported yet".to_string(),
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn read_cdef_index(
@@ -1281,13 +1509,7 @@ fn decode_luma_root_block(
     x: usize,
     y: usize,
 ) -> Result<DecodedLumaBlock, DecoderError> {
-    let partition = decoder.read_root_partition(tile_plan)?;
-    if partition.partition != Partition::None {
-        return Err(DecoderError::Unsupported(format!(
-            "AV1 luma root block decode for partition {:?} is not supported yet",
-            partition.partition
-        )));
-    }
+    let partition = decoder.read_first_leaf_partition(tile_plan, sequence)?;
 
     decode_luma_leaf_block(
         decoder,
@@ -1412,12 +1634,17 @@ fn decode_plane_block(
     let plane = buffers.planes.get_mut(plane_index).ok_or_else(|| {
         DecoderError::Bitstream(format!("AV1 plane {plane_index} buffer is missing"))
     })?;
+    let tx_size = if plane_index > 0 && block_mode.tx_size == TxSize::Tx64x64 {
+        TxSize::Tx32x32
+    } else {
+        block_mode.tx_size
+    };
     let transforms = plan_transform_blocks_with_tx_size(
         plane_index,
         x,
         y,
         block_mode.block_size,
-        block_mode.tx_size,
+        tx_size,
         layout.width,
         layout.height,
     );
@@ -1843,7 +2070,7 @@ fn decode_luma_partition_children(
         if *block_budget == 0 {
             return Ok(blocks);
         }
-        match decode_luma_block_tree(
+        let decoded = decode_luma_block_tree(
             decoder,
             sequence,
             frame,
@@ -1854,11 +2081,8 @@ fn decode_luma_partition_children(
             sub_x,
             sub_y,
             block_budget,
-        ) {
-            Ok(decoded) => blocks.extend(decoded),
-            Err(DecoderError::Unsupported(_)) if !blocks.is_empty() => return Ok(blocks),
-            Err(err) => return Err(err),
-        }
+        )?;
+        blocks.extend(decoded);
     }
     Ok(blocks)
 }
@@ -1881,16 +2105,11 @@ fn decode_luma_partition_runs(
         if sub_x >= plan.width || sub_y >= plan.height {
             continue;
         }
-        match decode_luma_leaf_block(
+        let decoded = decode_luma_leaf_block(
             decoder, sequence, frame, tile_plan, plan, buffers, subsize, sub_x, sub_y,
-        ) {
-            Ok(decoded) => {
-                *block_budget -= 1;
-                blocks.push(decoded);
-            }
-            Err(DecoderError::Unsupported(_)) if !blocks.is_empty() => return Ok(blocks),
-            Err(err) => return Err(err),
-        }
+        )?;
+        *block_budget -= 1;
+        blocks.push(decoded);
     }
     Ok(blocks)
 }
@@ -1936,6 +2155,23 @@ fn partition_symbol(partition: Partition) -> usize {
 fn partition_plane_context(above: u8, left: u8, block_size: BlockSize) -> usize {
     let bit = block_size.width_mi_log2().saturating_sub(1);
     usize::from((above >> bit) & 1) + usize::from((left >> bit) & 1) * 2
+}
+
+fn inv_recenter_finite_nonneg(n: usize, reference: usize, value: usize) -> usize {
+    let inv_recenter = |r: usize, v: usize| {
+        if v > (r << 1) {
+            v
+        } else if v & 1 == 0 {
+            (v >> 1) + r
+        } else {
+            r - ((v + 1) >> 1)
+        }
+    };
+    if (reference << 1) <= n {
+        inv_recenter(reference, value)
+    } else {
+        n - 1 - inv_recenter(n - 1 - reference, value)
+    }
 }
 
 fn restricted_partition_cdf(source: &[u16], has_rows: bool) -> [u16; 3] {
@@ -2589,6 +2825,7 @@ pub fn prepare_tile_entropy(
 pub fn probe_tile_partitions(
     data: &[u8],
     tile_group: &TileGroup,
+    sequence: &SequenceHeader,
     frame: &FrameHeader,
     plan: &FrameDecodePlan,
 ) -> Result<Vec<PartitionProbe>, DecoderError> {
@@ -2605,7 +2842,7 @@ pub fn probe_tile_partitions(
             DecoderError::Bitstream("AV1 tile decode plan is missing a tile".to_string())
         })?;
         let mut decoder = TileDecoder::new(payload, frame)?;
-        probes.push(decoder.read_root_partition(tile_plan)?);
+        probes.push(decoder.read_root_partition(tile_plan, sequence)?);
     }
     Ok(probes)
 }
@@ -2630,7 +2867,7 @@ pub fn probe_tile_block_modes(
             DecoderError::Bitstream("AV1 tile decode plan is missing a tile".to_string())
         })?;
         let mut decoder = TileDecoder::new(payload, frame)?;
-        let partition = decoder.read_root_partition(tile_plan)?;
+        let partition = decoder.read_first_leaf_partition(tile_plan, sequence)?;
         if partition.partition == Partition::None {
             probes.push(decoder.read_intra_frame_block_mode(
                 sequence,
@@ -2667,7 +2904,7 @@ pub fn probe_first_block_residuals(
             DecoderError::Bitstream("AV1 tile decode plan is missing a tile".to_string())
         })?;
         let mut decoder = TileDecoder::new(payload, frame)?;
-        let partition = decoder.read_root_partition(tile_plan)?;
+        let partition = decoder.read_first_leaf_partition(tile_plan, sequence)?;
         if partition.partition == Partition::None {
             let block_mode = decoder.read_intra_frame_block_mode(
                 sequence,
@@ -2724,13 +2961,7 @@ pub fn decode_first_luma_transform(
         .first()
         .ok_or_else(|| DecoderError::Bitstream("AV1 tile decode plan is missing".to_string()))?;
     let mut decoder = TileDecoder::new(payload, frame)?;
-    let partition = decoder.read_root_partition(tile_plan)?;
-    if partition.partition != Partition::None {
-        return Err(DecoderError::Unsupported(format!(
-            "AV1 first luma transform decode for root partition {:?} is not supported yet",
-            partition.partition
-        )));
-    }
+    let partition = decoder.read_first_leaf_partition(tile_plan, sequence)?;
 
     let block_mode = decoder.read_intra_frame_block_mode(
         sequence,
@@ -2897,6 +3128,7 @@ pub fn decode_luma_root_block_prefix(
             }
             let x = (sb_col as usize * plan.superblock_size).min(plan.width);
             let y = (sb_row as usize * plan.superblock_size).min(plan.height);
+            decoder.read_restoration_units(sequence, x, y)?;
             let decoded = match decode_luma_block_tree(
                 &mut decoder,
                 sequence,
@@ -3058,12 +3290,14 @@ mod tests {
         let payload = &frame_payload[tile_payload.offset..tile_payload.offset + tile_payload.len];
         let mut decoder = TileDecoder::new(payload, &frame).unwrap();
 
-        let probe = decoder.read_root_partition(&plan.tiles[0]).unwrap();
+        let probe = decoder
+            .read_root_partition(&plan.tiles[0], &sequence)
+            .unwrap();
 
         assert_eq!(probe.tile_id, 0);
         assert_eq!(probe.block_size, BlockSize::Block128x128);
-        assert_eq!(probe.symbol, 0);
-        assert_eq!(probe.partition, Partition::None);
+        assert_eq!(probe.symbol, 3);
+        assert_eq!(probe.partition, Partition::Split);
         assert!(probe.bit_position_after >= 15);
     }
 
@@ -3100,9 +3334,18 @@ mod tests {
 
         assert_eq!(probes.len(), 1);
         assert_eq!(probes[0].tile_id, 0);
-        assert_eq!(probes[0].block_size, BlockSize::Block128x128);
-        assert!(probes[0].y_mode_symbol < 13);
-        assert!(probes[0].uv_mode_symbol.is_some());
+        assert_eq!(probes[0].block_size, BlockSize::Block64x64);
+        assert_eq!(probes[0].skip_symbol, 0);
+        assert_eq!(probes[0].cdef_idx, Some(0));
+        assert_eq!(probes[0].y_mode_symbol, 0);
+        assert_eq!(probes[0].y_mode, PredictionMode::Dc);
+        assert_eq!(probes[0].uv_mode_symbol, Some(0));
+        assert_eq!(
+            probes[0].uv_mode,
+            Some(UvPredictionMode::Intra(PredictionMode::Dc))
+        );
+        assert_eq!(probes[0].tx_size_symbol, Some(0));
+        assert_eq!(probes[0].tx_size, TxSize::Tx64x64);
         assert!(probes[0].bit_position_after > 15);
     }
 
@@ -3146,7 +3389,7 @@ mod tests {
             plan.height,
         );
 
-        assert_eq!(transforms.len(), 16);
+        assert_eq!(transforms.len(), 1);
         assert!(transforms.iter().all(|tx| tx.plane == 0));
         assert!(transforms.iter().all(|tx| tx.tx_size == probes[0].tx_size));
     }
@@ -3184,7 +3427,7 @@ mod tests {
 
         assert_eq!(probes.len(), 1);
         assert_eq!(probes[0].tile_id, 0);
-        assert_eq!(probes[0].block_size, BlockSize::Block128x128);
+        assert_eq!(probes[0].block_size, BlockSize::Block64x64);
         let first_tx_size = probes[0]
             .first_tx_size
             .expect("sample first transform size should be known");
@@ -3321,10 +3564,10 @@ mod tests {
                 );
                 assert!(probes[0].eob.unwrap() >= probes[0].eob_base.unwrap());
                 assert!(probes[0].eob.unwrap() <= tx_sample_count);
-                assert!(probes[0].tx_type_read);
-                assert_eq!(probes[0].tx_type_set, Some(1));
-                assert!(probes[0].tx_type_symbol.unwrap() < 7);
-                assert_eq!(probes[0].tx_type, Some(TxType::VerticalDct));
+                assert!(!probes[0].tx_type_read);
+                assert_eq!(probes[0].tx_type_set, None);
+                assert_eq!(probes[0].tx_type_symbol, None);
+                assert_eq!(probes[0].tx_type, Some(TxType::DctDct));
                 assert!(probes[0].coeff_base_eob_context.unwrap() < 4);
                 assert!(probes[0].coeff_base_eob_symbol.unwrap() < 3);
                 assert_eq!(
@@ -3444,6 +3687,9 @@ mod tests {
                         .len(),
                     tx_sample_count
                 );
+                let coefficients = probes[0].first_quantized_coefficients.as_ref().unwrap();
+                assert_eq!(coefficients[0], -468);
+                assert_eq!(coefficients.iter().filter(|value| **value != 0).count(), 1);
             }
         }
         assert_eq!(probes[0].first_tx_size, Some(first_tx_size));
@@ -3477,6 +3723,7 @@ mod tests {
         .unwrap();
         let plan = build_still_decode_plan(&sequence, &frame, &tile_group).unwrap();
         let mut buffers = alloc_frame_buffers(&plan).unwrap();
+        buffers.planes[0].samples.fill(u16::MAX);
 
         let residual = decode_first_luma_transform(
             frame_payload,
@@ -3493,7 +3740,12 @@ mod tests {
         if residual.first_non_zero_transform.is_none() {
             assert_eq!(residual.zero_transform_count, residual.transform_count);
         } else {
-            assert!(buffers.planes[0].samples.iter().any(|sample| *sample != 0));
+            assert!(
+                buffers.planes[0]
+                    .samples
+                    .iter()
+                    .any(|sample| *sample != u16::MAX)
+            );
         }
     }
 
@@ -3525,6 +3777,9 @@ mod tests {
         .unwrap();
         let plan = build_still_decode_plan(&sequence, &frame, &tile_group).unwrap();
         let mut buffers = alloc_frame_buffers(&plan).unwrap();
+        for plane in &mut buffers.planes {
+            plane.samples.fill(u16::MAX);
+        }
 
         let decoded = decode_first_luma_block(
             frame_payload,
@@ -3541,9 +3796,12 @@ mod tests {
                 .iter()
                 .all(|transform| transform.transform.plane == 0)
         );
-        assert!(buffers.planes[0].samples.iter().any(|sample| *sample != 0));
-        assert!(buffers.planes[1].samples.iter().any(|sample| *sample != 0));
-        assert!(buffers.planes[2].samples.iter().any(|sample| *sample != 0));
+        assert!(
+            buffers
+                .planes
+                .iter()
+                .all(|plane| { plane.samples.iter().any(|sample| *sample != u16::MAX) })
+        );
     }
 
     #[test]
@@ -3589,7 +3847,7 @@ mod tests {
 
         assert_eq!(blocks.len(), 8);
         assert_eq!((blocks[0].x, blocks[0].y), (0, 0));
-        assert_eq!((blocks[1].x, blocks[1].y), (128, 0));
+        assert_eq!((blocks[1].x, blocks[1].y), (64, 0));
         assert!(blocks.iter().any(|block| !block.transforms.is_empty()));
         assert!(buffers.planes[1].samples.iter().any(|sample| *sample != 0));
         assert!(buffers.planes[2].samples.iter().any(|sample| *sample != 0));
@@ -3597,7 +3855,7 @@ mod tests {
     }
 
     #[test]
-    fn decodes_all_sample_blocks_without_unsupported_syntax() {
+    fn decodes_sample_prefix_until_first_palette_block() {
         let data = std::fs::read(
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .parent()
@@ -3636,14 +3894,19 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(prefix.blocks.len(), 915);
+        assert_eq!(prefix.blocks.len(), 38);
+        assert_eq!(
+            prefix.next_unsupported,
+            Some(DecoderError::Unsupported(
+                "AV1 luma palette blocks are not supported yet".to_string()
+            ))
+        );
         assert!(
             buffers
                 .planes
                 .iter()
                 .all(|plane| { plane.samples.iter().any(|sample| *sample != 0) })
         );
-        assert_eq!(prefix.next_unsupported, None);
     }
 
     #[test]
