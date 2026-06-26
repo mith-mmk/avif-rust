@@ -48,6 +48,20 @@ impl<'a> EntropyDecoder<'a> {
         Ok(value)
     }
 
+    pub fn read_uniform(&mut self, n: usize) -> Result<usize, DecoderError> {
+        if n <= 1 {
+            return Ok(0);
+        }
+        let bits = usize::BITS as usize - (n - 1).leading_zeros() as usize;
+        let threshold = (1usize << bits) - n;
+        let value = self.read_literal(bits - 1)? as usize;
+        if value < threshold {
+            Ok(value)
+        } else {
+            Ok((value << 1) - threshold + self.read_literal(1)? as usize)
+        }
+    }
+
     pub fn read_symbol(&mut self, cdf: &mut [u16]) -> Result<usize, DecoderError> {
         if cdf.len() < 3 {
             return Err(DecoderError::InvalidParam(

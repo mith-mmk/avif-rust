@@ -59,7 +59,10 @@ This is the current highest-priority implementation block. Entropy components th
   - [x] Consume loop-restoration-unit syntax before each applicable superblock partition.
   - [x] Match the AOM root/first-leaf partition sequence and first luma coefficient (`-468`).
   - [x] Enforce the AV1 32x32 maximum chroma transform size for a signalled 64x64 luma transform.
-  - [ ] Implement selected palette block syntax; traversal now reaches the first real luma palette block after 38 leaves.
+  - [x] Implement selected palette block syntax and color-map token consumption; the sample prefix now traverses palette blocks without `Unsupported`.
+  - [x] Implement palette prediction/reconstruction output for decoded palette maps.
+  - [x] Implement cached palette color syntax and sorted cache/transmitted color merging for above/left palette reuse.
+  - [ ] Add plane-level oracle checks for palette-coded blocks, including cached-color cases.
 - [x] Implement normative ext-tx subset mapping, filter-intra tx mode mapping, directional scan selection and 1D coefficient contexts.
 - [x] Apply the normative 20-bit coefficient magnitude clamp after Golomb extension.
 - [x] Confirm dequant shifts: 4/8/16 no shift, 32 divide by 2, 64 divide by 4.
@@ -127,7 +130,10 @@ These measurements document incomplete combinations; they are not acceptance cri
 - Enabling the AOM-vector-verified 16x16 integer DCT changes the sample average RGB error to about `74.4911`; it remains enabled because the single sample is diagnostic rather than the conformance oracle.
 - Routing all 16x16 transform types through integer DCT/IADST/identity stages changes the diagnostic sample error to about `75.8173`.
 - Direct AOM coefficient instrumentation shows the sample starts with a non-zero 64x64 luma DC coefficient (`-468`), while the current Rust traversal first reaches a non-zero luma transform later in the frame; this identifies block syntax/traversal as an upstream conformance blocker rather than a coefficient-state-machine failure.
-- Loop-restoration syntax and the chroma 32x32 transform cap now align the initial partition/transform sequence with AOM exactly. AOM reports 3646 leaves for the sample; Rust reaches the first selected luma palette block after 38 leaves, making palette syntax the next traversal blocker.
+- Loop-restoration syntax and the chroma 32x32 transform cap aligned the initial partition/transform sequence with AOM exactly. AOM reports 3646 leaves for the sample; Rust previously reached the first selected luma palette block after 38 leaves.
+- Palette size/color syntax and color-map token consumption now allow the sample prefix to traverse palette blocks without `Unsupported`; the retained prefix test decodes 2166 luma leaves with no syntax frontier.
+- Palette prediction now expands decoded palette maps into reconstructed block prediction. The sample diagnostic average RGB absolute error improved to about `56.1582`.
+- Cached palette color selection now reuses sorted above/left palette colors and merges them with transmitted colors. The sample diagnostic average RGB absolute error improved further to about `54.5251`; visual conformance remains pending because plane-level oracle fixtures are not covered yet.
 - Normative ext-tx mapping alone produced `71.5238`; mapping plus incomplete 1D contexts changed block traversal to `1347`.
 - Directional scan/context combinations produced `72.8957` and `82.0004` before the complete retained scan/mapping subset was wired.
 - DC-sign neighbour contexts alone changed `1997` blocks to `1976` and produced `77.1615`.

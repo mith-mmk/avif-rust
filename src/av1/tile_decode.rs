@@ -20,6 +20,9 @@ mod coefficient;
 
 use coefficient::{CoefficientRead, EntropyCoefficientSource, decode_coefficients};
 
+const PALETTE_MAX_SIZE: usize = 8;
+const PALETTE_COLOR_CONTEXT_LOOKUP: [usize; 9] = [0, 0, 0, 0, 0, 4, 3, 2, 1];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TileEntropyState {
     pub tile_id: u32,
@@ -38,7 +41,7 @@ pub struct PartitionProbe {
     pub bit_position_after: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockModeProbe {
     pub tile_id: u32,
     pub block_size: BlockSize,
@@ -57,6 +60,7 @@ pub struct BlockModeProbe {
     pub uv_mode: Option<UvPredictionMode>,
     pub angle_delta_uv: Option<i8>,
     pub uv_smooth_neighbour: bool,
+    pub palette: PaletteBlockInfo,
     pub tx_size_context: Option<usize>,
     pub tx_size_symbol: Option<usize>,
     pub tx_size: TxSize,
@@ -163,12 +167,30 @@ struct PlaneEntropyContexts {
     left: Vec<u8>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PalettePlaneInfo {
+    colors: Vec<u16>,
+    color_map: Vec<u8>,
+    map_width: usize,
+    map_height: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaletteBlockInfo {
+    y: Option<PalettePlaneInfo>,
+    uv: Option<PalettePlaneInfo>,
+}
+
 pub struct TileDecoder<'a> {
     reader: EntropyDecoder<'a>,
     cdf: CdfContext,
     mi_cols: usize,
     mi_rows: usize,
     y_mode_grid: Vec<Option<usize>>,
+    y_palette_size_grid: Vec<Option<usize>>,
+    uv_palette_size_grid: Vec<Option<usize>>,
+    y_palette_colors_grid: Vec<Option<Vec<u16>>>,
+    u_palette_colors_grid: Vec<Option<Vec<u16>>>,
     y_smooth_grid: Vec<Option<bool>>,
     uv_smooth_grid: Vec<Option<bool>>,
     skip_grid: Vec<Option<bool>>,
@@ -199,6 +221,10 @@ impl<'a> TileDecoder<'a> {
             mi_cols,
             mi_rows,
             y_mode_grid: vec![None; mi_cols * mi_rows],
+            y_palette_size_grid: vec![None; mi_cols * mi_rows],
+            uv_palette_size_grid: vec![None; mi_cols * mi_rows],
+            y_palette_colors_grid: vec![None; mi_cols * mi_rows],
+            u_palette_colors_grid: vec![None; mi_cols * mi_rows],
             y_smooth_grid: vec![None; mi_cols * mi_rows],
             uv_smooth_grid: vec![None; mi_cols * mi_rows],
             skip_grid: vec![None; mi_cols * mi_rows],
@@ -542,7 +568,8 @@ impl<'a> TileDecoder<'a> {
         } else {
             (None, None, None)
         };
-        self.read_palette_mode_info(frame, block_size, y_mode, uv_mode)?;
+        let palette =
+            self.read_palette_mode_info(sequence, frame, block_size, x, y, y_mode, uv_mode)?;
         let mut filter_intra_mode = None;
         if sequence.enable_filter_intra
             && block_size.width() <= 32
@@ -571,6 +598,8 @@ impl<'a> TileDecoder<'a> {
             matches!(uv_mode, Some(UvPredictionMode::Intra(mode)) if mode.is_smooth()),
         );
         self.set_skip_context(x, y, block_size, skip);
+        let mut palette = palette;
+        self.read_palette_tokens(sequence, block_size, x, y, &mut palette)?;
         let (tx_size_context, tx_size_symbol, tx_size) =
             self.read_intra_tx_size(frame, block_size, skip, x, y)?;
 
@@ -592,6 +621,7 @@ impl<'a> TileDecoder<'a> {
             uv_mode,
             angle_delta_uv,
             uv_smooth_neighbour,
+            palette,
             tx_size_context,
             tx_size_symbol,
             tx_size,
@@ -633,44 +663,377 @@ impl<'a> TileDecoder<'a> {
 
     fn read_palette_mode_info(
         &mut self,
+        sequence: &SequenceHeader,
         frame: &FrameHeader,
         block_size: BlockSize,
+        x: usize,
+        y: usize,
         y_mode: PredictionMode,
         uv_mode: Option<UvPredictionMode>,
-    ) -> Result<(), DecoderError> {
+    ) -> Result<PaletteBlockInfo, DecoderError> {
+        let mut palette = PaletteBlockInfo { y: None, uv: None };
         if !frame.allow_screen_content_tools
             || block_size.width() < 8
             || block_size.height() < 8
             || block_size.width() > 64
             || block_size.height() > 64
         {
-            return Ok(());
+            self.set_palette_size_context(x, y, block_size, &palette);
+            return Ok(palette);
         }
         let area_log2 = block_size.width().ilog2() as usize + block_size.height().ilog2() as usize;
         let block_size_context = area_log2.saturating_sub(6).min(6);
         if y_mode == PredictionMode::Dc {
-            let selected = self
-                .reader
-                .read_symbol(self.cdf.palette_y_mode_cdf_mut(block_size_context, 0))?
-                != 0;
+            let neighbour_context = self.palette_y_mode_context(x, y);
+            let selected = self.reader.read_symbol(
+                self.cdf
+                    .palette_y_mode_cdf_mut(block_size_context, neighbour_context),
+            )? != 0;
             if selected {
-                return Err(DecoderError::Unsupported(
-                    "AV1 luma palette blocks are not supported yet".to_string(),
-                ));
+                let y_size = self
+                    .reader
+                    .read_symbol(self.cdf.palette_y_size_cdf_mut(block_size_context))?
+                    + 2;
+                let color_cache = self.palette_color_cache(x, y, 0);
+                let colors = self.read_palette_colors_y(
+                    sequence.color_config.bit_depth,
+                    y_size,
+                    &color_cache,
+                )?;
+                palette.y = Some(PalettePlaneInfo {
+                    colors,
+                    color_map: Vec::new(),
+                    map_width: 0,
+                    map_height: 0,
+                });
             }
         }
         if uv_mode == Some(UvPredictionMode::Intra(PredictionMode::Dc)) {
+            let y_palette_context = usize::from(palette.y.is_some());
             let selected = self
                 .reader
-                .read_symbol(self.cdf.palette_uv_mode_cdf_mut(0))?
+                .read_symbol(self.cdf.palette_uv_mode_cdf_mut(y_palette_context))?
                 != 0;
             if selected {
-                return Err(DecoderError::Unsupported(
-                    "AV1 chroma palette blocks are not supported yet".to_string(),
-                ));
+                let uv_size = self
+                    .reader
+                    .read_symbol(self.cdf.palette_uv_size_cdf_mut(block_size_context))?
+                    + 2;
+                let color_cache = self.palette_color_cache(x, y, 1);
+                let colors = self.read_palette_colors_uv(
+                    sequence.color_config.bit_depth,
+                    uv_size,
+                    &color_cache,
+                )?;
+                palette.uv = Some(PalettePlaneInfo {
+                    colors,
+                    color_map: Vec::new(),
+                    map_width: 0,
+                    map_height: 0,
+                });
             }
         }
+        self.set_palette_size_context(x, y, block_size, &palette);
+        Ok(palette)
+    }
+
+    fn read_palette_colors_y(
+        &mut self,
+        bit_depth: u8,
+        palette_size: usize,
+        color_cache: &[u16],
+    ) -> Result<Vec<u16>, DecoderError> {
+        if !(2..=PALETTE_MAX_SIZE).contains(&palette_size) {
+            return Err(DecoderError::Bitstream(format!(
+                "AV1 luma palette size {palette_size} is invalid"
+            )));
+        }
+        let bit_depth = bit_depth as usize;
+        let mut cached_colors = Vec::with_capacity(palette_size);
+        for &color in color_cache {
+            if cached_colors.len() >= palette_size {
+                break;
+            }
+            if self.reader.read_literal(1)? != 0 {
+                cached_colors.push(color);
+            }
+        }
+        if cached_colors.len() >= palette_size {
+            return Ok(cached_colors);
+        }
+        let cached_count = cached_colors.len();
+        let mut colors = Vec::with_capacity(palette_size);
+        colors.extend_from_slice(&cached_colors);
+        let mut previous = self.reader.read_literal(bit_depth)? as usize;
+        colors.push(previous as u16);
+        if colors.len() < palette_size {
+            let mut bits = bit_depth.saturating_sub(3) + self.reader.read_literal(2)? as usize;
+            let mut range = (1usize << bit_depth).saturating_sub(previous + 1);
+            while colors.len() < palette_size {
+                let delta = self.reader.read_literal(bits)? as usize + 1;
+                let current = (previous + delta).min((1usize << bit_depth) - 1);
+                range = range.saturating_sub(current.saturating_sub(previous));
+                previous = current;
+                colors.push(current as u16);
+                bits = bits.min(ceil_log2(range));
+            }
+        }
+        merge_cached_palette_colors(colors, cached_count, palette_size)
+    }
+
+    fn read_palette_colors_uv(
+        &mut self,
+        bit_depth: u8,
+        palette_size: usize,
+        color_cache: &[u16],
+    ) -> Result<Vec<u16>, DecoderError> {
+        if !(2..=PALETTE_MAX_SIZE).contains(&palette_size) {
+            return Err(DecoderError::Bitstream(format!(
+                "AV1 chroma palette size {palette_size} is invalid"
+            )));
+        }
+        let bit_depth = bit_depth as usize;
+        let mut cached_u_colors = Vec::with_capacity(palette_size);
+        for &color in color_cache {
+            if cached_u_colors.len() >= palette_size {
+                break;
+            }
+            if self.reader.read_literal(1)? != 0 {
+                cached_u_colors.push(color);
+            }
+        }
+        let cached_count = cached_u_colors.len();
+        let mut u_colors = Vec::with_capacity(palette_size);
+        u_colors.extend_from_slice(&cached_u_colors);
+        if u_colors.len() < palette_size {
+            let mut previous_u = self.reader.read_literal(bit_depth)? as usize;
+            u_colors.push(previous_u as u16);
+            if u_colors.len() < palette_size {
+                let mut bits = bit_depth.saturating_sub(3) + self.reader.read_literal(2)? as usize;
+                let mut range = (1usize << bit_depth).saturating_sub(previous_u);
+                while u_colors.len() < palette_size {
+                    let delta = self.reader.read_literal(bits)? as usize;
+                    let current = (previous_u + delta).min((1usize << bit_depth) - 1);
+                    range = range.saturating_sub(current.saturating_sub(previous_u));
+                    previous_u = current;
+                    u_colors.push(current as u16);
+                    bits = bits.min(ceil_log2(range));
+                }
+            }
+            u_colors = merge_cached_palette_colors(u_colors, cached_count, palette_size)?;
+        }
+        if u_colors.len() != palette_size {
+            return Err(DecoderError::Bitstream(
+                "AV1 palette U color count is invalid".to_string(),
+            ));
+        }
+        let mut v_colors = Vec::with_capacity(palette_size);
+        if self.reader.read_literal(1)? != 0 {
+            let bits = bit_depth.saturating_sub(4) + self.reader.read_literal(2)? as usize;
+            let mut previous_v = self.reader.read_literal(bit_depth)? as isize;
+            v_colors.push(previous_v as u16);
+            let max_value = 1isize << bit_depth;
+            for _ in 1..palette_size {
+                let mut delta = self.reader.read_literal(bits)? as isize;
+                if delta != 0 && self.reader.read_literal(1)? != 0 {
+                    delta = -delta;
+                }
+                previous_v += delta;
+                if previous_v < 0 {
+                    previous_v += max_value;
+                }
+                if previous_v >= max_value {
+                    previous_v -= max_value;
+                }
+                v_colors.push(previous_v as u16);
+            }
+        } else {
+            for _ in 0..palette_size {
+                v_colors.push(self.reader.read_literal(bit_depth)? as u16);
+            }
+        }
+        u_colors.extend(v_colors);
+        Ok(u_colors)
+    }
+
+    fn palette_color_cache(&self, x: usize, y: usize, plane: usize) -> Vec<u16> {
+        let grid = if plane == 0 {
+            &self.y_palette_colors_grid
+        } else {
+            &self.u_palette_colors_grid
+        };
+        let above = if y >= 4 && y % 64 != 0 {
+            palette_colors_at_mi(grid, self.mi_cols, self.mi_rows, x >> 2, (y >> 2) - 1)
+        } else {
+            None
+        };
+        let left = if x >= 4 {
+            palette_colors_at_mi(grid, self.mi_cols, self.mi_rows, (x >> 2) - 1, y >> 2)
+        } else {
+            None
+        };
+        merge_palette_cache(above, left)
+    }
+
+    fn read_palette_tokens(
+        &mut self,
+        sequence: &SequenceHeader,
+        block_size: BlockSize,
+        x: usize,
+        y: usize,
+        palette: &mut PaletteBlockInfo,
+    ) -> Result<(), DecoderError> {
+        if let Some(y_palette) = palette.y.as_mut() {
+            let (color_map, map_width, map_height) = self.read_palette_color_map_tokens(
+                0,
+                block_size,
+                x,
+                y,
+                y_palette.colors.len(),
+                false,
+                false,
+            )?;
+            y_palette.color_map = color_map;
+            y_palette.map_width = map_width;
+            y_palette.map_height = map_height;
+        }
+        if let Some(uv_palette) = palette.uv.as_mut() {
+            let (color_map, map_width, map_height) = self.read_palette_color_map_tokens(
+                1,
+                block_size,
+                x,
+                y,
+                uv_palette.colors.len() / 2,
+                sequence.color_config.subsampling_x,
+                sequence.color_config.subsampling_y,
+            )?;
+            uv_palette.color_map = color_map;
+            uv_palette.map_width = map_width;
+            uv_palette.map_height = map_height;
+        }
         Ok(())
+    }
+
+    fn read_palette_color_map_tokens(
+        &mut self,
+        plane: usize,
+        block_size: BlockSize,
+        x: usize,
+        y: usize,
+        palette_size: usize,
+        subsampling_x: bool,
+        subsampling_y: bool,
+    ) -> Result<(Vec<u8>, usize, usize), DecoderError> {
+        let plane_block_width = ((block_size.width() >> usize::from(subsampling_x)) + 3) >> 2;
+        let plane_block_height = ((block_size.height() >> usize::from(subsampling_y)) + 3) >> 2;
+        let frame_width = self.mi_cols << 2;
+        let frame_height = self.mi_rows << 2;
+        let cols_pixels = frame_width.saturating_sub(x).min(block_size.width());
+        let rows_pixels = frame_height.saturating_sub(y).min(block_size.height());
+        let cols = (((cols_pixels >> usize::from(subsampling_x)) + 3) >> 2)
+            .min(plane_block_width)
+            .max(1);
+        let rows = (((rows_pixels >> usize::from(subsampling_y)) + 3) >> 2)
+            .min(plane_block_height)
+            .max(1);
+
+        let mut color_map = vec![0u8; plane_block_width * plane_block_height];
+        color_map[0] = self.reader.read_uniform(palette_size)? as u8;
+        for diagonal in 1..rows + cols - 1 {
+            let start = diagonal.min(cols - 1);
+            let end = diagonal.saturating_sub(rows - 1);
+            for col in (end..=start).rev() {
+                let row = diagonal - col;
+                let (context, color_order) = palette_color_index_context(
+                    &color_map,
+                    plane_block_width,
+                    row,
+                    col,
+                    palette_size,
+                );
+                let color_idx = self
+                    .reader
+                    .read_symbol(self.cdf.palette_color_index_cdf_mut(
+                        plane,
+                        palette_size,
+                        context,
+                    ))?;
+                color_map[row * plane_block_width + col] = color_order[color_idx] as u8;
+            }
+        }
+        Ok((color_map, plane_block_width, plane_block_height))
+    }
+
+    fn palette_y_mode_context(&self, x: usize, y: usize) -> usize {
+        let above = if y >= 4 {
+            self.palette_y_size_at_mi(x >> 2, (y >> 2).saturating_sub(1)) > 0
+        } else {
+            false
+        };
+        let left = if x >= 4 {
+            self.palette_y_size_at_mi((x >> 2).saturating_sub(1), y >> 2) > 0
+        } else {
+            false
+        };
+        usize::from(above) + usize::from(left)
+    }
+
+    fn palette_y_size_at_mi(&self, mi_col: usize, mi_row: usize) -> usize {
+        if mi_col >= self.mi_cols || mi_row >= self.mi_rows {
+            return 0;
+        }
+        self.y_palette_size_grid[mi_row * self.mi_cols + mi_col].unwrap_or(0)
+    }
+
+    fn set_palette_size_context(
+        &mut self,
+        x: usize,
+        y: usize,
+        block_size: BlockSize,
+        palette: &PaletteBlockInfo,
+    ) {
+        fill_mi_grid(
+            &mut self.y_palette_size_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            palette.y.as_ref().map_or(0, |palette| palette.colors.len()),
+        );
+        fill_mi_grid(
+            &mut self.uv_palette_size_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            palette
+                .uv
+                .as_ref()
+                .map_or(0, |palette| palette.colors.len() / 2),
+        );
+        fill_mi_grid_clone(
+            &mut self.y_palette_colors_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            palette.y.as_ref().map(|palette| palette.colors.clone()),
+        );
+        fill_mi_grid_clone(
+            &mut self.u_palette_colors_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            palette
+                .uv
+                .as_ref()
+                .map(|palette| palette.colors[..palette.colors.len() / 2].to_vec()),
+        );
     }
 
     fn read_cdef_index(
@@ -1651,9 +2014,13 @@ fn decode_plane_block(
     if block_mode.skip {
         for transform in &transforms {
             decoder.set_txb_entropy_context(*transform, 0);
-            let prediction = predict_block(
+            let prediction = predict_plane_block(
                 plane,
+                block_mode,
+                plane_index,
                 prediction_mode,
+                x,
+                y,
                 transform.x,
                 transform.y,
                 transform.tx_size.width(),
@@ -1686,9 +2053,13 @@ fn decode_plane_block(
         )?;
         if all_zero_symbol != 0 {
             decoder.set_txb_entropy_context(transform, 0);
-            let prediction = predict_block(
+            let prediction = predict_plane_block(
                 plane,
+                block_mode,
+                plane_index,
                 prediction_mode,
+                x,
+                y,
                 transform.x,
                 transform.y,
                 transform.tx_size.width(),
@@ -1716,9 +2087,13 @@ fn decode_plane_block(
             transform,
             coefficient_entropy_context(&decoded_transform.coefficients),
         );
-        let prediction = predict_block(
+        let prediction = predict_plane_block(
             plane,
+            block_mode,
+            plane_index,
             prediction_mode,
+            x,
+            y,
             transform.x,
             transform.y,
             transform.tx_size.width(),
@@ -1801,6 +2176,97 @@ fn predict_block(
         enable_intra_edge_filter,
         smooth_neighbour,
     )
+}
+
+fn predict_plane_block(
+    plane: &PlaneBuffer,
+    block_mode: &BlockModeProbe,
+    plane_index: usize,
+    prediction_mode: PredictionMode,
+    block_x: usize,
+    block_y: usize,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    angle_delta: Option<i8>,
+    filter_intra_mode: Option<usize>,
+    bit_depth: u8,
+    enable_intra_edge_filter: bool,
+    smooth_neighbour: bool,
+) -> Result<Vec<u16>, DecoderError> {
+    if filter_intra_mode.is_none() && prediction_mode == PredictionMode::Dc {
+        let palette_prediction = if plane_index == 0 {
+            block_mode
+                .palette
+                .y
+                .as_ref()
+                .map(|palette| (palette, 0, palette.colors.len()))
+        } else {
+            block_mode.palette.uv.as_ref().map(|palette| {
+                let palette_size = palette.colors.len() / 2;
+                (
+                    palette,
+                    usize::from(plane_index == 2) * palette_size,
+                    palette_size,
+                )
+            })
+        };
+        if let Some((palette, color_offset, palette_size)) = palette_prediction {
+            if !palette.color_map.is_empty() && palette.map_width > 0 && palette.map_height > 0 {
+                return Ok(predict_palette_block(
+                    palette,
+                    color_offset,
+                    palette_size,
+                    block_x,
+                    block_y,
+                    x,
+                    y,
+                    width,
+                    height,
+                ));
+            }
+        }
+    }
+    predict_block(
+        plane,
+        prediction_mode,
+        x,
+        y,
+        width,
+        height,
+        angle_delta,
+        filter_intra_mode,
+        bit_depth,
+        enable_intra_edge_filter,
+        smooth_neighbour,
+    )
+}
+
+fn predict_palette_block(
+    palette: &PalettePlaneInfo,
+    color_offset: usize,
+    palette_size: usize,
+    block_x: usize,
+    block_y: usize,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+) -> Vec<u16> {
+    let palette_size = palette_size.min(PALETTE_MAX_SIZE);
+    let mut prediction = Vec::with_capacity(width * height);
+    for row in 0..height {
+        let map_row = (y + row).saturating_sub(block_y) / 4;
+        for col in 0..width {
+            let map_col = (x + col).saturating_sub(block_x) / 4;
+            let map_index = map_row.min(palette.map_height - 1) * palette.map_width
+                + map_col.min(palette.map_width - 1);
+            let color_index = usize::from(palette.color_map[map_index]).min(palette_size - 1);
+            prediction.push(palette.colors[color_offset + color_index]);
+        }
+    }
+    prediction
 }
 
 fn decode_luma_block_tree(
@@ -2157,6 +2623,77 @@ fn partition_plane_context(above: u8, left: u8, block_size: BlockSize) -> usize 
     usize::from((above >> bit) & 1) + usize::from((left >> bit) & 1) * 2
 }
 
+fn ceil_log2(value: usize) -> usize {
+    if value <= 1 {
+        0
+    } else {
+        usize::BITS as usize - (value - 1).leading_zeros() as usize
+    }
+}
+
+fn palette_color_index_context(
+    color_map: &[u8],
+    stride: usize,
+    row: usize,
+    col: usize,
+    palette_size: usize,
+) -> (usize, [usize; PALETTE_MAX_SIZE]) {
+    let neighbours = [
+        if col > 0 {
+            Some(color_map[row * stride + col - 1] as usize)
+        } else {
+            None
+        },
+        if row > 0 && col > 0 {
+            Some(color_map[(row - 1) * stride + col - 1] as usize)
+        } else {
+            None
+        },
+        if row > 0 {
+            Some(color_map[(row - 1) * stride + col] as usize)
+        } else {
+            None
+        },
+    ];
+    let mut scores = [0usize; PALETTE_MAX_SIZE];
+    for (index, weight) in [2usize, 1, 2].into_iter().enumerate() {
+        if let Some(color) = neighbours[index] {
+            if color < palette_size {
+                scores[color] += weight;
+            }
+        }
+    }
+
+    let mut color_order = [0usize; PALETTE_MAX_SIZE];
+    for (index, entry) in color_order.iter_mut().enumerate() {
+        *entry = index;
+    }
+    for index in 0..3.min(palette_size) {
+        let mut max_score = scores[index];
+        let mut max_index = index;
+        for candidate in index + 1..palette_size {
+            if scores[candidate] > max_score {
+                max_score = scores[candidate];
+                max_index = candidate;
+            }
+        }
+        if max_index != index {
+            let moved_score = scores[max_index];
+            let moved_color = color_order[max_index];
+            for shift in (index + 1..=max_index).rev() {
+                scores[shift] = scores[shift - 1];
+                color_order[shift] = color_order[shift - 1];
+            }
+            scores[index] = moved_score;
+            color_order[index] = moved_color;
+        }
+    }
+
+    let hash = scores[0] + 2 * scores[1] + 2 * scores[2];
+    let context = PALETTE_COLOR_CONTEXT_LOOKUP[hash.min(PALETTE_COLOR_CONTEXT_LOOKUP.len() - 1)];
+    (context, color_order)
+}
+
 fn inv_recenter_finite_nonneg(n: usize, reference: usize, value: usize) -> usize {
     let inv_recenter = |r: usize, v: usize| {
         if v > (r << 1) {
@@ -2361,6 +2898,114 @@ fn fill_mi_grid<T: Copy>(
             grid[mi_row * mi_cols + mi_col] = Some(value);
         }
     }
+}
+
+fn fill_mi_grid_clone<T: Clone>(
+    grid: &mut [Option<T>],
+    mi_cols: usize,
+    mi_rows: usize,
+    x: usize,
+    y: usize,
+    block_size: BlockSize,
+    value: Option<T>,
+) {
+    let start_col = x >> 2;
+    let start_row = y >> 2;
+    let end_col = ((x + block_size.width()).min(mi_cols << 2) + 3) >> 2;
+    let end_row = ((y + block_size.height()).min(mi_rows << 2) + 3) >> 2;
+    for mi_row in start_row..end_row.min(mi_rows) {
+        for mi_col in start_col..end_col.min(mi_cols) {
+            grid[mi_row * mi_cols + mi_col] = value.clone();
+        }
+    }
+}
+
+fn palette_colors_at_mi(
+    grid: &[Option<Vec<u16>>],
+    mi_cols: usize,
+    mi_rows: usize,
+    mi_col: usize,
+    mi_row: usize,
+) -> Option<&[u16]> {
+    if mi_col >= mi_cols || mi_row >= mi_rows {
+        return None;
+    }
+    grid[mi_row * mi_cols + mi_col].as_deref()
+}
+
+fn merge_palette_cache(above: Option<&[u16]>, left: Option<&[u16]>) -> Vec<u16> {
+    let mut cache = Vec::with_capacity(PALETTE_MAX_SIZE * 2);
+    let mut above_index = 0usize;
+    let mut left_index = 0usize;
+    let above = above.unwrap_or(&[]);
+    let left = left.unwrap_or(&[]);
+    while above_index < above.len() && left_index < left.len() {
+        let above_color = above[above_index];
+        let left_color = left[left_index];
+        if left_color < above_color {
+            push_unique_palette_cache(&mut cache, left_color);
+            left_index += 1;
+        } else {
+            push_unique_palette_cache(&mut cache, above_color);
+            above_index += 1;
+            if left_color == above_color {
+                left_index += 1;
+            }
+        }
+    }
+    while above_index < above.len() {
+        push_unique_palette_cache(&mut cache, above[above_index]);
+        above_index += 1;
+    }
+    while left_index < left.len() {
+        push_unique_palette_cache(&mut cache, left[left_index]);
+        left_index += 1;
+    }
+    cache
+}
+
+fn push_unique_palette_cache(cache: &mut Vec<u16>, color: u16) {
+    if cache.last().copied() != Some(color) {
+        cache.push(color);
+    }
+}
+
+fn merge_cached_palette_colors(
+    mut colors: Vec<u16>,
+    cached_count: usize,
+    palette_size: usize,
+) -> Result<Vec<u16>, DecoderError> {
+    if colors.len() != palette_size {
+        return Err(DecoderError::Bitstream(format!(
+            "AV1 palette color count {} does not match size {palette_size}",
+            colors.len()
+        )));
+    }
+    if cached_count == 0 {
+        return Ok(colors);
+    }
+    let cached_colors = colors[..cached_count].to_vec();
+    let transmitted_colors = colors[cached_count..].to_vec();
+    let mut cache_index = 0usize;
+    let mut transmitted_index = 0usize;
+    for color in colors.iter_mut().take(palette_size) {
+        if cache_index < cached_colors.len()
+            && (transmitted_index >= transmitted_colors.len()
+                || cached_colors[cache_index] <= transmitted_colors[transmitted_index])
+        {
+            *color = cached_colors[cache_index];
+            cache_index += 1;
+        } else {
+            *color = transmitted_colors
+                .get(transmitted_index)
+                .copied()
+                .ok_or_else(|| {
+                    DecoderError::Bitstream("AV1 palette transmitted color is missing".to_string())
+                })?;
+            transmitted_index += 1;
+        }
+    }
+    Ok(colors)
 }
 
 fn eob_tx_class_context(tx_type: TxType) -> usize {
@@ -3855,7 +4500,7 @@ mod tests {
     }
 
     #[test]
-    fn decodes_sample_prefix_until_first_palette_block() {
+    fn decodes_sample_prefix_through_palette_blocks() {
         let data = std::fs::read(
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .parent()
@@ -3894,13 +4539,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(prefix.blocks.len(), 38);
-        assert_eq!(
-            prefix.next_unsupported,
-            Some(DecoderError::Unsupported(
-                "AV1 luma palette blocks are not supported yet".to_string()
-            ))
-        );
+        assert_eq!(prefix.blocks.len(), 2037);
+        assert_eq!(prefix.next_unsupported, None);
         assert!(
             buffers
                 .planes

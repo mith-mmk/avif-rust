@@ -22,6 +22,10 @@ pub const COEFF_BR_CONTEXTS: usize = 21;
 pub const DC_SIGN_CONTEXTS: usize = 3;
 pub const INTRA_EXT_TX_TYPES_SET1: usize = 7;
 pub const INTRA_EXT_TX_TYPES_SET2: usize = 5;
+pub const PALETTE_BLOCK_SIZE_CONTEXTS: usize = 7;
+pub const PALETTE_COLOR_INDEX_CONTEXTS: usize = 5;
+pub const PALETTE_SIZES: usize = 7;
+pub const PALETTE_COLORS: usize = 8;
 
 pub const DEFAULT_INTRA_EXT_TX_SET1_CDF: [[[u16; INTRA_EXT_TX_TYPES_SET1 + 1]; INTRA_MODES]; 2] = [
     [
@@ -221,6 +225,132 @@ pub const DEFAULT_PALETTE_Y_MODE_CDF: [[[u16; 3]; 3]; 7] = [
     [[32450, 32768, 0], [7946, 32768, 0], [129, 32768, 0]],
 ];
 pub const DEFAULT_PALETTE_UV_MODE_CDF: [[u16; 3]; 2] = [[32461, 32768, 0], [21488, 32768, 0]];
+
+pub const DEFAULT_PALETTE_Y_SIZE_CDF: [[u16; PALETTE_SIZES + 1]; PALETTE_BLOCK_SIZE_CONTEXTS] = [
+    [7952, 13000, 18149, 21478, 25527, 29241, 32768, 0],
+    [7139, 11421, 16195, 19544, 23666, 28073, 32768, 0],
+    [7788, 12741, 17325, 20500, 24315, 28530, 32768, 0],
+    [8271, 14064, 18246, 21564, 25071, 28533, 32768, 0],
+    [12725, 19180, 21863, 24839, 27535, 30120, 32768, 0],
+    [9711, 14888, 16923, 21052, 25661, 27875, 32768, 0],
+    [14940, 20797, 21678, 24186, 27033, 28999, 32768, 0],
+];
+
+pub const DEFAULT_PALETTE_UV_SIZE_CDF: [[u16; PALETTE_SIZES + 1]; PALETTE_BLOCK_SIZE_CONTEXTS] = [
+    [8713, 19979, 27128, 29609, 31331, 32272, 32768, 0],
+    [5839, 15573, 23581, 26947, 29848, 31700, 32768, 0],
+    [4426, 11260, 17999, 21483, 25863, 29430, 32768, 0],
+    [3228, 9464, 14993, 18089, 22523, 27420, 32768, 0],
+    [3768, 8886, 13091, 17852, 22495, 27207, 32768, 0],
+    [2464, 8451, 12861, 21632, 25525, 28555, 32768, 0],
+    [1269, 5435, 10433, 18963, 21700, 25865, 32768, 0],
+];
+
+pub const DEFAULT_PALETTE_Y_COLOR_INDEX_CDF: [[[u16; PALETTE_COLORS + 1];
+    PALETTE_COLOR_INDEX_CONTEXTS]; PALETTE_SIZES] = [
+    [
+        [28710, 32768, 0, 0, 0, 0, 0, 0, 0],
+        [16384, 32768, 0, 0, 0, 0, 0, 0, 0],
+        [10553, 32768, 0, 0, 0, 0, 0, 0, 0],
+        [27036, 32768, 0, 0, 0, 0, 0, 0, 0],
+        [31603, 32768, 0, 0, 0, 0, 0, 0, 0],
+    ],
+    [
+        [27877, 30490, 32768, 0, 0, 0, 0, 0, 0],
+        [11532, 25697, 32768, 0, 0, 0, 0, 0, 0],
+        [6544, 30234, 32768, 0, 0, 0, 0, 0, 0],
+        [23018, 28072, 32768, 0, 0, 0, 0, 0, 0],
+        [31915, 32385, 32768, 0, 0, 0, 0, 0, 0],
+    ],
+    [
+        [25572, 28046, 30045, 32768, 0, 0, 0, 0, 0],
+        [9478, 21590, 27256, 32768, 0, 0, 0, 0, 0],
+        [7248, 26837, 29824, 32768, 0, 0, 0, 0, 0],
+        [19167, 24486, 28349, 32768, 0, 0, 0, 0, 0],
+        [31400, 31825, 32250, 32768, 0, 0, 0, 0, 0],
+    ],
+    [
+        [24779, 26955, 28576, 30282, 32768, 0, 0, 0, 0],
+        [8669, 20364, 24073, 28093, 32768, 0, 0, 0, 0],
+        [4255, 27565, 29377, 31067, 32768, 0, 0, 0, 0],
+        [19864, 23674, 26716, 29530, 32768, 0, 0, 0, 0],
+        [31646, 31893, 32147, 32426, 32768, 0, 0, 0, 0],
+    ],
+    [
+        [23132, 25407, 26970, 28435, 30073, 32768, 0, 0, 0],
+        [7443, 17242, 20717, 24762, 27982, 32768, 0, 0, 0],
+        [6300, 24862, 26944, 28784, 30671, 32768, 0, 0, 0],
+        [18916, 22895, 25267, 27435, 29652, 32768, 0, 0, 0],
+        [31270, 31550, 31808, 32059, 32353, 32768, 0, 0, 0],
+    ],
+    [
+        [23105, 25199, 26464, 27684, 28931, 30318, 32768, 0, 0],
+        [6950, 15447, 18952, 22681, 25567, 28563, 32768, 0, 0],
+        [7560, 23474, 25490, 27203, 28921, 30708, 32768, 0, 0],
+        [18544, 22373, 24457, 26195, 28119, 30045, 32768, 0, 0],
+        [31198, 31451, 31670, 31882, 32123, 32391, 32768, 0, 0],
+    ],
+    [
+        [21689, 23883, 25163, 26352, 27506, 28827, 30195, 32768, 0],
+        [6892, 15385, 17840, 21606, 24287, 26753, 29204, 32768, 0],
+        [5651, 23182, 25042, 26518, 27982, 29392, 30900, 32768, 0],
+        [19349, 22578, 24418, 25994, 27524, 29031, 30448, 32768, 0],
+        [31028, 31270, 31504, 31705, 31927, 32153, 32392, 32768, 0],
+    ],
+];
+
+pub const DEFAULT_PALETTE_UV_COLOR_INDEX_CDF: [[[u16; PALETTE_COLORS + 1];
+    PALETTE_COLOR_INDEX_CONTEXTS]; PALETTE_SIZES] = [
+    [
+        [29089, 32768, 0, 0, 0, 0, 0, 0, 0],
+        [16384, 32768, 0, 0, 0, 0, 0, 0, 0],
+        [8713, 32768, 0, 0, 0, 0, 0, 0, 0],
+        [29257, 32768, 0, 0, 0, 0, 0, 0, 0],
+        [31610, 32768, 0, 0, 0, 0, 0, 0, 0],
+    ],
+    [
+        [25257, 29145, 32768, 0, 0, 0, 0, 0, 0],
+        [12287, 27293, 32768, 0, 0, 0, 0, 0, 0],
+        [7033, 27960, 32768, 0, 0, 0, 0, 0, 0],
+        [20145, 25405, 32768, 0, 0, 0, 0, 0, 0],
+        [30608, 31639, 32768, 0, 0, 0, 0, 0, 0],
+    ],
+    [
+        [24210, 27175, 29903, 32768, 0, 0, 0, 0, 0],
+        [9888, 22386, 27214, 32768, 0, 0, 0, 0, 0],
+        [5901, 26053, 29293, 32768, 0, 0, 0, 0, 0],
+        [18318, 22152, 28333, 32768, 0, 0, 0, 0, 0],
+        [30459, 31136, 31926, 32768, 0, 0, 0, 0, 0],
+    ],
+    [
+        [22980, 25479, 27781, 29986, 32768, 0, 0, 0, 0],
+        [8413, 21408, 24859, 28874, 32768, 0, 0, 0, 0],
+        [2257, 29449, 30594, 31598, 32768, 0, 0, 0, 0],
+        [19189, 21202, 25915, 28620, 32768, 0, 0, 0, 0],
+        [31844, 32044, 32281, 32518, 32768, 0, 0, 0, 0],
+    ],
+    [
+        [22217, 24567, 26637, 28683, 30548, 32768, 0, 0, 0],
+        [7307, 16406, 19636, 24632, 28424, 32768, 0, 0, 0],
+        [4441, 25064, 26879, 28942, 30919, 32768, 0, 0, 0],
+        [17210, 20528, 23319, 26750, 29582, 32768, 0, 0, 0],
+        [30674, 30953, 31396, 31735, 32207, 32768, 0, 0, 0],
+    ],
+    [
+        [21239, 23168, 25044, 26962, 28705, 30506, 32768, 0, 0],
+        [6545, 15012, 18004, 21817, 25503, 28701, 32768, 0, 0],
+        [3448, 26295, 27437, 28704, 30126, 31442, 32768, 0, 0],
+        [15889, 18323, 21704, 24698, 26976, 29690, 32768, 0, 0],
+        [30988, 31204, 31479, 31734, 31983, 32325, 32768, 0, 0],
+    ],
+    [
+        [21442, 23288, 24758, 26246, 27649, 28980, 30563, 32768, 0],
+        [5863, 14933, 17552, 20668, 23683, 26411, 29273, 32768, 0],
+        [3415, 25810, 26877, 27990, 29223, 30394, 31618, 32768, 0],
+        [17965, 20084, 22232, 23974, 26274, 28402, 30390, 32768, 0],
+        [31190, 31329, 31516, 31679, 31825, 32026, 32322, 32768, 0],
+    ],
+];
 
 pub const DEFAULT_TXB_SKIP_CDF: [[[[u16; 3]; TXB_SKIP_CONTEXTS]; TX_SIZE_CONTEXTS];
     COEFF_CDF_Q_CONTEXTS] = [
@@ -1499,6 +1629,12 @@ pub struct CdfContext {
     pub sgrproj_restore: [u16; 3],
     pub palette_y_mode: [[[u16; 3]; 3]; 7],
     pub palette_uv_mode: [[u16; 3]; 2],
+    pub palette_y_size: [[u16; PALETTE_SIZES + 1]; PALETTE_BLOCK_SIZE_CONTEXTS],
+    pub palette_uv_size: [[u16; PALETTE_SIZES + 1]; PALETTE_BLOCK_SIZE_CONTEXTS],
+    pub palette_y_color_index:
+        [[[u16; PALETTE_COLORS + 1]; PALETTE_COLOR_INDEX_CONTEXTS]; PALETTE_SIZES],
+    pub palette_uv_color_index:
+        [[[u16; PALETTE_COLORS + 1]; PALETTE_COLOR_INDEX_CONTEXTS]; PALETTE_SIZES],
     pub intra_frame_y_mode: [[[u16; INTRA_MODES + 1]; INTRA_MODE_CONTEXTS]; INTRA_MODE_CONTEXTS],
     pub y_mode: [[u16; INTRA_MODES + 1]; BLOCK_SIZE_GROUPS],
     pub uv_mode_cfl_not_allowed: [[u16; INTRA_MODES + 1]; INTRA_MODES],
@@ -1548,6 +1684,10 @@ impl CdfContext {
             sgrproj_restore: DEFAULT_SGRPROJ_RESTORE_CDF,
             palette_y_mode: DEFAULT_PALETTE_Y_MODE_CDF,
             palette_uv_mode: DEFAULT_PALETTE_UV_MODE_CDF,
+            palette_y_size: DEFAULT_PALETTE_Y_SIZE_CDF,
+            palette_uv_size: DEFAULT_PALETTE_UV_SIZE_CDF,
+            palette_y_color_index: DEFAULT_PALETTE_Y_COLOR_INDEX_CDF,
+            palette_uv_color_index: DEFAULT_PALETTE_UV_COLOR_INDEX_CDF,
             intra_frame_y_mode: DEFAULT_INTRA_FRAME_Y_MODE_CDF,
             y_mode: DEFAULT_Y_MODE_CDF,
             uv_mode_cfl_not_allowed: DEFAULT_UV_MODE_CFL_NOT_ALLOWED_CDF,
@@ -1615,6 +1755,30 @@ impl CdfContext {
 
     pub fn palette_uv_mode_cdf_mut(&mut self, y_palette_context: usize) -> &mut [u16] {
         &mut self.palette_uv_mode[y_palette_context]
+    }
+
+    pub fn palette_y_size_cdf_mut(&mut self, block_size_context: usize) -> &mut [u16] {
+        &mut self.palette_y_size[block_size_context]
+    }
+
+    pub fn palette_uv_size_cdf_mut(&mut self, block_size_context: usize) -> &mut [u16] {
+        &mut self.palette_uv_size[block_size_context]
+    }
+
+    pub fn palette_color_index_cdf_mut(
+        &mut self,
+        plane: usize,
+        palette_size: usize,
+        context: usize,
+    ) -> &mut [u16] {
+        debug_assert!((2..=8).contains(&palette_size));
+        let size_index = palette_size.saturating_sub(2).min(PALETTE_SIZES - 1);
+        let len = palette_size + 1;
+        if plane == 0 {
+            &mut self.palette_y_color_index[size_index][context][..len]
+        } else {
+            &mut self.palette_uv_color_index[size_index][context][..len]
+        }
     }
 
     pub fn intra_frame_y_mode_cdf_mut(
