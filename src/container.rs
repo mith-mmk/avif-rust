@@ -24,6 +24,7 @@ pub struct AvifInfo {
     pub color_information: Option<ColorInformation>,
     pub alpha_premultiplied: bool,
     pub alpha_auxiliary_items: Vec<AuxiliaryImage>,
+    pub primary_grid: Option<GridImage>,
     pub av1_config: Option<Vec<u8>>,
     pub primary_item_payload: Vec<u8>,
 }
@@ -93,6 +94,17 @@ pub struct AuxiliaryImage {
     pub payload: Vec<u8>,
 }
 
+/// Parsed AVIF image grid derived item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GridImage {
+    pub item_id: u32,
+    pub rows: u8,
+    pub columns: u8,
+    pub output_width: u32,
+    pub output_height: u32,
+    pub payload: Vec<u8>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ItemLocation {
     item_id: u32,
@@ -120,6 +132,13 @@ struct ItemPropertyAssociation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct ItemInfo {
+    item_id: u32,
+    item_type: [u8; 4],
+    item_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum ItemProperty {
     AuxiliaryType(String),
     Other,
@@ -129,6 +148,7 @@ enum ItemProperty {
 struct MetaState {
     primary_item_id: Option<u32>,
     item_locations: Vec<ItemLocation>,
+    item_infos: Vec<ItemInfo>,
     item_references: Vec<ItemReference>,
     item_property_associations: Vec<ItemPropertyAssociation>,
     item_properties: Vec<ItemProperty>,
@@ -170,6 +190,7 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
 
     let primary_item_payload = primary_item_payload(data, &meta)?;
     let alpha_auxiliary_items = alpha_auxiliary_items(data, &meta)?;
+    let primary_grid = primary_grid(&primary_item_payload, &meta)?;
     Ok(AvifInfo {
         major_brand,
         compatible_brands,
@@ -180,6 +201,7 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
         color_information: meta.color_information,
         alpha_premultiplied: meta.alpha_premultiplied,
         alpha_auxiliary_items,
+        primary_grid,
         av1_config: meta.av1_config,
         primary_item_payload,
     })
@@ -249,6 +271,7 @@ fn parse_meta_children(
         let child_payload = box_payload(payload, header)?;
         match &header.box_type {
             b"pitm" => state.primary_item_id = parse_pitm(child_payload)?,
+            b"iinf" => state.item_infos = parse_iinf(child_payload)?,
             b"iloc" => state.item_locations = parse_iloc(child_payload)?,
             b"iref" => state.item_references = parse_iref(child_payload)?,
             b"iprp" => parse_iprp(source, child_payload, state)?,
@@ -317,6 +340,72 @@ fn parse_pitm(payload: &[u8]) -> Result<Option<u32>, DecoderError> {
         }
     };
     Ok(Some(item_id))
+}
+
+fn parse_iinf(payload: &[u8]) -> Result<Vec<ItemInfo>, DecoderError> {
+    if payload.len() < 6 {
+        return Err(DecoderError::NotEnoughData(
+            "iinf payload is too short".to_string(),
+        ));
+    }
+    let version = payload[0];
+    if version > 1 {
+        return Err(DecoderError::Unsupported(format!(
+            "iinf version {version} is not supported"
+        )));
+    }
+    let (entry_count, mut offset) = if version == 0 {
+        (read_u16(payload, 4)? as usize, 6usize)
+    } else {
+        (read_u32(payload, 4)? as usize, 8usize)
+    };
+    let mut infos = Vec::with_capacity(entry_count);
+    for _ in 0..entry_count {
+        let header = read_box_header(payload, offset, payload.len())?;
+        let child_payload = box_payload(payload, header)?;
+        if &header.box_type == b"infe" {
+            infos.push(parse_infe(child_payload)?);
+        }
+        offset = checked_add(header.offset, header.size, "iinf child box end")?;
+    }
+    Ok(infos)
+}
+
+fn parse_infe(payload: &[u8]) -> Result<ItemInfo, DecoderError> {
+    if payload.len() < 12 {
+        return Err(DecoderError::NotEnoughData(
+            "infe payload is too short".to_string(),
+        ));
+    }
+    let version = payload[0];
+    let mut cursor = 4usize;
+    let item_id = match version {
+        2 => {
+            let value = read_u16(payload, cursor)? as u32;
+            cursor += 2;
+            value
+        }
+        3 => {
+            let value = read_u32(payload, cursor)?;
+            cursor += 4;
+            value
+        }
+        _ => {
+            return Err(DecoderError::Unsupported(format!(
+                "infe version {version} is not supported"
+            )));
+        }
+    };
+    let _item_protection_index = read_u16(payload, cursor)?;
+    cursor += 2;
+    let item_type = read_fourcc(payload, cursor)?;
+    cursor += 4;
+    let item_name = read_c_string(payload, cursor)?;
+    Ok(ItemInfo {
+        item_id,
+        item_type,
+        item_name,
+    })
 }
 
 fn parse_iloc(payload: &[u8]) -> Result<Vec<ItemLocation>, DecoderError> {
@@ -616,6 +705,80 @@ fn alpha_auxiliary_items(
         .collect()
 }
 
+fn primary_grid(payload: &[u8], state: &MetaState) -> Result<Option<GridImage>, DecoderError> {
+    let Some(primary_item_id) = state.primary_item_id else {
+        return Ok(None);
+    };
+    let Some(item_info) = state
+        .item_infos
+        .iter()
+        .find(|info| info.item_id == primary_item_id)
+    else {
+        return Ok(None);
+    };
+    if &item_info.item_type != b"grid" {
+        return Ok(None);
+    }
+    let parsed = parse_grid_payload(payload)?;
+    Ok(Some(GridImage {
+        item_id: primary_item_id,
+        rows: parsed.rows,
+        columns: parsed.columns,
+        output_width: parsed.output_width,
+        output_height: parsed.output_height,
+        payload: payload.to_vec(),
+    }))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ParsedGridPayload {
+    rows: u8,
+    columns: u8,
+    output_width: u32,
+    output_height: u32,
+}
+
+fn parse_grid_payload(payload: &[u8]) -> Result<ParsedGridPayload, DecoderError> {
+    if payload.len() < 8 {
+        return Err(DecoderError::NotEnoughData(
+            "grid payload is too short".to_string(),
+        ));
+    }
+    let version = read_u8(payload, 0)?;
+    if version != 0 {
+        return Err(DecoderError::Unsupported(format!(
+            "grid version {version} is not supported"
+        )));
+    }
+    let flags = read_u8(payload, 1)?;
+    let rows = read_u8(payload, 2)?
+        .checked_add(1)
+        .ok_or_else(|| DecoderError::Bitstream("grid row count overflow".to_string()))?;
+    let columns = read_u8(payload, 3)?
+        .checked_add(1)
+        .ok_or_else(|| DecoderError::Bitstream("grid column count overflow".to_string()))?;
+    if flags & 1 == 0 {
+        Ok(ParsedGridPayload {
+            rows,
+            columns,
+            output_width: read_u16(payload, 4)? as u32,
+            output_height: read_u16(payload, 6)? as u32,
+        })
+    } else {
+        if payload.len() < 12 {
+            return Err(DecoderError::NotEnoughData(
+                "large grid payload is too short".to_string(),
+            ));
+        }
+        Ok(ParsedGridPayload {
+            rows,
+            columns,
+            output_width: read_u32(payload, 4)?,
+            output_height: read_u32(payload, 8)?,
+        })
+    }
+}
+
 fn item_payload(data: &[u8], state: &MetaState, item_id: u32) -> Result<Vec<u8>, DecoderError> {
     let location = state
         .item_locations
@@ -735,6 +898,19 @@ fn read_fourcc(data: &[u8], offset: usize) -> Result<[u8; 4], DecoderError> {
         .ok_or_else(|| DecoderError::NotEnoughData("fourcc is truncated".to_string()))?
         .try_into()
         .expect("slice length checked"))
+}
+
+fn read_c_string(data: &[u8], offset: usize) -> Result<String, DecoderError> {
+    let bytes = data
+        .get(offset..)
+        .ok_or_else(|| DecoderError::NotEnoughData("string offset exceeds input".to_string()))?;
+    let end = bytes
+        .iter()
+        .position(|value| *value == 0)
+        .unwrap_or(bytes.len());
+    std::str::from_utf8(&bytes[..end])
+        .map(|value| value.to_string())
+        .map_err(|_| DecoderError::Bitstream("box string is not UTF-8".to_string()))
 }
 
 fn read_u8(data: &[u8], offset: usize) -> Result<u8, DecoderError> {
@@ -936,6 +1112,99 @@ mod tests {
                 item_id: 2,
                 property_indices: vec![1],
             }]
+        );
+    }
+
+    #[test]
+    fn parses_item_info_for_grid_items() {
+        let payload = [
+            0, 0, 0, 0, // iinf version and flags
+            0, 1, // entry count
+            0, 0, 0, 24, b'i', b'n', b'f', b'e', // infe box header
+            2, 0, 0, 0, // infe version and flags
+            0, 7, // item id
+            0, 0, // protection index
+            b'g', b'r', b'i', b'd', // item type
+            b'g', b'r', b'i', b'd', 0, // item name
+        ];
+
+        let infos = parse_iinf(&payload).unwrap();
+
+        assert_eq!(
+            infos,
+            vec![ItemInfo {
+                item_id: 7,
+                item_type: *b"grid",
+                item_name: "grid".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_grid_payload_small_and_large_dimensions() {
+        assert_eq!(
+            parse_grid_payload(&[
+                0, 0, // version, flags
+                1, 2, // rows_minus_one, columns_minus_one
+                0x03, 0x20, // output width 800
+                0x02, 0x58, // output height 600
+            ])
+            .unwrap(),
+            ParsedGridPayload {
+                rows: 2,
+                columns: 3,
+                output_width: 800,
+                output_height: 600,
+            }
+        );
+
+        assert_eq!(
+            parse_grid_payload(&[
+                0, 1, // version, large-fields flag
+                0, 0, // rows_minus_one, columns_minus_one
+                0, 0, 0x10, 0, // output width 4096
+                0, 0, 0x08, 0, // output height 2048
+            ])
+            .unwrap(),
+            ParsedGridPayload {
+                rows: 1,
+                columns: 1,
+                output_width: 4096,
+                output_height: 2048,
+            }
+        );
+    }
+
+    #[test]
+    fn primary_grid_is_exposed_from_item_info_and_payload() {
+        let state = MetaState {
+            primary_item_id: Some(7),
+            item_infos: vec![ItemInfo {
+                item_id: 7,
+                item_type: *b"grid",
+                item_name: "grid".to_string(),
+            }],
+            ..MetaState::default()
+        };
+        let payload = [
+            0, 0, // version, flags
+            1, 1, // rows_minus_one, columns_minus_one
+            0, 10, // output width
+            0, 20, // output height
+        ];
+
+        let grid = primary_grid(&payload, &state).unwrap().unwrap();
+
+        assert_eq!(
+            grid,
+            GridImage {
+                item_id: 7,
+                rows: 2,
+                columns: 2,
+                output_width: 10,
+                output_height: 20,
+                payload: payload.to_vec(),
+            }
         );
     }
 }

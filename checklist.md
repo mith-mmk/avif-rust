@@ -113,6 +113,8 @@ This is the current highest-priority implementation block. Entropy components th
   - [x] Parse alpha `auxC` / `auxl` metadata and payloads, and return explicit `Unsupported` instead of dropping alpha.
   - [ ] Decode and compose alpha auxiliary planes into RGBA output.
 - [ ] Parse and compose grid items.
+  - [x] Parse primary `grid` derived item metadata/payload and return explicit `Unsupported` instead of treating it as AV1.
+  - [ ] Compose grid image cells into a decoded frame.
 - [ ] Apply `clap`, then `irot`, then `imir`.
 - [ ] Support multiple tiles and tile groups.
 
