@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use std::path::Path;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy)]
 pub struct ExpectedPlane<'a> {
@@ -79,4 +80,12 @@ pub fn read_u16le_samples(path: &Path, sample_count: usize) -> Vec<u16> {
         .chunks_exact(2)
         .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
         .collect()
+}
+
+pub fn sample_path(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("samples")
+        .join(name)
 }

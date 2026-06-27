@@ -1066,40 +1066,6 @@ fn checked_add(left: usize, right: usize, label: &str) -> Result<usize, DecoderE
 mod tests {
     use super::*;
 
-    fn sample_avif() -> Vec<u8> {
-        std::fs::read(
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .unwrap()
-                .join("samples")
-                .join("WML2Viewer.avif"),
-        )
-        .expect("sample AVIF should exist")
-    }
-
-    #[test]
-    fn ftyp_recognizes_avif_brand() {
-        let data = sample_avif();
-        assert!(is_avif_file(&data));
-    }
-
-    #[test]
-    fn parse_sample_container_metadata() {
-        let data = sample_avif();
-        let info = parse_avif(&data).unwrap();
-
-        assert!(info.is_avif_brand());
-        assert_eq!(info.width, Some(900));
-        assert_eq!(info.height, Some(900));
-        assert_eq!(
-            info.pixel_information
-                .as_ref()
-                .map(|pixi| pixi.bits_per_channel.as_slice()),
-            Some(&[8, 8, 8][..])
-        );
-        assert!(!info.primary_item_payload.is_empty());
-    }
-
     #[test]
     fn rejects_truncated_top_level_box_header() {
         let err = parse_avif(&[0, 0, 0]).unwrap_err();

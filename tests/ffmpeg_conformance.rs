@@ -1,11 +1,12 @@
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 mod support;
 
 use support::{
     ExpectedPlane, assert_exact_decoded_planes, assert_rgba8_max_error, assert_rgba16_max_error,
+    sample_path,
 };
 
 const SAMPLE_WIDTH: usize = 900;
@@ -17,14 +18,6 @@ const SAMPLE_RGBA_LEN: usize = SAMPLE_PIXELS * 4;
 struct DiffMetrics {
     average_rgb_abs: f64,
     max_rgb_abs: u8,
-}
-
-fn sample_path(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("workspace root should exist")
-        .join("samples")
-        .join(name)
 }
 
 fn ffmpeg_decode_rgba(path: &Path) -> Option<Vec<u8>> {
