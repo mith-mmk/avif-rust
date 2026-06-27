@@ -107,7 +107,7 @@ This is the current highest-priority implementation block. Entropy components th
   - [x] Expose u16 source planes, dimensions, stride, bit depth and pixel layout.
   - [x] Preserve CICP (`nclx`), raw ICC (`prof`/`rICC`) and alpha-premultiplication metadata on decoded frames.
   - [x] Provide straight-alpha `to_rgba8()` and `to_rgba16()` conversion methods for the currently supported identity-GBR subset.
-- [ ] Implement SDR nclx range/matrix conversion.
+- [x] Implement SDR nclx range/matrix conversion for non-subsampled identity GBR and BT.601/709/2020 non-constant-luminance matrices.
 - [ ] Return explicit `Unsupported` for RGBA conversion requiring unimplemented HDR/ICC colour management.
 - [ ] Parse and compose alpha auxiliary items.
 - [ ] Parse and compose grid items.

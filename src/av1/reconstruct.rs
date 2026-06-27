@@ -133,27 +133,15 @@ pub fn frame_buffers_to_rgba_8(
     buffers: &FrameBuffers,
     color_config: &ColorConfig,
 ) -> Result<ImageBuffer, DecoderError> {
-    if color_config.bit_depth != 8 {
-        return Err(DecoderError::Unsupported(
-            "AV1 RGBA conversion currently supports 8-bit output only".to_string(),
-        ));
-    }
-    validate_identity_rgba_conversion(buffers, color_config)?;
-
-    let mut rgba = vec![0u8; buffers.width * buffers.height * 4];
-    let plane_g = &buffers.planes[0].samples;
-    let plane_b = &buffers.planes[1].samples;
-    let plane_r = &buffers.planes[2].samples;
-    for index in 0..buffers.width * buffers.height {
-        let out = index * 4;
-        rgba[out] = plane_r[index].min(255) as u8;
-        rgba[out + 1] = plane_g[index].min(255) as u8;
-        rgba[out + 2] = plane_b[index].min(255) as u8;
-        rgba[out + 3] = 255;
-    }
+    let rgba16 = frame_buffers_to_rgba_16(buffers, color_config)?;
+    let rgba = rgba16
+        .rgba
+        .iter()
+        .map(|sample| ((u32::from(*sample) * 255 + 32767) / 65535) as u8)
+        .collect();
     Ok(ImageBuffer {
-        width: buffers.width,
-        height: buffers.height,
+        width: rgba16.width,
+        height: rgba16.height,
         rgba,
     })
 }
@@ -162,19 +150,47 @@ pub fn frame_buffers_to_rgba_16(
     buffers: &FrameBuffers,
     color_config: &ColorConfig,
 ) -> Result<Rgba16ImageBuffer, DecoderError> {
-    validate_identity_rgba_conversion(buffers, color_config)?;
-    let max_source = (1u32 << color_config.bit_depth) - 1;
+    validate_rgba_conversion(buffers)?;
+    let matrix_coefficients = color_config
+        .color_description
+        .map(|description| description.matrix_coefficients)
+        .unwrap_or(2);
     let mut rgba = vec![0u16; buffers.width * buffers.height * 4];
-    let plane_g = &buffers.planes[0].samples;
-    let plane_b = &buffers.planes[1].samples;
-    let plane_r = &buffers.planes[2].samples;
-    for index in 0..buffers.width * buffers.height {
-        let out = index * 4;
-        rgba[out] = scale_sample_to_u16(plane_r[index], max_source);
-        rgba[out + 1] = scale_sample_to_u16(plane_g[index], max_source);
-        rgba[out + 2] = scale_sample_to_u16(plane_b[index], max_source);
-        rgba[out + 3] = u16::MAX;
+
+    if matrix_coefficients == 0 {
+        let max_source = (1u32 << color_config.bit_depth) - 1;
+        let plane_g = &buffers.planes[0].samples;
+        let plane_b = &buffers.planes[1].samples;
+        let plane_r = &buffers.planes[2].samples;
+        for index in 0..buffers.width * buffers.height {
+            let out = index * 4;
+            rgba[out] = scale_sample_to_u16(plane_r[index], max_source);
+            rgba[out + 1] = scale_sample_to_u16(plane_g[index], max_source);
+            rgba[out + 2] = scale_sample_to_u16(plane_b[index], max_source);
+            rgba[out + 3] = u16::MAX;
+        }
+    } else {
+        let matrix = MatrixCoefficients::from_av1(matrix_coefficients)?;
+        let range = SampleRange::new(color_config.bit_depth, color_config.color_range)?;
+        let plane_y = &buffers.planes[0].samples;
+        let plane_u = &buffers.planes[1].samples;
+        let plane_v = &buffers.planes[2].samples;
+        for index in 0..buffers.width * buffers.height {
+            let rgb = yuv_to_rgb_u16(
+                plane_y[index],
+                plane_u[index],
+                plane_v[index],
+                range,
+                matrix,
+            );
+            let out = index * 4;
+            rgba[out] = rgb[0];
+            rgba[out + 1] = rgb[1];
+            rgba[out + 2] = rgb[2];
+            rgba[out + 3] = u16::MAX;
+        }
     }
+
     Ok(Rgba16ImageBuffer {
         width: buffers.width,
         height: buffers.height,
@@ -182,10 +198,7 @@ pub fn frame_buffers_to_rgba_16(
     })
 }
 
-fn validate_identity_rgba_conversion(
-    buffers: &FrameBuffers,
-    color_config: &ColorConfig,
-) -> Result<(), DecoderError> {
+fn validate_rgba_conversion(buffers: &FrameBuffers) -> Result<(), DecoderError> {
     if buffers.planes.len() < 3 {
         return Err(DecoderError::Unsupported(
             "AV1 monochrome RGBA conversion is not supported yet".to_string(),
@@ -201,16 +214,93 @@ fn validate_identity_rgba_conversion(
             "AV1 subsampled RGBA conversion is not supported yet".to_string(),
         ));
     }
-    let matrix_coefficients = color_config
-        .color_description
-        .map(|description| description.matrix_coefficients)
-        .unwrap_or(2);
-    if matrix_coefficients != 0 {
-        return Err(DecoderError::Unsupported(format!(
-            "AV1 matrix coefficients {matrix_coefficients} RGBA conversion is not supported yet"
-        )));
-    }
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MatrixCoefficients {
+    kr: f64,
+    kb: f64,
+}
+
+impl MatrixCoefficients {
+    fn from_av1(matrix_coefficients: u8) -> Result<Self, DecoderError> {
+        match matrix_coefficients {
+            1 => Ok(Self {
+                kr: 0.2126,
+                kb: 0.0722,
+            }),
+            5 | 6 => Ok(Self {
+                kr: 0.299,
+                kb: 0.114,
+            }),
+            9 => Ok(Self {
+                kr: 0.2627,
+                kb: 0.0593,
+            }),
+            _ => Err(DecoderError::Unsupported(format!(
+                "AV1 matrix coefficients {matrix_coefficients} RGBA conversion is not supported yet"
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SampleRange {
+    y_offset: f64,
+    y_scale: f64,
+    chroma_offset: f64,
+    chroma_scale: f64,
+}
+
+impl SampleRange {
+    fn new(bit_depth: u8, color_range: super::sequence::ColorRange) -> Result<Self, DecoderError> {
+        if !(8..=16).contains(&bit_depth) {
+            return Err(DecoderError::Unsupported(format!(
+                "AV1 {bit_depth}-bit RGBA conversion is not supported yet"
+            )));
+        }
+        let max_value = ((1u32 << bit_depth) - 1) as f64;
+        let range_shift = f64::from(1u32 << bit_depth.saturating_sub(8));
+        Ok(match color_range {
+            super::sequence::ColorRange::Full => Self {
+                y_offset: 0.0,
+                y_scale: max_value,
+                chroma_offset: f64::from(1u32 << bit_depth.saturating_sub(1)),
+                chroma_scale: max_value,
+            },
+            super::sequence::ColorRange::Studio => Self {
+                y_offset: 16.0 * range_shift,
+                y_scale: 219.0 * range_shift,
+                chroma_offset: 128.0 * range_shift,
+                chroma_scale: 224.0 * range_shift,
+            },
+        })
+    }
+}
+
+fn yuv_to_rgb_u16(
+    y_sample: u16,
+    u_sample: u16,
+    v_sample: u16,
+    range: SampleRange,
+    matrix: MatrixCoefficients,
+) -> [u16; 3] {
+    let y = ((f64::from(y_sample) - range.y_offset) / range.y_scale).clamp(0.0, 1.0);
+    let cb = (f64::from(u_sample) - range.chroma_offset) / range.chroma_scale;
+    let cr = (f64::from(v_sample) - range.chroma_offset) / range.chroma_scale;
+    let r = y + 2.0 * (1.0 - matrix.kr) * cr;
+    let b = y + 2.0 * (1.0 - matrix.kb) * cb;
+    let g = (y - matrix.kr * r - matrix.kb * b) / (1.0 - matrix.kr - matrix.kb);
+    [
+        normalized_to_u16(r),
+        normalized_to_u16(g),
+        normalized_to_u16(b),
+    ]
+}
+
+fn normalized_to_u16(value: f64) -> u16 {
+    (value.clamp(0.0, 1.0) * f64::from(u16::MAX)).round() as u16
 }
 
 fn scale_sample_to_u16(sample: u16, max_source: u32) -> u16 {
@@ -320,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn rgba_conversion_rejects_non_identity_matrix_for_now() {
+    fn rgba_conversion_supports_full_range_bt709_matrix() {
         let layout = PlaneLayout {
             plane: 0,
             width: 1,
@@ -339,11 +429,11 @@ mod tests {
                 },
                 PlaneBuffer {
                     layout: PlaneLayout { plane: 1, ..layout },
-                    samples: vec![0],
+                    samples: vec![128],
                 },
                 PlaneBuffer {
                     layout: PlaneLayout { plane: 2, ..layout },
-                    samples: vec![0],
+                    samples: vec![128],
                 },
             ],
         };
@@ -364,8 +454,69 @@ mod tests {
             separate_uv_delta_q: false,
         };
 
-        let err = frame_buffers_to_rgba_8(&buffers, &color_config).unwrap_err();
+        let image = frame_buffers_to_rgba_8(&buffers, &color_config).unwrap();
 
-        assert!(matches!(err, DecoderError::Unsupported(_)));
+        assert_eq!(image.rgba, vec![0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn rgba_conversion_supports_studio_range_bt601_matrix() {
+        let layout = PlaneLayout {
+            plane: 0,
+            width: 3,
+            height: 1,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 3,
+        };
+        let buffers = FrameBuffers {
+            width: 3,
+            height: 1,
+            planes: vec![
+                PlaneBuffer {
+                    layout,
+                    samples: vec![16, 235, 81],
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout { plane: 1, ..layout },
+                    samples: vec![128, 128, 90],
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout { plane: 2, ..layout },
+                    samples: vec![128, 128, 240],
+                },
+            ],
+        };
+        let color_config = ColorConfig {
+            high_bitdepth: false,
+            twelve_bit: false,
+            bit_depth: 8,
+            monochrome: false,
+            color_description: Some(super::super::sequence::ColorDescription {
+                color_primaries: 6,
+                transfer_characteristics: 6,
+                matrix_coefficients: 6,
+            }),
+            color_range: super::super::sequence::ColorRange::Studio,
+            subsampling_x: false,
+            subsampling_y: false,
+            chroma_sample_position: None,
+            separate_uv_delta_q: false,
+        };
+
+        let image = frame_buffers_to_rgba_8(&buffers, &color_config).unwrap();
+
+        assert_eq!(&image.rgba[..8], &[0, 0, 0, 255, 255, 255, 255, 255]);
+        assert_rgb_close(&image.rgba[8..12], &[255, 0, 0, 255], 1);
+    }
+
+    fn assert_rgb_close(actual: &[u8], expected: &[u8], tolerance: u8) {
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert!(
+                actual.abs_diff(*expected) <= tolerance,
+                "{actual} differed from {expected} by more than {tolerance}"
+            );
+        }
     }
 }
