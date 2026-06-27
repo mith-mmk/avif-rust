@@ -45,6 +45,7 @@ AVIF sequences, encoding, HDR tone mapping and ICC application are later milesto
 - [x] Add a reproducible corpus fetch/verification command for `test_data/`.
 - [ ] Split oversized decode code by responsibility: block syntax, coefficient entropy, reconstruction state and diagnostics.
   - [x] Split palette cache/context helpers into `tile_decode::palette`.
+  - [x] Split public and internal decode diagnostic probe structs into `tile_decode::diagnostic`.
   - [ ] Split block syntax/reconstruction diagnostics out of the remaining oversized tile decoder.
 - [ ] Move tests out of implementation modules as files are split.
   - [x] Move reusable conformance/oracle assertions into integration-test support code.
