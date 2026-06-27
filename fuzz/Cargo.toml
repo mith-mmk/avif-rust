@@ -1,0 +1,38 @@
+[package]
+name = "avif-rust-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+avif-rust = { path = ".." }
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "container"
+path = "fuzz_targets/container.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "obu"
+path = "fuzz_targets/obu.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "frame_header"
+path = "fuzz_targets/frame_header.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "entropy"
+path = "fuzz_targets/entropy.rs"
+test = false
+doc = false

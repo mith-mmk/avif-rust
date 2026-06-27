@@ -132,7 +132,7 @@ This is the current highest-priority implementation block. Entropy components th
   - [x] Cover item extent length/offset overflow, out-of-file extents, large grid truncation and multi-tile payload bounds.
   - [x] Reject public frame-buffer allocation requests that exceed the decoder plane sample resource limit.
   - [ ] Audit newly supported composition/filter paths for the same overflow/resource-limit checks.
-- [ ] Add fuzz targets for container boxes, OBU headers, frame headers and tile entropy.
+- [x] Add fuzz targets for container boxes, OBU headers, frame headers and tile entropy.
 - [ ] Optimise allocations only after conformance and safety gates pass.
 - [ ] Add SIMD/parallel paths only with scalar equivalence tests and Wasm-compatible fallbacks.
 
