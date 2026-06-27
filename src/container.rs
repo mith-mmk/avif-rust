@@ -1128,6 +1128,92 @@ mod tests {
     }
 
     #[test]
+    fn rejects_item_extent_payload_length_overflow() {
+        let state = MetaState {
+            primary_item_id: Some(1),
+            item_locations: vec![ItemLocation {
+                item_id: 1,
+                base_offset: 0,
+                extents: vec![
+                    ItemExtent {
+                        offset: 0,
+                        length: u64::MAX,
+                    },
+                    ItemExtent {
+                        offset: 0,
+                        length: 1,
+                    },
+                ],
+            }],
+            ..MetaState::default()
+        };
+
+        let err = primary_item_payload(&[], &state).unwrap_err();
+
+        assert!(
+            matches!(err, DecoderError::Bitstream(message) if message.contains("payload length overflow") || message.contains("too large"))
+        );
+    }
+
+    #[test]
+    fn rejects_item_extent_offset_overflow() {
+        let state = MetaState {
+            primary_item_id: Some(1),
+            item_locations: vec![ItemLocation {
+                item_id: 1,
+                base_offset: u64::MAX,
+                extents: vec![ItemExtent {
+                    offset: 1,
+                    length: 0,
+                }],
+            }],
+            ..MetaState::default()
+        };
+
+        let err = primary_item_payload(&[], &state).unwrap_err();
+
+        assert!(
+            matches!(err, DecoderError::Bitstream(message) if message.contains("offset overflow"))
+        );
+    }
+
+    #[test]
+    fn rejects_item_extent_outside_file() {
+        let state = MetaState {
+            primary_item_id: Some(1),
+            item_locations: vec![ItemLocation {
+                item_id: 1,
+                base_offset: 0,
+                extents: vec![ItemExtent {
+                    offset: 1,
+                    length: 2,
+                }],
+            }],
+            ..MetaState::default()
+        };
+
+        let err = primary_item_payload(&[0, 1], &state).unwrap_err();
+
+        assert!(
+            matches!(err, DecoderError::NotEnoughData(message) if message.contains("outside the file"))
+        );
+    }
+
+    #[test]
+    fn rejects_truncated_large_grid_payload() {
+        let err = parse_grid_payload(&[
+            0, 1, // version, large-field flag
+            0, 0, // rows minus 1, columns minus 1
+            0, 0, 0, 1, // width
+        ])
+        .unwrap_err();
+
+        assert!(
+            matches!(err, DecoderError::NotEnoughData(message) if message.contains("large grid"))
+        );
+    }
+
+    #[test]
     fn color_information_exposes_nclx_and_icc_payloads() {
         let nclx = parse_colr(&[
             b'n', b'c', b'l', b'x', //

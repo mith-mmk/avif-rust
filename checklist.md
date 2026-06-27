@@ -129,6 +129,9 @@ This is the current highest-priority implementation block. Entropy components th
   - [x] Cover truncated top-level box headers, invalid box sizes, truncated OBU headers/size fields, overlong OBU payloads and malformed entropy termination/CDF inputs.
   - [ ] Expand malformed regression fixtures as new supported parser paths are added.
 - [ ] Check all dimensions, offsets, allocations and arithmetic for overflow and resource limits.
+  - [x] Cover item extent length/offset overflow, out-of-file extents, large grid truncation and multi-tile payload bounds.
+  - [x] Reject public frame-buffer allocation requests that exceed the decoder plane sample resource limit.
+  - [ ] Audit newly supported composition/filter paths for the same overflow/resource-limit checks.
 - [ ] Add fuzz targets for container boxes, OBU headers, frame headers and tile entropy.
 - [ ] Optimise allocations only after conformance and safety gates pass.
 - [ ] Add SIMD/parallel paths only with scalar equivalence tests and Wasm-compatible fallbacks.

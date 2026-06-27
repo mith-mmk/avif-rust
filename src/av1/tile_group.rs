@@ -157,4 +157,46 @@ mod tests {
         );
         assert!(group.tiles.iter().all(|tile| tile.len > 0));
     }
+
+    #[test]
+    fn rejects_truncated_tile_size_field() {
+        let tile_info = TileInfo {
+            uniform_tile_spacing: true,
+            tile_cols: 2,
+            tile_rows: 1,
+            tile_cols_log2: 1,
+            tile_rows_log2: 0,
+            tile_size_bytes: 1,
+            context_update_tile_id: 0,
+            mi_col_starts: vec![0, 16, 32],
+            mi_row_starts: vec![0, 16],
+        };
+
+        let err = parse_tile_group(&[0], 0, &tile_info).unwrap_err();
+
+        assert!(
+            matches!(err, DecoderError::NotEnoughData(message) if message.contains("tile size"))
+        );
+    }
+
+    #[test]
+    fn rejects_tile_payload_extending_beyond_tile_group() {
+        let tile_info = TileInfo {
+            uniform_tile_spacing: true,
+            tile_cols: 2,
+            tile_rows: 1,
+            tile_cols_log2: 1,
+            tile_rows_log2: 0,
+            tile_size_bytes: 1,
+            context_update_tile_id: 0,
+            mi_col_starts: vec![0, 16, 32],
+            mi_row_starts: vec![0, 16],
+        };
+
+        let err = parse_tile_group(&[0, 0xff], 0, &tile_info).unwrap_err();
+
+        assert!(
+            matches!(err, DecoderError::NotEnoughData(message) if message.contains("payload extends"))
+        );
+    }
 }

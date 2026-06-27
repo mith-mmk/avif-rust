@@ -3,6 +3,8 @@ use super::sequence::SequenceHeader;
 use super::tile_group::TileGroup;
 use crate::DecoderError;
 
+const MAX_PLANE_SAMPLE_ALLOCATION: usize = 1 << 28;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlaneLayout {
     pub plane: u8,
@@ -134,6 +136,12 @@ pub fn alloc_frame_buffers(plan: &FrameDecodePlan) -> Result<FrameBuffers, Decod
     }
     let mut planes = Vec::with_capacity(plan.planes.len());
     for layout in &plan.planes {
+        if layout.sample_count > MAX_PLANE_SAMPLE_ALLOCATION {
+            return Err(DecoderError::InvalidParam(format!(
+                "AV1 plane sample count {} exceeds decoder resource limit",
+                layout.sample_count
+            )));
+        }
         planes.push(PlaneBuffer {
             layout: *layout,
             samples: vec![0; layout.sample_count],
@@ -349,5 +357,38 @@ mod tests {
         assert_eq!(buffers.planes[0].samples.len(), 900 * 900);
         assert_eq!(buffers.planes[1].samples.len(), 900 * 900);
         assert_eq!(buffers.planes[2].samples.len(), 900 * 900);
+    }
+
+    #[test]
+    fn rejects_frame_buffer_allocation_above_resource_limit() {
+        let plan = FrameDecodePlan {
+            width: 1,
+            height: 1,
+            render_width: 1,
+            render_height: 1,
+            bit_depth: 8,
+            base_q_idx: 0,
+            tx_mode: TxMode::Largest,
+            superblock_size: 64,
+            superblock_cols: 1,
+            superblock_rows: 1,
+            uses_cdef: false,
+            uses_restoration: false,
+            planes: vec![PlaneLayout {
+                plane: 0,
+                width: 1,
+                height: 1,
+                subsampling_x: 0,
+                subsampling_y: 0,
+                sample_count: MAX_PLANE_SAMPLE_ALLOCATION + 1,
+            }],
+            tiles: Vec::new(),
+        };
+
+        let err = alloc_frame_buffers(&plan).unwrap_err();
+
+        assert!(
+            matches!(err, DecoderError::InvalidParam(message) if message.contains("resource limit"))
+        );
     }
 }
