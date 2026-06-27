@@ -21,6 +21,7 @@ pub struct AvifInfo {
     pub height: Option<u32>,
     pub pixel_information: Option<PixelInformation>,
     pub color_information: Option<ColorInformation>,
+    pub alpha_premultiplied: bool,
     pub av1_config: Option<Vec<u8>>,
     pub primary_item_payload: Vec<u8>,
 }
@@ -51,6 +52,37 @@ pub struct ColorInformation {
     pub payload: Vec<u8>,
 }
 
+impl ColorInformation {
+    pub fn nclx(&self) -> Option<NclxColorInformation> {
+        if &self.color_type != b"nclx" || self.payload.len() < 7 {
+            return None;
+        }
+        Some(NclxColorInformation {
+            color_primaries: u16::from_be_bytes([self.payload[0], self.payload[1]]),
+            transfer_characteristics: u16::from_be_bytes([self.payload[2], self.payload[3]]),
+            matrix_coefficients: u16::from_be_bytes([self.payload[4], self.payload[5]]),
+            full_range_flag: self.payload[6] & 0x80 != 0,
+        })
+    }
+
+    pub fn icc_profile(&self) -> Option<&[u8]> {
+        if &self.color_type == b"prof" || &self.color_type == b"rICC" {
+            Some(&self.payload)
+        } else {
+            None
+        }
+    }
+}
+
+/// Structured `nclx` CICP colour information from an AVIF `colr` property.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NclxColorInformation {
+    pub color_primaries: u16,
+    pub transfer_characteristics: u16,
+    pub matrix_coefficients: u16,
+    pub full_range_flag: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ItemLocation {
     item_id: u32,
@@ -72,6 +104,7 @@ struct MetaState {
     height: Option<u32>,
     pixel_information: Option<PixelInformation>,
     color_information: Option<ColorInformation>,
+    alpha_premultiplied: bool,
     av1_config: Option<Vec<u8>>,
 }
 
@@ -112,6 +145,7 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
         height: meta.height,
         pixel_information: meta.pixel_information,
         color_information: meta.color_information,
+        alpha_premultiplied: meta.alpha_premultiplied,
         av1_config: meta.av1_config,
         primary_item_payload,
     })
@@ -217,6 +251,7 @@ fn parse_ipco(_source: &[u8], payload: &[u8], state: &mut MetaState) -> Result<(
             b"pixi" => state.pixel_information = Some(parse_pixi(child_payload)?),
             b"av1C" => state.av1_config = Some(child_payload.to_vec()),
             b"colr" => state.color_information = Some(parse_colr(child_payload)?),
+            b"prem" => state.alpha_premultiplied = true,
             _ => {}
         }
         offset = checked_add(header.offset, header.size, "ipco child box end")?;
@@ -562,5 +597,28 @@ mod tests {
             Some(&[8, 8, 8][..])
         );
         assert!(!info.primary_item_payload.is_empty());
+    }
+
+    #[test]
+    fn color_information_exposes_nclx_and_icc_payloads() {
+        let nclx = parse_colr(&[
+            b'n', b'c', b'l', b'x', //
+            0, 1, 0, 13, 0, 0, 0x80,
+        ])
+        .unwrap();
+        assert_eq!(
+            nclx.nclx(),
+            Some(NclxColorInformation {
+                color_primaries: 1,
+                transfer_characteristics: 13,
+                matrix_coefficients: 0,
+                full_range_flag: true,
+            })
+        );
+        assert_eq!(nclx.icc_profile(), None);
+
+        let icc = parse_colr(&[b'p', b'r', b'o', b'f', 1, 2, 3, 4]).unwrap();
+        assert_eq!(icc.nclx(), None);
+        assert_eq!(icc.icc_profile(), Some(&[1, 2, 3, 4][..]));
     }
 }

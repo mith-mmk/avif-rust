@@ -16,10 +16,12 @@ pub use compat::{
     CallbackResponse, DataMap, DecodeOptions, DrawCallback, DrawOptions, InitOptions, Metadata,
     ResponseCommand, TerminateOptions, VerboseOptions,
 };
-pub use container::{AvifInfo, ColorInformation, ImageSpatialExtents, PixelInformation};
-pub use decoder::{decode, parse_info};
+pub use container::{
+    AvifInfo, ColorInformation, ImageSpatialExtents, NclxColorInformation, PixelInformation,
+};
+pub use decoder::{DecodedFrame, decode, decode_frame_bytes, parse_info};
 pub use error::DecoderError;
-pub use image::ImageBuffer;
+pub use image::{ImageBuffer, Rgba16ImageBuffer};
 
 /// Decodes a still AVIF image from memory into an RGBA buffer.
 ///

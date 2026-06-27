@@ -1,6 +1,6 @@
 use super::decode::{FrameBuffers, PlaneBuffer};
 use super::sequence::ColorConfig;
-use crate::{DecoderError, ImageBuffer};
+use crate::{DecoderError, ImageBuffer, Rgba16ImageBuffer};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnedIntraEdges {
@@ -138,6 +138,54 @@ pub fn frame_buffers_to_rgba_8(
             "AV1 RGBA conversion currently supports 8-bit output only".to_string(),
         ));
     }
+    validate_identity_rgba_conversion(buffers, color_config)?;
+
+    let mut rgba = vec![0u8; buffers.width * buffers.height * 4];
+    let plane_g = &buffers.planes[0].samples;
+    let plane_b = &buffers.planes[1].samples;
+    let plane_r = &buffers.planes[2].samples;
+    for index in 0..buffers.width * buffers.height {
+        let out = index * 4;
+        rgba[out] = plane_r[index].min(255) as u8;
+        rgba[out + 1] = plane_g[index].min(255) as u8;
+        rgba[out + 2] = plane_b[index].min(255) as u8;
+        rgba[out + 3] = 255;
+    }
+    Ok(ImageBuffer {
+        width: buffers.width,
+        height: buffers.height,
+        rgba,
+    })
+}
+
+pub fn frame_buffers_to_rgba_16(
+    buffers: &FrameBuffers,
+    color_config: &ColorConfig,
+) -> Result<Rgba16ImageBuffer, DecoderError> {
+    validate_identity_rgba_conversion(buffers, color_config)?;
+    let max_source = (1u32 << color_config.bit_depth) - 1;
+    let mut rgba = vec![0u16; buffers.width * buffers.height * 4];
+    let plane_g = &buffers.planes[0].samples;
+    let plane_b = &buffers.planes[1].samples;
+    let plane_r = &buffers.planes[2].samples;
+    for index in 0..buffers.width * buffers.height {
+        let out = index * 4;
+        rgba[out] = scale_sample_to_u16(plane_r[index], max_source);
+        rgba[out + 1] = scale_sample_to_u16(plane_g[index], max_source);
+        rgba[out + 2] = scale_sample_to_u16(plane_b[index], max_source);
+        rgba[out + 3] = u16::MAX;
+    }
+    Ok(Rgba16ImageBuffer {
+        width: buffers.width,
+        height: buffers.height,
+        rgba,
+    })
+}
+
+fn validate_identity_rgba_conversion(
+    buffers: &FrameBuffers,
+    color_config: &ColorConfig,
+) -> Result<(), DecoderError> {
     if buffers.planes.len() < 3 {
         return Err(DecoderError::Unsupported(
             "AV1 monochrome RGBA conversion is not supported yet".to_string(),
@@ -162,23 +210,15 @@ pub fn frame_buffers_to_rgba_8(
             "AV1 matrix coefficients {matrix_coefficients} RGBA conversion is not supported yet"
         )));
     }
+    Ok(())
+}
 
-    let mut rgba = vec![0u8; buffers.width * buffers.height * 4];
-    let plane_g = &buffers.planes[0].samples;
-    let plane_b = &buffers.planes[1].samples;
-    let plane_r = &buffers.planes[2].samples;
-    for index in 0..buffers.width * buffers.height {
-        let out = index * 4;
-        rgba[out] = plane_r[index].min(255) as u8;
-        rgba[out + 1] = plane_g[index].min(255) as u8;
-        rgba[out + 2] = plane_b[index].min(255) as u8;
-        rgba[out + 3] = 255;
+fn scale_sample_to_u16(sample: u16, max_source: u32) -> u16 {
+    if max_source == u32::from(u16::MAX) {
+        sample
+    } else {
+        ((u32::from(sample) * u32::from(u16::MAX) + (max_source / 2)) / max_source) as u16
     }
-    Ok(ImageBuffer {
-        width: buffers.width,
-        height: buffers.height,
-        rgba,
-    })
 }
 
 #[cfg(test)]

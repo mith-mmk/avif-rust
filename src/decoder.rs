@@ -1,15 +1,16 @@
 use crate::av1::{
-    Av1CodecConfiguration, BlockModeProbe, FrameDecodePlan, FrameHeader, PartitionProbe,
-    QuantState, ResidualProbe, SequenceHeader, TileEntropyState, TileGroup, alloc_frame_buffers,
-    build_still_decode_plan, decode_luma_root_block_prefix, frame_buffers_to_rgba_8,
-    parse_av1_config, parse_frame_header, parse_sequence_header, parse_tile_group,
-    plan_transform_blocks_with_tx_size, prepare_tile_entropy, probe_first_block_residuals,
-    probe_tile_block_modes, probe_tile_partitions,
+    Av1CodecConfiguration, BlockModeProbe, ColorConfig, FrameBuffers, FrameDecodePlan, FrameHeader,
+    PartitionProbe, QuantState, ResidualProbe, SequenceHeader, TileEntropyState, TileGroup,
+    alloc_frame_buffers, build_still_decode_plan, decode_luma_root_block_prefix,
+    frame_buffers_to_rgba_8, frame_buffers_to_rgba_16, parse_av1_config, parse_frame_header,
+    parse_sequence_header, parse_tile_group, plan_transform_blocks_with_tx_size,
+    prepare_tile_entropy, probe_first_block_residuals, probe_tile_block_modes,
+    probe_tile_partitions,
 };
 use crate::compat::{DataMap, DecodeOptions, InitOptions};
-use crate::container::{AvifInfo, parse_avif};
+use crate::container::{AvifInfo, ColorInformation, parse_avif};
 use crate::obu::{ObuType, find_obu_payloads};
-use crate::{DecoderError, ImageBuffer};
+use crate::{DecoderError, ImageBuffer, Rgba16ImageBuffer};
 use bin_rs::reader::BinaryReader;
 use std::io::SeekFrom;
 
@@ -52,6 +53,41 @@ pub fn decode_bytes(data: &[u8]) -> Result<ImageBuffer, DecoderError> {
     let info = parse_avif(data)?;
     let headers = parse_av1_headers(&info)?;
     decode_still_image(&headers)
+}
+
+/// Decoded still-frame planes before colour conversion.
+///
+/// Samples are stored as native AV1 source planes in raster order. The current
+/// decoder only supports a subset of still-image tools, but this type is the
+/// conformance-test boundary for exact Y/U/V/alpha plane comparisons.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedFrame {
+    pub width: usize,
+    pub height: usize,
+    pub render_width: usize,
+    pub render_height: usize,
+    pub bit_depth: u8,
+    pub color_config: ColorConfig,
+    pub color_information: Option<ColorInformation>,
+    pub alpha_premultiplied: bool,
+    pub buffers: FrameBuffers,
+}
+
+impl DecodedFrame {
+    pub fn to_rgba8(&self) -> Result<ImageBuffer, DecoderError> {
+        frame_buffers_to_rgba_8(&self.buffers, &self.color_config)
+    }
+
+    pub fn to_rgba16(&self) -> Result<Rgba16ImageBuffer, DecoderError> {
+        frame_buffers_to_rgba_16(&self.buffers, &self.color_config)
+    }
+}
+
+/// Decodes a still AVIF image from memory into high-precision source planes.
+pub fn decode_frame_bytes(data: &[u8]) -> Result<DecodedFrame, DecoderError> {
+    let info = parse_avif(data)?;
+    let headers = parse_av1_headers(&info)?;
+    decode_still_frame(&headers, Some(&info))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -198,6 +234,14 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
 }
 
 fn decode_still_image(headers: &Av1Headers) -> Result<ImageBuffer, DecoderError> {
+    let frame = decode_still_frame(headers, None)?;
+    frame_buffers_to_rgba_8(&frame.buffers, &frame.color_config)
+}
+
+fn decode_still_frame(
+    headers: &Av1Headers,
+    info: Option<&AvifInfo>,
+) -> Result<DecodedFrame, DecoderError> {
     let mut buffers = alloc_frame_buffers(&headers.decode_plan)?;
     let prefix = decode_luma_root_block_prefix(
         &headers.tile_group.tile_data,
@@ -211,7 +255,17 @@ fn decode_still_image(headers: &Av1Headers) -> Result<ImageBuffer, DecoderError>
     if let Some(err) = prefix.next_unsupported {
         return Err(err);
     }
-    frame_buffers_to_rgba_8(&buffers, &headers.sequence.color_config)
+    Ok(DecodedFrame {
+        width: headers.decode_plan.width,
+        height: headers.decode_plan.height,
+        render_width: headers.decode_plan.render_width,
+        render_height: headers.decode_plan.render_height,
+        bit_depth: headers.decode_plan.bit_depth,
+        color_config: headers.sequence.color_config,
+        color_information: info.and_then(|info| info.color_information.clone()),
+        alpha_premultiplied: info.is_some_and(|info| info.alpha_premultiplied),
+        buffers,
+    })
 }
 
 fn validate_av1_config(

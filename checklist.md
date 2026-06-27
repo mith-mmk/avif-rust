@@ -62,7 +62,8 @@ This is the current highest-priority implementation block. Entropy components th
   - [x] Implement selected palette block syntax and color-map token consumption; the sample prefix now traverses palette blocks without `Unsupported`.
   - [x] Implement palette prediction/reconstruction output for decoded palette maps.
   - [x] Implement cached palette color syntax and sorted cache/transmitted color merging for above/left palette reuse.
-  - [ ] Add plane-level oracle checks for palette-coded blocks, including cached-color cases.
+  - [x] Add deterministic plane-level unit fixtures for palette color-map expansion and cached-color merging.
+  - [ ] Add external AOM/FFmpeg plane-level oracle fixtures for palette-coded blocks, including cached-color cases.
 - [x] Implement normative ext-tx subset mapping, filter-intra tx mode mapping, directional scan selection and 1D coefficient contexts.
 - [x] Apply the normative 20-bit coefficient magnitude clamp after Golomb extension.
 - [x] Confirm dequant shifts: 4/8/16 no shift, 32 divide by 2, 64 divide by 4.
@@ -103,9 +104,9 @@ This is the current highest-priority implementation block. Entropy components th
 - [ ] Decode 4:4:4 and identity GBR.
 - [ ] Support 8/10/12-bit quantisation and reconstruction.
 - [ ] Add a public high-precision decoded-frame API.
-  - [ ] Expose u16 source planes, dimensions, stride, bit depth and pixel layout.
-  - [ ] Preserve CICP, raw ICC and alpha-premultiplication metadata.
-  - [ ] Provide straight-alpha `to_rgba8()` and `to_rgba16()` conversion methods.
+  - [x] Expose u16 source planes, dimensions, stride, bit depth and pixel layout.
+  - [x] Preserve CICP (`nclx`), raw ICC (`prof`/`rICC`) and alpha-premultiplication metadata on decoded frames.
+  - [x] Provide straight-alpha `to_rgba8()` and `to_rgba16()` conversion methods for the currently supported identity-GBR subset.
 - [ ] Implement SDR nclx range/matrix conversion.
 - [ ] Return explicit `Unsupported` for RGBA conversion requiring unimplemented HDR/ICC colour management.
 - [ ] Parse and compose alpha auxiliary items.

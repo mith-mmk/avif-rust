@@ -3870,6 +3870,71 @@ mod tests {
     }
 
     #[test]
+    fn palette_prediction_expands_color_map_cells() {
+        let palette = PalettePlaneInfo {
+            colors: vec![10, 20, 30],
+            color_map: vec![
+                0, 1, //
+                2, 1,
+            ],
+            map_width: 2,
+            map_height: 2,
+        };
+
+        let prediction = predict_palette_block(&palette, 0, 3, 0, 0, 0, 0, 8, 8);
+
+        assert_eq!(prediction.len(), 64);
+        for row in 0..8 {
+            for col in 0..8 {
+                let expected = match (row / 4, col / 4) {
+                    (0, 0) => 10,
+                    (0, 1) => 20,
+                    (1, 0) => 30,
+                    (1, 1) => 20,
+                    _ => unreachable!(),
+                };
+                assert_eq!(prediction[row * 8 + col], expected);
+            }
+        }
+    }
+
+    #[test]
+    fn palette_prediction_uses_chroma_color_offset() {
+        let palette = PalettePlaneInfo {
+            colors: vec![100, 200, 300, 400],
+            color_map: vec![0, 1],
+            map_width: 2,
+            map_height: 1,
+        };
+
+        let prediction = predict_palette_block(&palette, 2, 2, 0, 0, 0, 0, 8, 4);
+
+        assert_eq!(prediction.len(), 32);
+        for row in 0..4 {
+            for col in 0..8 {
+                let expected = if col < 4 { 300 } else { 400 };
+                assert_eq!(prediction[row * 8 + col], expected);
+            }
+        }
+    }
+
+    #[test]
+    fn palette_cache_merges_above_left_and_transmitted_colors() {
+        assert_eq!(
+            merge_palette_cache(Some(&[10, 30, 50]), Some(&[20, 30, 40])),
+            vec![10, 20, 30, 40, 50]
+        );
+        assert_eq!(
+            merge_cached_palette_colors(vec![10, 30, 20, 40], 2, 4).unwrap(),
+            vec![10, 20, 30, 40]
+        );
+        assert_eq!(
+            merge_cached_palette_colors(vec![25, 15, 35], 1, 3).unwrap(),
+            vec![15, 25, 35]
+        );
+    }
+
+    #[test]
     fn prepares_sample_tile_entropy_state() {
         let data = std::fs::read(
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))

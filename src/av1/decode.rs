@@ -13,6 +13,12 @@ pub struct PlaneLayout {
     pub sample_count: usize,
 }
 
+impl PlaneLayout {
+    pub fn stride(&self) -> usize {
+        self.width
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TileDecodePlan {
     pub tile_id: u32,
