@@ -36,6 +36,8 @@ AVIF sequences, encoding, HDR tone mapping and ICC application are later milesto
   - [x] Add reusable integration-test helpers for exact decoded-plane checks and SDR RGBA max-error checks.
   - [x] Syntax/CDF/context known-vector tests derived from the AV1 specification or AOM.
   - [ ] Exact decoded Y/U/V/alpha plane comparison for supported streams.
+    - [x] Add a manifest-driven `test_data/oracles.csv` harness for exact source-plane fixtures.
+    - [ ] Populate external supported-stream plane fixtures.
   - [ ] SDR RGBA8/RGBA16 comparison with maximum per-channel error of 1.
     - [x] Add RGBA8/RGBA16 max-error comparison gates that include alpha.
     - [ ] Apply the RGBA8/RGBA16 max-error gate to external supported-stream fixtures.
@@ -43,6 +45,8 @@ AVIF sequences, encoding, HDR tone mapping and ICC application are later milesto
 - [x] Add a reproducible corpus fetch/verification command for `test_data/`.
 - [ ] Split oversized decode code by responsibility: block syntax, coefficient entropy, reconstruction state and diagnostics.
 - [ ] Move tests out of implementation modules as files are split.
+  - [x] Move reusable conformance/oracle assertions into integration-test support code.
+  - [ ] Continue moving private implementation tests as decode modules are split.
 
 ## 2. AV1 entropy and coefficient decoding
 

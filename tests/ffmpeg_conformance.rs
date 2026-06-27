@@ -2,6 +2,12 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod support;
+
+use support::{
+    ExpectedPlane, assert_exact_decoded_planes, assert_rgba8_max_error, assert_rgba16_max_error,
+};
+
 const SAMPLE_WIDTH: usize = 900;
 const SAMPLE_HEIGHT: usize = 900;
 const SAMPLE_PIXELS: usize = SAMPLE_WIDTH * SAMPLE_HEIGHT;
@@ -11,14 +17,6 @@ const SAMPLE_RGBA_LEN: usize = SAMPLE_PIXELS * 4;
 struct DiffMetrics {
     average_rgb_abs: f64,
     max_rgb_abs: u8,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ExpectedPlane<'a> {
-    width: usize,
-    height: usize,
-    stride: usize,
-    samples: &'a [u16],
 }
 
 fn sample_path(name: &str) -> PathBuf {
@@ -55,35 +53,6 @@ fn ffmpeg_decode_rgba(path: &Path) -> Option<Vec<u8>> {
     Some(output.stdout)
 }
 
-fn assert_exact_decoded_planes(decoded: &avif_rust::DecodedFrame, expected: &[ExpectedPlane<'_>]) {
-    assert_eq!(decoded.buffers.planes.len(), expected.len());
-    for (plane_index, (actual, expected)) in decoded
-        .buffers
-        .planes
-        .iter()
-        .zip(expected.iter())
-        .enumerate()
-    {
-        assert_eq!(
-            actual.layout.width, expected.width,
-            "plane {plane_index} width"
-        );
-        assert_eq!(
-            actual.layout.height, expected.height,
-            "plane {plane_index} height"
-        );
-        assert_eq!(
-            actual.layout.stride(),
-            expected.stride,
-            "plane {plane_index} stride"
-        );
-        assert_eq!(
-            actual.samples, expected.samples,
-            "plane {plane_index} samples"
-        );
-    }
-}
-
 fn diff_rgb(left: &[u8], right: &[u8]) -> DiffMetrics {
     assert_eq!(left.len(), right.len());
     assert_eq!(left.len(), SAMPLE_RGBA_LEN);
@@ -103,46 +72,6 @@ fn diff_rgb(left: &[u8], right: &[u8]) -> DiffMetrics {
         average_rgb_abs: sum as f64 / (SAMPLE_PIXELS * 3) as f64,
         max_rgb_abs: max,
     }
-}
-
-fn diff_rgba_dynamic(left: &[u8], right: &[u8]) -> DiffMetrics {
-    assert_eq!(left.len(), right.len());
-    assert_eq!(left.len() % 4, 0);
-
-    let mut sum = 0u64;
-    let mut max = 0u8;
-    for (left, right) in left.iter().zip(right.iter()) {
-        let diff = left.abs_diff(*right);
-        sum += u64::from(diff);
-        max = max.max(diff);
-    }
-
-    DiffMetrics {
-        average_rgb_abs: sum as f64 / left.len() as f64,
-        max_rgb_abs: max,
-    }
-}
-
-fn assert_rgba_max_error(left: &[u8], right: &[u8], max_allowed: u8) {
-    let metrics = diff_rgba_dynamic(left, right);
-    assert!(
-        metrics.max_rgb_abs <= max_allowed,
-        "max RGBA absolute error was {}",
-        metrics.max_rgb_abs
-    );
-}
-
-fn assert_rgba16_max_error(left: &[u16], right: &[u16], max_allowed: u16) {
-    assert_eq!(left.len(), right.len());
-    assert_eq!(left.len() % 4, 0);
-
-    let max = left
-        .iter()
-        .zip(right.iter())
-        .map(|(left, right)| left.abs_diff(*right))
-        .max()
-        .unwrap_or(0);
-    assert!(max <= max_allowed, "max RGBA16 absolute error was {max}");
 }
 
 #[test]
@@ -245,13 +174,19 @@ fn layered_conformance_helpers_compare_planes_and_rgba_max_error() {
     );
 
     let rgba = frame.to_rgba8().expect("identity GBR should convert");
-    assert_rgba_max_error(&rgba.rgba, &[40, 20, 30, 255, 41, 21, 31, 255], 0);
+    assert_rgba8_max_error(
+        &rgba.rgba,
+        &[40, 20, 30, 255, 41, 21, 31, 255],
+        0,
+        "synthetic identity GBR",
+    );
 
     let rgba16 = frame.to_rgba16().expect("identity GBR should convert");
     assert_rgba16_max_error(
         &rgba16.rgba,
         &[10280, 5140, 7710, u16::MAX, 10537, 5397, 7967, u16::MAX],
         1,
+        "synthetic identity GBR",
     );
 }
 
