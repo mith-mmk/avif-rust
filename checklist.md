@@ -47,6 +47,7 @@ AVIF sequences, encoding, HDR tone mapping and ICC application are later milesto
 - [ ] Move tests out of implementation modules as files are split.
   - [x] Move reusable conformance/oracle assertions into integration-test support code.
   - [x] Move public container/OBU sample and malformed-input checks into integration tests.
+  - [x] Move public AV1 config/header/tile/decode-plan sample checks into integration tests.
   - [ ] Continue moving private implementation tests as decode modules are split.
 
 ## 2. AV1 entropy and coefficient decoding

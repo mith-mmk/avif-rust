@@ -91,37 +91,6 @@ pub fn parse_av1_config(data: &[u8]) -> Result<Av1CodecConfiguration, DecoderErr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::container::parse_avif;
-
-    fn sample_config() -> Vec<u8> {
-        let data = std::fs::read(
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .unwrap()
-                .join("samples")
-                .join("WML2Viewer.avif"),
-        )
-        .expect("sample AVIF should exist");
-        parse_avif(&data)
-            .unwrap()
-            .av1_config
-            .expect("sample should contain av1C")
-    }
-
-    #[test]
-    fn parses_sample_av1_config() {
-        let config = parse_av1_config(&sample_config()).unwrap();
-
-        assert_eq!(config.version, 1);
-        assert_eq!(config.seq_profile, 1);
-        assert_eq!(config.seq_level_idx_0, 5);
-        assert_eq!(config.bit_depth(), 8);
-        assert!(!config.monochrome);
-        assert!(!config.chroma_subsampling_x);
-        assert!(!config.chroma_subsampling_y);
-        assert_eq!(config.chroma_sample_position, ChromaSamplePosition::Unknown);
-        assert!(config.initial_presentation_delay.is_none());
-    }
 
     #[test]
     fn rejects_missing_av1_config_marker() {

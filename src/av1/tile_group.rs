@@ -111,52 +111,6 @@ fn read_le_sized_int(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::av1::{parse_frame_header, parse_sequence_header};
-    use crate::container::parse_avif;
-    use crate::obu::{ObuType, find_obu_payload};
-
-    fn sample_frame_payload_and_tile_info() -> (Vec<u8>, TileInfo, usize) {
-        let data = std::fs::read(
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .unwrap()
-                .join("samples")
-                .join("WML2Viewer.avif"),
-        )
-        .expect("sample AVIF should exist");
-        let info = parse_avif(&data).unwrap();
-        let sequence_payload =
-            find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
-                .unwrap()
-                .expect("sequence header OBU should exist");
-        let sequence = parse_sequence_header(sequence_payload).unwrap();
-        let frame_payload = find_obu_payload(&info.primary_item_payload, ObuType::Frame)
-            .unwrap()
-            .expect("frame OBU should exist");
-        let frame = parse_frame_header(frame_payload, &sequence).unwrap();
-        (
-            frame_payload.to_vec(),
-            frame.tile_info,
-            frame.uncompressed_header_bits,
-        )
-    }
-
-    #[test]
-    fn parses_sample_tile_group_payloads() {
-        let (frame_payload, tile_info, start_bit_offset) = sample_frame_payload_and_tile_info();
-        let group = parse_tile_group(&frame_payload, start_bit_offset, &tile_info).unwrap();
-
-        assert_eq!(group.start_tile, 0);
-        assert_eq!(group.end_tile, 0);
-        assert_eq!(group.tiles.len(), 1);
-        assert_eq!(group.tiles.first().unwrap().tile_id, 0);
-        assert_eq!(group.tiles.last().unwrap().tile_id, 0);
-        assert_eq!(
-            group.tiles.iter().map(|tile| tile.len).sum::<usize>() + group.data_start_offset,
-            frame_payload.len()
-        );
-        assert!(group.tiles.iter().all(|tile| tile.len > 0));
-    }
 
     #[test]
     fn rejects_truncated_tile_size_field() {
