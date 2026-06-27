@@ -116,6 +116,8 @@ This is the current highest-priority implementation block. Entropy components th
   - [x] Parse primary `grid` derived item metadata/payload and return explicit `Unsupported` instead of treating it as AV1.
   - [ ] Compose grid image cells into a decoded frame.
 - [ ] Apply `clap`, then `irot`, then `imir`.
+  - [x] Parse primary item `clap`, `irot` and `imir` properties and return explicit `Unsupported` instead of ignoring them.
+  - [ ] Apply clean aperture, rotation and mirror transforms in AVIF composition order.
 - [ ] Support multiple tiles and tile groups.
 
 ## 6. Safety and performance

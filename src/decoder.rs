@@ -260,6 +260,13 @@ fn decode_still_frame(
     headers: &Av1Headers,
     info: Option<&AvifInfo>,
 ) -> Result<DecodedFrame, DecoderError> {
+    if info.is_some_and(|info| {
+        info.clean_aperture.is_some() || info.rotation.is_some() || info.mirror.is_some()
+    }) {
+        return Err(DecoderError::Unsupported(
+            "AVIF clap/irot/imir composition is not supported yet".to_string(),
+        ));
+    }
     if info.is_some_and(|info| info.primary_grid.is_some()) {
         return Err(DecoderError::Unsupported(
             "AVIF image grid composition is not supported yet".to_string(),

@@ -25,6 +25,9 @@ pub struct AvifInfo {
     pub alpha_premultiplied: bool,
     pub alpha_auxiliary_items: Vec<AuxiliaryImage>,
     pub primary_grid: Option<GridImage>,
+    pub clean_aperture: Option<CleanAperture>,
+    pub rotation: Option<ImageRotation>,
+    pub mirror: Option<ImageMirror>,
     pub av1_config: Option<Vec<u8>>,
     pub primary_item_payload: Vec<u8>,
 }
@@ -105,6 +108,31 @@ pub struct GridImage {
     pub payload: Vec<u8>,
 }
 
+/// `clap` clean aperture item property.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CleanAperture {
+    pub width_n: u32,
+    pub width_d: u32,
+    pub height_n: u32,
+    pub height_d: u32,
+    pub horizontal_offset_n: u32,
+    pub horizontal_offset_d: u32,
+    pub vertical_offset_n: u32,
+    pub vertical_offset_d: u32,
+}
+
+/// `irot` image rotation item property.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImageRotation {
+    pub angle: u8,
+}
+
+/// `imir` image mirror item property.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImageMirror {
+    pub axis: u8,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ItemLocation {
     item_id: u32,
@@ -141,6 +169,9 @@ struct ItemInfo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ItemProperty {
     AuxiliaryType(String),
+    CleanAperture(CleanAperture),
+    Rotation(ImageRotation),
+    Mirror(ImageMirror),
     Other,
 }
 
@@ -191,6 +222,7 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
     let primary_item_payload = primary_item_payload(data, &meta)?;
     let alpha_auxiliary_items = alpha_auxiliary_items(data, &meta)?;
     let primary_grid = primary_grid(&primary_item_payload, &meta)?;
+    let primary_transforms = primary_item_transforms(&meta);
     Ok(AvifInfo {
         major_brand,
         compatible_brands,
@@ -202,6 +234,9 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
         alpha_premultiplied: meta.alpha_premultiplied,
         alpha_auxiliary_items,
         primary_grid,
+        clean_aperture: primary_transforms.clean_aperture,
+        rotation: primary_transforms.rotation,
+        mirror: primary_transforms.mirror,
         av1_config: meta.av1_config,
         primary_item_payload,
     })
@@ -316,6 +351,9 @@ fn parse_ipco(_source: &[u8], payload: &[u8], state: &mut MetaState) -> Result<(
         }
         state.item_properties.push(match &header.box_type {
             b"auxC" => ItemProperty::AuxiliaryType(parse_auxc(child_payload)?),
+            b"clap" => ItemProperty::CleanAperture(parse_clap(child_payload)?),
+            b"irot" => ItemProperty::Rotation(parse_irot(child_payload)?),
+            b"imir" => ItemProperty::Mirror(parse_imir(child_payload)?),
             _ => ItemProperty::Other,
         });
         offset = checked_add(header.offset, header.size, "ipco child box end")?;
@@ -590,6 +628,36 @@ fn parse_auxc(payload: &[u8]) -> Result<String, DecoderError> {
         .map_err(|_| DecoderError::Bitstream("auxC auxiliary type is not UTF-8".to_string()))
 }
 
+fn parse_clap(payload: &[u8]) -> Result<CleanAperture, DecoderError> {
+    if payload.len() < 32 {
+        return Err(DecoderError::NotEnoughData(
+            "clap payload is too short".to_string(),
+        ));
+    }
+    Ok(CleanAperture {
+        width_n: read_u32(payload, 0)?,
+        width_d: read_u32(payload, 4)?,
+        height_n: read_u32(payload, 8)?,
+        height_d: read_u32(payload, 12)?,
+        horizontal_offset_n: read_u32(payload, 16)?,
+        horizontal_offset_d: read_u32(payload, 20)?,
+        vertical_offset_n: read_u32(payload, 24)?,
+        vertical_offset_d: read_u32(payload, 28)?,
+    })
+}
+
+fn parse_irot(payload: &[u8]) -> Result<ImageRotation, DecoderError> {
+    let value = read_u8(payload, 0)?;
+    Ok(ImageRotation {
+        angle: value & 0x03,
+    })
+}
+
+fn parse_imir(payload: &[u8]) -> Result<ImageMirror, DecoderError> {
+    let value = read_u8(payload, 0)?;
+    Ok(ImageMirror { axis: value & 0x01 })
+}
+
 fn read_item_id(payload: &[u8], cursor: &mut usize, large_ids: bool) -> Result<u32, DecoderError> {
     if large_ids {
         let value = read_u32(payload, *cursor)?;
@@ -728,6 +796,42 @@ fn primary_grid(payload: &[u8], state: &MetaState) -> Result<Option<GridImage>, 
         output_height: parsed.output_height,
         payload: payload.to_vec(),
     }))
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct PrimaryItemTransforms {
+    clean_aperture: Option<CleanAperture>,
+    rotation: Option<ImageRotation>,
+    mirror: Option<ImageMirror>,
+}
+
+fn primary_item_transforms(state: &MetaState) -> PrimaryItemTransforms {
+    let Some(primary_item_id) = state.primary_item_id else {
+        return PrimaryItemTransforms::default();
+    };
+    let Some(association) = state
+        .item_property_associations
+        .iter()
+        .find(|association| association.item_id == primary_item_id)
+    else {
+        return PrimaryItemTransforms::default();
+    };
+    let mut transforms = PrimaryItemTransforms::default();
+    for index in &association.property_indices {
+        let Some(property) = state
+            .item_properties
+            .get(usize::from(*index).saturating_sub(1))
+        else {
+            continue;
+        };
+        match property {
+            ItemProperty::CleanAperture(clap) => transforms.clean_aperture = Some(*clap),
+            ItemProperty::Rotation(rotation) => transforms.rotation = Some(*rotation),
+            ItemProperty::Mirror(mirror) => transforms.mirror = Some(*mirror),
+            _ => {}
+        }
+    }
+    transforms
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1204,6 +1308,71 @@ mod tests {
                 output_width: 10,
                 output_height: 20,
                 payload: payload.to_vec(),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_clap_irot_and_imir_properties() {
+        assert_eq!(
+            parse_clap(&[
+                0, 0, 3, 32, // width_n 800
+                0, 0, 0, 1, // width_d
+                0, 0, 2, 88, // height_n 600
+                0, 0, 0, 1, // height_d
+                0, 0, 0, 0, // horiz offset n
+                0, 0, 0, 1, // horiz offset d
+                0, 0, 0, 0, // vert offset n
+                0, 0, 0, 1, // vert offset d
+            ])
+            .unwrap(),
+            CleanAperture {
+                width_n: 800,
+                width_d: 1,
+                height_n: 600,
+                height_d: 1,
+                horizontal_offset_n: 0,
+                horizontal_offset_d: 1,
+                vertical_offset_n: 0,
+                vertical_offset_d: 1,
+            }
+        );
+        assert_eq!(parse_irot(&[5]).unwrap(), ImageRotation { angle: 1 });
+        assert_eq!(parse_imir(&[3]).unwrap(), ImageMirror { axis: 1 });
+    }
+
+    #[test]
+    fn primary_item_transforms_are_exposed_from_property_associations() {
+        let clap = CleanAperture {
+            width_n: 800,
+            width_d: 1,
+            height_n: 600,
+            height_d: 1,
+            horizontal_offset_n: 0,
+            horizontal_offset_d: 1,
+            vertical_offset_n: 0,
+            vertical_offset_d: 1,
+        };
+        let state = MetaState {
+            primary_item_id: Some(7),
+            item_property_associations: vec![ItemPropertyAssociation {
+                item_id: 7,
+                property_indices: vec![1, 2, 3],
+            }],
+            item_properties: vec![
+                ItemProperty::CleanAperture(clap),
+                ItemProperty::Rotation(ImageRotation { angle: 2 }),
+                ItemProperty::Mirror(ImageMirror { axis: 1 }),
+            ],
+            ..MetaState::default()
+        };
+
+        assert_eq!(
+            primary_item_transforms(&state),
+            PrimaryItemTransforms {
+                clean_aperture: Some(clap),
+                rotation: Some(ImageRotation { angle: 2 }),
+                mirror: Some(ImageMirror { axis: 1 }),
             }
         );
     }
