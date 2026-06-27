@@ -17,7 +17,8 @@ pub use compat::{
     ResponseCommand, TerminateOptions, VerboseOptions,
 };
 pub use container::{
-    AvifInfo, ColorInformation, ImageSpatialExtents, NclxColorInformation, PixelInformation,
+    AuxiliaryImage, AvifInfo, ColorInformation, ImageSpatialExtents, NclxColorInformation,
+    PixelInformation,
 };
 pub use decoder::{DecodedFrame, decode, decode_frame_bytes, parse_info};
 pub use error::DecoderError;

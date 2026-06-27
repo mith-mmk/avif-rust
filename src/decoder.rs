@@ -260,6 +260,11 @@ fn decode_still_frame(
     headers: &Av1Headers,
     info: Option<&AvifInfo>,
 ) -> Result<DecodedFrame, DecoderError> {
+    if info.is_some_and(|info| !info.alpha_auxiliary_items.is_empty()) {
+        return Err(DecoderError::Unsupported(
+            "AVIF alpha auxiliary item composition is not supported yet".to_string(),
+        ));
+    }
     let mut buffers = alloc_frame_buffers(&headers.decode_plan)?;
     let prefix = decode_luma_root_block_prefix(
         &headers.tile_group.tile_data,

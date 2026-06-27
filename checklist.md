@@ -110,6 +110,8 @@ This is the current highest-priority implementation block. Entropy components th
 - [x] Implement SDR nclx range/matrix conversion for non-subsampled identity GBR and BT.601/709/2020 non-constant-luminance matrices.
 - [x] Return explicit `Unsupported` for RGBA conversion requiring unimplemented HDR/ICC colour management.
 - [ ] Parse and compose alpha auxiliary items.
+  - [x] Parse alpha `auxC` / `auxl` metadata and payloads, and return explicit `Unsupported` instead of dropping alpha.
+  - [ ] Decode and compose alpha auxiliary planes into RGBA output.
 - [ ] Parse and compose grid items.
 - [ ] Apply `clap`, then `irot`, then `imir`.
 - [ ] Support multiple tiles and tile groups.

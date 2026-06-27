@@ -2,6 +2,7 @@ use crate::DecoderError;
 
 const BRAND_AVIF: &[u8; 4] = b"avif";
 const BRAND_AVIS: &[u8; 4] = b"avis";
+const ALPHA_AUX_TYPE: &str = "urn:mpeg:mpegB:cicp:systems:auxiliary:alpha";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct BoxHeader {
@@ -22,6 +23,7 @@ pub struct AvifInfo {
     pub pixel_information: Option<PixelInformation>,
     pub color_information: Option<ColorInformation>,
     pub alpha_premultiplied: bool,
+    pub alpha_auxiliary_items: Vec<AuxiliaryImage>,
     pub av1_config: Option<Vec<u8>>,
     pub primary_item_payload: Vec<u8>,
 }
@@ -83,6 +85,14 @@ pub struct NclxColorInformation {
     pub full_range_flag: bool,
 }
 
+/// Auxiliary image item payload, such as an AVIF alpha plane.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuxiliaryImage {
+    pub item_id: u32,
+    pub aux_type: String,
+    pub payload: Vec<u8>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ItemLocation {
     item_id: u32,
@@ -96,10 +106,32 @@ struct ItemExtent {
     length: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ItemReference {
+    reference_type: [u8; 4],
+    from_item_id: u32,
+    to_item_ids: Vec<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ItemPropertyAssociation {
+    item_id: u32,
+    property_indices: Vec<u16>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ItemProperty {
+    AuxiliaryType(String),
+    Other,
+}
+
 #[derive(Debug, Default)]
 struct MetaState {
     primary_item_id: Option<u32>,
     item_locations: Vec<ItemLocation>,
+    item_references: Vec<ItemReference>,
+    item_property_associations: Vec<ItemPropertyAssociation>,
+    item_properties: Vec<ItemProperty>,
     width: Option<u32>,
     height: Option<u32>,
     pixel_information: Option<PixelInformation>,
@@ -137,6 +169,7 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
     })?;
 
     let primary_item_payload = primary_item_payload(data, &meta)?;
+    let alpha_auxiliary_items = alpha_auxiliary_items(data, &meta)?;
     Ok(AvifInfo {
         major_brand,
         compatible_brands,
@@ -146,6 +179,7 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
         pixel_information: meta.pixel_information,
         color_information: meta.color_information,
         alpha_premultiplied: meta.alpha_premultiplied,
+        alpha_auxiliary_items,
         av1_config: meta.av1_config,
         primary_item_payload,
     })
@@ -216,6 +250,7 @@ fn parse_meta_children(
         match &header.box_type {
             b"pitm" => state.primary_item_id = parse_pitm(child_payload)?,
             b"iloc" => state.item_locations = parse_iloc(child_payload)?,
+            b"iref" => state.item_references = parse_iref(child_payload)?,
             b"iprp" => parse_iprp(source, child_payload, state)?,
             _ => {}
         }
@@ -229,8 +264,10 @@ fn parse_iprp(source: &[u8], payload: &[u8], state: &mut MetaState) -> Result<()
     while offset < payload.len() {
         let header = read_box_header(payload, offset, payload.len())?;
         let child_payload = box_payload(payload, header)?;
-        if &header.box_type == b"ipco" {
-            parse_ipco(source, child_payload, state)?;
+        match &header.box_type {
+            b"ipco" => parse_ipco(source, child_payload, state)?,
+            b"ipma" => state.item_property_associations = parse_ipma(child_payload)?,
+            _ => {}
         }
         offset = checked_add(header.offset, header.size, "iprp child box end")?;
     }
@@ -254,6 +291,10 @@ fn parse_ipco(_source: &[u8], payload: &[u8], state: &mut MetaState) -> Result<(
             b"prem" => state.alpha_premultiplied = true,
             _ => {}
         }
+        state.item_properties.push(match &header.box_type {
+            b"auxC" => ItemProperty::AuxiliaryType(parse_auxc(child_payload)?),
+            _ => ItemProperty::Other,
+        });
         offset = checked_add(header.offset, header.size, "ipco child box end")?;
     }
     Ok(())
@@ -364,6 +405,114 @@ fn parse_iloc(payload: &[u8]) -> Result<Vec<ItemLocation>, DecoderError> {
     Ok(locations)
 }
 
+fn parse_iref(payload: &[u8]) -> Result<Vec<ItemReference>, DecoderError> {
+    if payload.len() < 4 {
+        return Err(DecoderError::NotEnoughData(
+            "iref full-box header is missing".to_string(),
+        ));
+    }
+    let version = payload[0];
+    if version > 1 {
+        return Err(DecoderError::Unsupported(format!(
+            "iref version {version} is not supported"
+        )));
+    }
+    let large_ids = version == 1;
+    let mut references = Vec::new();
+    let mut offset = 4;
+    while offset < payload.len() {
+        let header = read_box_header(payload, offset, payload.len())?;
+        let child_payload = box_payload(payload, header)?;
+        let mut cursor = 0usize;
+        let from_item_id = read_item_id(child_payload, &mut cursor, large_ids)?;
+        let reference_count = read_u16(child_payload, cursor)? as usize;
+        cursor += 2;
+        let mut to_item_ids = Vec::with_capacity(reference_count);
+        for _ in 0..reference_count {
+            to_item_ids.push(read_item_id(child_payload, &mut cursor, large_ids)?);
+        }
+        references.push(ItemReference {
+            reference_type: header.box_type,
+            from_item_id,
+            to_item_ids,
+        });
+        offset = checked_add(header.offset, header.size, "iref child box end")?;
+    }
+    Ok(references)
+}
+
+fn parse_ipma(payload: &[u8]) -> Result<Vec<ItemPropertyAssociation>, DecoderError> {
+    if payload.len() < 8 {
+        return Err(DecoderError::NotEnoughData(
+            "ipma payload is too short".to_string(),
+        ));
+    }
+    let version = payload[0];
+    if version > 1 {
+        return Err(DecoderError::Unsupported(format!(
+            "ipma version {version} is not supported"
+        )));
+    }
+    let flags = read_u24(payload, 1)?;
+    let large_property_index = flags & 1 != 0;
+    let entry_count = read_u32(payload, 4)? as usize;
+    let mut cursor = 8usize;
+    let mut associations = Vec::with_capacity(entry_count);
+    for _ in 0..entry_count {
+        let item_id = read_item_id(payload, &mut cursor, version == 1)?;
+        let association_count = read_u8(payload, cursor)? as usize;
+        cursor += 1;
+        let mut property_indices = Vec::with_capacity(association_count);
+        for _ in 0..association_count {
+            let association = if large_property_index {
+                let value = read_u16(payload, cursor)?;
+                cursor += 2;
+                value & 0x7fff
+            } else {
+                let value = read_u8(payload, cursor)?;
+                cursor += 1;
+                u16::from(value & 0x7f)
+            };
+            if association != 0 {
+                property_indices.push(association);
+            }
+        }
+        associations.push(ItemPropertyAssociation {
+            item_id,
+            property_indices,
+        });
+    }
+    Ok(associations)
+}
+
+fn parse_auxc(payload: &[u8]) -> Result<String, DecoderError> {
+    if payload.len() < 4 {
+        return Err(DecoderError::NotEnoughData(
+            "auxC full-box header is missing".to_string(),
+        ));
+    }
+    let aux_type = &payload[4..];
+    let end = aux_type
+        .iter()
+        .position(|value| *value == 0)
+        .unwrap_or(aux_type.len());
+    std::str::from_utf8(&aux_type[..end])
+        .map(|value| value.to_string())
+        .map_err(|_| DecoderError::Bitstream("auxC auxiliary type is not UTF-8".to_string()))
+}
+
+fn read_item_id(payload: &[u8], cursor: &mut usize, large_ids: bool) -> Result<u32, DecoderError> {
+    if large_ids {
+        let value = read_u32(payload, *cursor)?;
+        *cursor += 4;
+        Ok(value)
+    } else {
+        let value = read_u16(payload, *cursor)? as u32;
+        *cursor += 2;
+        Ok(value)
+    }
+}
+
 fn parse_ispe(payload: &[u8]) -> Result<ImageSpatialExtents, DecoderError> {
     if payload.len() < 12 {
         return Err(DecoderError::NotEnoughData(
@@ -409,11 +558,70 @@ fn primary_item_payload(data: &[u8], state: &MetaState) -> Result<Vec<u8>, Decod
     let primary_item_id = state
         .primary_item_id
         .ok_or_else(|| DecoderError::Bitstream("primary item is missing".to_string()))?;
+    item_payload(data, state, primary_item_id)
+}
+
+fn alpha_auxiliary_items(
+    data: &[u8],
+    state: &MetaState,
+) -> Result<Vec<AuxiliaryImage>, DecoderError> {
+    let mut item_ids: Vec<(u32, String)> = state
+        .item_property_associations
+        .iter()
+        .filter_map(|association| {
+            association
+                .property_indices
+                .iter()
+                .filter_map(|index| {
+                    state
+                        .item_properties
+                        .get(usize::from(*index).saturating_sub(1))
+                })
+                .find_map(|property| match property {
+                    ItemProperty::AuxiliaryType(aux_type) if aux_type == ALPHA_AUX_TYPE => {
+                        Some((association.item_id, aux_type.clone()))
+                    }
+                    _ => None,
+                })
+        })
+        .collect();
+
+    if item_ids.is_empty() {
+        if let Some(primary_item_id) = state.primary_item_id {
+            for reference in &state.item_references {
+                if &reference.reference_type == b"auxl" && reference.from_item_id == primary_item_id
+                {
+                    item_ids.extend(
+                        reference
+                            .to_item_ids
+                            .iter()
+                            .map(|item_id| (*item_id, ALPHA_AUX_TYPE.to_string())),
+                    );
+                }
+            }
+        }
+    }
+
+    item_ids.sort_by_key(|(item_id, _)| *item_id);
+    item_ids.dedup_by_key(|(item_id, _)| *item_id);
+    item_ids
+        .into_iter()
+        .map(|(item_id, aux_type)| {
+            Ok(AuxiliaryImage {
+                item_id,
+                aux_type,
+                payload: item_payload(data, state, item_id)?,
+            })
+        })
+        .collect()
+}
+
+fn item_payload(data: &[u8], state: &MetaState, item_id: u32) -> Result<Vec<u8>, DecoderError> {
     let location = state
         .item_locations
         .iter()
-        .find(|location| location.item_id == primary_item_id)
-        .ok_or_else(|| DecoderError::Bitstream("primary item location is missing".to_string()))?;
+        .find(|location| location.item_id == item_id)
+        .ok_or_else(|| DecoderError::Bitstream(format!("item {item_id} location is missing")))?;
 
     let payload_len = location.extents.iter().try_fold(0usize, |sum, extent| {
         let length = usize::try_from(extent.length)
@@ -529,6 +737,12 @@ fn read_fourcc(data: &[u8], offset: usize) -> Result<[u8; 4], DecoderError> {
         .expect("slice length checked"))
 }
 
+fn read_u8(data: &[u8], offset: usize) -> Result<u8, DecoderError> {
+    data.get(offset)
+        .copied()
+        .ok_or_else(|| DecoderError::NotEnoughData("u8 is truncated".to_string()))
+}
+
 fn read_u16(data: &[u8], offset: usize) -> Result<u16, DecoderError> {
     Ok(u16::from_be_bytes(
         data.get(offset..offset + 2)
@@ -536,6 +750,13 @@ fn read_u16(data: &[u8], offset: usize) -> Result<u16, DecoderError> {
             .try_into()
             .expect("slice length checked"),
     ))
+}
+
+fn read_u24(data: &[u8], offset: usize) -> Result<u32, DecoderError> {
+    let bytes = data
+        .get(offset..offset + 3)
+        .ok_or_else(|| DecoderError::NotEnoughData("u24 is truncated".to_string()))?;
+    Ok((u32::from(bytes[0]) << 16) | (u32::from(bytes[1]) << 8) | u32::from(bytes[2]))
 }
 
 fn read_u32(data: &[u8], offset: usize) -> Result<u32, DecoderError> {
@@ -620,5 +841,101 @@ mod tests {
         let icc = parse_colr(&[b'p', b'r', b'o', b'f', 1, 2, 3, 4]).unwrap();
         assert_eq!(icc.nclx(), None);
         assert_eq!(icc.icc_profile(), Some(&[1, 2, 3, 4][..]));
+    }
+
+    #[test]
+    fn parses_alpha_auxiliary_item_metadata_and_payload() {
+        let state = MetaState {
+            primary_item_id: Some(1),
+            item_locations: vec![
+                ItemLocation {
+                    item_id: 1,
+                    base_offset: 0,
+                    extents: vec![ItemExtent {
+                        offset: 0,
+                        length: 4,
+                    }],
+                },
+                ItemLocation {
+                    item_id: 2,
+                    base_offset: 0,
+                    extents: vec![ItemExtent {
+                        offset: 4,
+                        length: 4,
+                    }],
+                },
+            ],
+            item_property_associations: vec![ItemPropertyAssociation {
+                item_id: 2,
+                property_indices: vec![1],
+            }],
+            item_properties: vec![ItemProperty::AuxiliaryType(ALPHA_AUX_TYPE.to_string())],
+            ..MetaState::default()
+        };
+
+        let alpha_items = alpha_auxiliary_items(b"mainalph", &state).unwrap();
+
+        assert_eq!(
+            alpha_items,
+            vec![AuxiliaryImage {
+                item_id: 2,
+                aux_type: ALPHA_AUX_TYPE.to_string(),
+                payload: b"alph".to_vec(),
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_auxiliary_item_references_as_alpha_fallback() {
+        let payload = [
+            0, 0, 0, 0, // iref version and flags
+            0, 0, 0, 14, b'a', b'u', b'x', b'l', // auxl box header
+            0, 1, // from item id
+            0, 1, // reference count
+            0, 2, // to item id
+        ];
+
+        let references = parse_iref(&payload).unwrap();
+
+        assert_eq!(
+            references,
+            vec![ItemReference {
+                reference_type: *b"auxl",
+                from_item_id: 1,
+                to_item_ids: vec![2],
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_auxiliary_type_and_property_association() {
+        let auxc = parse_auxc(
+            &[
+                0, 0, 0, 0, // auxC full-box header
+            ]
+            .into_iter()
+            .chain(ALPHA_AUX_TYPE.bytes())
+            .chain([0])
+            .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        assert_eq!(auxc, ALPHA_AUX_TYPE);
+
+        let associations = parse_ipma(&[
+            0, 0, 0, 0, // version and flags
+            0, 0, 0, 1, // entry count
+            0, 2,    // item id
+            1,    // association count
+            0x81, // essential property index 1
+        ])
+        .unwrap();
+
+        assert_eq!(
+            associations,
+            vec![ItemPropertyAssociation {
+                item_id: 2,
+                property_indices: vec![1],
+            }]
+        );
     }
 }
