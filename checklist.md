@@ -37,6 +37,8 @@ AVIF sequences, encoding, HDR tone mapping and ICC application are later milesto
   - [x] Syntax/CDF/context known-vector tests derived from the AV1 specification or AOM.
   - [ ] Exact decoded Y/U/V/alpha plane comparison for supported streams.
   - [ ] SDR RGBA8/RGBA16 comparison with maximum per-channel error of 1.
+    - [x] Add RGBA8/RGBA16 max-error comparison gates that include alpha.
+    - [ ] Apply the RGBA8/RGBA16 max-error gate to external supported-stream fixtures.
   - [x] Keep `WML2Viewer.avif` as a normal regression case until exact plane fixtures are available.
 - [x] Add a reproducible corpus fetch/verification command for `test_data/`.
 - [ ] Split oversized decode code by responsibility: block syntax, coefficient entropy, reconstruction state and diagnostics.
