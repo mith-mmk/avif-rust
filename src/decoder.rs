@@ -9,7 +9,7 @@ use crate::av1::{
 };
 use crate::compat::{DataMap, DecodeOptions, InitOptions};
 use crate::container::{AvifInfo, ColorInformation, parse_avif};
-use crate::obu::{ObuType, find_obu_payloads};
+use crate::obu::{ObuType, count_obus, find_obu_payloads};
 use crate::{DecoderError, ImageBuffer, Rgba16ImageBuffer};
 use bin_rs::reader::BinaryReader;
 use std::io::SeekFrom;
@@ -128,6 +128,7 @@ struct ParsedTileGroup {
 }
 
 fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
+    let tile_group_obu_count = count_obus(&info.primary_item_payload, ObuType::TileGroup)?;
     let [
         sequence_payload,
         frame_payload,
@@ -152,6 +153,11 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
         .transpose()?;
     if let Some(config) = config {
         validate_av1_config(&config, &sequence)?;
+    }
+    if frame_payload.is_none() && tile_group_obu_count > 1 {
+        return Err(DecoderError::Unsupported(
+            "AVIF multiple tile-group OBUs for one frame are not supported yet".to_string(),
+        ));
     }
     let (frame, tile_group_payload, tile_data) = if let Some(frame_payload) = frame_payload {
         let frame = parse_frame_header(frame_payload, &sequence)?;

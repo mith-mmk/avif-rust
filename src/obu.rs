@@ -59,6 +59,19 @@ pub fn find_obu_payload(data: &[u8], target: ObuType) -> Result<Option<&[u8]>, D
     Ok(None)
 }
 
+pub fn count_obus(data: &[u8], target: ObuType) -> Result<usize, DecoderError> {
+    let mut offset = 0usize;
+    let mut count = 0usize;
+    while let Some(obu) = read_next_obu(data, &mut offset)? {
+        if obu.obu_type == target {
+            count = count
+                .checked_add(1)
+                .ok_or_else(|| DecoderError::Bitstream("OBU count overflow".to_string()))?;
+        }
+    }
+    Ok(count)
+}
+
 pub fn find_obu_payloads<'a, const N: usize>(
     data: &'a [u8],
     targets: [ObuType; N],
@@ -217,6 +230,19 @@ mod tests {
 
         assert!(sequence.is_some());
         assert!(frame.is_some());
+    }
+
+    #[test]
+    fn counts_repeated_obu_types() {
+        let data = [
+            0x22, 0x01, 0xaa, // tile group, one-byte payload
+            0x0a, 0x01, 0xbb, // sequence header, one-byte payload
+            0x22, 0x02, 0xcc, 0xdd, // tile group, two-byte payload
+        ];
+
+        assert_eq!(count_obus(&data, ObuType::TileGroup).unwrap(), 2);
+        assert_eq!(count_obus(&data, ObuType::SequenceHeader).unwrap(), 1);
+        assert_eq!(count_obus(&data, ObuType::Frame).unwrap(), 0);
     }
 
     #[test]
