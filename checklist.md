@@ -37,7 +37,7 @@ AVIF sequences, encoding, HDR tone mapping and ICC application are later milesto
   - [ ] Exact decoded Y/U/V/alpha plane comparison for supported streams.
   - [ ] SDR RGBA8/RGBA16 comparison with maximum per-channel error of 1.
   - [ ] Keep `WML2Viewer.avif` as a normal regression case until exact plane fixtures are available.
-- [ ] Add a reproducible corpus fetch/verification command for `test_data/`.
+- [x] Add a reproducible corpus fetch/verification command for `test_data/`.
 - [ ] Split oversized decode code by responsibility: block syntax, coefficient entropy, reconstruction state and diagnostics.
 - [ ] Move tests out of implementation modules as files are split.
 
