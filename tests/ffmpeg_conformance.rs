@@ -13,6 +13,14 @@ struct DiffMetrics {
     max_rgb_abs: u8,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ExpectedPlane<'a> {
+    width: usize,
+    height: usize,
+    stride: usize,
+    samples: &'a [u16],
+}
+
 fn sample_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -47,6 +55,35 @@ fn ffmpeg_decode_rgba(path: &Path) -> Option<Vec<u8>> {
     Some(output.stdout)
 }
 
+fn assert_exact_decoded_planes(decoded: &avif_rust::DecodedFrame, expected: &[ExpectedPlane<'_>]) {
+    assert_eq!(decoded.buffers.planes.len(), expected.len());
+    for (plane_index, (actual, expected)) in decoded
+        .buffers
+        .planes
+        .iter()
+        .zip(expected.iter())
+        .enumerate()
+    {
+        assert_eq!(
+            actual.layout.width, expected.width,
+            "plane {plane_index} width"
+        );
+        assert_eq!(
+            actual.layout.height, expected.height,
+            "plane {plane_index} height"
+        );
+        assert_eq!(
+            actual.layout.stride(),
+            expected.stride,
+            "plane {plane_index} stride"
+        );
+        assert_eq!(
+            actual.samples, expected.samples,
+            "plane {plane_index} samples"
+        );
+    }
+}
+
 fn diff_rgb(left: &[u8], right: &[u8]) -> DiffMetrics {
     assert_eq!(left.len(), right.len());
     assert_eq!(left.len(), SAMPLE_RGBA_LEN);
@@ -68,6 +105,36 @@ fn diff_rgb(left: &[u8], right: &[u8]) -> DiffMetrics {
     }
 }
 
+fn diff_rgba_dynamic(left: &[u8], right: &[u8]) -> DiffMetrics {
+    assert_eq!(left.len(), right.len());
+    assert_eq!(left.len() % 4, 0);
+
+    let mut sum = 0u64;
+    let mut max = 0u8;
+    for index in 0..left.len() {
+        if index % 4 == 3 {
+            continue;
+        }
+        let diff = left[index].abs_diff(right[index]);
+        sum += u64::from(diff);
+        max = max.max(diff);
+    }
+
+    DiffMetrics {
+        average_rgb_abs: sum as f64 / ((left.len() / 4) * 3) as f64,
+        max_rgb_abs: max,
+    }
+}
+
+fn assert_rgba_max_error(left: &[u8], right: &[u8], max_allowed: u8) {
+    let metrics = diff_rgba_dynamic(left, right);
+    assert!(
+        metrics.max_rgb_abs <= max_allowed,
+        "max RGB absolute error was {}",
+        metrics.max_rgb_abs
+    );
+}
+
 #[test]
 fn ffmpeg_avif_decode_is_close_to_original_png() {
     let Some(avif_rgba) = ffmpeg_decode_rgba(&sample_path("WML2Viewer.avif")) else {
@@ -87,6 +154,88 @@ fn ffmpeg_avif_decode_is_close_to_original_png() {
         "max RGB absolute error was {}",
         metrics.max_rgb_abs
     );
+}
+
+#[test]
+fn layered_conformance_helpers_compare_planes_and_rgba_max_error() {
+    let layout = avif_rust::av1::PlaneLayout {
+        plane: 0,
+        width: 2,
+        height: 1,
+        subsampling_x: 0,
+        subsampling_y: 0,
+        sample_count: 2,
+    };
+    let frame = avif_rust::DecodedFrame {
+        width: 2,
+        height: 1,
+        render_width: 2,
+        render_height: 1,
+        bit_depth: 8,
+        color_config: avif_rust::av1::ColorConfig {
+            high_bitdepth: false,
+            twelve_bit: false,
+            bit_depth: 8,
+            monochrome: false,
+            color_description: Some(avif_rust::av1::ColorDescription {
+                color_primaries: 1,
+                transfer_characteristics: 13,
+                matrix_coefficients: 0,
+            }),
+            color_range: avif_rust::av1::ColorRange::Full,
+            subsampling_x: false,
+            subsampling_y: false,
+            chroma_sample_position: None,
+            separate_uv_delta_q: false,
+        },
+        color_information: None,
+        alpha_premultiplied: false,
+        buffers: avif_rust::av1::FrameBuffers {
+            width: 2,
+            height: 1,
+            planes: vec![
+                avif_rust::av1::PlaneBuffer {
+                    layout,
+                    samples: vec![20, 21],
+                },
+                avif_rust::av1::PlaneBuffer {
+                    layout: avif_rust::av1::PlaneLayout { plane: 1, ..layout },
+                    samples: vec![30, 31],
+                },
+                avif_rust::av1::PlaneBuffer {
+                    layout: avif_rust::av1::PlaneLayout { plane: 2, ..layout },
+                    samples: vec![40, 41],
+                },
+            ],
+        },
+    };
+
+    assert_exact_decoded_planes(
+        &frame,
+        &[
+            ExpectedPlane {
+                width: 2,
+                height: 1,
+                stride: 2,
+                samples: &[20, 21],
+            },
+            ExpectedPlane {
+                width: 2,
+                height: 1,
+                stride: 2,
+                samples: &[30, 31],
+            },
+            ExpectedPlane {
+                width: 2,
+                height: 1,
+                stride: 2,
+                samples: &[40, 41],
+            },
+        ],
+    );
+
+    let rgba = frame.to_rgba8().expect("identity GBR should convert");
+    assert_rgba_max_error(&rgba.rgba, &[40, 20, 30, 255, 41, 21, 31, 255], 0);
 }
 
 #[test]

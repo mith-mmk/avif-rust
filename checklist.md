@@ -33,10 +33,11 @@ AVIF sequences, encoding, HDR tone mapping and ICC application are later milesto
 ## 1. Conformance harness and architecture
 
 - [ ] Replace the single-sample average-error gate with layered conformance checks.
+  - [x] Add reusable integration-test helpers for exact decoded-plane checks and SDR RGBA max-error checks.
   - [ ] Syntax/CDF/context known-vector tests derived from the AV1 specification or AOM.
   - [ ] Exact decoded Y/U/V/alpha plane comparison for supported streams.
   - [ ] SDR RGBA8/RGBA16 comparison with maximum per-channel error of 1.
-  - [ ] Keep `WML2Viewer.avif` as a normal regression case until exact plane fixtures are available.
+  - [x] Keep `WML2Viewer.avif` as a normal regression case until exact plane fixtures are available.
 - [x] Add a reproducible corpus fetch/verification command for `test_data/`.
 - [ ] Split oversized decode code by responsibility: block syntax, coefficient entropy, reconstruction state and diagnostics.
 - [ ] Move tests out of implementation modules as files are split.
