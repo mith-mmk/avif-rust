@@ -151,6 +151,7 @@ pub fn frame_buffers_to_rgba_16(
     color_config: &ColorConfig,
 ) -> Result<Rgba16ImageBuffer, DecoderError> {
     validate_rgba_conversion(buffers)?;
+    validate_sdr_transfer(color_config)?;
     let matrix_coefficients = color_config
         .color_description
         .map(|description| description.matrix_coefficients)
@@ -215,6 +216,22 @@ fn validate_rgba_conversion(buffers: &FrameBuffers) -> Result<(), DecoderError> 
         ));
     }
     Ok(())
+}
+
+fn validate_sdr_transfer(color_config: &ColorConfig) -> Result<(), DecoderError> {
+    let Some(description) = color_config.color_description else {
+        return Ok(());
+    };
+    match description.transfer_characteristics {
+        1 | 6 | 13 => Ok(()),
+        16 | 18 => Err(DecoderError::Unsupported(format!(
+            "AV1 transfer characteristics {} require unimplemented HDR colour management",
+            description.transfer_characteristics
+        ))),
+        transfer => Err(DecoderError::Unsupported(format!(
+            "AV1 transfer characteristics {transfer} RGBA conversion is not supported yet"
+        ))),
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -508,6 +525,56 @@ mod tests {
 
         assert_eq!(&image.rgba[..8], &[0, 0, 0, 255, 255, 255, 255, 255]);
         assert_rgb_close(&image.rgba[8..12], &[255, 0, 0, 255], 1);
+    }
+
+    #[test]
+    fn rgba_conversion_rejects_hdr_transfer_characteristics() {
+        let layout = PlaneLayout {
+            plane: 0,
+            width: 1,
+            height: 1,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 1,
+        };
+        let buffers = FrameBuffers {
+            width: 1,
+            height: 1,
+            planes: vec![
+                PlaneBuffer {
+                    layout,
+                    samples: vec![64],
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout { plane: 1, ..layout },
+                    samples: vec![512],
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout { plane: 2, ..layout },
+                    samples: vec![512],
+                },
+            ],
+        };
+        let color_config = ColorConfig {
+            high_bitdepth: true,
+            twelve_bit: false,
+            bit_depth: 10,
+            monochrome: false,
+            color_description: Some(super::super::sequence::ColorDescription {
+                color_primaries: 9,
+                transfer_characteristics: 16,
+                matrix_coefficients: 9,
+            }),
+            color_range: super::super::sequence::ColorRange::Studio,
+            subsampling_x: false,
+            subsampling_y: false,
+            chroma_sample_position: None,
+            separate_uv_delta_q: false,
+        };
+
+        let err = frame_buffers_to_rgba_16(&buffers, &color_config).unwrap_err();
+
+        assert!(matches!(err, DecoderError::Unsupported(message) if message.contains("HDR")));
     }
 
     fn assert_rgb_close(actual: &[u8], expected: &[u8], tolerance: u8) {

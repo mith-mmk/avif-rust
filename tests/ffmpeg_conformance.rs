@@ -155,6 +155,70 @@ fn pure_rust_decode_exposes_source_planes_for_oracle_tests() {
 }
 
 #[test]
+fn decoded_frame_rejects_icc_rgba_conversion_until_colour_management_exists() {
+    let layout = avif_rust::av1::PlaneLayout {
+        plane: 0,
+        width: 1,
+        height: 1,
+        subsampling_x: 0,
+        subsampling_y: 0,
+        sample_count: 1,
+    };
+    let frame = avif_rust::DecodedFrame {
+        width: 1,
+        height: 1,
+        render_width: 1,
+        render_height: 1,
+        bit_depth: 8,
+        color_config: avif_rust::av1::ColorConfig {
+            high_bitdepth: false,
+            twelve_bit: false,
+            bit_depth: 8,
+            monochrome: false,
+            color_description: Some(avif_rust::av1::ColorDescription {
+                color_primaries: 1,
+                transfer_characteristics: 13,
+                matrix_coefficients: 0,
+            }),
+            color_range: avif_rust::av1::ColorRange::Full,
+            subsampling_x: false,
+            subsampling_y: false,
+            chroma_sample_position: None,
+            separate_uv_delta_q: false,
+        },
+        color_information: Some(avif_rust::ColorInformation {
+            color_type: *b"prof",
+            payload: vec![1, 2, 3],
+        }),
+        alpha_premultiplied: false,
+        buffers: avif_rust::av1::FrameBuffers {
+            width: 1,
+            height: 1,
+            planes: vec![
+                avif_rust::av1::PlaneBuffer {
+                    layout,
+                    samples: vec![10],
+                },
+                avif_rust::av1::PlaneBuffer {
+                    layout: avif_rust::av1::PlaneLayout { plane: 1, ..layout },
+                    samples: vec![20],
+                },
+                avif_rust::av1::PlaneBuffer {
+                    layout: avif_rust::av1::PlaneLayout { plane: 2, ..layout },
+                    samples: vec![30],
+                },
+            ],
+        },
+    };
+
+    let err = frame.to_rgba8().unwrap_err();
+
+    assert!(
+        matches!(err, avif_rust::DecoderError::Unsupported(message) if message.contains("ICC"))
+    );
+}
+
+#[test]
 #[ignore = "single-sample RGB error is diagnostic until plane-level conformance fixtures exist"]
 fn report_current_wml2viewer_rgb_error() {
     let avif_data =

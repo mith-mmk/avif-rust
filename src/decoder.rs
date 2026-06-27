@@ -32,7 +32,7 @@ pub fn decode<B: BinaryReader>(
     let info = parse_avif(&data)?;
     let headers = parse_av1_headers(&info)?;
     emit_metadata(&info, Some(&headers), option)?;
-    let image = decode_still_image(&headers)?;
+    let image = decode_still_image(&headers, Some(&info))?;
 
     option.drawer.init(
         image.width,
@@ -52,7 +52,7 @@ pub fn decode<B: BinaryReader>(
 pub fn decode_bytes(data: &[u8]) -> Result<ImageBuffer, DecoderError> {
     let info = parse_avif(data)?;
     let headers = parse_av1_headers(&info)?;
-    decode_still_image(&headers)
+    decode_still_image(&headers, Some(&info))
 }
 
 /// Decoded still-frame planes before colour conversion.
@@ -75,11 +75,26 @@ pub struct DecodedFrame {
 
 impl DecodedFrame {
     pub fn to_rgba8(&self) -> Result<ImageBuffer, DecoderError> {
+        self.validate_color_management_for_rgba()?;
         frame_buffers_to_rgba_8(&self.buffers, &self.color_config)
     }
 
     pub fn to_rgba16(&self) -> Result<Rgba16ImageBuffer, DecoderError> {
+        self.validate_color_management_for_rgba()?;
         frame_buffers_to_rgba_16(&self.buffers, &self.color_config)
+    }
+
+    fn validate_color_management_for_rgba(&self) -> Result<(), DecoderError> {
+        if self
+            .color_information
+            .as_ref()
+            .is_some_and(|color| color.icc_profile().is_some())
+        {
+            return Err(DecoderError::Unsupported(
+                "AVIF ICC colour management for RGBA conversion is not supported yet".to_string(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -233,9 +248,12 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
     })
 }
 
-fn decode_still_image(headers: &Av1Headers) -> Result<ImageBuffer, DecoderError> {
-    let frame = decode_still_frame(headers, None)?;
-    frame_buffers_to_rgba_8(&frame.buffers, &frame.color_config)
+fn decode_still_image(
+    headers: &Av1Headers,
+    info: Option<&AvifInfo>,
+) -> Result<ImageBuffer, DecoderError> {
+    let frame = decode_still_frame(headers, info)?;
+    frame.to_rgba8()
 }
 
 fn decode_still_frame(
