@@ -3746,62 +3746,73 @@ pub fn decode_luma_root_block_prefix(
     buffers: &mut FrameBuffers,
     max_blocks: usize,
 ) -> Result<DecodedBlockPrefix, DecoderError> {
-    let tile_payload = tile_group.tiles.first().ok_or_else(|| {
-        DecoderError::Bitstream("AV1 tile group has no tile payloads".to_string())
-    })?;
-    let end = tile_payload
-        .offset
-        .checked_add(tile_payload.len)
-        .ok_or_else(|| DecoderError::Bitstream("AV1 tile payload end overflow".to_string()))?;
-    let payload = data.get(tile_payload.offset..end).ok_or_else(|| {
-        DecoderError::NotEnoughData("AV1 tile payload extends beyond tile group".to_string())
-    })?;
-    let tile_plan = plan
-        .tiles
-        .first()
-        .ok_or_else(|| DecoderError::Bitstream("AV1 tile decode plan is missing".to_string()))?;
-    let mut decoder = TileDecoder::new(payload, frame)?;
+    if tile_group.tiles.is_empty() {
+        return Err(DecoderError::Bitstream(
+            "AV1 tile group has no tile payloads".to_string(),
+        ));
+    }
     let mut blocks = Vec::new();
     let mut block_budget = max_blocks;
-    for sb_row in tile_plan.sb_row_start..tile_plan.sb_row_end {
-        for sb_col in tile_plan.sb_col_start..tile_plan.sb_col_end {
-            if block_budget == 0 {
-                return Ok(DecodedBlockPrefix {
-                    blocks,
-                    next_unsupported: None,
-                });
-            }
-            let x = (sb_col as usize * plan.superblock_size).min(plan.width);
-            let y = (sb_row as usize * plan.superblock_size).min(plan.height);
-            decoder.read_restoration_units(sequence, x, y)?;
-            let decoded = match decode_luma_block_tree(
-                &mut decoder,
-                sequence,
-                frame,
-                tile_plan,
-                plan,
-                buffers,
-                BlockSize::Block128x128,
-                x,
-                y,
-                &mut block_budget,
-            ) {
-                Ok(blocks) => blocks,
-                Err(err @ DecoderError::Unsupported(_)) if !blocks.is_empty() => {
+
+    for (tile_index, tile_payload) in tile_group.tiles.iter().enumerate() {
+        let payload = tile_payload_bytes(data, tile_payload)?;
+        let tile_plan = plan.tiles.get(tile_index).ok_or_else(|| {
+            DecoderError::Bitstream("AV1 tile decode plan is missing a tile".to_string())
+        })?;
+        let mut decoder = TileDecoder::new(payload, frame)?;
+        for sb_row in tile_plan.sb_row_start..tile_plan.sb_row_end {
+            for sb_col in tile_plan.sb_col_start..tile_plan.sb_col_end {
+                if block_budget == 0 {
                     return Ok(DecodedBlockPrefix {
                         blocks,
-                        next_unsupported: Some(err),
+                        next_unsupported: None,
                     });
                 }
-                Err(err) => return Err(err),
-            };
-            blocks.extend(decoded);
+                let x = (sb_col as usize * plan.superblock_size).min(plan.width);
+                let y = (sb_row as usize * plan.superblock_size).min(plan.height);
+                decoder.read_restoration_units(sequence, x, y)?;
+                let decoded = match decode_luma_block_tree(
+                    &mut decoder,
+                    sequence,
+                    frame,
+                    tile_plan,
+                    plan,
+                    buffers,
+                    BlockSize::Block128x128,
+                    x,
+                    y,
+                    &mut block_budget,
+                ) {
+                    Ok(blocks) => blocks,
+                    Err(err @ DecoderError::Unsupported(_)) if !blocks.is_empty() => {
+                        return Ok(DecodedBlockPrefix {
+                            blocks,
+                            next_unsupported: Some(err),
+                        });
+                    }
+                    Err(err) => return Err(err),
+                };
+                blocks.extend(decoded);
+            }
         }
     }
 
     Ok(DecodedBlockPrefix {
         blocks,
         next_unsupported: None,
+    })
+}
+
+fn tile_payload_bytes<'a>(
+    data: &'a [u8],
+    tile_payload: &super::tile_group::TilePayload,
+) -> Result<&'a [u8], DecoderError> {
+    let end = tile_payload
+        .offset
+        .checked_add(tile_payload.len)
+        .ok_or_else(|| DecoderError::Bitstream("AV1 tile payload end overflow".to_string()))?;
+    data.get(tile_payload.offset..end).ok_or_else(|| {
+        DecoderError::NotEnoughData("AV1 tile payload extends beyond tile group".to_string())
     })
 }
 
@@ -3932,6 +3943,27 @@ mod tests {
             merge_cached_palette_colors(vec![25, 15, 35], 1, 3).unwrap(),
             vec![15, 25, 35]
         );
+    }
+
+    #[test]
+    fn tile_payload_bytes_checks_bounds_for_each_tile() {
+        let data = b"0123456789";
+        let first = super::super::tile_group::TilePayload {
+            tile_id: 0,
+            offset: 2,
+            len: 3,
+        };
+        assert_eq!(tile_payload_bytes(data, &first).unwrap(), b"234");
+
+        let truncated = super::super::tile_group::TilePayload {
+            tile_id: 1,
+            offset: 8,
+            len: 4,
+        };
+        assert!(matches!(
+            tile_payload_bytes(data, &truncated),
+            Err(DecoderError::NotEnoughData(_))
+        ));
     }
 
     #[test]

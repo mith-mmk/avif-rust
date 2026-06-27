@@ -119,6 +119,8 @@ This is the current highest-priority implementation block. Entropy components th
   - [x] Parse primary item `clap`, `irot` and `imir` properties and return explicit `Unsupported` instead of ignoring them.
   - [ ] Apply clean aperture, rotation and mirror transforms in AVIF composition order.
 - [ ] Support multiple tiles and tile groups.
+  - [x] Decode every tile payload in a parsed tile group instead of only the first tile.
+  - [ ] Parse and compose multiple tile-group OBUs for one frame.
 
 ## 6. Safety and performance
 
