@@ -246,6 +246,33 @@ mod tests {
     }
 
     #[test]
+    fn rejects_truncated_obu_extension_header() {
+        let err = parse_obu_stream(&[0x0e]).unwrap_err();
+
+        assert!(
+            matches!(err, DecoderError::NotEnoughData(message) if message.contains("extension header"))
+        );
+    }
+
+    #[test]
+    fn rejects_truncated_obu_leb128_size_field() {
+        let err = parse_obu_stream(&[0x0a, 0x80]).unwrap_err();
+
+        assert!(
+            matches!(err, DecoderError::NotEnoughData(message) if message.contains("leb128 size"))
+        );
+    }
+
+    #[test]
+    fn rejects_obu_payload_extending_beyond_item_data() {
+        let err = parse_obu_stream(&[0x0a, 0x02, 0xff]).unwrap_err();
+
+        assert!(
+            matches!(err, DecoderError::NotEnoughData(message) if message.contains("payload extends"))
+        );
+    }
+
+    #[test]
     fn rejects_forbidden_obu_bit() {
         let err = parse_obu_stream(&[0x80]).unwrap_err();
         assert!(err.to_string().contains("forbidden bit"));

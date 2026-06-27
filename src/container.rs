@@ -1101,6 +1101,33 @@ mod tests {
     }
 
     #[test]
+    fn rejects_truncated_top_level_box_header() {
+        let err = parse_avif(&[0, 0, 0]).unwrap_err();
+
+        assert!(
+            matches!(err, DecoderError::NotEnoughData(message) if message.contains("box header"))
+        );
+    }
+
+    #[test]
+    fn rejects_box_size_smaller_than_header() {
+        let err = read_box_header(&[0, 0, 0, 4, b'f', b't', b'y', b'p'], 0, 8).unwrap_err();
+
+        assert!(
+            matches!(err, DecoderError::Bitstream(message) if message.contains("smaller than its header"))
+        );
+    }
+
+    #[test]
+    fn rejects_box_extending_beyond_parent() {
+        let err = read_box_header(&[0, 0, 0, 12, b'f', b't', b'y', b'p'], 0, 8).unwrap_err();
+
+        assert!(
+            matches!(err, DecoderError::NotEnoughData(message) if message.contains("beyond parent"))
+        );
+    }
+
+    #[test]
     fn color_information_exposes_nclx_and_icc_payloads() {
         let nclx = parse_colr(&[
             b'n', b'c', b'l', b'x', //

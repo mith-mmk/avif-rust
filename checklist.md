@@ -126,6 +126,8 @@ This is the current highest-priority implementation block. Entropy components th
 ## 6. Safety and performance
 
 - [ ] Add malformed/truncated container, OBU and entropy-stream tests.
+  - [x] Cover truncated top-level box headers, invalid box sizes, truncated OBU headers/size fields, overlong OBU payloads and malformed entropy termination/CDF inputs.
+  - [ ] Expand malformed regression fixtures as new supported parser paths are added.
 - [ ] Check all dimensions, offsets, allocations and arithmetic for overflow and resource limits.
 - [ ] Add fuzz targets for container boxes, OBU headers, frame headers and tile entropy.
 - [ ] Optimise allocations only after conformance and safety gates pass.

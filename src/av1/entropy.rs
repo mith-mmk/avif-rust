@@ -212,6 +212,27 @@ mod tests {
     }
 
     #[test]
+    fn exit_rejects_missing_trailing_one_bit() {
+        let mut decoder = EntropyDecoder::new(&[0, 0], false).unwrap();
+        let err = decoder.exit().unwrap_err();
+
+        assert!(
+            matches!(err, DecoderError::Bitstream(message) if message.contains("trailing one bit"))
+        );
+    }
+
+    #[test]
+    fn read_symbol_rejects_malformed_cdf_terminal() {
+        let mut decoder = EntropyDecoder::new(&[0xff, 0x80], false).unwrap();
+        let mut cdf = [1 << 14, (1 << 15) - 1, 0];
+        let err = decoder.read_symbol(&mut cdf).unwrap_err();
+
+        assert!(
+            matches!(err, DecoderError::Bitstream(message) if message.contains("terminal value"))
+        );
+    }
+
+    #[test]
     fn updates_cdf_count_when_enabled() {
         let mut cdf = [1 << 14, 1 << 15, 0];
         update_cdf(&mut cdf, 0);
