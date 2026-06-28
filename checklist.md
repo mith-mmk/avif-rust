@@ -49,6 +49,7 @@ AVIF sequences, encoding, HDR tone mapping and ICC application are later milesto
   - [x] Split per-plane reconstruction and prediction helpers into `tile_decode::reconstruction`.
   - [x] Split palette block syntax reading into `tile_decode::palette`.
   - [x] Split intra block-mode syntax reading into `tile_decode::block_syntax`.
+  - [x] Split luma decode flow and partition-recursive block decoding into `tile_decode::decode_flow`.
   - [ ] Split block syntax/reconstruction diagnostics out of the remaining oversized tile decoder.
 - [ ] Move tests out of implementation modules as files are split.
   - [x] Move reusable conformance/oracle assertions into integration-test support code.
