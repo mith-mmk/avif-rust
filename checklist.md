@@ -46,11 +46,13 @@ AVIF sequences, encoding, HDR tone mapping and ICC application are later milesto
 - [ ] Split oversized decode code by responsibility: block syntax, coefficient entropy, reconstruction state and diagnostics.
   - [x] Split palette cache/context helpers into `tile_decode::palette`.
   - [x] Split public and internal decode diagnostic probe structs into `tile_decode::diagnostic`.
+  - [x] Split per-plane reconstruction and prediction helpers into `tile_decode::reconstruction`.
   - [ ] Split block syntax/reconstruction diagnostics out of the remaining oversized tile decoder.
 - [ ] Move tests out of implementation modules as files are split.
   - [x] Move reusable conformance/oracle assertions into integration-test support code.
   - [x] Move public container/OBU sample and malformed-input checks into integration tests.
   - [x] Move public AV1 config/header/tile/decode-plan sample checks into integration tests.
+  - [x] Move prediction/reconstruction private unit tests with the reconstruction helpers.
   - [ ] Continue moving private implementation tests as decode modules are split.
 
 ## 2. AV1 entropy and coefficient decoding
