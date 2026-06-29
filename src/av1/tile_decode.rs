@@ -2,9 +2,9 @@ use super::cdf::CdfContext;
 use super::decode::TileDecodePlan;
 use super::entropy::EntropyDecoder;
 use super::frame::{FrameHeader, RestorationParams};
-use super::quant::{QuantState, dequantize_coefficients};
+use super::quant::QuantState;
 use super::syntax::{BlockSize, Partition, PredictionMode, TxSize, TxType};
-use super::transform::{TransformBlock, coefficient_scan, inverse_transform};
+use super::transform::{TransformBlock, coefficient_scan};
 use crate::DecoderError;
 
 mod block_syntax;
@@ -16,6 +16,7 @@ mod palette;
 mod partition_syntax;
 mod public_api;
 mod reconstruction;
+mod residual_preview;
 mod restoration_syntax;
 
 use coefficient::{CoefficientRead, EntropyCoefficientSource, decode_coefficients};
@@ -34,15 +35,13 @@ pub use diagnostic::{
     BlockModeProbe, DecodedBlockPrefix, DecodedLumaBlock, DecodedTransform, PartitionProbe,
     ResidualProbe, TileEntropyState,
 };
-use diagnostic::{
-    CoeffBaseProbe, CoeffBaseRead, CoeffBrProbe, CoeffSignRead, DequantCoeffProbe, ResidualPreview,
-    TxTypeProbe,
-};
+use diagnostic::{CoeffBaseProbe, CoeffBaseRead, CoeffBrProbe, CoeffSignRead, TxTypeProbe};
 pub use public_api::{
     decode_first_luma_block, decode_first_luma_transform, decode_luma_root_block_prefix,
     decode_luma_root_blocks, prepare_tile_entropy, probe_first_block_residuals,
     probe_tile_block_modes, probe_tile_partitions,
 };
+use residual_preview::build_residual_preview;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PlaneEntropyContexts {
@@ -566,22 +565,6 @@ impl<'a> TileDecoder<'a> {
                 coeff_base_read.base_levels.len(),
                 non_zero_transform.tx_size.sample_count()
             );
-            let plane_quant = quant_state.plane(non_zero_transform.plane);
-            let dequant = dequantize_coefficients(
-                &coeff_base_read.base_levels,
-                plane_quant,
-                bit_depth,
-                non_zero_transform.tx_size.dq_denom(),
-            );
-            let dequant_non_zero_count = dequant.iter().filter(|value| **value != 0).count();
-            let first_dequant_coeff =
-                dequant
-                    .iter()
-                    .copied()
-                    .enumerate()
-                    .find_map(|(position, value)| {
-                        (value != 0).then_some(DequantCoeffProbe { position, value })
-                    });
             let residual_preview = build_residual_preview(
                 non_zero_transform,
                 &coeff_base_read.base_levels,
@@ -633,9 +616,17 @@ impl<'a> TileDecoder<'a> {
                     .first_signed_coeff
                     .map(|first| first.position),
                 coeff_base_read.first_signed_coeff.map(|first| first.value),
-                Some(dequant_non_zero_count),
-                first_dequant_coeff.map(|first| first.position),
-                first_dequant_coeff.map(|first| first.value),
+                residual_preview
+                    .as_ref()
+                    .map(|preview| preview.dequant_non_zero_count),
+                residual_preview
+                    .as_ref()
+                    .and_then(|preview| preview.first_dequant_coeff)
+                    .map(|first| first.position),
+                residual_preview
+                    .as_ref()
+                    .and_then(|preview| preview.first_dequant_coeff)
+                    .map(|first| first.value),
                 residual_preview.as_ref().map(|preview| preview.tx_type),
                 residual_preview
                     .as_ref()
@@ -974,56 +965,6 @@ fn fill_mi_grid_clone<T: Clone>(
             grid[mi_row * mi_cols + mi_col] = value.clone();
         }
     }
-}
-
-fn build_residual_preview(
-    transform: TransformBlock,
-    coefficients: &[i32],
-    quant_state: QuantState,
-    bit_depth: u8,
-    tx_type: TxType,
-) -> Result<Option<ResidualPreview>, DecoderError> {
-    if coefficients.len() != transform.tx_size.sample_count() {
-        return Err(DecoderError::InvalidParam(
-            "AV1 residual preview coefficient count does not match transform size".to_string(),
-        ));
-    }
-    if !matches!(
-        tx_type,
-        TxType::DctDct
-            | TxType::AdstDct
-            | TxType::DctAdst
-            | TxType::AdstAdst
-            | TxType::Identity
-            | TxType::VerticalDct
-            | TxType::HorizontalDct
-    ) {
-        return Ok(None);
-    }
-    let plane_quant = quant_state.plane(transform.plane);
-    let dequant = dequantize_coefficients(
-        coefficients,
-        plane_quant,
-        bit_depth,
-        transform.tx_size.dq_denom(),
-    );
-    let first_dequant_coeff = dequant
-        .iter()
-        .copied()
-        .enumerate()
-        .find_map(|(position, value)| {
-            (value != 0).then_some(DequantCoeffProbe { position, value })
-        });
-    let dequant_non_zero_count = dequant.iter().filter(|value| **value != 0).count();
-    let residual = inverse_transform(tx_type, transform.tx_size, &dequant, bit_depth)?;
-    let first_residual_sample = residual.first().copied();
-    Ok(Some(ResidualPreview {
-        tx_type,
-        dequant_non_zero_count,
-        first_dequant_coeff,
-        residual_sample_count: residual.len(),
-        first_residual_sample,
-    }))
 }
 
 #[cfg(test)]
