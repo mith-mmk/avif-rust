@@ -9,6 +9,7 @@ use crate::DecoderError;
 
 mod block_syntax;
 mod coefficient;
+mod coefficient_context;
 mod decode_flow;
 mod diagnostic;
 mod palette;
@@ -18,25 +19,30 @@ mod reconstruction;
 mod restoration_syntax;
 
 use coefficient::{CoefficientRead, EntropyCoefficientSource, decode_coefficients};
+#[cfg(test)]
+#[allow(unused_imports)]
+use coefficient_context::{
+    BR_CDF_SIZE, COEFF_BR_CDF_ROUNDS, COEFF_CONTEXT_BITS, COEFFICIENT_LEVEL_MASK,
+    MAX_BASE_BR_RANGE, NUM_BASE_LEVELS, clamp_coefficient_level, coeff_base_context_1d,
+    coeff_base_context_2d, coeff_base_eob_context, coeff_base_non_zero_count, coeff_br_context_1d,
+    coeff_br_context_2d, eob_base_from_pt, eob_multisize, eob_tx_class_context, first_signed_coeff,
+};
+use coefficient_context::{
+    TxbContext, coefficient_entropy_context, set_txb_entropy_context, txb_context,
+};
 pub use diagnostic::{
     BlockModeProbe, DecodedBlockPrefix, DecodedLumaBlock, DecodedTransform, PartitionProbe,
     ResidualProbe, TileEntropyState,
 };
 use diagnostic::{
     CoeffBaseProbe, CoeffBaseRead, CoeffBrProbe, CoeffSignRead, DequantCoeffProbe, ResidualPreview,
-    SignedCoeffProbe, TxTypeProbe,
+    TxTypeProbe,
 };
 pub use public_api::{
     decode_first_luma_block, decode_first_luma_transform, decode_luma_root_block_prefix,
     decode_luma_root_blocks, prepare_tile_entropy, probe_first_block_residuals,
     probe_tile_block_modes, probe_tile_partitions,
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TxbContext {
-    skip: usize,
-    dc_sign: usize,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PlaneEntropyContexts {
@@ -891,116 +897,6 @@ fn ceil_log2(value: usize) -> usize {
     }
 }
 
-const COEFF_CONTEXT_BITS: u8 = 3;
-const COEFF_CONTEXT_MASK: u8 = (1 << COEFF_CONTEXT_BITS) - 1;
-const TXB_SKIP_CONTEXTS: [[usize; 5]; 5] = [
-    [1, 2, 2, 2, 3],
-    [2, 4, 4, 4, 5],
-    [2, 4, 4, 4, 5],
-    [2, 4, 4, 4, 5],
-    [3, 5, 5, 5, 6],
-];
-
-fn txb_context(
-    block_size: BlockSize,
-    transform: TransformBlock,
-    above: &[u8],
-    left: &[u8],
-) -> TxbContext {
-    let col = transform.x >> 2;
-    let row = transform.y >> 2;
-    let width_units = transform.tx_size.width() >> 2;
-    let height_units = transform.tx_size.height() >> 2;
-    let above_contexts = above
-        .get(col..col.saturating_add(width_units).min(above.len()))
-        .unwrap_or(&[]);
-    let left_contexts = left
-        .get(row..row.saturating_add(height_units).min(left.len()))
-        .unwrap_or(&[]);
-
-    let dc_sign_sum = above_contexts
-        .iter()
-        .chain(left_contexts)
-        .map(|value| match value >> COEFF_CONTEXT_BITS {
-            1 => -1,
-            2 => 1,
-            _ => 0,
-        })
-        .sum::<i32>();
-    let dc_sign = match dc_sign_sum.cmp(&0) {
-        std::cmp::Ordering::Less => 1,
-        std::cmp::Ordering::Equal => 0,
-        std::cmp::Ordering::Greater => 2,
-    };
-
-    let skip = if transform.plane == 0 {
-        if block_size.width() == transform.tx_size.width()
-            && block_size.height() == transform.tx_size.height()
-        {
-            0
-        } else {
-            let top = above_contexts
-                .iter()
-                .fold(0, |value, context| value | context)
-                & COEFF_CONTEXT_MASK;
-            let left = left_contexts
-                .iter()
-                .fold(0, |value, context| value | context)
-                & COEFF_CONTEXT_MASK;
-            TXB_SKIP_CONTEXTS[usize::from(top.min(4))][usize::from(left.min(4))]
-        }
-    } else {
-        let base = usize::from(above_contexts.iter().any(|value| *value != 0))
-            + usize::from(left_contexts.iter().any(|value| *value != 0));
-        let offset = if block_size.width() * block_size.height()
-            > transform.tx_size.width() * transform.tx_size.height()
-        {
-            10
-        } else {
-            7
-        };
-        base + offset
-    };
-
-    TxbContext { skip, dc_sign }
-}
-
-fn coefficient_entropy_context(coefficients: &[i32]) -> u8 {
-    let mut context = coefficients
-        .iter()
-        .map(|coefficient| coefficient.unsigned_abs() as u64)
-        .sum::<u64>()
-        .min(u64::from(COEFF_CONTEXT_MASK)) as u8;
-    if let Some(dc) = coefficients.first() {
-        if *dc < 0 {
-            context |= 1 << COEFF_CONTEXT_BITS;
-        } else if *dc > 0 {
-            context += 2 << COEFF_CONTEXT_BITS;
-        }
-    }
-    context
-}
-
-fn set_txb_entropy_context(
-    transform: TransformBlock,
-    value: u8,
-    above: &mut [u8],
-    left: &mut [u8],
-) {
-    let col = transform.x >> 2;
-    let row = transform.y >> 2;
-    let width_units = transform.tx_size.width() >> 2;
-    let height_units = transform.tx_size.height() >> 2;
-    let above_end = col.saturating_add(width_units).min(above.len());
-    if let Some(contexts) = above.get_mut(col..above_end) {
-        contexts.fill(value);
-    }
-    let left_end = row.saturating_add(height_units).min(left.len());
-    if let Some(contexts) = left.get_mut(row..left_end) {
-        contexts.fill(value);
-    }
-}
-
 fn intra_mode_context(mode: PredictionMode) -> usize {
     match mode {
         PredictionMode::Dc => 0,
@@ -1080,78 +976,6 @@ fn fill_mi_grid_clone<T: Clone>(
     }
 }
 
-fn eob_tx_class_context(tx_type: TxType) -> usize {
-    usize::from(matches!(
-        tx_type,
-        TxType::VerticalDct | TxType::HorizontalDct
-    ))
-}
-
-#[cfg(test)]
-fn eob_multisize(transform: TransformBlock) -> usize {
-    usize::from(transform.tx_size.width_log2().min(5) + transform.tx_size.height_log2().min(5) - 4)
-}
-
-fn eob_base_from_pt(eob_pt: usize) -> usize {
-    if eob_pt < 2 {
-        eob_pt
-    } else {
-        (1 << (eob_pt - 2)) + 1
-    }
-}
-
-fn coeff_base_eob_context(tx_size: super::syntax::TxSize, scan_index: usize) -> usize {
-    let samples = coeff_scan_sample_count(tx_size);
-    if scan_index == 0 {
-        0
-    } else if scan_index <= samples / 8 {
-        1
-    } else if scan_index <= samples / 4 {
-        2
-    } else {
-        3
-    }
-}
-
-fn coeff_scan_sample_count(tx_size: super::syntax::TxSize) -> usize {
-    tx_size.width().min(32) * tx_size.height().min(32)
-}
-
-fn coeff_base_non_zero_count(base_levels: &[i32]) -> usize {
-    let mut non_zero_count = 0usize;
-    for level in base_levels.iter().copied() {
-        let magnitude = level.unsigned_abs() as usize;
-        if magnitude != 0 {
-            non_zero_count += 1;
-        }
-    }
-    non_zero_count
-}
-
-fn first_signed_coeff(
-    eob: usize,
-    scan: &[usize],
-    coefficients: &[i32],
-) -> Result<Option<SignedCoeffProbe>, DecoderError> {
-    if eob == 0 || eob > scan.len() {
-        return Err(DecoderError::InvalidParam(
-            "AV1 signed coefficient eob exceeds scan".to_string(),
-        ));
-    }
-    for scan_index in 0..eob {
-        let position = scan[scan_index];
-        let value = coefficients[position];
-        if value != 0 {
-            return Ok(Some(SignedCoeffProbe {
-                scan_index,
-                position,
-                value,
-            }));
-        }
-    }
-    Ok(None)
-}
-
 fn build_residual_preview(
     transform: TransformBlock,
     coefficients: &[i32],
@@ -1202,235 +1026,9 @@ fn build_residual_preview(
     }))
 }
 
-const NUM_BASE_LEVELS: usize = 2;
-const COEFF_BASE_RANGE: usize = 12;
-const BR_CDF_SIZE: usize = 4;
-const COEFF_BR_CDF_ROUNDS: usize = COEFF_BASE_RANGE / (BR_CDF_SIZE - 1);
-const MAX_BASE_BR_RANGE: usize = NUM_BASE_LEVELS + COEFF_BASE_RANGE + 1;
-const BR_LEVEL_CAP: usize = COEFF_BASE_RANGE + NUM_BASE_LEVELS + 1;
-const COEFFICIENT_LEVEL_MASK: usize = (1 << 20) - 1;
-
-fn clamp_coefficient_level(level: usize) -> usize {
-    level & COEFFICIENT_LEVEL_MASK
-}
-
 #[cfg(test)]
 #[path = "tests/tile_decode_coeff.rs"]
 mod coeff_tests;
-
-const MAG_REF_OFFSET_WITH_TX_CLASS_2D: [(usize, usize); 3] = [(0, 1), (1, 0), (1, 1)];
-const SIG_REF_DIFF_OFFSET_2D: [(usize, usize); 5] = [(0, 1), (1, 0), (1, 1), (0, 2), (2, 0)];
-const COEFF_BASE_CTX_OFFSET_SQUARE: [[[usize; 5]; 5]; 5] = [
-    [
-        [0, 1, 6, 6, 0],
-        [1, 6, 6, 21, 0],
-        [6, 6, 21, 21, 0],
-        [6, 21, 21, 21, 0],
-        [0, 0, 0, 0, 0],
-    ],
-    [
-        [0, 1, 6, 6, 21],
-        [1, 6, 6, 21, 21],
-        [6, 6, 21, 21, 21],
-        [6, 21, 21, 21, 21],
-        [21, 21, 21, 21, 21],
-    ],
-    [
-        [0, 1, 6, 6, 21],
-        [1, 6, 6, 21, 21],
-        [6, 6, 21, 21, 21],
-        [6, 21, 21, 21, 21],
-        [21, 21, 21, 21, 21],
-    ],
-    [
-        [0, 1, 6, 6, 21],
-        [1, 6, 6, 21, 21],
-        [6, 6, 21, 21, 21],
-        [6, 21, 21, 21, 21],
-        [21, 21, 21, 21, 21],
-    ],
-    [
-        [0, 1, 6, 6, 21],
-        [1, 6, 6, 21, 21],
-        [6, 6, 21, 21, 21],
-        [6, 21, 21, 21, 21],
-        [21, 21, 21, 21, 21],
-    ],
-];
-
-fn coeff_base_context_2d(
-    tx_size: super::syntax::TxSize,
-    position: usize,
-    quant: &[i32],
-) -> Result<(usize, usize), DecoderError> {
-    if quant.len() != tx_size.sample_count() {
-        return Err(DecoderError::InvalidParam(
-            "AV1 coeff_base context quant buffer size does not match transform size".to_string(),
-        ));
-    }
-    if position >= quant.len() {
-        return Err(DecoderError::InvalidParam(
-            "AV1 coeff_base context position exceeds transform size".to_string(),
-        ));
-    }
-
-    let width = tx_size.width();
-    let height = tx_size.height();
-    let row = position / width;
-    let col = position % width;
-    let mut magnitude = 0usize;
-    for (row_offset, col_offset) in SIG_REF_DIFF_OFFSET_2D {
-        let ref_row = row + row_offset;
-        let ref_col = col + col_offset;
-        if ref_row < height && ref_col < width {
-            magnitude += quant[ref_row * width + ref_col].unsigned_abs().min(3) as usize;
-        }
-    }
-
-    if row == 0 && col == 0 {
-        return Ok((0, magnitude));
-    }
-
-    let context_delta = ((magnitude + 1) >> 1).min(4);
-    let offset = COEFF_BASE_CTX_OFFSET_SQUARE[tx_size.coeff_cdf_index()][row.min(4)][col.min(4)];
-    Ok((context_delta + offset, magnitude))
-}
-
-fn coeff_base_context_1d(
-    tx_size: super::syntax::TxSize,
-    tx_type: TxType,
-    position: usize,
-    quant: &[i32],
-) -> Result<(usize, usize), DecoderError> {
-    if quant.len() != tx_size.sample_count() || position >= quant.len() {
-        return Err(DecoderError::InvalidParam(
-            "AV1 1D coeff_base context input is invalid".to_string(),
-        ));
-    }
-    let width = tx_size.width();
-    let height = tx_size.height();
-    let row = position / width;
-    let col = position % width;
-    let offsets: [(usize, usize); 5] = match tx_type {
-        TxType::VerticalDct => [(0, 1), (1, 0), (0, 2), (0, 3), (0, 4)],
-        TxType::HorizontalDct => [(0, 1), (1, 0), (2, 0), (3, 0), (4, 0)],
-        _ => {
-            return Err(DecoderError::InvalidParam(
-                "AV1 1D coeff_base context requires a directional transform".to_string(),
-            ));
-        }
-    };
-    let magnitude = offsets
-        .into_iter()
-        .filter_map(|(dy, dx)| {
-            let y = row + dy;
-            let x = col + dx;
-            (y < height && x < width).then(|| quant[y * width + x].unsigned_abs().min(3) as usize)
-        })
-        .sum::<usize>();
-    if position == 0 {
-        return Ok((0, magnitude));
-    }
-    let delta = ((magnitude + 1) >> 1).min(4);
-    let axis = if tx_type == TxType::HorizontalDct {
-        row
-    } else {
-        col
-    };
-    let offset = if axis == 0 {
-        26
-    } else if axis == 1 {
-        31
-    } else {
-        36
-    };
-    Ok((offset + delta, magnitude))
-}
-
-fn coeff_br_context_2d(
-    tx_size: super::syntax::TxSize,
-    position: usize,
-    quant: &[i32],
-) -> Result<usize, DecoderError> {
-    if quant.len() != tx_size.sample_count() {
-        return Err(DecoderError::InvalidParam(
-            "AV1 coeff_br context quant buffer size does not match transform size".to_string(),
-        ));
-    }
-    if position >= quant.len() {
-        return Err(DecoderError::InvalidParam(
-            "AV1 coeff_br context position exceeds transform size".to_string(),
-        ));
-    }
-
-    let width = tx_size.width();
-    let height = tx_size.height();
-    let row = position / width;
-    let col = position % width;
-    let mut magnitude = 0usize;
-    for (row_offset, col_offset) in MAG_REF_OFFSET_WITH_TX_CLASS_2D {
-        let ref_row = row + row_offset;
-        let ref_col = col + col_offset;
-        if ref_row < height && ref_col < width {
-            magnitude +=
-                (quant[ref_row * width + ref_col].unsigned_abs() as usize).min(BR_LEVEL_CAP);
-        }
-    }
-
-    let magnitude_context = ((magnitude + 1) >> 1).min(6);
-    if position == 0 {
-        Ok(magnitude_context)
-    } else if row < 2 && col < 2 {
-        Ok(magnitude_context + 7)
-    } else {
-        Ok(magnitude_context + 14)
-    }
-}
-
-fn coeff_br_context_1d(
-    tx_size: super::syntax::TxSize,
-    tx_type: TxType,
-    position: usize,
-    quant: &[i32],
-) -> Result<usize, DecoderError> {
-    if quant.len() != tx_size.sample_count() || position >= quant.len() {
-        return Err(DecoderError::InvalidParam(
-            "AV1 1D coeff_br context input is invalid".to_string(),
-        ));
-    }
-    let width = tx_size.width();
-    let height = tx_size.height();
-    let row = position / width;
-    let col = position % width;
-    let offsets = match tx_type {
-        TxType::VerticalDct => [(0, 1), (1, 0), (0, 2)],
-        TxType::HorizontalDct => [(0, 1), (1, 0), (2, 0)],
-        _ => {
-            return Err(DecoderError::InvalidParam(
-                "AV1 1D coeff_br context requires a directional transform".to_string(),
-            ));
-        }
-    };
-    let magnitude = offsets
-        .into_iter()
-        .filter_map(|(dy, dx)| {
-            let y = row + dy;
-            let x = col + dx;
-            (y < height && x < width)
-                .then(|| (quant[y * width + x].unsigned_abs() as usize).min(BR_LEVEL_CAP))
-        })
-        .sum::<usize>();
-    let delta = ((magnitude + 1) >> 1).min(6);
-    if position == 0 {
-        Ok(delta)
-    } else if (tx_type == TxType::HorizontalDct && row == 0)
-        || (tx_type == TxType::VerticalDct && col == 0)
-    {
-        Ok(delta + 7)
-    } else {
-        Ok(delta + 14)
-    }
-}
 
 #[cfg(test)]
 mod tests {

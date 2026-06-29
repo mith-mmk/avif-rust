@@ -1,9 +1,12 @@
+use super::coefficient_context::{
+    BR_CDF_SIZE, COEFF_BR_CDF_ROUNDS, MAX_BASE_BR_RANGE, NUM_BASE_LEVELS, clamp_coefficient_level,
+    coeff_base_context_1d, coeff_base_context_2d, coeff_base_eob_context,
+    coeff_base_non_zero_count, coeff_br_context_1d, coeff_br_context_2d, eob_base_from_pt,
+    eob_tx_class_context, first_signed_coeff,
+};
 use super::{
-    BR_CDF_SIZE, COEFF_BR_CDF_ROUNDS, CoeffBaseProbe, CoeffBaseRead, CoeffBrProbe, CoeffSignRead,
-    DecoderError, EntropyDecoder, MAX_BASE_BR_RANGE, NUM_BASE_LEVELS, TxSize, TxType,
-    clamp_coefficient_level, coeff_base_context_1d, coeff_base_context_2d, coeff_base_eob_context,
-    coeff_base_non_zero_count, coeff_br_context_1d, coeff_br_context_2d, coefficient_scan,
-    eob_base_from_pt, eob_tx_class_context, first_signed_coeff,
+    CoeffBaseProbe, CoeffBaseRead, CoeffBrProbe, CoeffSignRead, DecoderError, EntropyDecoder,
+    TxSize, TxType, coefficient_scan,
 };
 use crate::av1::cdf::CdfContext;
 

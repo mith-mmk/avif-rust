@@ -53,6 +53,7 @@ AVIF sequences, encoding, HDR tone mapping and ICC application are later milesto
   - [x] Split partition syntax reading into `tile_decode::partition_syntax`.
   - [x] Split loop-restoration syntax reading into `tile_decode::restoration_syntax`.
   - [x] Split public diagnostic/decode wrappers and tile payload bounds helper into `tile_decode::public_api`.
+  - [x] Split coefficient/txb context helpers into `tile_decode::coefficient_context`.
   - [ ] Split block syntax/reconstruction diagnostics out of the remaining oversized tile decoder.
 - [ ] Move tests out of implementation modules as files are split.
   - [x] Move reusable conformance/oracle assertions into integration-test support code.
