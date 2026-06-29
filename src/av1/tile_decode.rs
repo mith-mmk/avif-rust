@@ -1,16 +1,10 @@
 use super::cdf::CdfContext;
-use super::decode::{FrameBuffers, FrameDecodePlan, TileDecodePlan};
+use super::decode::TileDecodePlan;
 use super::entropy::EntropyDecoder;
 use super::frame::{FrameHeader, RestorationParams};
-use super::predict::{IntraEdges, predict_intra};
 use super::quant::{QuantState, dequantize_coefficients};
-use super::sequence::SequenceHeader;
 use super::syntax::{BlockSize, Partition, PredictionMode, TxSize, TxType};
-use super::tile_group::TileGroup;
-use super::transform::{
-    QuantizedTransform, TransformBlock, coefficient_scan, inverse_transform,
-    plan_transform_blocks_with_tx_size, reconstruct_transform_block,
-};
+use super::transform::{TransformBlock, coefficient_scan, inverse_transform};
 use crate::DecoderError;
 
 mod block_syntax;
@@ -19,11 +13,11 @@ mod decode_flow;
 mod diagnostic;
 mod palette;
 mod partition_syntax;
+mod public_api;
 mod reconstruction;
 mod restoration_syntax;
 
 use coefficient::{CoefficientRead, EntropyCoefficientSource, decode_coefficients};
-use decode_flow::{decode_luma_block_tree, decode_luma_root_block};
 pub use diagnostic::{
     BlockModeProbe, DecodedBlockPrefix, DecodedLumaBlock, DecodedTransform, PartitionProbe,
     ResidualProbe, TileEntropyState,
@@ -31,6 +25,11 @@ pub use diagnostic::{
 use diagnostic::{
     CoeffBaseProbe, CoeffBaseRead, CoeffBrProbe, CoeffSignRead, DequantCoeffProbe, ResidualPreview,
     SignedCoeffProbe, TxTypeProbe,
+};
+pub use public_api::{
+    decode_first_luma_block, decode_first_luma_transform, decode_luma_root_block_prefix,
+    decode_luma_root_blocks, prepare_tile_entropy, probe_first_block_residuals,
+    probe_tile_block_modes, probe_tile_partitions,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1433,389 +1432,10 @@ fn coeff_br_context_1d(
     }
 }
 
-pub fn prepare_tile_entropy(
-    data: &[u8],
-    tile_group: &TileGroup,
-    frame: &FrameHeader,
-) -> Result<Vec<TileEntropyState>, DecoderError> {
-    if tile_group.tiles.is_empty() {
-        return Err(DecoderError::Bitstream(
-            "AV1 tile group has no tile payloads".to_string(),
-        ));
-    }
-
-    let mut states = Vec::with_capacity(tile_group.tiles.len());
-    for tile in &tile_group.tiles {
-        let end = tile
-            .offset
-            .checked_add(tile.len)
-            .ok_or_else(|| DecoderError::Bitstream("AV1 tile payload end overflow".to_string()))?;
-        let payload = data.get(tile.offset..end).ok_or_else(|| {
-            DecoderError::NotEnoughData("AV1 tile payload extends beyond tile group".to_string())
-        })?;
-        let decoder = EntropyDecoder::new(payload, frame.disable_cdf_update)?;
-        states.push(TileEntropyState {
-            tile_id: tile.tile_id,
-            payload_offset: tile.offset,
-            payload_len: tile.len,
-            entropy_start_bits: decoder.bit_position(),
-        });
-    }
-    Ok(states)
-}
-
-pub fn probe_tile_partitions(
-    data: &[u8],
-    tile_group: &TileGroup,
-    sequence: &SequenceHeader,
-    frame: &FrameHeader,
-    plan: &FrameDecodePlan,
-) -> Result<Vec<PartitionProbe>, DecoderError> {
-    let mut probes = Vec::with_capacity(tile_group.tiles.len());
-    for (index, tile_payload) in tile_group.tiles.iter().enumerate() {
-        let end = tile_payload
-            .offset
-            .checked_add(tile_payload.len)
-            .ok_or_else(|| DecoderError::Bitstream("AV1 tile payload end overflow".to_string()))?;
-        let payload = data.get(tile_payload.offset..end).ok_or_else(|| {
-            DecoderError::NotEnoughData("AV1 tile payload extends beyond tile group".to_string())
-        })?;
-        let tile_plan = plan.tiles.get(index).ok_or_else(|| {
-            DecoderError::Bitstream("AV1 tile decode plan is missing a tile".to_string())
-        })?;
-        let mut decoder = TileDecoder::new(payload, frame)?;
-        probes.push(decoder.read_root_partition(tile_plan, sequence)?);
-    }
-    Ok(probes)
-}
-
-pub fn probe_tile_block_modes(
-    data: &[u8],
-    tile_group: &TileGroup,
-    sequence: &SequenceHeader,
-    frame: &FrameHeader,
-    plan: &FrameDecodePlan,
-) -> Result<Vec<BlockModeProbe>, DecoderError> {
-    let mut probes = Vec::with_capacity(tile_group.tiles.len());
-    for (index, tile_payload) in tile_group.tiles.iter().enumerate() {
-        let end = tile_payload
-            .offset
-            .checked_add(tile_payload.len)
-            .ok_or_else(|| DecoderError::Bitstream("AV1 tile payload end overflow".to_string()))?;
-        let payload = data.get(tile_payload.offset..end).ok_or_else(|| {
-            DecoderError::NotEnoughData("AV1 tile payload extends beyond tile group".to_string())
-        })?;
-        let tile_plan = plan.tiles.get(index).ok_or_else(|| {
-            DecoderError::Bitstream("AV1 tile decode plan is missing a tile".to_string())
-        })?;
-        let mut decoder = TileDecoder::new(payload, frame)?;
-        let partition = decoder.read_first_leaf_partition(tile_plan, sequence)?;
-        if partition.partition == Partition::None {
-            probes.push(decoder.read_intra_frame_block_mode(
-                sequence,
-                frame,
-                tile_plan,
-                partition.block_size,
-                tile_plan.pixel_x,
-                tile_plan.pixel_y,
-            )?);
-        }
-    }
-    Ok(probes)
-}
-
-pub fn probe_first_block_residuals(
-    data: &[u8],
-    tile_group: &TileGroup,
-    sequence: &SequenceHeader,
-    frame: &FrameHeader,
-    plan: &FrameDecodePlan,
-) -> Result<Vec<ResidualProbe>, DecoderError> {
-    let quant_state =
-        QuantState::from_params(&frame.quantization, sequence.color_config.bit_depth)?;
-    let mut probes = Vec::with_capacity(tile_group.tiles.len());
-    for (index, tile_payload) in tile_group.tiles.iter().enumerate() {
-        let end = tile_payload
-            .offset
-            .checked_add(tile_payload.len)
-            .ok_or_else(|| DecoderError::Bitstream("AV1 tile payload end overflow".to_string()))?;
-        let payload = data.get(tile_payload.offset..end).ok_or_else(|| {
-            DecoderError::NotEnoughData("AV1 tile payload extends beyond tile group".to_string())
-        })?;
-        let tile_plan = plan.tiles.get(index).ok_or_else(|| {
-            DecoderError::Bitstream("AV1 tile decode plan is missing a tile".to_string())
-        })?;
-        let mut decoder = TileDecoder::new(payload, frame)?;
-        let partition = decoder.read_first_leaf_partition(tile_plan, sequence)?;
-        if partition.partition == Partition::None {
-            let block_mode = decoder.read_intra_frame_block_mode(
-                sequence,
-                frame,
-                tile_plan,
-                partition.block_size,
-                tile_plan.pixel_x,
-                tile_plan.pixel_y,
-            )?;
-            let transforms = plan_transform_blocks_with_tx_size(
-                0,
-                0,
-                0,
-                block_mode.block_size,
-                block_mode.tx_size,
-                plan.width,
-                plan.height,
-            );
-            probes.push(decoder.read_first_transform_residual(
-                tile_plan.tile_id,
-                frame,
-                &block_mode,
-                &transforms,
-                quant_state,
-                sequence.color_config.bit_depth,
-            )?);
-        }
-    }
-    Ok(probes)
-}
-
-pub fn decode_first_luma_transform(
-    data: &[u8],
-    tile_group: &TileGroup,
-    sequence: &SequenceHeader,
-    frame: &FrameHeader,
-    plan: &FrameDecodePlan,
-    buffers: &mut FrameBuffers,
-) -> Result<ResidualProbe, DecoderError> {
-    let quant_state =
-        QuantState::from_params(&frame.quantization, sequence.color_config.bit_depth)?;
-    let tile_payload = tile_group.tiles.first().ok_or_else(|| {
-        DecoderError::Bitstream("AV1 tile group has no tile payloads".to_string())
-    })?;
-    let end = tile_payload
-        .offset
-        .checked_add(tile_payload.len)
-        .ok_or_else(|| DecoderError::Bitstream("AV1 tile payload end overflow".to_string()))?;
-    let payload = data.get(tile_payload.offset..end).ok_or_else(|| {
-        DecoderError::NotEnoughData("AV1 tile payload extends beyond tile group".to_string())
-    })?;
-    let tile_plan = plan
-        .tiles
-        .first()
-        .ok_or_else(|| DecoderError::Bitstream("AV1 tile decode plan is missing".to_string()))?;
-    let mut decoder = TileDecoder::new(payload, frame)?;
-    let partition = decoder.read_first_leaf_partition(tile_plan, sequence)?;
-
-    let block_mode = decoder.read_intra_frame_block_mode(
-        sequence,
-        frame,
-        tile_plan,
-        partition.block_size,
-        tile_plan.pixel_x,
-        tile_plan.pixel_y,
-    )?;
-    let transforms = plan_transform_blocks_with_tx_size(
-        0,
-        tile_plan.pixel_x,
-        tile_plan.pixel_y,
-        block_mode.block_size,
-        block_mode.tx_size,
-        plan.width,
-        plan.height,
-    );
-    let residual = decoder.read_first_transform_residual(
-        tile_plan.tile_id,
-        frame,
-        &block_mode,
-        &transforms,
-        quant_state,
-        sequence.color_config.bit_depth,
-    )?;
-
-    if residual.skipped || residual.first_non_zero_transform.is_none() {
-        return Ok(residual);
-    }
-    let transform = residual
-        .first_non_zero_transform
-        .expect("checked first_non_zero_transform");
-    let tx_type = residual
-        .tx_type
-        .ok_or_else(|| DecoderError::Bitstream("AV1 residual tx_type is missing".to_string()))?;
-    let coefficients = residual
-        .first_quantized_coefficients
-        .as_ref()
-        .ok_or_else(|| {
-            DecoderError::Bitstream("AV1 residual quantized coefficients are missing".to_string())
-        })?;
-    let mid = 1u16 << (sequence.color_config.bit_depth - 1);
-    let above = vec![mid; transform.tx_size.width()];
-    let left = vec![mid; transform.tx_size.height()];
-    let prediction = predict_intra(
-        block_mode.y_mode,
-        block_mode.angle_delta_y,
-        transform.tx_size.width(),
-        transform.tx_size.height(),
-        IntraEdges {
-            above: Some(&above),
-            left: Some(&left),
-            above_left: Some(mid),
-            bit_depth: sequence.color_config.bit_depth,
-        },
-    )?;
-    let quantized = QuantizedTransform {
-        block: transform,
-        tx_type,
-        coefficients: coefficients.clone(),
-    };
-    let luma = buffers
-        .planes
-        .get_mut(0)
-        .ok_or_else(|| DecoderError::Bitstream("AV1 luma plane is missing".to_string()))?;
-    reconstruct_transform_block(
-        luma,
-        &quantized,
-        quant_state.plane(transform.plane),
-        &prediction,
-        sequence.color_config.bit_depth,
-    )?;
-
-    Ok(residual)
-}
-
-pub fn decode_first_luma_block(
-    data: &[u8],
-    tile_group: &TileGroup,
-    sequence: &SequenceHeader,
-    frame: &FrameHeader,
-    plan: &FrameDecodePlan,
-    buffers: &mut FrameBuffers,
-) -> Result<Vec<DecodedTransform>, DecoderError> {
-    let tile_payload = tile_group.tiles.first().ok_or_else(|| {
-        DecoderError::Bitstream("AV1 tile group has no tile payloads".to_string())
-    })?;
-    let end = tile_payload
-        .offset
-        .checked_add(tile_payload.len)
-        .ok_or_else(|| DecoderError::Bitstream("AV1 tile payload end overflow".to_string()))?;
-    let payload = data.get(tile_payload.offset..end).ok_or_else(|| {
-        DecoderError::NotEnoughData("AV1 tile payload extends beyond tile group".to_string())
-    })?;
-    let tile_plan = plan
-        .tiles
-        .first()
-        .ok_or_else(|| DecoderError::Bitstream("AV1 tile decode plan is missing".to_string()))?;
-    let mut decoder = TileDecoder::new(payload, frame)?;
-    let block = decode_luma_root_block(
-        &mut decoder,
-        sequence,
-        frame,
-        tile_plan,
-        plan,
-        buffers,
-        tile_plan.pixel_x,
-        tile_plan.pixel_y,
-    )?;
-    Ok(block.transforms)
-}
-
-pub fn decode_luma_root_blocks(
-    data: &[u8],
-    tile_group: &TileGroup,
-    sequence: &SequenceHeader,
-    frame: &FrameHeader,
-    plan: &FrameDecodePlan,
-    buffers: &mut FrameBuffers,
-    max_blocks: usize,
-) -> Result<Vec<DecodedLumaBlock>, DecoderError> {
-    Ok(
-        decode_luma_root_block_prefix(
-            data, tile_group, sequence, frame, plan, buffers, max_blocks,
-        )?
-        .blocks,
-    )
-}
-
-pub fn decode_luma_root_block_prefix(
-    data: &[u8],
-    tile_group: &TileGroup,
-    sequence: &SequenceHeader,
-    frame: &FrameHeader,
-    plan: &FrameDecodePlan,
-    buffers: &mut FrameBuffers,
-    max_blocks: usize,
-) -> Result<DecodedBlockPrefix, DecoderError> {
-    if tile_group.tiles.is_empty() {
-        return Err(DecoderError::Bitstream(
-            "AV1 tile group has no tile payloads".to_string(),
-        ));
-    }
-    let mut blocks = Vec::new();
-    let mut block_budget = max_blocks;
-
-    for (tile_index, tile_payload) in tile_group.tiles.iter().enumerate() {
-        let payload = tile_payload_bytes(data, tile_payload)?;
-        let tile_plan = plan.tiles.get(tile_index).ok_or_else(|| {
-            DecoderError::Bitstream("AV1 tile decode plan is missing a tile".to_string())
-        })?;
-        let mut decoder = TileDecoder::new(payload, frame)?;
-        for sb_row in tile_plan.sb_row_start..tile_plan.sb_row_end {
-            for sb_col in tile_plan.sb_col_start..tile_plan.sb_col_end {
-                if block_budget == 0 {
-                    return Ok(DecodedBlockPrefix {
-                        blocks,
-                        next_unsupported: None,
-                    });
-                }
-                let x = (sb_col as usize * plan.superblock_size).min(plan.width);
-                let y = (sb_row as usize * plan.superblock_size).min(plan.height);
-                decoder.read_restoration_units(sequence, x, y)?;
-                let decoded = match decode_luma_block_tree(
-                    &mut decoder,
-                    sequence,
-                    frame,
-                    tile_plan,
-                    plan,
-                    buffers,
-                    BlockSize::Block128x128,
-                    x,
-                    y,
-                    &mut block_budget,
-                ) {
-                    Ok(blocks) => blocks,
-                    Err(err @ DecoderError::Unsupported(_)) if !blocks.is_empty() => {
-                        return Ok(DecodedBlockPrefix {
-                            blocks,
-                            next_unsupported: Some(err),
-                        });
-                    }
-                    Err(err) => return Err(err),
-                };
-                blocks.extend(decoded);
-            }
-        }
-    }
-
-    Ok(DecodedBlockPrefix {
-        blocks,
-        next_unsupported: None,
-    })
-}
-
-fn tile_payload_bytes<'a>(
-    data: &'a [u8],
-    tile_payload: &super::tile_group::TilePayload,
-) -> Result<&'a [u8], DecoderError> {
-    let end = tile_payload
-        .offset
-        .checked_add(tile_payload.len)
-        .ok_or_else(|| DecoderError::Bitstream("AV1 tile payload end overflow".to_string()))?;
-    data.get(tile_payload.offset..end).ok_or_else(|| {
-        DecoderError::NotEnoughData("AV1 tile payload extends beyond tile group".to_string())
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::av1::transform::plan_transform_blocks_with_tx_size;
     use crate::av1::{
         UvPredictionMode, alloc_frame_buffers, build_still_decode_plan, parse_frame_header,
         parse_sequence_header, parse_tile_group,
@@ -1833,27 +1453,6 @@ mod tests {
         assert!(!has_smooth_neighbour(&grid, 4, 4, 0, 0));
         assert!(PredictionMode::Smooth.is_smooth());
         assert!(!PredictionMode::Vertical.is_smooth());
-    }
-
-    #[test]
-    fn tile_payload_bytes_checks_bounds_for_each_tile() {
-        let data = b"0123456789";
-        let first = super::super::tile_group::TilePayload {
-            tile_id: 0,
-            offset: 2,
-            len: 3,
-        };
-        assert_eq!(tile_payload_bytes(data, &first).unwrap(), b"234");
-
-        let truncated = super::super::tile_group::TilePayload {
-            tile_id: 1,
-            offset: 8,
-            len: 4,
-        };
-        assert!(matches!(
-            tile_payload_bytes(data, &truncated),
-            Err(DecoderError::NotEnoughData(_))
-        ));
     }
 
     #[test]

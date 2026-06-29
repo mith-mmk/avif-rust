@@ -52,12 +52,14 @@ AVIF sequences, encoding, HDR tone mapping and ICC application are later milesto
   - [x] Split luma decode flow and partition-recursive block decoding into `tile_decode::decode_flow`.
   - [x] Split partition syntax reading into `tile_decode::partition_syntax`.
   - [x] Split loop-restoration syntax reading into `tile_decode::restoration_syntax`.
+  - [x] Split public diagnostic/decode wrappers and tile payload bounds helper into `tile_decode::public_api`.
   - [ ] Split block syntax/reconstruction diagnostics out of the remaining oversized tile decoder.
 - [ ] Move tests out of implementation modules as files are split.
   - [x] Move reusable conformance/oracle assertions into integration-test support code.
   - [x] Move public container/OBU sample and malformed-input checks into integration tests.
   - [x] Move public AV1 config/header/tile/decode-plan sample checks into integration tests.
   - [x] Move prediction/reconstruction private unit tests with the reconstruction helpers.
+  - [x] Move tile payload bounds unit test with public API helpers.
   - [ ] Continue moving private implementation tests as decode modules are split.
 
 ## 2. AV1 entropy and coefficient decoding
