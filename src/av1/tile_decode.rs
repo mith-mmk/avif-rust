@@ -19,6 +19,7 @@ mod public_api;
 mod reconstruction;
 mod residual_preview;
 mod restoration_syntax;
+mod syntax_helpers;
 mod tx_type_syntax;
 
 use coefficient::{CoefficientRead, EntropyCoefficientSource, decode_coefficients};
@@ -38,6 +39,7 @@ pub use diagnostic::{
     ResidualProbe, TileEntropyState,
 };
 use diagnostic::{CoeffBaseProbe, CoeffBaseRead, CoeffBrProbe, CoeffSignRead};
+use partition_syntax::{partition_plane_context, partition_subsize};
 pub use public_api::{
     decode_first_luma_block, decode_first_luma_transform, decode_luma_root_block_prefix,
     decode_luma_root_blocks, prepare_tile_entropy, probe_first_block_residuals,
@@ -749,57 +751,6 @@ impl<'a> TileDecoder<'a> {
     ) -> Result<CoefficientRead, DecoderError> {
         let mut source = EntropyCoefficientSource::new(&mut self.reader, &mut self.cdf);
         decode_coefficients(&mut source, tx_size, tx_type, plane_type, dc_sign_context)
-    }
-}
-
-fn partition_subsize(
-    block_size: BlockSize,
-    partition: Partition,
-) -> Result<BlockSize, DecoderError> {
-    let subsize = match partition {
-        Partition::None => Some(block_size),
-        Partition::Horizontal | Partition::HorizontalA | Partition::HorizontalB => {
-            block_size.horizontal_subsize()
-        }
-        Partition::Vertical | Partition::VerticalA | Partition::VerticalB => {
-            block_size.vertical_subsize()
-        }
-        Partition::Split => block_size.split_subsize(),
-        Partition::Horizontal4 => block_size.horizontal_4_subsize(),
-        Partition::Vertical4 => block_size.vertical_4_subsize(),
-    };
-    subsize.ok_or_else(|| {
-        DecoderError::Bitstream(format!(
-            "AV1 partition {partition:?} has no subsize for {block_size:?}"
-        ))
-    })
-}
-
-fn partition_symbol(partition: Partition) -> usize {
-    match partition {
-        Partition::None => 0,
-        Partition::Horizontal => 1,
-        Partition::Vertical => 2,
-        Partition::Split => 3,
-        Partition::HorizontalA => 4,
-        Partition::HorizontalB => 5,
-        Partition::VerticalA => 6,
-        Partition::VerticalB => 7,
-        Partition::Horizontal4 => 8,
-        Partition::Vertical4 => 9,
-    }
-}
-
-fn partition_plane_context(above: u8, left: u8, block_size: BlockSize) -> usize {
-    let bit = block_size.width_mi_log2().saturating_sub(1);
-    usize::from((above >> bit) & 1) + usize::from((left >> bit) & 1) * 2
-}
-
-fn ceil_log2(value: usize) -> usize {
-    if value <= 1 {
-        0
-    } else {
-        usize::BITS as usize - (value - 1).leading_zeros() as usize
     }
 }
 

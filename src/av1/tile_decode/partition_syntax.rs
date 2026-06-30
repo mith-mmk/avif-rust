@@ -1,4 +1,4 @@
-use super::{PartitionProbe, TileDecoder, partition_symbol};
+use super::{PartitionProbe, TileDecoder};
 use crate::DecoderError;
 use crate::av1::decode::TileDecodePlan;
 use crate::av1::sequence::SequenceHeader;
@@ -119,4 +119,47 @@ fn restricted_partition_cdf(source: &[u16], has_rows: bool) -> [u16; 3] {
 fn cdf_symbol_probability(cdf: &[u16], symbol: usize) -> u16 {
     let lower = if symbol == 0 { 0 } else { cdf[symbol - 1] };
     cdf[symbol].saturating_sub(lower)
+}
+
+pub(super) fn partition_subsize(
+    block_size: BlockSize,
+    partition: Partition,
+) -> Result<BlockSize, DecoderError> {
+    let subsize = match partition {
+        Partition::None => Some(block_size),
+        Partition::Horizontal | Partition::HorizontalA | Partition::HorizontalB => {
+            block_size.horizontal_subsize()
+        }
+        Partition::Vertical | Partition::VerticalA | Partition::VerticalB => {
+            block_size.vertical_subsize()
+        }
+        Partition::Split => block_size.split_subsize(),
+        Partition::Horizontal4 => block_size.horizontal_4_subsize(),
+        Partition::Vertical4 => block_size.vertical_4_subsize(),
+    };
+    subsize.ok_or_else(|| {
+        DecoderError::Bitstream(format!(
+            "AV1 partition {partition:?} has no subsize for {block_size:?}"
+        ))
+    })
+}
+
+fn partition_symbol(partition: Partition) -> usize {
+    match partition {
+        Partition::None => 0,
+        Partition::Horizontal => 1,
+        Partition::Vertical => 2,
+        Partition::Split => 3,
+        Partition::HorizontalA => 4,
+        Partition::HorizontalB => 5,
+        Partition::VerticalA => 6,
+        Partition::VerticalB => 7,
+        Partition::Horizontal4 => 8,
+        Partition::Vertical4 => 9,
+    }
+}
+
+pub(super) fn partition_plane_context(above: u8, left: u8, block_size: BlockSize) -> usize {
+    let bit = block_size.width_mi_log2().saturating_sub(1);
+    usize::from((above >> bit) & 1) + usize::from((left >> bit) & 1) * 2
 }
