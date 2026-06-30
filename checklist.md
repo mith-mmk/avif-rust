@@ -56,6 +56,7 @@ AVIF sequences, encoding, HDR tone mapping and ICC application are later milesto
   - [x] Split coefficient/txb context helpers into `tile_decode::coefficient_context`.
   - [x] Split residual preview diagnostics into `tile_decode::residual_preview`.
   - [x] Split mode/context grid helpers into `tile_decode::context_grid`.
+  - [x] Split intra transform-type syntax reading into `tile_decode::tx_type_syntax`.
   - [ ] Split block syntax/reconstruction diagnostics out of the remaining oversized tile decoder.
 - [ ] Move tests out of implementation modules as files are split.
   - [x] Move reusable conformance/oracle assertions into integration-test support code.
@@ -63,6 +64,7 @@ AVIF sequences, encoding, HDR tone mapping and ICC application are later milesto
   - [x] Move public AV1 config/header/tile/decode-plan sample checks into integration tests.
   - [x] Move prediction/reconstruction private unit tests with the reconstruction helpers.
   - [x] Move mode/context grid private unit tests with the context-grid helpers.
+  - [x] Move transform-type syntax private unit tests with the transform-type syntax helpers.
   - [x] Move tile payload bounds unit test with public API helpers.
   - [ ] Continue moving private implementation tests as decode modules are split.
 
