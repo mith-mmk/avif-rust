@@ -1,9 +1,12 @@
-use super::{BlockModeProbe, TileDecoder, fill_mi_grid, has_smooth_neighbour, intra_mode_context};
+use super::{BlockModeProbe, TileDecoder};
 use crate::DecoderError;
 use crate::av1::decode::TileDecodePlan;
 use crate::av1::frame::{FrameHeader, TxMode};
 use crate::av1::sequence::SequenceHeader;
 use crate::av1::syntax::{BlockSize, PredictionMode, TxSize, UvPredictionMode};
+use crate::av1::tile_decode::context_grid::{
+    fill_mi_grid, has_smooth_neighbour, intra_mode_context,
+};
 
 impl<'a> TileDecoder<'a> {
     pub fn read_intra_frame_block_mode(

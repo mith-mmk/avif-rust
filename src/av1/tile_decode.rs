@@ -3,13 +3,14 @@ use super::decode::TileDecodePlan;
 use super::entropy::EntropyDecoder;
 use super::frame::{FrameHeader, RestorationParams};
 use super::quant::QuantState;
-use super::syntax::{BlockSize, Partition, PredictionMode, TxSize, TxType};
+use super::syntax::{BlockSize, Partition, TxSize, TxType};
 use super::transform::{TransformBlock, coefficient_scan};
 use crate::DecoderError;
 
 mod block_syntax;
 mod coefficient;
 mod coefficient_context;
+mod context_grid;
 mod decode_flow;
 mod diagnostic;
 mod palette;
@@ -888,85 +889,6 @@ fn ceil_log2(value: usize) -> usize {
     }
 }
 
-fn intra_mode_context(mode: PredictionMode) -> usize {
-    match mode {
-        PredictionMode::Dc => 0,
-        PredictionMode::Vertical => 1,
-        PredictionMode::Horizontal => 2,
-        PredictionMode::Smooth
-        | PredictionMode::SmoothVertical
-        | PredictionMode::SmoothHorizontal => 3,
-        _ => 4,
-    }
-}
-
-fn smooth_mode_at(
-    grid: &[Option<bool>],
-    mi_cols: usize,
-    mi_rows: usize,
-    mi_col: usize,
-    mi_row: usize,
-) -> bool {
-    if mi_col >= mi_cols || mi_row >= mi_rows {
-        return false;
-    }
-    grid[mi_row * mi_cols + mi_col].unwrap_or(false)
-}
-
-fn has_smooth_neighbour(
-    grid: &[Option<bool>],
-    mi_cols: usize,
-    mi_rows: usize,
-    x: usize,
-    y: usize,
-) -> bool {
-    let mi_col = x >> 2;
-    let mi_row = y >> 2;
-    let above = y >= 4 && smooth_mode_at(grid, mi_cols, mi_rows, mi_col, mi_row - 1);
-    let left = x >= 4 && smooth_mode_at(grid, mi_cols, mi_rows, mi_col - 1, mi_row);
-    above || left
-}
-
-fn fill_mi_grid<T: Copy>(
-    grid: &mut [Option<T>],
-    mi_cols: usize,
-    mi_rows: usize,
-    x: usize,
-    y: usize,
-    block_size: BlockSize,
-    value: T,
-) {
-    let start_col = x >> 2;
-    let start_row = y >> 2;
-    let end_col = ((x + block_size.width()).min(mi_cols << 2) + 3) >> 2;
-    let end_row = ((y + block_size.height()).min(mi_rows << 2) + 3) >> 2;
-    for mi_row in start_row..end_row.min(mi_rows) {
-        for mi_col in start_col..end_col.min(mi_cols) {
-            grid[mi_row * mi_cols + mi_col] = Some(value);
-        }
-    }
-}
-
-fn fill_mi_grid_clone<T: Clone>(
-    grid: &mut [Option<T>],
-    mi_cols: usize,
-    mi_rows: usize,
-    x: usize,
-    y: usize,
-    block_size: BlockSize,
-    value: Option<T>,
-) {
-    let start_col = x >> 2;
-    let start_row = y >> 2;
-    let end_col = ((x + block_size.width()).min(mi_cols << 2) + 3) >> 2;
-    let end_row = ((y + block_size.height()).min(mi_rows << 2) + 3) >> 2;
-    for mi_row in start_row..end_row.min(mi_rows) {
-        for mi_col in start_col..end_col.min(mi_cols) {
-            grid[mi_row * mi_cols + mi_col] = value.clone();
-        }
-    }
-}
-
 #[cfg(test)]
 #[path = "tests/tile_decode_coeff.rs"]
 mod coeff_tests;
@@ -976,23 +898,11 @@ mod tests {
     use super::*;
     use crate::av1::transform::plan_transform_blocks_with_tx_size;
     use crate::av1::{
-        UvPredictionMode, alloc_frame_buffers, build_still_decode_plan, parse_frame_header,
-        parse_sequence_header, parse_tile_group,
+        PredictionMode, UvPredictionMode, alloc_frame_buffers, build_still_decode_plan,
+        parse_frame_header, parse_sequence_header, parse_tile_group,
     };
     use crate::container::parse_avif;
     use crate::obu::{ObuType, find_obu_payload};
-
-    #[test]
-    fn smooth_mode_grid_tracks_above_and_left_neighbours() {
-        let mut grid = vec![None; 16];
-        fill_mi_grid(&mut grid, 4, 4, 4, 4, BlockSize::Block8x8, true);
-
-        assert!(has_smooth_neighbour(&grid, 4, 4, 4, 12));
-        assert!(has_smooth_neighbour(&grid, 4, 4, 12, 4));
-        assert!(!has_smooth_neighbour(&grid, 4, 4, 0, 0));
-        assert!(PredictionMode::Smooth.is_smooth());
-        assert!(!PredictionMode::Vertical.is_smooth());
-    }
 
     #[test]
     fn prepares_sample_tile_entropy_state() {

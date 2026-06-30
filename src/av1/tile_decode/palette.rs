@@ -1,10 +1,9 @@
-use super::{
-    PaletteBlockInfo, PalettePlaneInfo, TileDecoder, ceil_log2, fill_mi_grid, fill_mi_grid_clone,
-};
+use super::{PaletteBlockInfo, PalettePlaneInfo, TileDecoder, ceil_log2};
 use crate::DecoderError;
 use crate::av1::frame::FrameHeader;
 use crate::av1::sequence::SequenceHeader;
 use crate::av1::syntax::{BlockSize, PredictionMode, UvPredictionMode};
+use crate::av1::tile_decode::context_grid::{fill_mi_grid, fill_mi_grid_clone};
 
 pub(super) const PALETTE_MAX_SIZE: usize = 8;
 
