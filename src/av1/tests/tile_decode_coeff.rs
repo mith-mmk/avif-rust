@@ -4,7 +4,12 @@ use super::coefficient::{
     CoefficientLiteral, CoefficientSymbol, CoefficientTokenSource, EntropyCoefficientSource,
     decode_coefficients, read_golomb,
 };
-use super::{CdfContext, DecoderError, EntropyDecoder, TxSize, TxType, eob_base_from_pt};
+use super::coefficient_context::{
+    COEFFICIENT_LEVEL_MASK, TxbContext, clamp_coefficient_level, coeff_base_context_1d,
+    coeff_base_context_2d, coeff_br_context_1d, coeff_br_context_2d, coefficient_entropy_context,
+    eob_base_from_pt, eob_tx_class_context, set_txb_entropy_context, txb_context,
+};
+use super::{BlockSize, CdfContext, DecoderError, EntropyDecoder, TransformBlock, TxSize, TxType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Token {
@@ -90,6 +95,164 @@ fn eob_point_groups_match_av1_group_starts() {
         (1..=11).map(eob_base_from_pt).collect::<Vec<_>>(),
         vec![1, 2, 3, 5, 9, 17, 33, 65, 129, 257, 513]
     );
+}
+
+#[test]
+fn coeff_base_context_2d_matches_square_offset_rules() {
+    let mut quant = vec![0; TxSize::Tx32x32.sample_count()];
+
+    assert_eq!(
+        coeff_base_context_2d(TxSize::Tx32x32, 0, &quant).unwrap(),
+        (0, 0)
+    );
+
+    quant[2] = 3;
+    assert_eq!(
+        coeff_base_context_2d(TxSize::Tx32x32, 1, &quant).unwrap(),
+        (3, 3)
+    );
+
+    assert_eq!(
+        coeff_base_context_2d(TxSize::Tx32x32, 4 * 32 + 4, &quant).unwrap(),
+        (21, 0)
+    );
+}
+
+#[test]
+fn txb_context_uses_neighbor_levels_and_dc_signs() {
+    let transform = TransformBlock {
+        plane: 0,
+        x: 4,
+        y: 4,
+        tx_size: TxSize::Tx4x4,
+    };
+    let mut above = vec![0; 8];
+    let mut left = vec![0; 8];
+
+    assert_eq!(
+        txb_context(BlockSize::Block8x8, transform, &above, &left),
+        TxbContext {
+            skip: 1,
+            dc_sign: 0
+        }
+    );
+
+    above[1] = 4 | (2 << super::coefficient_context::COEFF_CONTEXT_BITS);
+    left[1] = 2 | (1 << super::coefficient_context::COEFF_CONTEXT_BITS);
+    assert_eq!(
+        txb_context(BlockSize::Block8x8, transform, &above, &left),
+        TxbContext {
+            skip: 5,
+            dc_sign: 0
+        }
+    );
+
+    left[1] = 0;
+    assert_eq!(
+        txb_context(BlockSize::Block8x8, transform, &above, &left),
+        TxbContext {
+            skip: 3,
+            dc_sign: 2
+        }
+    );
+}
+
+#[test]
+fn chroma_txb_skip_context_uses_non_zero_neighbors_and_block_area() {
+    let transform = TransformBlock {
+        plane: 1,
+        x: 0,
+        y: 0,
+        tx_size: TxSize::Tx4x4,
+    };
+    assert_eq!(
+        txb_context(BlockSize::Block4x4, transform, &[1], &[0]).skip,
+        8
+    );
+    assert_eq!(
+        txb_context(BlockSize::Block8x8, transform, &[1], &[1]).skip,
+        12
+    );
+}
+
+#[test]
+fn coefficient_entropy_context_caps_level_and_encodes_dc_sign() {
+    assert_eq!(coefficient_entropy_context(&[0, 0]), 0);
+    assert_eq!(coefficient_entropy_context(&[2, 3]), 5 | 16);
+    assert_eq!(coefficient_entropy_context(&[-10, 4]), 7 | 8);
+
+    let transform = TransformBlock {
+        plane: 0,
+        x: 4,
+        y: 8,
+        tx_size: TxSize::Tx8x8,
+    };
+    let mut above = vec![0; 8];
+    let mut left = vec![0; 8];
+    set_txb_entropy_context(transform, 23, &mut above, &mut left);
+    assert_eq!(&above[1..3], &[23, 23]);
+    assert_eq!(&left[2..4], &[23, 23]);
+}
+
+#[test]
+fn eob_context_distinguishes_2d_and_directional_transforms() {
+    assert_eq!(eob_tx_class_context(TxType::DctDct), 0);
+    assert_eq!(eob_tx_class_context(TxType::Identity), 0);
+    assert_eq!(eob_tx_class_context(TxType::VerticalDct), 1);
+    assert_eq!(eob_tx_class_context(TxType::HorizontalDct), 1);
+}
+
+#[test]
+fn coeff_br_context_2d_matches_square_tx_rules() {
+    let mut quant = vec![0; TxSize::Tx32x32.sample_count()];
+
+    assert_eq!(coeff_br_context_2d(TxSize::Tx32x32, 0, &quant).unwrap(), 0);
+
+    quant[1] = 3;
+    assert_eq!(coeff_br_context_2d(TxSize::Tx32x32, 0, &quant).unwrap(), 2);
+
+    assert_eq!(
+        coeff_br_context_2d(TxSize::Tx32x32, 32 + 1, &quant).unwrap(),
+        7
+    );
+
+    assert_eq!(
+        coeff_br_context_2d(TxSize::Tx32x32, 4 * 32 + 4, &quant).unwrap(),
+        14
+    );
+}
+
+#[test]
+fn directional_coefficient_contexts_follow_aom_1d_axes() {
+    let tx_size = TxSize::Tx8x8;
+    let mut quant = vec![0; tx_size.sample_count()];
+    quant[2] = 3;
+    quant[16] = 2;
+
+    assert_eq!(
+        coeff_base_context_1d(tx_size, TxType::VerticalDct, 1, &quant).unwrap(),
+        (33, 3)
+    );
+    assert_eq!(
+        coeff_base_context_1d(tx_size, TxType::HorizontalDct, 0, &quant).unwrap(),
+        (0, 2)
+    );
+    assert_eq!(
+        coeff_br_context_1d(tx_size, TxType::VerticalDct, 0, &quant).unwrap(),
+        2
+    );
+    assert_eq!(
+        coeff_br_context_1d(tx_size, TxType::HorizontalDct, 8, &quant).unwrap(),
+        15
+    );
+}
+
+#[test]
+fn coefficient_level_is_clamped_to_av1_twenty_bit_range() {
+    assert_eq!(clamp_coefficient_level(0), 0);
+    assert_eq!(clamp_coefficient_level(COEFFICIENT_LEVEL_MASK), 0x0f_ffff);
+    assert_eq!(clamp_coefficient_level(1 << 20), 0);
+    assert_eq!(clamp_coefficient_level((1 << 20) + 7), 7);
 }
 
 #[test]

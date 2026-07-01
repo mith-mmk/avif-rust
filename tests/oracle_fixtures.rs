@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
 mod support;
@@ -38,10 +39,12 @@ fn parse_oracle_manifest(input: &str) -> Result<Vec<OracleEntry>, String> {
         return Err(format!("unexpected oracle manifest header: {header}"));
     }
 
-    lines
+    let entries = lines
         .enumerate()
         .map(|(line_index, line)| parse_oracle_manifest_line(line_index + 2, line))
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    validate_oracle_entries(&entries)?;
+    Ok(entries)
 }
 
 fn parse_oracle_manifest_line(line_number: usize, line: &str) -> Result<OracleEntry, String> {
@@ -83,6 +86,29 @@ fn parse_oracle_manifest_line(line_number: usize, line: &str) -> Result<OracleEn
         rgba8,
         rgba16,
     })
+}
+
+fn validate_oracle_entries(entries: &[OracleEntry]) -> Result<(), String> {
+    let mut ids = HashSet::new();
+    for entry in entries {
+        if !ids.insert(entry.id.as_str()) {
+            return Err(format!("duplicate oracle fixture id: {}", entry.id));
+        }
+        if !matches!(entry.bit_depth, 8 | 10 | 12) {
+            return Err(format!(
+                "oracle fixture {} has unsupported bit depth {}",
+                entry.id, entry.bit_depth
+            ));
+        }
+        if !matches!(entry.plane_paths.len(), 1 | 3 | 4) {
+            return Err(format!(
+                "oracle fixture {} has unsupported plane count {}",
+                entry.id,
+                entry.plane_paths.len()
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn required_column(line_number: usize, name: &str, value: &str) -> Result<String, String> {
@@ -194,6 +220,32 @@ fn oracle_manifest_parser_rejects_unsafe_paths() {
     let err = parse_oracle_manifest(&manifest).unwrap_err();
 
     assert!(err.contains("relative"));
+}
+
+#[test]
+fn oracle_manifest_parser_rejects_duplicate_ids() {
+    let manifest = format!(
+        "{ORACLE_HEADER}\nfixture,images/a.avif,2,1,8,planes/y.u16le,2,1,rgba/a.rgba,rgba/a.rgba16le\nfixture,images/b.avif,2,1,8,planes/y.u16le,2,1,rgba/b.rgba,rgba/b.rgba16le\n"
+    );
+
+    let err = parse_oracle_manifest(&manifest).unwrap_err();
+
+    assert!(err.contains("duplicate"));
+}
+
+#[test]
+fn oracle_manifest_parser_rejects_unsupported_bit_depth_and_plane_count() {
+    let bad_depth = format!(
+        "{ORACLE_HEADER}\nfixture,images/a.avif,2,1,16,planes/y.u16le,2,1,rgba/a.rgba,rgba/a.rgba16le\n"
+    );
+    let err = parse_oracle_manifest(&bad_depth).unwrap_err();
+    assert!(err.contains("bit depth"));
+
+    let bad_plane_count = format!(
+        "{ORACLE_HEADER}\nfixture,images/a.avif,2,1,8,planes/y.u16le;planes/u.u16le,2;1,1;1,rgba/a.rgba,rgba/a.rgba16le\n"
+    );
+    let err = parse_oracle_manifest(&bad_plane_count).unwrap_err();
+    assert!(err.contains("plane count"));
 }
 
 #[test]

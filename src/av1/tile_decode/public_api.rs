@@ -363,6 +363,9 @@ fn tile_payload_bytes<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::av1::{parse_frame_header, parse_sequence_header, parse_tile_group};
+    use crate::container::parse_avif;
+    use crate::obu::{ObuType, find_obu_payload};
 
     #[test]
     fn tile_payload_bytes_checks_bounds_for_each_tile() {
@@ -383,5 +386,40 @@ mod tests {
             tile_payload_bytes(data, &truncated),
             Err(DecoderError::NotEnoughData(_))
         ));
+    }
+
+    #[test]
+    fn prepares_sample_tile_entropy_state() {
+        let data = std::fs::read(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join("samples")
+                .join("WML2Viewer.avif"),
+        )
+        .expect("sample AVIF should exist");
+        let info = parse_avif(&data).unwrap();
+        let sequence_payload =
+            find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
+                .unwrap()
+                .expect("sequence header OBU should exist");
+        let sequence = parse_sequence_header(sequence_payload).unwrap();
+        let frame_payload = find_obu_payload(&info.primary_item_payload, ObuType::Frame)
+            .unwrap()
+            .expect("frame OBU should exist");
+        let frame = parse_frame_header(frame_payload, &sequence).unwrap();
+        let tile_group = parse_tile_group(
+            frame_payload,
+            frame.uncompressed_header_bits,
+            &frame.tile_info,
+        )
+        .unwrap();
+
+        let states = prepare_tile_entropy(frame_payload, &tile_group, &frame).unwrap();
+
+        assert_eq!(states.len(), 1);
+        assert_eq!(states[0].tile_id, 0);
+        assert_eq!(states[0].entropy_start_bits, 15);
+        assert!(states[0].payload_len > 0);
     }
 }

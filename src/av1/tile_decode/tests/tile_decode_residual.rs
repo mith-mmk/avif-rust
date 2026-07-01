@@ -1,3 +1,4 @@
+use super::coefficient_context::eob_multisize;
 use super::*;
 use crate::av1::{
     BlockSize, TxType, build_still_decode_plan, parse_frame_header, parse_sequence_header,
