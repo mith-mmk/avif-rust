@@ -19,74 +19,19 @@ fn empty_residual_probe(
     first_tx_size: Option<TxSize>,
     first_transform_all_zero: bool,
 ) -> ResidualProbe {
-    ResidualProbe {
+    scanned_residual_probe(
         tile_id,
-        block_size: block_mode.block_size,
+        block_mode,
         skipped,
         transform_count,
-        zero_transform_count,
         first_tx_size,
-        first_non_zero_transform_index: None,
-        first_non_zero_transform: None,
-        first_non_zero_tx_size: None,
-        tx_type_read: false,
-        tx_type_set: None,
-        tx_type_symbol: None,
-        tx_type: None,
-        txb_skip_context: None,
-        all_zero_symbol: None,
-        first_transform_all_zero,
-        eob_multisize: None,
-        eob_pt_symbol: None,
-        eob_pt: None,
-        eob_base: None,
-        eob_extra_context: None,
-        eob_extra_symbol: None,
-        eob_extra_literal_bits: None,
-        eob: None,
-        coeff_base_eob_context: None,
-        coeff_base_eob_symbol: None,
-        coeff_base_eob_level: None,
-        regular_coeff_base_count: None,
-        regular_coeff_base_decoded_count: None,
-        coeff_base_non_zero_count: None,
-        coeff_base_range_count: None,
-        coeff_br_decoded_count: None,
-        first_coeff_br_scan_index: None,
-        first_coeff_br_position: None,
-        first_coeff_br_context: None,
-        first_coeff_br_symbol: None,
-        first_coeff_br_level: None,
-        sign_decoded_count: None,
-        dc_sign_context: None,
-        dc_sign_symbol: None,
-        first_ac_sign_scan_index: None,
-        first_ac_sign_bit: None,
-        golomb_decoded_count: None,
-        first_golomb_scan_index: None,
-        first_golomb_value: None,
-        signed_coeff_non_zero_count: None,
-        first_signed_coeff_scan_index: None,
-        first_signed_coeff_position: None,
-        first_signed_coeff_value: None,
-        dequant_non_zero_count: None,
-        first_dequant_coeff_position: None,
-        first_dequant_coeff_value: None,
-        residual_preview_tx_type: None,
-        residual_preview_sample_count: None,
-        first_residual_preview_sample: None,
-        first_coeff_base_scan_index: None,
-        first_coeff_base_position: None,
-        first_coeff_base_context: None,
-        first_coeff_base_reference_magnitude: None,
-        first_coeff_base_symbol: None,
-        first_coeff_base_level: None,
-        first_quantized_coefficients: None,
-        bit_position_after: block_mode.bit_position_after,
-    }
+        FirstNonZeroTransformScan::empty(zero_transform_count, first_transform_all_zero),
+        ResidualProbeFields::default(),
+        block_mode.bit_position_after,
+    )
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct FirstNonZeroTransformScan {
     txb_skip_context: Option<usize>,
     all_zero_symbol: Option<usize>,
@@ -95,6 +40,23 @@ struct FirstNonZeroTransformScan {
     first_non_zero_transform: Option<TransformBlock>,
     first_non_zero_transform_index: Option<usize>,
     first_non_zero_txb_context: Option<TxbContext>,
+}
+
+impl FirstNonZeroTransformScan {
+    fn empty(zero_transform_count: usize, first_transform_all_zero: bool) -> Self {
+        Self {
+            zero_transform_count,
+            first_transform_all_zero,
+            ..Self::default()
+        }
+    }
+
+    fn scanning() -> Self {
+        Self {
+            first_transform_all_zero: true,
+            ..Self::default()
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -154,8 +116,9 @@ struct ResidualProbeFields {
 fn scanned_residual_probe(
     tile_id: u32,
     block_mode: &BlockModeProbe,
-    first_transform: TransformBlock,
+    skipped: bool,
     transform_count: usize,
+    first_tx_size: Option<TxSize>,
     scan: FirstNonZeroTransformScan,
     fields: ResidualProbeFields,
     bit_position_after: usize,
@@ -163,10 +126,10 @@ fn scanned_residual_probe(
     ResidualProbe {
         tile_id,
         block_size: block_mode.block_size,
-        skipped: false,
+        skipped,
         transform_count,
         zero_transform_count: scan.zero_transform_count,
-        first_tx_size: Some(first_transform.tx_size),
+        first_tx_size,
         first_non_zero_transform_index: scan.first_non_zero_transform_index,
         first_non_zero_transform: scan.first_non_zero_transform,
         first_non_zero_tx_size: scan
@@ -314,8 +277,9 @@ impl<'a> TileDecoder<'a> {
         Ok(scanned_residual_probe(
             tile_id,
             block_mode,
-            first_transform,
+            false,
             transform_count,
+            Some(first_transform.tx_size),
             first_non_zero_scan,
             fields,
             self.reader.bit_position(),
@@ -433,15 +397,7 @@ impl<'a> TileDecoder<'a> {
         block_mode: &BlockModeProbe,
         transforms: &[TransformBlock],
     ) -> Result<FirstNonZeroTransformScan, DecoderError> {
-        let mut scan = FirstNonZeroTransformScan {
-            txb_skip_context: None,
-            all_zero_symbol: None,
-            first_transform_all_zero: true,
-            zero_transform_count: 0,
-            first_non_zero_transform: None,
-            first_non_zero_transform_index: None,
-            first_non_zero_txb_context: None,
-        };
+        let mut scan = FirstNonZeroTransformScan::scanning();
 
         for (index, transform) in transforms.iter().copied().enumerate() {
             let txb_context = self.txb_context(block_mode.block_size, transform);

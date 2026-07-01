@@ -67,6 +67,8 @@ AVIF sequences, encoding, HDR tone mapping and ICC application are later milesto
   - [x] Split scanned residual-probe assembly inside `tile_decode::residual_decode`.
   - [x] Split non-zero residual probe field reading inside `tile_decode::residual_decode`.
   - [x] Split scanned residual-probe field mapping inside `tile_decode::residual_decode`.
+  - [x] Reuse residual-probe field mapping for empty residual cases.
+  - [x] Split first non-zero transform scan initialization helpers.
   - [ ] Split block syntax/reconstruction diagnostics out of the remaining oversized tile decoder.
 - [ ] Move tests out of implementation modules as files are split.
   - [x] Move reusable conformance/oracle assertions into integration-test support code.
