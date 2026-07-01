@@ -1,0 +1,130 @@
+use super::*;
+use crate::av1::transform::plan_transform_blocks_with_tx_size;
+use crate::av1::{
+    BlockSize, Partition, PredictionMode, TxSize, UvPredictionMode, build_still_decode_plan,
+    parse_frame_header, parse_sequence_header, parse_tile_group,
+};
+use crate::container::parse_avif;
+use crate::obu::{ObuType, find_obu_payload};
+
+#[test]
+fn reads_sample_root_partition_symbol() {
+    let data = read_sample_avif();
+    let info = parse_avif(&data).unwrap();
+    let sequence_payload = find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
+        .unwrap()
+        .expect("sequence header OBU should exist");
+    let sequence = parse_sequence_header(sequence_payload).unwrap();
+    let frame_payload = find_obu_payload(&info.primary_item_payload, ObuType::Frame)
+        .unwrap()
+        .expect("frame OBU should exist");
+    let frame = parse_frame_header(frame_payload, &sequence).unwrap();
+    let tile_group = parse_tile_group(
+        frame_payload,
+        frame.uncompressed_header_bits,
+        &frame.tile_info,
+    )
+    .unwrap();
+    let plan = build_still_decode_plan(&sequence, &frame, &tile_group).unwrap();
+    let tile_payload = &tile_group.tiles[0];
+    let payload = &frame_payload[tile_payload.offset..tile_payload.offset + tile_payload.len];
+    let mut decoder = TileDecoder::new(payload, &frame).unwrap();
+
+    let probe = decoder
+        .read_root_partition(&plan.tiles[0], &sequence)
+        .unwrap();
+
+    assert_eq!(probe.tile_id, 0);
+    assert_eq!(probe.block_size, BlockSize::Block128x128);
+    assert_eq!(probe.symbol, 3);
+    assert_eq!(probe.partition, Partition::Split);
+    assert!(probe.bit_position_after >= 15);
+}
+
+#[test]
+fn reads_sample_first_block_mode_symbols() {
+    let data = read_sample_avif();
+    let info = parse_avif(&data).unwrap();
+    let sequence_payload = find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
+        .unwrap()
+        .expect("sequence header OBU should exist");
+    let sequence = parse_sequence_header(sequence_payload).unwrap();
+    let frame_payload = find_obu_payload(&info.primary_item_payload, ObuType::Frame)
+        .unwrap()
+        .expect("frame OBU should exist");
+    let frame = parse_frame_header(frame_payload, &sequence).unwrap();
+    let tile_group = parse_tile_group(
+        frame_payload,
+        frame.uncompressed_header_bits,
+        &frame.tile_info,
+    )
+    .unwrap();
+    let plan = build_still_decode_plan(&sequence, &frame, &tile_group).unwrap();
+
+    let probes =
+        probe_tile_block_modes(frame_payload, &tile_group, &sequence, &frame, &plan).unwrap();
+
+    assert_eq!(probes.len(), 1);
+    assert_eq!(probes[0].tile_id, 0);
+    assert_eq!(probes[0].block_size, BlockSize::Block64x64);
+    assert_eq!(probes[0].skip_symbol, 0);
+    assert_eq!(probes[0].cdef_idx, Some(0));
+    assert_eq!(probes[0].y_mode_symbol, 0);
+    assert_eq!(probes[0].y_mode, PredictionMode::Dc);
+    assert_eq!(probes[0].uv_mode_symbol, Some(0));
+    assert_eq!(
+        probes[0].uv_mode,
+        Some(UvPredictionMode::Intra(PredictionMode::Dc))
+    );
+    assert_eq!(probes[0].tx_size_symbol, Some(0));
+    assert_eq!(probes[0].tx_size, TxSize::Tx64x64);
+    assert!(probes[0].bit_position_after > 15);
+}
+
+#[test]
+fn plans_sample_first_block_transforms() {
+    let data = read_sample_avif();
+    let info = parse_avif(&data).unwrap();
+    let sequence_payload = find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
+        .unwrap()
+        .expect("sequence header OBU should exist");
+    let sequence = parse_sequence_header(sequence_payload).unwrap();
+    let frame_payload = find_obu_payload(&info.primary_item_payload, ObuType::Frame)
+        .unwrap()
+        .expect("frame OBU should exist");
+    let frame = parse_frame_header(frame_payload, &sequence).unwrap();
+    let tile_group = parse_tile_group(
+        frame_payload,
+        frame.uncompressed_header_bits,
+        &frame.tile_info,
+    )
+    .unwrap();
+    let plan = build_still_decode_plan(&sequence, &frame, &tile_group).unwrap();
+    let probes =
+        probe_tile_block_modes(frame_payload, &tile_group, &sequence, &frame, &plan).unwrap();
+
+    let transforms = plan_transform_blocks_with_tx_size(
+        0,
+        0,
+        0,
+        probes[0].block_size,
+        probes[0].tx_size,
+        plan.width,
+        plan.height,
+    );
+
+    assert_eq!(transforms.len(), 1);
+    assert!(transforms.iter().all(|tx| tx.plane == 0));
+    assert!(transforms.iter().all(|tx| tx.tx_size == probes[0].tx_size));
+}
+
+fn read_sample_avif() -> Vec<u8> {
+    std::fs::read(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("samples")
+            .join("WML2Viewer.avif"),
+    )
+    .expect("sample AVIF should exist")
+}

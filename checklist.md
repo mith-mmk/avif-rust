@@ -74,6 +74,10 @@ AVIF sequences, encoding, HDR tone mapping and ICC application are later milesto
   - [x] Move residual-probe field construction into `tile_decode::residual_probe`.
   - [x] Split residual preview construction for non-zero residual probes.
   - [x] Move residual probe preview helper into `tile_decode::residual_preview`.
+  - [x] Split txb entropy-context update for non-zero residual probes.
+  - [x] Split non-zero tx type and coefficient-state reading.
+  - [x] Split non-zero residual probe field finalization.
+  - [x] Split non-zero residual state helpers into `tile_decode::residual_state`.
   - [ ] Split block syntax/reconstruction diagnostics out of the remaining oversized tile decoder.
 - [ ] Move tests out of implementation modules as files are split.
   - [x] Move reusable conformance/oracle assertions into integration-test support code.
@@ -83,6 +87,8 @@ AVIF sequences, encoding, HDR tone mapping and ICC application are later milesto
   - [x] Move mode/context grid private unit tests with the context-grid helpers.
   - [x] Move transform-type syntax private unit tests with the transform-type syntax helpers.
   - [x] Move tile payload bounds unit test with public API helpers.
+  - [x] Move residual probe private unit test into `tile_decode/tests/tile_decode_residual.rs`.
+  - [x] Move block syntax private unit tests into `tile_decode/tests/tile_decode_block_syntax.rs`.
   - [ ] Continue moving private implementation tests as decode modules are split.
 
 ## 2. AV1 entropy and coefficient decoding

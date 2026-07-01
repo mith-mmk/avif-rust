@@ -1,11 +1,10 @@
 use super::coefficient::{EntropyCoefficientSource, decode_coefficients};
 use super::diagnostic::ResidualProbe;
-use super::residual_preview::build_probe_residual_preview;
 use super::residual_probe::{
     FirstNonZeroTransformScan, ResidualProbeContext, ResidualProbeFields, empty_residual_probe,
     scanned_residual_probe,
 };
-use super::{BlockModeProbe, DecodedTransform, TileDecoder, coefficient_entropy_context};
+use super::{BlockModeProbe, DecodedTransform, TileDecoder};
 use crate::DecoderError;
 use crate::av1::frame::FrameHeader;
 use crate::av1::quant::QuantState;
@@ -104,43 +103,6 @@ impl<'a> TileDecoder<'a> {
             block_mode,
             first_non_zero_scan,
             fields,
-        ))
-    }
-
-    fn read_non_zero_residual_probe_fields(
-        &mut self,
-        frame: &FrameHeader,
-        block_mode: &BlockModeProbe,
-        non_zero_transform: TransformBlock,
-        dc_sign_context: usize,
-        quant_state: QuantState,
-        bit_depth: u8,
-    ) -> Result<ResidualProbeFields, DecoderError> {
-        let tx_type_probe = self.read_intra_tx_type(frame, block_mode, non_zero_transform)?;
-        let plane_type = usize::from(non_zero_transform.plane > 0);
-        let coefficient_read = self.read_coefficient_state(
-            non_zero_transform.tx_size,
-            tx_type_probe.tx_type,
-            plane_type,
-            dc_sign_context,
-        )?;
-        let coeff_base_read = &coefficient_read.base;
-        self.set_txb_entropy_context(
-            non_zero_transform,
-            coefficient_entropy_context(&coeff_base_read.base_levels),
-        );
-        let residual_preview = build_probe_residual_preview(
-            non_zero_transform,
-            &coefficient_read,
-            quant_state,
-            bit_depth,
-            tx_type_probe.tx_type,
-        )?;
-
-        Ok(ResidualProbeFields::from_reads(
-            tx_type_probe,
-            coefficient_read,
-            residual_preview,
         ))
     }
 
