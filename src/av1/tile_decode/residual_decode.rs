@@ -1,6 +1,6 @@
 use super::coefficient::{EntropyCoefficientSource, decode_coefficients};
 use super::diagnostic::ResidualProbe;
-use super::residual_preview::build_residual_preview;
+use super::residual_preview::build_probe_residual_preview;
 use super::residual_probe::{
     FirstNonZeroTransformScan, ResidualProbeContext, ResidualProbeFields, empty_residual_probe,
     scanned_residual_probe,
@@ -129,13 +129,9 @@ impl<'a> TileDecoder<'a> {
             non_zero_transform,
             coefficient_entropy_context(&coeff_base_read.base_levels),
         );
-        debug_assert_eq!(
-            coeff_base_read.base_levels.len(),
-            non_zero_transform.tx_size.sample_count()
-        );
-        let residual_preview = build_residual_preview(
+        let residual_preview = build_probe_residual_preview(
             non_zero_transform,
-            &coeff_base_read.base_levels,
+            &coefficient_read,
             quant_state,
             bit_depth,
             tx_type_probe.tx_type,

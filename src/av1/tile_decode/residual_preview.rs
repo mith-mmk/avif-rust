@@ -2,7 +2,29 @@ use super::diagnostic::{DequantCoeffProbe, ResidualPreview};
 use crate::DecoderError;
 use crate::av1::quant::{QuantState, dequantize_coefficients};
 use crate::av1::syntax::TxType;
+use crate::av1::tile_decode::coefficient::CoefficientRead;
 use crate::av1::transform::{TransformBlock, inverse_transform};
+
+pub(super) fn build_probe_residual_preview(
+    transform: TransformBlock,
+    coefficient_read: &CoefficientRead,
+    quant_state: QuantState,
+    bit_depth: u8,
+    tx_type: TxType,
+) -> Result<Option<ResidualPreview>, DecoderError> {
+    let coeff_base_read = &coefficient_read.base;
+    debug_assert_eq!(
+        coeff_base_read.base_levels.len(),
+        transform.tx_size.sample_count()
+    );
+    build_residual_preview(
+        transform,
+        &coeff_base_read.base_levels,
+        quant_state,
+        bit_depth,
+        tx_type,
+    )
+}
 
 pub(super) fn build_residual_preview(
     transform: TransformBlock,
