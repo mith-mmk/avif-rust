@@ -60,6 +60,10 @@ AVIF sequences, encoding, HDR tone mapping and ICC application are later milesto
   - [x] Split partition helper functions into `tile_decode::partition_syntax`.
   - [x] Split generic syntax helper functions into `tile_decode::syntax_helpers`.
   - [x] Split skip, transform-size and partition context state updates into `tile_decode::context_state`.
+  - [x] Split decoded transform and coefficient state reading into `tile_decode::residual_decode`.
+  - [x] Split first-transform residual probe reading into `tile_decode::residual_decode`.
+  - [x] Split empty residual-probe construction inside `tile_decode::residual_decode`.
+  - [x] Split first non-zero transform scan inside `tile_decode::residual_decode`.
   - [ ] Split block syntax/reconstruction diagnostics out of the remaining oversized tile decoder.
 - [ ] Move tests out of implementation modules as files are split.
   - [x] Move reusable conformance/oracle assertions into integration-test support code.

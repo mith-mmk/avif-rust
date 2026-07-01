@@ -4,7 +4,7 @@ use crate::av1::syntax::{BlockSize, TxSize, TxType};
 use crate::av1::transform::TransformBlock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct TxbContext {
+pub(crate) struct TxbContext {
     pub(super) skip: usize,
     pub(super) dc_sign: usize,
 }
