@@ -18,6 +18,7 @@ mod public_api;
 mod reconstruction;
 mod residual_decode;
 mod residual_preview;
+mod residual_probe;
 mod restoration_syntax;
 mod syntax_helpers;
 mod tx_type_syntax;

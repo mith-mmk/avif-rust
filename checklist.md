@@ -70,6 +70,8 @@ AVIF sequences, encoding, HDR tone mapping and ICC application are later milesto
   - [x] Reuse residual-probe field mapping for empty residual cases.
   - [x] Split first non-zero transform scan initialization helpers.
   - [x] Group residual-probe mapping inputs into a local context type.
+  - [x] Split residual-probe mapping helpers into `tile_decode::residual_probe`.
+  - [x] Move residual-probe field construction into `tile_decode::residual_probe`.
   - [ ] Split block syntax/reconstruction diagnostics out of the remaining oversized tile decoder.
 - [ ] Move tests out of implementation modules as files are split.
   - [x] Move reusable conformance/oracle assertions into integration-test support code.
