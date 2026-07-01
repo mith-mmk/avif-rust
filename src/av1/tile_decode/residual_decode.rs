@@ -20,15 +20,26 @@ fn empty_residual_probe(
     first_transform_all_zero: bool,
 ) -> ResidualProbe {
     scanned_residual_probe(
-        tile_id,
+        ResidualProbeContext {
+            tile_id,
+            skipped,
+            transform_count,
+            first_tx_size,
+            bit_position_after: block_mode.bit_position_after,
+        },
         block_mode,
-        skipped,
-        transform_count,
-        first_tx_size,
         FirstNonZeroTransformScan::empty(zero_transform_count, first_transform_all_zero),
         ResidualProbeFields::default(),
-        block_mode.bit_position_after,
     )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ResidualProbeContext {
+    tile_id: u32,
+    skipped: bool,
+    transform_count: usize,
+    first_tx_size: Option<TxSize>,
+    bit_position_after: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -114,22 +125,18 @@ struct ResidualProbeFields {
 }
 
 fn scanned_residual_probe(
-    tile_id: u32,
+    context: ResidualProbeContext,
     block_mode: &BlockModeProbe,
-    skipped: bool,
-    transform_count: usize,
-    first_tx_size: Option<TxSize>,
     scan: FirstNonZeroTransformScan,
     fields: ResidualProbeFields,
-    bit_position_after: usize,
 ) -> ResidualProbe {
     ResidualProbe {
-        tile_id,
+        tile_id: context.tile_id,
         block_size: block_mode.block_size,
-        skipped,
-        transform_count,
+        skipped: context.skipped,
+        transform_count: context.transform_count,
         zero_transform_count: scan.zero_transform_count,
-        first_tx_size,
+        first_tx_size: context.first_tx_size,
         first_non_zero_transform_index: scan.first_non_zero_transform_index,
         first_non_zero_transform: scan.first_non_zero_transform,
         first_non_zero_tx_size: scan
@@ -188,7 +195,7 @@ fn scanned_residual_probe(
         first_coeff_base_symbol: fields.first_coeff_base_symbol,
         first_coeff_base_level: fields.first_coeff_base_level,
         first_quantized_coefficients: fields.first_quantized_coefficients,
-        bit_position_after,
+        bit_position_after: context.bit_position_after,
     }
 }
 
@@ -234,25 +241,26 @@ impl<'a> TileDecoder<'a> {
         let first_non_zero_scan = self.read_first_non_zero_transform(block_mode, transforms)?;
 
         self.read_scanned_residual_probe(
-            tile_id,
+            ResidualProbeContext {
+                tile_id,
+                skipped: false,
+                transform_count,
+                first_tx_size: Some(first_transform.tx_size),
+                bit_position_after: self.reader.bit_position(),
+            },
             frame,
             block_mode,
-            first_transform,
-            transform_count,
             first_non_zero_scan,
             quant_state,
             bit_depth,
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn read_scanned_residual_probe(
         &mut self,
-        tile_id: u32,
+        context: ResidualProbeContext,
         frame: &FrameHeader,
         block_mode: &BlockModeProbe,
-        first_transform: TransformBlock,
-        transform_count: usize,
         first_non_zero_scan: FirstNonZeroTransformScan,
         quant_state: QuantState,
         bit_depth: u8,
@@ -275,14 +283,13 @@ impl<'a> TileDecoder<'a> {
         };
 
         Ok(scanned_residual_probe(
-            tile_id,
+            ResidualProbeContext {
+                bit_position_after: self.reader.bit_position(),
+                ..context
+            },
             block_mode,
-            false,
-            transform_count,
-            Some(first_transform.tx_size),
             first_non_zero_scan,
             fields,
-            self.reader.bit_position(),
         ))
     }
 
