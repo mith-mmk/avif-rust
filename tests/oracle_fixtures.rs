@@ -107,6 +107,40 @@ fn validate_oracle_entries(entries: &[OracleEntry]) -> Result<(), String> {
                 entry.plane_paths.len()
             ));
         }
+        validate_oracle_dimensions(entry)?;
+    }
+    Ok(())
+}
+
+fn validate_oracle_dimensions(entry: &OracleEntry) -> Result<(), String> {
+    entry
+        .width
+        .checked_mul(entry.height)
+        .ok_or_else(|| format!("oracle fixture {} frame sample count overflows", entry.id))?;
+    entry
+        .width
+        .checked_mul(entry.height)
+        .and_then(|sample_count| sample_count.checked_mul(4))
+        .ok_or_else(|| format!("oracle fixture {} RGBA sample count overflows", entry.id))?;
+
+    for (index, (&width, &height)) in entry
+        .plane_widths
+        .iter()
+        .zip(entry.plane_heights.iter())
+        .enumerate()
+    {
+        if width > entry.width || height > entry.height {
+            return Err(format!(
+                "oracle fixture {} plane {index} dimensions exceed frame dimensions",
+                entry.id
+            ));
+        }
+        width.checked_mul(height).ok_or_else(|| {
+            format!(
+                "oracle fixture {} plane {index} sample count overflows",
+                entry.id
+            )
+        })?;
     }
     Ok(())
 }
@@ -246,6 +280,29 @@ fn oracle_manifest_parser_rejects_unsupported_bit_depth_and_plane_count() {
     );
     let err = parse_oracle_manifest(&bad_plane_count).unwrap_err();
     assert!(err.contains("plane count"));
+}
+
+#[test]
+fn oracle_manifest_parser_rejects_plane_dimensions_exceeding_frame() {
+    let manifest = format!(
+        "{ORACLE_HEADER}\nfixture,images/a.avif,2,1,8,planes/y.u16le,3,1,rgba/a.rgba,rgba/a.rgba16le\n"
+    );
+
+    let err = parse_oracle_manifest(&manifest).unwrap_err();
+
+    assert!(err.contains("dimensions"));
+}
+
+#[test]
+fn oracle_manifest_parser_rejects_sample_count_overflow() {
+    let manifest = format!(
+        "{ORACLE_HEADER}\nfixture,images/a.avif,{max},{max},8,planes/y.u16le,{max},{max},rgba/a.rgba,rgba/a.rgba16le\n",
+        max = usize::MAX
+    );
+
+    let err = parse_oracle_manifest(&manifest).unwrap_err();
+
+    assert!(err.contains("overflows"));
 }
 
 #[test]

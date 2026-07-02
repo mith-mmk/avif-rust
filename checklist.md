@@ -38,6 +38,7 @@ AVIF sequences, encoding, HDR tone mapping and ICC application are later milesto
   - [ ] Exact decoded Y/U/V/alpha plane comparison for supported streams.
     - [x] Add a manifest-driven `test_data/oracles.csv` harness for exact source-plane fixtures.
     - [x] Validate oracle manifest duplicate IDs, bit depth and supported plane counts.
+    - [x] Validate oracle manifest frame/plane dimensions and sample-count overflow.
     - [ ] Populate external supported-stream plane fixtures.
   - [ ] SDR RGBA8/RGBA16 comparison with maximum per-channel error of 1.
     - [x] Add RGBA8/RGBA16 max-error comparison gates that include alpha.
@@ -135,7 +136,16 @@ This is the current highest-priority implementation block. Entropy components th
   - [x] Port AOM's 16-point IADST and route ADST, identity and directional 16x16 types through integer stages.
   - [x] Add independent AOM vectors for 16-point IADST and identity outputs.
 - [ ] Verify all supported 32x32 transform types.
+  - [x] Add sparse-coefficient dispatch safety coverage for every currently enabled 32x32 transform type.
+  - [x] Verify large-transform identity rounding and residual clipping for 32x32.
+- [x] Add 32x32 and 64x64 DCT DC-only regression vectors before replacing the floating fallback.
+- [x] Route 32x32 and 64x64 DCT DC-only transforms through an integer fast path.
+- [x] Route all-zero transforms through a zero-residual fast path before any floating fallback.
 - [ ] Verify 64x64 DCT and coded top-left coefficient limits.
+  - [x] Verify 64x64 DC-only residual clipping for supported bit depths.
+  - [x] Verify 64x64 coefficient scan placement rejects entries outside the coded top-left 32x32 area.
+  - [x] Add sparse coded-top-left dispatch safety coverage for 64x64 DCT_DCT.
+  - [x] Verify large-transform identity rounding and residual clipping for 64x64.
 - [ ] Add reference vectors for every enabled transform type/size pair.
 
 ## 4. Prediction and reconstruction pipeline
