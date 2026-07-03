@@ -127,14 +127,17 @@ This is the current highest-priority implementation block. Entropy components th
 
 ## 3. Integer inverse transforms
 
-- [ ] Remove floating-point transform fallbacks.
+- [x] Remove floating-point transform fallbacks.
 - [ ] Implement normative staged integer transforms, stage ranges, cosine constants and row/column shifts.
 - [x] Verify 4x4 DCT/ADST/identity vectors.
+  - [x] Verify 4x4 dispatch paths match the staged transform core for every supported transform type and bit depth.
 - [x] Verify 8x8 DCT/ADST/identity vectors.
-- [ ] Verify all supported 16x16 transform types.
+  - [x] Verify 8x8 dispatch paths match the staged transform core for every supported transform type and bit depth.
+- [x] Verify all supported 16x16 transform types.
   - [x] Route 16x16 DCT_DCT through the staged integer transform and verify its AOM rounding vector.
   - [x] Port AOM's 16-point IADST and route ADST, identity and directional 16x16 types through integer stages.
   - [x] Add independent AOM vectors for 16-point IADST and identity outputs.
+  - [x] Verify 16x16 dispatch paths match the staged transform core for every supported transform type and bit depth.
 - [x] Verify all currently enabled 32x32 transform types.
   - [x] Add sparse-coefficient dispatch safety coverage for 32x32 DCT_DCT.
   - [x] Verify 32x32 DC-only residual clipping for supported bit depths.
@@ -146,6 +149,18 @@ This is the current highest-priority implementation block. Entropy components th
 - [x] Remove unused floating ADST and directional-DCT fallback paths from the large-transform dispatch.
 - [x] Confine the remaining DCT floating fallback to explicit 32x32/64x64 non-DC coverage.
 - [x] Guard the remaining DCT floating fallback against direct size/count misuse.
+- [x] Split 32x32 and 64x64 DCT dispatch entry points before integer replacement.
+- [x] Add size-specific 32x32 and 64x64 DCT fallback wrappers before replacing them with integer code.
+- [x] Remove the generic `TxSize` large-DCT floating fallback entry point.
+- [x] Route 32x32 DCT_DCT non-DC transforms through an integer fixed-point DCT basis.
+- [x] Remove the 32x32 DCT floating fallback wrapper.
+- [x] Route 64x64 DCT_DCT non-DC transforms through an integer fixed-point DCT basis.
+- [x] Remove the final 64x64 DCT floating fallback wrapper and f64 DCT basis helper.
+- [x] Share the 32x32/64x64 fixed-basis row/column DCT core while preserving their rounding points.
+- [x] Add direct DC reference vectors for the 32x32 and 64x64 fixed-basis DCT cores.
+- [x] Add fixed-basis endpoint and quadrant-symmetry reference vectors for large DCTs.
+- [x] Verify 32x32 and 64x64 DCT dispatch paths match their fixed-basis cores.
+- [x] Reject unsupported transform bit depths before inverse-transform shifts and clamps.
 - [x] Verify 64x64 DCT and coded top-left coefficient limits.
   - [x] Verify 64x64 DC-only residual clipping for supported bit depths.
   - [x] Verify 64x64 coefficient scan placement rejects entries outside the coded top-left 32x32 area.
