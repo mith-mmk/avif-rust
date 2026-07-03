@@ -135,17 +135,24 @@ This is the current highest-priority implementation block. Entropy components th
   - [x] Route 16x16 DCT_DCT through the staged integer transform and verify its AOM rounding vector.
   - [x] Port AOM's 16-point IADST and route ADST, identity and directional 16x16 types through integer stages.
   - [x] Add independent AOM vectors for 16-point IADST and identity outputs.
-- [ ] Verify all supported 32x32 transform types.
-  - [x] Add sparse-coefficient dispatch safety coverage for every currently enabled 32x32 transform type.
-  - [x] Verify large-transform identity rounding and residual clipping for 32x32.
+- [x] Verify all currently enabled 32x32 transform types.
+  - [x] Add sparse-coefficient dispatch safety coverage for 32x32 DCT_DCT.
+  - [x] Verify 32x32 DC-only residual clipping for supported bit depths.
+  - [x] Verify non-zero 32x32 non-DCT transform types return explicit `Unsupported`.
+  - [x] Pin a sparse 32x32 DCT_DCT residual reference slice before replacing the fallback.
 - [x] Add 32x32 and 64x64 DCT DC-only regression vectors before replacing the floating fallback.
 - [x] Route 32x32 and 64x64 DCT DC-only transforms through an integer fast path.
 - [x] Route all-zero transforms through a zero-residual fast path before any floating fallback.
-- [ ] Verify 64x64 DCT and coded top-left coefficient limits.
+- [x] Remove unused floating ADST and directional-DCT fallback paths from the large-transform dispatch.
+- [x] Confine the remaining DCT floating fallback to explicit 32x32/64x64 non-DC coverage.
+- [x] Guard the remaining DCT floating fallback against direct size/count misuse.
+- [x] Verify 64x64 DCT and coded top-left coefficient limits.
   - [x] Verify 64x64 DC-only residual clipping for supported bit depths.
   - [x] Verify 64x64 coefficient scan placement rejects entries outside the coded top-left 32x32 area.
+  - [x] Reject direct 64x64 inverse-transform coefficients outside the coded top-left 32x32 area.
   - [x] Add sparse coded-top-left dispatch safety coverage for 64x64 DCT_DCT.
-  - [x] Verify large-transform identity rounding and residual clipping for 64x64.
+  - [x] Verify non-zero 64x64 non-DCT transform types return explicit `Unsupported`.
+  - [x] Pin a sparse 64x64 DCT_DCT residual reference slice before replacing the fallback.
 - [ ] Add reference vectors for every enabled transform type/size pair.
 
 ## 4. Prediction and reconstruction pipeline

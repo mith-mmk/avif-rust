@@ -222,39 +222,30 @@ pub fn inverse_transform(
     if tx_type == TxType::DctDct && dequant.iter().skip(1).all(|value| *value == 0) {
         return Ok(inverse_dct_dc_only(tx_size, dequant[0], bit_depth));
     }
-    match tx_type {
-        TxType::DctDct => inverse_separable_transform(
-            tx_size,
-            dequant,
-            bit_depth,
-            Transform1d::Dct,
-            Transform1d::Dct,
-        ),
-        TxType::AdstDct => inverse_separable_transform(
-            tx_size,
-            dequant,
-            bit_depth,
-            Transform1d::Adst,
-            Transform1d::Dct,
-        ),
-        TxType::DctAdst => inverse_separable_transform(
-            tx_size,
-            dequant,
-            bit_depth,
-            Transform1d::Dct,
-            Transform1d::Adst,
-        ),
-        TxType::AdstAdst => inverse_separable_transform(
-            tx_size,
-            dequant,
-            bit_depth,
-            Transform1d::Adst,
-            Transform1d::Adst,
-        ),
-        TxType::Identity => Ok(inverse_identity(tx_size, dequant, bit_depth)),
-        TxType::VerticalDct => inverse_vertical_dct(tx_size, dequant, bit_depth),
-        TxType::HorizontalDct => inverse_horizontal_dct(tx_size, dequant, bit_depth),
+    if tx_type != TxType::DctDct && (tx_size.width() >= 32 || tx_size.height() >= 32) {
+        return Err(DecoderError::Unsupported(format!(
+            "AV1 {tx_size:?} non-DCT transform is not signaled for intra blocks"
+        )));
     }
+    if tx_type != TxType::DctDct {
+        return Err(DecoderError::Unsupported(format!(
+            "AV1 {tx_size:?} {tx_type:?} transform is not supported for this size"
+        )));
+    }
+    if tx_size == TxSize::Tx64x64 && has_non_zero_outside_tx64_coded_top_left(dequant) {
+        return Err(DecoderError::InvalidParam(
+            "AV1 64x64 DCT coefficients outside the coded top-left 32x32 area must be zero"
+                .to_string(),
+        ));
+    }
+    inverse_large_dct_floating_fallback(tx_size, dequant, bit_depth)
+}
+
+fn has_non_zero_outside_tx64_coded_top_left(coefficients: &[i32]) -> bool {
+    coefficients
+        .iter()
+        .enumerate()
+        .any(|(index, coefficient)| *coefficient != 0 && (index / 64 >= 32 || index % 64 >= 32))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -800,31 +791,26 @@ fn round_shift_i64(value: i64, bits: u8) -> i64 {
 const NEW_SQRT2: i64 = 5793;
 const NEW_SQRT2_BITS: u8 = 12;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Transform1d {
-    Dct,
-    Adst,
-}
-
-fn inverse_separable_transform(
+fn inverse_large_dct_floating_fallback(
     tx_size: TxSize,
     dequant: &[i32],
     bit_depth: u8,
-    vertical: Transform1d,
-    horizontal: Transform1d,
 ) -> Result<Vec<i32>, DecoderError> {
-    if (tx_size.width() > 32 || tx_size.height() > 32)
-        && (vertical != Transform1d::Dct || horizontal != Transform1d::Dct)
-    {
-        return Err(DecoderError::Unsupported(
-            "AV1 staged separable transforms larger than 32x32 are not supported yet".to_string(),
+    if tx_size.width() < 32 || tx_size.height() < 32 {
+        return Err(DecoderError::Unsupported(format!(
+            "AV1 {tx_size:?} DCT fallback is only retained for large transforms"
+        )));
+    }
+    if dequant.len() != tx_size.sample_count() {
+        return Err(DecoderError::InvalidParam(
+            "AV1 DCT fallback coefficient count does not match transform size".to_string(),
         ));
     }
 
     let width = tx_size.width();
     let height = tx_size.height();
-    let horizontal_basis = inverse_1d_basis_table(horizontal, width);
-    let vertical_basis = inverse_1d_basis_table(vertical, height);
+    let horizontal_basis = inverse_dct_basis_table(width);
+    let vertical_basis = inverse_dct_basis_table(height);
     let mut temp = vec![0.0; width * height];
     let mut out = vec![0i32; width * height];
     let residual_limit = 1i32 << (bit_depth + 7);
@@ -852,113 +838,25 @@ fn inverse_separable_transform(
     Ok(out)
 }
 
-fn inverse_1d_basis_table(transform: Transform1d, len: usize) -> Vec<f64> {
+fn inverse_dct_basis_table(len: usize) -> Vec<f64> {
     let mut table = vec![0.0; len * len];
     for sample in 0..len {
         for coeff in 0..len {
-            table[sample * len + coeff] = inverse_1d_basis(transform, len, sample, coeff);
+            table[sample * len + coeff] = inverse_dct_basis(len, sample, coeff);
         }
     }
     table
 }
 
-fn inverse_1d_basis(transform: Transform1d, len: usize, sample: usize, coeff: usize) -> f64 {
-    match transform {
-        Transform1d::Dct => {
-            let scale = (2.0 / len as f64).sqrt();
-            let alpha = if coeff == 0 {
-                1.0 / 2.0_f64.sqrt()
-            } else {
-                1.0
-            };
-            let angle =
-                ((2 * sample + 1) * coeff) as f64 * std::f64::consts::PI / (2.0 * len as f64);
-            scale * alpha * angle.cos()
-        }
-        Transform1d::Adst => {
-            let scale = (2.0 / (len + 1) as f64).sqrt();
-            let angle =
-                ((sample + 1) * (coeff + 1)) as f64 * std::f64::consts::PI / ((len + 1) as f64);
-            scale * angle.sin()
-        }
-    }
-}
-
-fn inverse_vertical_dct(
-    tx_size: TxSize,
-    dequant: &[i32],
-    bit_depth: u8,
-) -> Result<Vec<i32>, DecoderError> {
-    if tx_size.height() > 32 {
-        return Err(DecoderError::Unsupported(
-            "AV1 vertical DCT transforms larger than 32 are not supported yet".to_string(),
-        ));
-    }
-
-    let width = tx_size.width();
-    let height = tx_size.height();
-    let mut out = vec![0i32; width * height];
-    let height_scale = (2.0 / height as f64).sqrt();
-    let residual_limit = 1i32 << (bit_depth + 7);
-
-    for y in 0..height {
-        for x in 0..width {
-            let mut sum = 0.0;
-            for v in 0..height {
-                let alpha_v = if v == 0 { 1.0 / 2.0_f64.sqrt() } else { 1.0 };
-                let cos_v =
-                    (((2 * y + 1) * v) as f64 * std::f64::consts::PI / (2.0 * height as f64)).cos();
-                sum += alpha_v * f64::from(dequant[v * width + x]) * cos_v;
-            }
-            let value = (sum * height_scale).round() as i32;
-            out[y * width + x] = value.clamp(-residual_limit, residual_limit - 1);
-        }
-    }
-    Ok(out)
-}
-
-fn inverse_horizontal_dct(
-    tx_size: TxSize,
-    dequant: &[i32],
-    bit_depth: u8,
-) -> Result<Vec<i32>, DecoderError> {
-    if tx_size.width() > 32 {
-        return Err(DecoderError::Unsupported(
-            "AV1 horizontal DCT transforms larger than 32 are not supported yet".to_string(),
-        ));
-    }
-
-    let width = tx_size.width();
-    let height = tx_size.height();
-    let mut out = vec![0i32; width * height];
-    let width_scale = (2.0 / width as f64).sqrt();
-    let residual_limit = 1i32 << (bit_depth + 7);
-
-    for y in 0..height {
-        for x in 0..width {
-            let mut sum = 0.0;
-            for u in 0..width {
-                let alpha_u = if u == 0 { 1.0 / 2.0_f64.sqrt() } else { 1.0 };
-                let cos_u =
-                    (((2 * x + 1) * u) as f64 * std::f64::consts::PI / (2.0 * width as f64)).cos();
-                sum += alpha_u * f64::from(dequant[y * width + u]) * cos_u;
-            }
-            let value = (sum * width_scale).round() as i32;
-            out[y * width + x] = value.clamp(-residual_limit, residual_limit - 1);
-        }
-    }
-    Ok(out)
-}
-
-fn inverse_identity(tx_size: TxSize, dequant: &[i32], bit_depth: u8) -> Vec<i32> {
-    let row_shift = tx_size.row_shift();
-    let residual_limit = 1i32 << (bit_depth + 7);
-    dequant
-        .iter()
-        .map(|value| {
-            round2_signed(*value, row_shift + 4).clamp(-residual_limit, residual_limit - 1)
-        })
-        .collect()
+fn inverse_dct_basis(len: usize, sample: usize, coeff: usize) -> f64 {
+    let scale = (2.0 / len as f64).sqrt();
+    let alpha = if coeff == 0 {
+        1.0 / 2.0_f64.sqrt()
+    } else {
+        1.0
+    };
+    let angle = ((2 * sample + 1) * coeff) as f64 * std::f64::consts::PI / (2.0 * len as f64);
+    scale * alpha * angle.cos()
 }
 
 fn round2_signed(value: i32, bits: u8) -> i32 {
@@ -1061,6 +959,23 @@ mod tests {
         let too_many_coefficients = vec![1; coded_count + 1];
         assert!(matches!(
             coefficients_from_scan(TxSize::Tx64x64, TxType::DctDct, &too_many_coefficients),
+            Err(DecoderError::InvalidParam(_))
+        ));
+    }
+
+    #[test]
+    fn tx64_inverse_transform_rejects_non_zero_coefficients_outside_coded_top_left() {
+        let mut coefficients = vec![0; TxSize::Tx64x64.sample_count()];
+        coefficients[32] = 1;
+        assert!(matches!(
+            inverse_transform(TxType::DctDct, TxSize::Tx64x64, &coefficients, 8),
+            Err(DecoderError::InvalidParam(_))
+        ));
+
+        coefficients[32] = 0;
+        coefficients[32 * TxSize::Tx64x64.width()] = 1;
+        assert!(matches!(
+            inverse_transform(TxType::DctDct, TxSize::Tx64x64, &coefficients, 8),
             Err(DecoderError::InvalidParam(_))
         ));
     }
@@ -1171,36 +1086,31 @@ mod tests {
     }
 
     #[test]
-    fn tx32_transform_dispatch_outputs_clamped_residuals_for_sparse_coefficients() {
+    fn tx32_dct_dispatch_outputs_clamped_residuals_for_sparse_coefficients() {
         let residual_limit = 1 << 15;
-        for tx_type in [
-            TxType::DctDct,
-            TxType::AdstDct,
-            TxType::DctAdst,
-            TxType::AdstAdst,
-            TxType::Identity,
-            TxType::VerticalDct,
-            TxType::HorizontalDct,
-        ] {
-            let mut coefficients = vec![0; TxSize::Tx32x32.sample_count()];
-            coefficients[0] = 64;
-            coefficients[1] = -32;
-            coefficients[TxSize::Tx32x32.width()] = 16;
+        let mut coefficients = vec![0; TxSize::Tx32x32.sample_count()];
+        coefficients[0] = 64;
+        coefficients[1] = -32;
+        coefficients[TxSize::Tx32x32.width()] = 16;
 
-            let residual = inverse_transform(tx_type, TxSize::Tx32x32, &coefficients, 8).unwrap();
+        let residual =
+            inverse_transform(TxType::DctDct, TxSize::Tx32x32, &coefficients, 8).unwrap();
 
-            assert_eq!(
-                residual.len(),
-                TxSize::Tx32x32.sample_count(),
-                "{tx_type:?}"
-            );
-            assert!(
-                residual
-                    .iter()
-                    .all(|value| (-residual_limit..residual_limit).contains(value)),
-                "{tx_type:?}"
-            );
-        }
+        assert_eq!(residual.len(), TxSize::Tx32x32.sample_count());
+        assert!(
+            residual
+                .iter()
+                .all(|value| (-residual_limit..residual_limit).contains(value))
+        );
+        assert_eq!(&residual[..8], &[1, 1, 1, 1, 1, 1, 2, 2]);
+        assert_eq!(
+            (0..8)
+                .map(|y| residual[y * TxSize::Tx32x32.width()])
+                .collect::<Vec<_>>(),
+            vec![1, 1, 1, 1, 1, 1, 1, 1]
+        );
+        assert_eq!(residual[31], 4);
+        assert_eq!(residual[TxSize::Tx32x32.sample_count() - 1], 3);
     }
 
     #[test]
@@ -1221,62 +1131,115 @@ mod tests {
                 .iter()
                 .all(|value| (-residual_limit..residual_limit).contains(value))
         );
+        assert_eq!(&residual[..8], &[1, 1, 1, 1, 1, 1, 1, 1]);
+        assert_eq!(
+            (0..8)
+                .map(|y| residual[y * TxSize::Tx64x64.width()])
+                .collect::<Vec<_>>(),
+            vec![1, 1, 1, 1, 0, 1, 1, 1]
+        );
+        assert_eq!(residual[63], 2);
+        assert_eq!(residual[31 * TxSize::Tx64x64.width() + 31], 1);
+        assert_eq!(residual[TxSize::Tx64x64.sample_count() - 1], 1);
     }
 
     #[test]
-    fn larger_identity_transform_rounds_and_clips_with_large_transform_shift() {
+    fn floating_dct_fallback_is_confined_to_large_transforms() {
+        let small_coefficients = vec![0; TxSize::Tx16x16.sample_count()];
+        assert!(matches!(
+            inverse_large_dct_floating_fallback(TxSize::Tx16x16, &small_coefficients, 8),
+            Err(DecoderError::Unsupported(_))
+        ));
+
+        let mut large_coefficients = vec![0; TxSize::Tx32x32.sample_count()];
+        large_coefficients[1] = 32;
+        assert!(matches!(
+            inverse_large_dct_floating_fallback(TxSize::Tx32x32, &large_coefficients[..1], 8),
+            Err(DecoderError::InvalidParam(_))
+        ));
+        let residual =
+            inverse_large_dct_floating_fallback(TxSize::Tx32x32, &large_coefficients, 8).unwrap();
+
+        assert_eq!(residual.len(), TxSize::Tx32x32.sample_count());
+    }
+
+    #[test]
+    fn tx32_and_tx64_non_dct_large_transforms_reject_non_zero_coefficients() {
         for tx_size in [TxSize::Tx32x32, TxSize::Tx64x64] {
-            let mut coefficients = vec![0; tx_size.sample_count()];
-            coefficients[0] = 64;
-            coefficients[1] = -192;
-            coefficients[2] = i32::MAX;
-            coefficients[3] = i32::MIN;
+            for tx_type in [
+                TxType::AdstDct,
+                TxType::DctAdst,
+                TxType::AdstAdst,
+                TxType::Identity,
+                TxType::VerticalDct,
+                TxType::HorizontalDct,
+            ] {
+                let mut coefficients = vec![0; tx_size.sample_count()];
+                coefficients[0] = 64;
+
+                assert!(
+                    matches!(
+                        inverse_transform(tx_type, tx_size, &coefficients, 8),
+                        Err(DecoderError::Unsupported(_))
+                    ),
+                    "{tx_type:?} {tx_size:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn larger_identity_transform_zero_coefficients_use_zero_fast_path() {
+        for tx_size in [TxSize::Tx32x32, TxSize::Tx64x64] {
+            let coefficients = vec![0; tx_size.sample_count()];
 
             let residual = inverse_transform(TxType::Identity, tx_size, &coefficients, 8).unwrap();
 
-            assert_eq!(residual[0], 1, "{tx_size:?}");
-            assert_eq!(residual[1], -3, "{tx_size:?}");
-            assert_eq!(residual[2], (1 << 15) - 1, "{tx_size:?}");
-            assert_eq!(residual[3], -(1 << 15), "{tx_size:?}");
-            assert!(residual[4..].iter().all(|value| *value == 0), "{tx_size:?}");
+            assert_eq!(residual, coefficients, "{tx_size:?}");
         }
     }
 
     #[test]
     fn larger_dct_dc_only_clips_to_bit_depth_residual_range() {
-        let mut coefficients = vec![0; TxSize::Tx64x64.sample_count()];
+        for tx_size in [TxSize::Tx32x32, TxSize::Tx64x64] {
+            let mut coefficients = vec![0; tx_size.sample_count()];
 
-        coefficients[0] = i32::MAX;
-        assert_eq!(
-            inverse_transform(TxType::DctDct, TxSize::Tx64x64, &coefficients, 8)
-                .unwrap()
-                .into_iter()
-                .max(),
-            Some((1 << 15) - 1)
-        );
-        assert_eq!(
-            inverse_transform(TxType::DctDct, TxSize::Tx64x64, &coefficients, 10)
-                .unwrap()
-                .into_iter()
-                .max(),
-            Some((1 << 17) - 1)
-        );
-        assert_eq!(
-            inverse_transform(TxType::DctDct, TxSize::Tx64x64, &coefficients, 12)
-                .unwrap()
-                .into_iter()
-                .max(),
-            Some((1 << 19) - 1)
-        );
+            coefficients[0] = i32::MAX;
+            assert_eq!(
+                inverse_transform(TxType::DctDct, tx_size, &coefficients, 8)
+                    .unwrap()
+                    .into_iter()
+                    .max(),
+                Some((1 << 15) - 1),
+                "{tx_size:?} 8-bit"
+            );
+            assert_eq!(
+                inverse_transform(TxType::DctDct, tx_size, &coefficients, 10)
+                    .unwrap()
+                    .into_iter()
+                    .max(),
+                Some((1 << 17) - 1),
+                "{tx_size:?} 10-bit"
+            );
+            assert_eq!(
+                inverse_transform(TxType::DctDct, tx_size, &coefficients, 12)
+                    .unwrap()
+                    .into_iter()
+                    .max(),
+                Some((1 << 19) - 1),
+                "{tx_size:?} 12-bit"
+            );
 
-        coefficients[0] = i32::MIN;
-        assert_eq!(
-            inverse_transform(TxType::DctDct, TxSize::Tx64x64, &coefficients, 8)
-                .unwrap()
-                .into_iter()
-                .min(),
-            Some(-(1 << 15))
-        );
+            coefficients[0] = i32::MIN;
+            assert_eq!(
+                inverse_transform(TxType::DctDct, tx_size, &coefficients, 8)
+                    .unwrap()
+                    .into_iter()
+                    .min(),
+                Some(-(1 << 15)),
+                "{tx_size:?} negative 8-bit"
+            );
+        }
     }
 
     #[test]
