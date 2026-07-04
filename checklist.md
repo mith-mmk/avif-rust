@@ -119,6 +119,7 @@ This is the current highest-priority implementation block. Entropy components th
   - [x] Implement palette prediction/reconstruction output for decoded palette maps.
   - [x] Implement cached palette color syntax and sorted cache/transmitted color merging for above/left palette reuse.
   - [x] Add deterministic plane-level unit fixtures for palette color-map expansion and cached-color merging.
+  - [x] Keep decoded sample-prefix diagnostics exposing palette-coded blocks and dimensionally valid non-empty palette maps through public accessors.
   - [ ] Add external AOM/FFmpeg plane-level oracle fixtures for palette-coded blocks, including cached-color cases.
 - [x] Implement normative ext-tx subset mapping, filter-intra tx mode mapping, directional scan selection and 1D coefficient contexts.
 - [x] Apply the normative 20-bit coefficient magnitude clamp after Golomb extension.
@@ -138,6 +139,7 @@ This is the current highest-priority implementation block. Entropy components th
   - [x] Port AOM's 16-point IADST and route ADST, identity and directional 16x16 types through integer stages.
   - [x] Add independent AOM vectors for 16-point IADST and identity outputs.
   - [x] Verify 16x16 dispatch paths match the staged transform core for every supported transform type and bit depth.
+- [x] Verify 4x4, 8x8 and 16x16 DCT DC-only residuals for every supported bit depth.
 - [x] Verify all currently enabled 32x32 transform types.
   - [x] Add sparse-coefficient dispatch safety coverage for 32x32 DCT_DCT.
   - [x] Verify 32x32 DC-only residual clipping for supported bit depths.
@@ -145,7 +147,7 @@ This is the current highest-priority implementation block. Entropy components th
   - [x] Pin a sparse 32x32 DCT_DCT residual reference slice before replacing the fallback.
 - [x] Add 32x32 and 64x64 DCT DC-only regression vectors before replacing the floating fallback.
 - [x] Route 32x32 and 64x64 DCT DC-only transforms through an integer fast path.
-- [x] Route all-zero transforms through a zero-residual fast path before any floating fallback.
+- [x] Route all-zero transforms through a zero-residual fast path for every supported size, type and bit depth.
 - [x] Remove unused floating ADST and directional-DCT fallback paths from the large-transform dispatch.
 - [x] Confine the remaining DCT floating fallback to explicit 32x32/64x64 non-DC coverage.
 - [x] Guard the remaining DCT floating fallback against direct size/count misuse.
@@ -159,7 +161,7 @@ This is the current highest-priority implementation block. Entropy components th
 - [x] Share the 32x32/64x64 fixed-basis row/column DCT core while preserving their rounding points.
 - [x] Add direct DC reference vectors for the 32x32 and 64x64 fixed-basis DCT cores.
 - [x] Add fixed-basis endpoint and quadrant-symmetry reference vectors for large DCTs.
-- [x] Verify 32x32 and 64x64 DCT dispatch paths match their fixed-basis cores.
+- [x] Verify 32x32 and 64x64 DCT dispatch paths match their fixed-basis cores for every supported bit depth.
 - [x] Reject unsupported transform bit depths before inverse-transform shifts and clamps.
 - [x] Verify 64x64 DCT and coded top-left coefficient limits.
   - [x] Verify 64x64 DC-only residual clipping for supported bit depths.

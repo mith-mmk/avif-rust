@@ -1076,13 +1076,22 @@ mod tests {
     }
 
     #[test]
-    fn inverse_dct_dc_only_outputs_constant_residual() {
-        let mut coeffs = vec![0; TxSize::Tx4x4.sample_count()];
-        coeffs[0] = 16;
-
-        let residual = inverse_transform(TxType::DctDct, TxSize::Tx4x4, &coeffs, 8).unwrap();
-
-        assert_eq!(residual, vec![1; 16]);
+    fn small_dct_dc_only_outputs_constant_residuals_for_supported_bit_depths() {
+        for (tx_size, dc) in [
+            (TxSize::Tx4x4, 16),
+            (TxSize::Tx8x8, 32),
+            (TxSize::Tx16x16, 64),
+        ] {
+            let mut coefficients = vec![0; tx_size.sample_count()];
+            coefficients[0] = dc;
+            for bit_depth in [8, 10, 12] {
+                assert_eq!(
+                    inverse_transform(TxType::DctDct, tx_size, &coefficients, bit_depth).unwrap(),
+                    vec![1; tx_size.sample_count()],
+                    "{tx_size:?} {bit_depth}-bit"
+                );
+            }
+        }
     }
 
     #[test]
@@ -1172,13 +1181,6 @@ mod tests {
             inverse_adst8([32, 0, 0, 0, 0, 0, 0, 0], 16),
             [3, 9, 16, 21, 25, 28, 31, 32]
         );
-
-        let mut coefficients = vec![0; TxSize::Tx8x8.sample_count()];
-        coefficients[0] = 32;
-        assert_eq!(
-            inverse_transform(TxType::DctDct, TxSize::Tx8x8, &coefficients, 8).unwrap(),
-            vec![1; 64]
-        );
     }
 
     fn inverse_transform_8x8_staged_reference(
@@ -1245,12 +1247,6 @@ mod tests {
             inverse_dct16([64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 16),
             [45; 16]
         );
-        let mut coefficients = vec![0; TxSize::Tx16x16.sample_count()];
-        coefficients[0] = 64;
-        assert_eq!(
-            inverse_transform(TxType::DctDct, TxSize::Tx16x16, &coefficients, 8).unwrap(),
-            vec![1; 256]
-        );
     }
 
     #[test]
@@ -1277,23 +1273,31 @@ mod tests {
     }
 
     #[test]
-    fn larger_zero_transform_returns_zero_without_fallback() {
-        for tx_size in [TxSize::Tx32x32, TxSize::Tx64x64] {
+    fn all_zero_transforms_return_zero_without_transform_dispatch() {
+        for tx_size in [
+            TxSize::Tx4x4,
+            TxSize::Tx8x8,
+            TxSize::Tx16x16,
+            TxSize::Tx32x32,
+            TxSize::Tx64x64,
+        ] {
             let coefficients = vec![0; tx_size.sample_count()];
-            for tx_type in [
-                TxType::DctDct,
-                TxType::AdstDct,
-                TxType::DctAdst,
-                TxType::AdstAdst,
-                TxType::Identity,
-                TxType::VerticalDct,
-                TxType::HorizontalDct,
-            ] {
-                assert_eq!(
-                    inverse_transform(tx_type, tx_size, &coefficients, 8).unwrap(),
-                    vec![0; tx_size.sample_count()],
-                    "{tx_type:?} {tx_size:?}"
-                );
+            for bit_depth in [8, 10, 12] {
+                for tx_type in [
+                    TxType::DctDct,
+                    TxType::AdstDct,
+                    TxType::DctAdst,
+                    TxType::AdstAdst,
+                    TxType::Identity,
+                    TxType::VerticalDct,
+                    TxType::HorizontalDct,
+                ] {
+                    assert_eq!(
+                        inverse_transform(tx_type, tx_size, &coefficients, bit_depth).unwrap(),
+                        vec![0; tx_size.sample_count()],
+                        "{tx_type:?} {tx_size:?} {bit_depth}-bit"
+                    );
+                }
             }
         }
     }
@@ -1425,20 +1429,37 @@ mod tests {
         tx32_coefficients[0] = 64;
         tx32_coefficients[1] = -32;
         tx32_coefficients[TxSize::Tx32x32.width()] = 16;
-        assert_eq!(
-            inverse_transform(TxType::DctDct, TxSize::Tx32x32, &tx32_coefficients, 8).unwrap(),
-            inverse_dct32_fixed_basis(&tx32_coefficients, 8)
-        );
 
         let mut tx64_coefficients = vec![0; TxSize::Tx64x64.sample_count()];
         tx64_coefficients[0] = 64;
         tx64_coefficients[1] = -32;
         tx64_coefficients[TxSize::Tx64x64.width()] = 16;
         tx64_coefficients[31 * TxSize::Tx64x64.width() + 31] = -8;
-        assert_eq!(
-            inverse_transform(TxType::DctDct, TxSize::Tx64x64, &tx64_coefficients, 8).unwrap(),
-            inverse_dct64_fixed_basis(&tx64_coefficients, 8)
-        );
+
+        for bit_depth in [8, 10, 12] {
+            assert_eq!(
+                inverse_transform(
+                    TxType::DctDct,
+                    TxSize::Tx32x32,
+                    &tx32_coefficients,
+                    bit_depth
+                )
+                .unwrap(),
+                inverse_dct32_fixed_basis(&tx32_coefficients, bit_depth),
+                "Tx32x32 {bit_depth}-bit"
+            );
+            assert_eq!(
+                inverse_transform(
+                    TxType::DctDct,
+                    TxSize::Tx64x64,
+                    &tx64_coefficients,
+                    bit_depth
+                )
+                .unwrap(),
+                inverse_dct64_fixed_basis(&tx64_coefficients, bit_depth),
+                "Tx64x64 {bit_depth}-bit"
+            );
+        }
     }
 
     #[test]

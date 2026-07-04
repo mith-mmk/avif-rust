@@ -111,6 +111,7 @@ pub(super) fn decode_luma_leaf_block(
         x,
         y,
         block_size: block_mode.block_size,
+        palette: block_mode.palette,
         transforms: decoded,
     })
 }

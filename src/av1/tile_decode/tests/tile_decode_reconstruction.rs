@@ -175,6 +175,29 @@ fn decodes_sample_prefix_through_palette_blocks() {
 
     assert_eq!(prefix.blocks.len(), 2037);
     assert_eq!(prefix.next_unsupported, None);
+    let palette_blocks = prefix
+        .blocks
+        .iter()
+        .filter(|block| block.palette.has_palette())
+        .count();
+    assert!(palette_blocks > 0);
+    assert!(
+        prefix
+            .blocks
+            .iter()
+            .any(|block| block.palette.has_non_empty_color_map())
+    );
+    assert!(prefix.blocks.iter().all(|block| {
+        [block.palette.y(), block.palette.uv()]
+            .into_iter()
+            .flatten()
+            .all(|palette| {
+                !palette.colors().is_empty()
+                    && palette.map_width() > 0
+                    && palette.map_height() > 0
+                    && palette.color_map().len() == palette.map_width() * palette.map_height()
+            })
+    }));
     assert!(
         buffers
             .planes

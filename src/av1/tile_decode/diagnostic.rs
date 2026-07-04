@@ -125,6 +125,7 @@ pub struct DecodedLumaBlock {
     pub x: usize,
     pub y: usize,
     pub block_size: BlockSize,
+    pub palette: PaletteBlockInfo,
     pub transforms: Vec<DecodedTransform>,
 }
 

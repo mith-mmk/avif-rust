@@ -52,10 +52,52 @@ pub struct PalettePlaneInfo {
     map_height: usize,
 }
 
+impl PalettePlaneInfo {
+    pub fn colors(&self) -> &[u16] {
+        &self.colors
+    }
+
+    pub fn color_map(&self) -> &[u8] {
+        &self.color_map
+    }
+
+    pub fn map_width(&self) -> usize {
+        self.map_width
+    }
+
+    pub fn map_height(&self) -> usize {
+        self.map_height
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaletteBlockInfo {
     y: Option<PalettePlaneInfo>,
     uv: Option<PalettePlaneInfo>,
+}
+
+impl PaletteBlockInfo {
+    pub fn y(&self) -> Option<&PalettePlaneInfo> {
+        self.y.as_ref()
+    }
+
+    pub fn uv(&self) -> Option<&PalettePlaneInfo> {
+        self.uv.as_ref()
+    }
+
+    pub fn has_palette(&self) -> bool {
+        self.y.is_some() || self.uv.is_some()
+    }
+
+    pub fn has_non_empty_color_map(&self) -> bool {
+        self.y
+            .as_ref()
+            .is_some_and(|palette| !palette.color_map.is_empty())
+            || self
+                .uv
+                .as_ref()
+                .is_some_and(|palette| !palette.color_map.is_empty())
+    }
 }
 
 pub struct TileDecoder<'a> {
