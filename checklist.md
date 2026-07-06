@@ -120,6 +120,7 @@ This is the current highest-priority implementation block. Entropy components th
   - [x] Implement cached palette color syntax and sorted cache/transmitted color merging for above/left palette reuse.
   - [x] Add deterministic plane-level unit fixtures for palette color-map expansion and cached-color merging.
   - [x] Keep decoded sample-prefix diagnostics exposing palette-coded blocks and dimensionally valid non-empty palette maps through public accessors.
+  - [x] Add unit coverage for palette diagnostic accessors and empty-map helper semantics.
   - [ ] Add external AOM/FFmpeg plane-level oracle fixtures for palette-coded blocks, including cached-color cases.
 - [x] Implement normative ext-tx subset mapping, filter-intra tx mode mapping, directional scan selection and 1D coefficient contexts.
 - [x] Apply the normative 20-bit coefficient magnitude clamp after Golomb extension.
@@ -178,6 +179,7 @@ This is the current highest-priority implementation block. Entropy components th
 - [x] Implement directional angle deltas and type-0 edge upsampling.
 - [x] Implement intra-edge filters and corner filtering.
 - [ ] Complete partition-aware top-right and bottom-left availability.
+  - [x] Add an edge-reader hook for partition-gated top-right and bottom-left extension samples.
 - [ ] Implement deblocking.
 - [ ] Implement CDEF.
 - [ ] Implement loop restoration.

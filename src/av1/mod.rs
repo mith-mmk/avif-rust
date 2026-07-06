@@ -27,7 +27,8 @@ pub use predict::{IntraEdges, predict_intra};
 pub use quant::{PlaneQuant, QuantState, dequantize_coefficients};
 pub use reconstruct::{
     add_residual_to_prediction, frame_buffers_to_identity_rgba_8, frame_buffers_to_rgba_8,
-    frame_buffers_to_rgba_16, read_intra_edges, write_plane_block,
+    frame_buffers_to_rgba_16, read_intra_edges, read_intra_edges_with_extension_availability,
+    write_plane_block,
 };
 pub use sequence::{
     ChromaSamplePosition, ColorConfig, ColorDescription, ColorRange, SequenceHeader,

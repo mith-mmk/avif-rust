@@ -65,6 +65,19 @@ pub fn read_intra_edges(
     height: usize,
     bit_depth: u8,
 ) -> OwnedIntraEdges {
+    read_intra_edges_with_extension_availability(plane, x, y, width, height, bit_depth, true, true)
+}
+
+pub fn read_intra_edges_with_extension_availability(
+    plane: &PlaneBuffer,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    bit_depth: u8,
+    top_right_available: bool,
+    bottom_left_available: bool,
+) -> OwnedIntraEdges {
     let mid = 1u16 << (bit_depth - 1);
     let above_available = y > 0 && plane.layout.width > 0;
     let left_available = x > 0 && plane.layout.height > 0;
@@ -76,7 +89,12 @@ pub fn read_intra_edges(
         if !above_available {
             above.push(mid - 1);
         } else {
-            let sample_x = (x + dx).min(plane.layout.width - 1);
+            let edge_dx = if !top_right_available && dx >= width {
+                width.saturating_sub(1)
+            } else {
+                dx
+            };
+            let sample_x = (x + edge_dx).min(plane.layout.width - 1);
             above.push(plane.samples[(y - 1) * plane.layout.width + sample_x]);
         }
     }
@@ -85,7 +103,12 @@ pub fn read_intra_edges(
         if !left_available {
             left.push(mid + 1);
         } else {
-            let sample_y = (y + dy).min(plane.layout.height - 1);
+            let edge_dy = if !bottom_left_available && dy >= height {
+                height.saturating_sub(1)
+            } else {
+                dy
+            };
+            let sample_y = (y + edge_dy).min(plane.layout.height - 1);
             left.push(plane.samples[sample_y * plane.layout.width + x - 1]);
         }
     }
@@ -390,6 +413,37 @@ mod tests {
         assert_eq!(frame_edge.above_left, 128);
         assert!(!frame_edge.above_available);
         assert!(!frame_edge.left_available);
+    }
+
+    #[test]
+    fn read_intra_edges_can_mask_partition_unavailable_extensions() {
+        let layout = PlaneLayout {
+            plane: 0,
+            width: 6,
+            height: 6,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 36,
+        };
+        let plane = PlaneBuffer {
+            layout,
+            samples: (0..36).collect(),
+        };
+
+        let edges =
+            read_intra_edges_with_extension_availability(&plane, 1, 2, 2, 2, 8, false, false);
+
+        assert_eq!(edges.above, vec![7, 8, 8, 8]);
+        assert_eq!(edges.left, vec![12, 18, 18, 18]);
+        assert_eq!(edges.above_left, 6);
+        assert!(edges.above_available);
+        assert!(edges.left_available);
+
+        let unmasked =
+            read_intra_edges_with_extension_availability(&plane, 1, 2, 2, 2, 8, true, true);
+
+        assert_eq!(unmasked.above, vec![7, 8, 9, 10]);
+        assert_eq!(unmasked.left, vec![12, 18, 24, 30]);
     }
 
     #[test]
