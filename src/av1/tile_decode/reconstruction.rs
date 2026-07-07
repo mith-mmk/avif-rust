@@ -6,7 +6,7 @@ use crate::av1::decode::{FrameBuffers, FrameDecodePlan, PlaneBuffer};
 use crate::av1::frame::FrameHeader;
 use crate::av1::predict::{IntraEdges, predict_filter_intra, predict_intra_with_edge_filter};
 use crate::av1::quant::QuantState;
-use crate::av1::reconstruct::{read_intra_edges, write_plane_block};
+use crate::av1::reconstruct::{read_intra_edges_with_extension_availability, write_plane_block};
 use crate::av1::sequence::SequenceHeader;
 use crate::av1::syntax::{PredictionMode, TxSize};
 use crate::av1::tile_decode::palette::PALETTE_MAX_SIZE;
@@ -74,6 +74,8 @@ pub(super) fn decode_plane_block(
                 sequence.color_config.bit_depth,
                 sequence.enable_intra_edge_filter,
                 smooth_neighbour,
+                true,
+                true,
             )?;
             write_plane_block(
                 plane,
@@ -113,6 +115,8 @@ pub(super) fn decode_plane_block(
                 sequence.color_config.bit_depth,
                 sequence.enable_intra_edge_filter,
                 smooth_neighbour,
+                true,
+                true,
             )?;
             write_plane_block(
                 plane,
@@ -147,6 +151,8 @@ pub(super) fn decode_plane_block(
             sequence.color_config.bit_depth,
             sequence.enable_intra_edge_filter,
             smooth_neighbour,
+            true,
+            true,
         )?;
         let quantized = QuantizedTransform {
             block: decoded_transform.transform,
@@ -178,8 +184,19 @@ fn predict_block(
     bit_depth: u8,
     enable_intra_edge_filter: bool,
     smooth_neighbour: bool,
+    top_right_available: bool,
+    bottom_left_available: bool,
 ) -> Result<Vec<u16>, DecoderError> {
-    let mut edges = read_intra_edges(plane, x, y, width, height, bit_depth);
+    let mut edges = read_intra_edges_with_extension_availability(
+        plane,
+        x,
+        y,
+        width,
+        height,
+        bit_depth,
+        top_right_available,
+        bottom_left_available,
+    );
     let midpoint = 1u16 << (bit_depth - 1);
     let above_left = match (edges.above_available, edges.left_available) {
         (true, true) => edges.above_left,
@@ -238,6 +255,8 @@ fn predict_plane_block(
     bit_depth: u8,
     enable_intra_edge_filter: bool,
     smooth_neighbour: bool,
+    top_right_available: bool,
+    bottom_left_available: bool,
 ) -> Result<Vec<u16>, DecoderError> {
     if filter_intra_mode.is_none() && prediction_mode == PredictionMode::Dc {
         let palette_prediction = if plane_index == 0 {
@@ -284,6 +303,8 @@ fn predict_plane_block(
         bit_depth,
         enable_intra_edge_filter,
         smooth_neighbour,
+        top_right_available,
+        bottom_left_available,
     )
 }
 
@@ -345,6 +366,8 @@ mod tests {
             8,
             false,
             false,
+            true,
+            true,
         )
         .unwrap();
 
@@ -357,6 +380,59 @@ mod tests {
                 40, 40, 40, 40,
             ]
         );
+    }
+
+    #[test]
+    fn transform_prediction_can_mask_partition_unavailable_edge_extensions() {
+        let layout = crate::av1::decode::PlaneLayout {
+            plane: 0,
+            width: 6,
+            height: 4,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 24,
+        };
+        let plane = PlaneBuffer {
+            layout,
+            samples: (0..24).collect(),
+        };
+
+        let unmasked = predict_block(
+            &plane,
+            PredictionMode::D45,
+            1,
+            2,
+            2,
+            2,
+            None,
+            None,
+            8,
+            false,
+            false,
+            true,
+            true,
+        )
+        .unwrap();
+        let masked = predict_block(
+            &plane,
+            PredictionMode::D45,
+            1,
+            2,
+            2,
+            2,
+            None,
+            None,
+            8,
+            false,
+            false,
+            false,
+            true,
+        )
+        .unwrap();
+
+        assert_ne!(masked, unmasked);
+        assert_eq!(unmasked, vec![8, 9, 9, 10]);
+        assert_eq!(masked, vec![8, 8, 8, 8]);
     }
 
     #[test]

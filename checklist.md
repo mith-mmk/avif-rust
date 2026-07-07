@@ -180,6 +180,7 @@ This is the current highest-priority implementation block. Entropy components th
 - [x] Implement intra-edge filters and corner filtering.
 - [ ] Complete partition-aware top-right and bottom-left availability.
   - [x] Add an edge-reader hook for partition-gated top-right and bottom-left extension samples.
+  - [x] Route edge-extension availability inputs through transform prediction.
 - [ ] Implement deblocking.
 - [ ] Implement CDEF.
 - [ ] Implement loop restoration.
