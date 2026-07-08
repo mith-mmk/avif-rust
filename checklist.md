@@ -93,6 +93,7 @@ AVIF sequences, encoding, HDR tone mapping and ICC application are later milesto
   - [x] Move residual probe private unit test into `tile_decode/tests/tile_decode_residual.rs`.
   - [x] Move block syntax private unit tests into `tile_decode/tests/tile_decode_block_syntax.rs`.
   - [x] Move luma reconstruction private unit tests into `tile_decode/tests/tile_decode_reconstruction.rs`.
+  - [x] Move palette diagnostic private unit tests into `tile_decode/tests/tile_decode_palette_diagnostic.rs`.
   - [x] Move coefficient context private unit tests into `av1/tests/tile_decode_coeff.rs`.
   - [x] Move tile entropy sample test into `tile_decode::public_api` tests.
   - [ ] Continue moving private implementation tests as decode modules are split.
