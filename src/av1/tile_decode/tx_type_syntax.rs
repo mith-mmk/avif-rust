@@ -72,7 +72,10 @@ impl<'a> TileDecoder<'a> {
     }
 }
 
-fn intra_ext_tx_set_context(reduced_tx_set: bool, tx_size: TxSize) -> Option<(usize, usize)> {
+pub(super) fn intra_ext_tx_set_context(
+    reduced_tx_set: bool,
+    tx_size: TxSize,
+) -> Option<(usize, usize)> {
     match tx_size {
         TxSize::Tx4x4 => Some((if reduced_tx_set { 2 } else { 1 }, 0)),
         TxSize::Tx8x8 => Some((if reduced_tx_set { 2 } else { 1 }, 1)),
@@ -81,7 +84,9 @@ fn intra_ext_tx_set_context(reduced_tx_set: bool, tx_size: TxSize) -> Option<(us
     }
 }
 
-fn filter_intra_mode_to_tx_cdf_mode(filter_intra_mode: usize) -> Result<usize, DecoderError> {
+pub(super) fn filter_intra_mode_to_tx_cdf_mode(
+    filter_intra_mode: usize,
+) -> Result<usize, DecoderError> {
     match filter_intra_mode {
         0 => Ok(0),
         1 => Ok(1),
@@ -91,33 +96,5 @@ fn filter_intra_mode_to_tx_cdf_mode(filter_intra_mode: usize) -> Result<usize, D
         _ => Err(DecoderError::Bitstream(format!(
             "AV1 filter intra mode {filter_intra_mode} is invalid"
         ))),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn intra_ext_tx_set_context_uses_set2_for_tx16() {
-        assert_eq!(intra_ext_tx_set_context(false, TxSize::Tx4x4), Some((1, 0)));
-        assert_eq!(intra_ext_tx_set_context(false, TxSize::Tx8x8), Some((1, 1)));
-        assert_eq!(
-            intra_ext_tx_set_context(false, TxSize::Tx16x16),
-            Some((2, 2))
-        );
-        assert_eq!(intra_ext_tx_set_context(true, TxSize::Tx4x4), Some((2, 0)));
-        assert_eq!(intra_ext_tx_set_context(true, TxSize::Tx8x8), Some((2, 1)));
-        assert_eq!(intra_ext_tx_set_context(false, TxSize::Tx32x32), None);
-    }
-
-    #[test]
-    fn filter_intra_mode_selects_normative_tx_cdf_mode() {
-        assert_eq!(filter_intra_mode_to_tx_cdf_mode(0).unwrap(), 0);
-        assert_eq!(filter_intra_mode_to_tx_cdf_mode(1).unwrap(), 1);
-        assert_eq!(filter_intra_mode_to_tx_cdf_mode(2).unwrap(), 2);
-        assert_eq!(filter_intra_mode_to_tx_cdf_mode(3).unwrap(), 6);
-        assert_eq!(filter_intra_mode_to_tx_cdf_mode(4).unwrap(), 0);
-        assert!(filter_intra_mode_to_tx_cdf_mode(5).is_err());
     }
 }

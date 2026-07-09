@@ -87,8 +87,8 @@ AVIF sequences, encoding, HDR tone mapping and ICC application are later milesto
   - [x] Move public container/OBU sample and malformed-input checks into integration tests.
   - [x] Move public AV1 config/header/tile/decode-plan sample checks into integration tests.
   - [x] Move prediction/reconstruction private unit tests with the reconstruction helpers.
-  - [x] Move mode/context grid private unit tests with the context-grid helpers.
-  - [x] Move transform-type syntax private unit tests with the transform-type syntax helpers.
+  - [x] Move mode/context grid private unit tests into `tile_decode/tests/tile_decode_context_grid.rs`.
+  - [x] Move transform-type syntax private unit tests into `tile_decode/tests/tile_decode_tx_type_syntax.rs`.
   - [x] Move tile payload bounds unit test with public API helpers.
   - [x] Move residual probe private unit test into `tile_decode/tests/tile_decode_residual.rs`.
   - [x] Move block syntax private unit tests into `tile_decode/tests/tile_decode_block_syntax.rs`.

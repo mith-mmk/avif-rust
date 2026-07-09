@@ -196,3 +196,11 @@ mod reconstruction_tests;
 #[cfg(test)]
 #[path = "tile_decode/tests/tile_decode_palette_diagnostic.rs"]
 mod palette_diagnostic_tests;
+
+#[cfg(test)]
+#[path = "tile_decode/tests/tile_decode_context_grid.rs"]
+mod context_grid_tests;
+
+#[cfg(test)]
+#[path = "tile_decode/tests/tile_decode_tx_type_syntax.rs"]
+mod tx_type_syntax_tests;
