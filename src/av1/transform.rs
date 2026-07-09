@@ -1693,6 +1693,58 @@ mod tests {
     }
 
     #[test]
+    fn enabled_transform_size_reference_anchors_match_fixed_vectors() {
+        let cases = [
+            (TxSize::Tx4x4, TxType::DctDct, [2, 2, 1, 2, 2]),
+            (TxSize::Tx4x4, TxType::AdstDct, [1, 1, 1, 2, 3]),
+            (TxSize::Tx4x4, TxType::DctAdst, [1, 1, 0, 1, 3]),
+            (TxSize::Tx4x4, TxType::AdstAdst, [0, 1, 0, 1, 4]),
+            (TxSize::Tx4x4, TxType::Identity, [8, -2, 1, 0, 0]),
+            (TxSize::Tx4x4, TxType::VerticalDct, [5, -1, 4, -1, 0]),
+            (TxSize::Tx4x4, TxType::HorizontalDct, [3, 3, 1, 1, 0]),
+            (TxSize::Tx8x8, TxType::DctDct, [1, 1, 1, 1, 1]),
+            (TxSize::Tx8x8, TxType::AdstDct, [0, 0, 0, 0, 2]),
+            (TxSize::Tx8x8, TxType::DctAdst, [0, 0, 0, 0, 2]),
+            (TxSize::Tx8x8, TxType::AdstAdst, [0, 0, 0, 0, 2]),
+            (TxSize::Tx8x8, TxType::Identity, [8, -2, 1, 0, 0]),
+            (TxSize::Tx8x8, TxType::VerticalDct, [3, -1, 3, -1, 0]),
+            (TxSize::Tx8x8, TxType::HorizontalDct, [2, 2, 0, 0, 0]),
+            (TxSize::Tx16x16, TxType::DctDct, [0, 0, 0, 0, 1]),
+            (TxSize::Tx16x16, TxType::AdstDct, [0, 0, 0, 0, 1]),
+            (TxSize::Tx16x16, TxType::DctAdst, [0, 0, 0, 0, 1]),
+            (TxSize::Tx16x16, TxType::AdstAdst, [0, 0, 0, 0, 1]),
+            (TxSize::Tx16x16, TxType::Identity, [8, -2, 1, 0, 0]),
+            (TxSize::Tx16x16, TxType::VerticalDct, [2, -1, 2, -1, 0]),
+            (TxSize::Tx16x16, TxType::HorizontalDct, [1, 1, 0, 0, 0]),
+            (TxSize::Tx32x32, TxType::DctDct, [1, 1, 1, 1, 2]),
+            (TxSize::Tx64x64, TxType::DctDct, [1, 1, 1, 1, 1]),
+        ];
+
+        for (tx_size, tx_type, expected) in cases {
+            let mut coefficients = vec![0; tx_size.sample_count()];
+            coefficients[0] = 64;
+            coefficients[1] = -16;
+            coefficients[tx_size.width()] = 8;
+            if tx_size.width() >= 32 {
+                coefficients[31 * tx_size.width() + 31] = -4;
+            }
+            let residual = inverse_transform(tx_type, tx_size, &coefficients, 8).unwrap();
+            let positions = [
+                0,
+                1,
+                tx_size.width(),
+                tx_size.width() + 1,
+                residual.len() - 1,
+            ];
+            assert_eq!(
+                positions.map(|position| residual[position]),
+                expected,
+                "{tx_size:?} {tx_type:?}"
+            );
+        }
+    }
+
+    #[test]
     fn identity_transform_rounds_and_clips() {
         let residual = inverse_transform(TxType::Identity, TxSize::Tx4x4, &[64; 16], 8).unwrap();
 

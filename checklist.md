@@ -172,7 +172,7 @@ This is the current highest-priority implementation block. Entropy components th
   - [x] Add sparse coded-top-left dispatch safety coverage for 64x64 DCT_DCT.
   - [x] Verify non-zero 64x64 non-DCT transform types return explicit `Unsupported`.
   - [x] Pin a sparse 64x64 DCT_DCT residual reference slice before replacing the fallback.
-- [ ] Add reference vectors for every enabled transform type/size pair.
+- [x] Add fixed 8-bit reference anchors for every enabled transform type/size pair.
 
 ## 4. Prediction and reconstruction pipeline
 
