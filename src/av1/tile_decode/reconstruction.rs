@@ -58,6 +58,8 @@ pub(super) fn decode_plane_block(
     if block_mode.skip {
         for transform in &transforms {
             decoder.set_txb_entropy_context(*transform, 0);
+            let (top_right_available, bottom_left_available) =
+                decoder.reconstructed_extension_availability(plane, *transform)?;
             let prediction = predict_plane_block(
                 plane,
                 block_mode,
@@ -74,8 +76,8 @@ pub(super) fn decode_plane_block(
                 sequence.color_config.bit_depth,
                 sequence.enable_intra_edge_filter,
                 smooth_neighbour,
-                true,
-                true,
+                top_right_available,
+                bottom_left_available,
             )?;
             write_plane_block(
                 plane,
@@ -85,6 +87,7 @@ pub(super) fn decode_plane_block(
                 transform.tx_size.height(),
                 &prediction,
             )?;
+            decoder.mark_reconstructed_transform(*transform)?;
         }
         return Ok(Vec::new());
     }
@@ -99,6 +102,8 @@ pub(super) fn decode_plane_block(
         )?;
         if all_zero_symbol != 0 {
             decoder.set_txb_entropy_context(transform, 0);
+            let (top_right_available, bottom_left_available) =
+                decoder.reconstructed_extension_availability(plane, transform)?;
             let prediction = predict_plane_block(
                 plane,
                 block_mode,
@@ -115,8 +120,8 @@ pub(super) fn decode_plane_block(
                 sequence.color_config.bit_depth,
                 sequence.enable_intra_edge_filter,
                 smooth_neighbour,
-                true,
-                true,
+                top_right_available,
+                bottom_left_available,
             )?;
             write_plane_block(
                 plane,
@@ -126,6 +131,7 @@ pub(super) fn decode_plane_block(
                 transform.tx_size.height(),
                 &prediction,
             )?;
+            decoder.mark_reconstructed_transform(transform)?;
             continue;
         }
 
@@ -135,6 +141,8 @@ pub(super) fn decode_plane_block(
             transform,
             coefficient_entropy_context(&decoded_transform.coefficients),
         );
+        let (top_right_available, bottom_left_available) =
+            decoder.reconstructed_extension_availability(plane, transform)?;
         let prediction = predict_plane_block(
             plane,
             block_mode,
@@ -151,8 +159,8 @@ pub(super) fn decode_plane_block(
             sequence.color_config.bit_depth,
             sequence.enable_intra_edge_filter,
             smooth_neighbour,
-            true,
-            true,
+            top_right_available,
+            bottom_left_available,
         )?;
         let quantized = QuantizedTransform {
             block: decoded_transform.transform,
@@ -166,13 +174,14 @@ pub(super) fn decode_plane_block(
             &prediction,
             sequence.color_config.bit_depth,
         )?;
+        decoder.mark_reconstructed_transform(transform)?;
         decoded.push(decoded_transform);
     }
 
     Ok(decoded)
 }
 
-fn predict_block(
+pub(super) fn predict_block(
     plane: &PlaneBuffer,
     prediction_mode: PredictionMode,
     x: usize,

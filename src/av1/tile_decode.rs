@@ -16,6 +16,7 @@ mod palette;
 mod partition_syntax;
 mod public_api;
 mod reconstruction;
+mod reconstruction_coverage;
 mod residual_decode;
 mod residual_preview;
 mod residual_probe;
@@ -118,6 +119,7 @@ pub struct TileDecoder<'a> {
     cdef_transmitted: [bool; 4],
     above_txfm_context: Vec<usize>,
     left_txfm_context: Vec<usize>,
+    reconstructed_mi_grid: [Vec<bool>; 3],
     plane_entropy_contexts: [PlaneEntropyContexts; 3],
     restoration: RestorationParams,
     wiener_refs: [[[i16; 3]; 2]; 3],
@@ -126,32 +128,38 @@ pub struct TileDecoder<'a> {
 
 impl<'a> TileDecoder<'a> {
     pub fn new(payload: &'a [u8], frame: &FrameHeader) -> Result<Self, DecoderError> {
-        let mi_cols = (usize::try_from(frame.frame_width)
-            .map_err(|_| DecoderError::InvalidParam("AV1 frame width is too large".to_string()))?
-            + 3)
-            >> 2;
-        let mi_rows = (usize::try_from(frame.frame_height).map_err(|_| {
+        let frame_width = usize::try_from(frame.frame_width)
+            .map_err(|_| DecoderError::InvalidParam("AV1 frame width is too large".to_string()))?;
+        let frame_height = usize::try_from(frame.frame_height)
+            .map_err(|_| DecoderError::InvalidParam("AV1 frame height is too large".to_string()))?;
+        let mi_cols = frame_width.checked_add(3).ok_or_else(|| {
+            DecoderError::InvalidParam("AV1 frame width is too large".to_string())
+        })? >> 2;
+        let mi_rows = frame_height.checked_add(3).ok_or_else(|| {
             DecoderError::InvalidParam("AV1 frame height is too large".to_string())
-        })? + 3)
-            >> 2;
+        })? >> 2;
+        let mi_count = mi_cols.checked_mul(mi_rows).ok_or_else(|| {
+            DecoderError::InvalidParam("AV1 frame dimensions are too large".to_string())
+        })?;
         Ok(Self {
             reader: EntropyDecoder::new(payload, frame.disable_cdf_update)?,
             cdf: CdfContext::new(frame.base_q_idx),
             mi_cols,
             mi_rows,
-            y_mode_grid: vec![None; mi_cols * mi_rows],
-            y_palette_size_grid: vec![None; mi_cols * mi_rows],
-            uv_palette_size_grid: vec![None; mi_cols * mi_rows],
-            y_palette_colors_grid: vec![None; mi_cols * mi_rows],
-            u_palette_colors_grid: vec![None; mi_cols * mi_rows],
-            y_smooth_grid: vec![None; mi_cols * mi_rows],
-            uv_smooth_grid: vec![None; mi_cols * mi_rows],
-            skip_grid: vec![None; mi_cols * mi_rows],
+            y_mode_grid: vec![None; mi_count],
+            y_palette_size_grid: vec![None; mi_count],
+            uv_palette_size_grid: vec![None; mi_count],
+            y_palette_colors_grid: vec![None; mi_count],
+            u_palette_colors_grid: vec![None; mi_count],
+            y_smooth_grid: vec![None; mi_count],
+            uv_smooth_grid: vec![None; mi_count],
+            skip_grid: vec![None; mi_count],
             above_partition_context: vec![0; mi_cols],
             left_partition_context: vec![0; mi_rows],
             cdef_transmitted: [false; 4],
             above_txfm_context: vec![0; mi_cols],
             left_txfm_context: vec![0; mi_rows],
+            reconstructed_mi_grid: std::array::from_fn(|_| vec![false; mi_count]),
             plane_entropy_contexts: std::array::from_fn(|_| PlaneEntropyContexts {
                 above: vec![0; mi_cols],
                 left: vec![0; mi_rows],
@@ -204,3 +212,7 @@ mod context_grid_tests;
 #[cfg(test)]
 #[path = "tile_decode/tests/tile_decode_tx_type_syntax.rs"]
 mod tx_type_syntax_tests;
+
+#[cfg(test)]
+#[path = "tile_decode/tests/tile_decode_reconstruction_coverage.rs"]
+mod reconstruction_coverage_tests;

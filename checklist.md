@@ -179,9 +179,10 @@ This is the current highest-priority implementation block. Entropy components th
 - [x] Implement smooth prediction weights and directional zone interpolation.
 - [x] Implement directional angle deltas and type-0 edge upsampling.
 - [x] Implement intra-edge filters and corner filtering.
-- [ ] Complete partition-aware top-right and bottom-left availability.
+- [x] Complete partition-aware top-right and bottom-left availability.
   - [x] Add an edge-reader hook for partition-gated top-right and bottom-left extension samples.
   - [x] Route edge-extension availability inputs through transform prediction.
+  - [x] Derive live transform edge-extension availability from per-plane, per-tile reconstructed MI coverage.
 - [ ] Implement deblocking.
 - [ ] Implement CDEF.
 - [ ] Implement loop restoration.
@@ -242,6 +243,7 @@ These measurements document incomplete combinations; they are not acceptance cri
 - Palette size/color syntax and color-map token consumption now allow the sample prefix to traverse palette blocks without `Unsupported`; the retained prefix test decodes 2166 luma leaves with no syntax frontier.
 - Palette prediction now expands decoded palette maps into reconstructed block prediction. The sample diagnostic average RGB absolute error improved to about `56.1582`.
 - Cached palette color selection now reuses sorted above/left palette colors and merges them with transmitted colors. The sample diagnostic average RGB absolute error improved further to about `54.5251`; visual conformance remains pending because plane-level oracle fixtures are not covered yet.
+- Live per-transform reconstructed-MI coverage now gates top-right and bottom-left prediction extensions. The sample diagnostic average RGB absolute error is about `65.7132`; this is recorded for investigation, not used as a conformance decision before plane-level fixtures exist.
 - Normative ext-tx mapping alone produced `71.5238`; mapping plus incomplete 1D contexts changed block traversal to `1347`.
 - Directional scan/context combinations produced `72.8957` and `82.0004` before the complete retained scan/mapping subset was wired.
 - DC-sign neighbour contexts alone changed `1997` blocks to `1976` and produced `77.1615`.
