@@ -14,6 +14,11 @@ profile exercised by `samples/WML2Viewer.avif`:
 target. No format expansion or additional architecture refactor is promoted
 above this vertical slice until its native planes match the reference oracle.
 
+### other avif sample images
+
+- https://github.com/link-u/avif-sample-images
+- https://colinbendell.github.io/webperf/animated-gif-decode/avif.html
+
 ## Guardrails
 
 - AVIF and AV1 decoding remain pure Rust. FFmpeg/libaom are test or fixture
@@ -31,29 +36,29 @@ above this vertical slice until its native planes match the reference oracle.
 
 - [x] Keep reusable exact-plane and RGBA max-error assertions.
 - [x] Keep manifest schema, duplicate-ID, dimensions, bit-depth, plane-count
-  and overflow validation.
+      and overflow validation.
 - [x] Add a local fixture generator for AVIF, native planes, RGBA8/RGBA16,
-  source hash and `test_data/oracles.csv`.
+      source hash and `test_data/oracles.csv`.
 - [x] Add `AVIF_REQUIRE_ORACLES=1` strict mode so conformance runs fail when
-  the manifest is absent, while normal parser/safety tests remain runnable
-  without local test data.
+      the manifest is absent, while normal parser/safety tests remain runnable
+      without local test data.
 - [ ] Make strict mode reject a header-only/zero-entry manifest and require
-  the approved fixture IDs plus their source hashes.
+      the approved fixture IDs plus their source hashes.
 - [x] Generate the first filter-disabled 8-bit 4:4:4 identity-GBR fixture.
 - [x] Generate exact residual, partition and directional fixtures in that same
-  profile.
+      profile.
 - [x] Generate the palette fixture in that same profile and assert that the
-  bitstream actually contains decoded palette blocks and color maps.
+      bitstream actually contains decoded palette blocks and color maps.
 - [x] Generate the `WML2Viewer.avif` native-plane and RGBA fixtures.
 - [ ] Make diagnostic fixture generation opt-in for strict registration
-  (for example, `generate_oracles.ps1 -RegisterInStrictManifest`), and keep
-  the default `WML2Viewer` generation out of `oracles.csv`.
+      (for example, `generate_oracles.ps1 -RegisterInStrictManifest`), and keep
+      the default `WML2Viewer` generation out of `oracles.csv`.
 - [ ] Add one reproducible recipe/bootstrap for `BlackLossless` and the five
-  filter-disabled fixtures from a fresh clone.
+      filter-disabled fixtures from a fresh clone.
 - [x] Make the strict oracle command part of the documented AVIF validation
-  gate.
+      gate.
 - [x] Capture and assert `wml2` draw callback bytes and dimensions in the
-  AVIF integration test.
+      AVIF integration test.
 - [ ] Assert callback order as `init -> draw -> terminate`.
 
 ## 2. Raw block reconstruction: current priority
@@ -62,45 +67,45 @@ The following work is one atomic correctness track. Each item must pass an
 exact native-plane fixture before the next feature is enabled.
 
 - [x] Align partition recursion and block traversal with the filter-disabled
-  partition and directional reference streams.
+      partition and directional reference streams.
 - [x] Route first-leaf traversal through the first child of vertical,
-  horizontal, extended and four-way partitions.
+      horizontal, extended and four-way partitions.
 - [ ] Align transform-block placement for luma and chroma, including clipped
-  frame edges and per-plane coordinates.
+      frame edges and per-plane coordinates.
 - [x] Verify transform-size selection and transform partition traversal for
-  every transform used by the filter-disabled fixture set.
+      every transform used by the filter-disabled fixture set.
 - [ ] Verify entropy/CDF update state across blocks: partition, mode, txb skip,
-  DC sign, EOB, coefficient base/range, signs and Golomb extension.
+      DC sign, EOB, coefficient base/range, signs and Golomb extension.
 - [ ] Verify coefficient scan selection and coefficient context for every
-  enabled transform type in the first profile.
+      enabled transform type in the first profile.
 - [ ] Fix palette/filter-intra syntax gating and support all 19 AV1 transform
-  sizes, including rectangular transform placement and per-plane coordinates.
+      sizes, including rectangular transform placement and per-plane coordinates.
 - [ ] Derive chroma transform types from the signalled UV mode and transform
-  set; validate the 32x32/64x64 transforms against normative reference vectors.
+      set; validate the 32x32/64x64 transforms against normative reference vectors.
 - [ ] Require entropy termination/trailing-bit validation and complete tile
-  coverage before accepting a decoded frame.
+      coverage before accepting a decoded frame.
 - [x] Replace diagnostic-only sample assertions with exact plane assertions
-  for the generated filter-disabled fixtures.
+      for the generated filter-disabled fixtures.
 - [x] Complete the filter-disabled fixture set with exact Y/U/V plane matches.
 - [ ] Complete the `WML2Viewer.avif` raw reconstruction comparison.
 - [x] Record the current first native-plane mismatch at plane 0, `(146, 0)`
-  after wiring CFL syntax/prediction and non-lossless chroma transform sizing;
-  plane 1 starts at `(104, 0)` and plane 2 at `(96, 0)`; keep this diagnostic
-  fixture out of the passing strict manifest until raw reconstruction and
-  enabled filters are separated.
+      after wiring CFL syntax/prediction and non-lossless chroma transform sizing;
+      plane 1 starts at `(104, 0)` and plane 2 at `(96, 0)`; keep this diagnostic
+      fixture out of the passing strict manifest until raw reconstruction and
+      enabled filters are separated.
 
 Completed prerequisites retained as stable code:
 
 - [x] Tile decoder responsibilities are split into syntax, entropy,
-  reconstruction, diagnostics and public API modules.
+      reconstruction, diagnostics and public API modules.
 - [x] Existing private tests moved with their implementation modules.
 - [x] Size/class-specific coefficient CDFs and neighbour txb state are wired.
 - [x] DC-sign contexts, coefficient state propagation and scan helpers have
-  known-vector coverage.
+      known-vector coverage.
 - [x] Partition-aware top-right/bottom-left availability is derived from live
-  reconstructed-MI coverage.
+      reconstructed-MI coverage.
 - [x] CFL-allowed UV mode CDFs, joint alpha syntax and 4:4:4 CFL prediction are
-  wired for the current non-subsampled reconstruction path.
+      wired for the current non-subsampled reconstruction path.
 - [x] Existing transform dispatch and 8-bit reference anchors are retained.
 
 ## 3. Reconstruction filters
@@ -112,14 +117,14 @@ public decoded-frame shape.
 - [x] Collect CDEF indices within each tile during block traversal.
 - [ ] Aggregate CDEF indices into frame-private post-filter state.
 - [ ] Retain transform boundaries, skip/mode state and restoration unit type
-  and coefficient information during frame decode.
+      and coefficient information during frame decode.
 - [ ] Implement deblocking in normative order with boundary and strength
-  vectors.
+      vectors.
 - [ ] Implement CDEF and apply the decoded per-block CDEF index.
 - [ ] Implement loop restoration and restoration-unit boundary handling.
 - [ ] Verify the complete reconstruction/filter order against plane oracles.
 - [ ] Enable the `WML2Viewer.avif` final oracle only after the required filters
-  are active and exact.
+      are active and exact.
 
 ## 4. Format and composition backlog
 
@@ -131,7 +136,7 @@ and RGBA gates.
 - [ ] 4:2:2 with chroma sample position.
 - [x] Keep the limited SDR BT.601/BT.709 colour-conversion core.
 - [ ] Verify 4:4:4 non-identity colour paths with real AVIF plane/RGBA
-  fixtures.
+      fixtures.
 - [ ] 10-bit and 12-bit quantisation/reconstruction.
 - [ ] Alpha auxiliary decode and composition.
 - [ ] Grid image-cell composition.
@@ -140,26 +145,26 @@ and RGBA gates.
 - [ ] Super-resolution.
 - [ ] Film grain for still images.
 - [x] Keep HDR transfer characteristics and ICC profiles explicitly
-  `Unsupported` until implemented.
+      `Unsupported` until implemented.
 - [ ] Implement HDR tone mapping and ICC display conversion.
 
 ## 5. Safety, performance and release gate
 
 - [ ] Add malformed/truncated cases for each newly supported syntax path.
 - [ ] Audit dimensions, offsets, allocations and filter scratch buffers for
-  overflow and resource limits.
+      overflow and resource limits.
 - [ ] Reject active but unimplemented filters, film grain, qmatrix and other
-  unsupported AV1 tools before public decode returns an image.
+      unsupported AV1 tools before public decode returns an image.
 - [ ] Validate AVIF primary-item property association, essential flags and
-  AV1/container dimension and colour metadata consistency.
+      AV1/container dimension and colour metadata consistency.
 - [ ] Gate the AVIF-disabled integration target with `required-features =
-  ["avif"]` and add an explicit feature-off test target.
+["avif"]` and add an explicit feature-off test target.
 - [x] Keep container, OBU, frame-header and entropy fuzz targets.
 - [ ] Optimise allocations only after exact-plane conformance passes.
 - [ ] Correct the nested crate repository metadata to point at the independent
-  `avif-rust` repository.
+      `avif-rust` repository.
 - [ ] Add SIMD/parallel paths only with scalar equivalence and Wasm fallback
-  tests.
+      tests.
 
 Required validation after every implementation step:
 
