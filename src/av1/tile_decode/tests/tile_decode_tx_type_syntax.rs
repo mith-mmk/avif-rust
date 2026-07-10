@@ -1,5 +1,13 @@
-use super::tx_type_syntax::{filter_intra_mode_to_tx_cdf_mode, intra_ext_tx_set_context};
-use crate::av1::syntax::TxSize;
+use super::tx_type_syntax::{
+    filter_intra_mode_to_tx_cdf_mode, fixed_tx_type, intra_ext_tx_set_context,
+};
+use crate::av1::frame::{
+    CdefParams, DeltaLfParams, DeltaQParams, FrameHeader, FrameType, LoopFilterParams,
+    QuantizationParams, RestorationParams, TxMode,
+};
+use crate::av1::syntax::{TxSize, TxType};
+use crate::av1::tile::TileInfo;
+use crate::av1::transform::TransformBlock;
 
 #[test]
 fn intra_ext_tx_set_context_uses_set2_for_tx16() {
@@ -22,4 +30,125 @@ fn filter_intra_mode_selects_normative_tx_cdf_mode() {
     assert_eq!(filter_intra_mode_to_tx_cdf_mode(3).unwrap(), 6);
     assert_eq!(filter_intra_mode_to_tx_cdf_mode(4).unwrap(), 0);
     assert!(filter_intra_mode_to_tx_cdf_mode(5).is_err());
+}
+
+#[test]
+fn fixed_tx_type_uses_dct_for_non_lossless_chroma_and_large_blocks() {
+    let frame = sample_frame(0);
+    let chroma = TransformBlock {
+        plane: 1,
+        x: 0,
+        y: 0,
+        tx_size: TxSize::Tx4x4,
+    };
+    let large = TransformBlock {
+        plane: 0,
+        x: 0,
+        y: 0,
+        tx_size: TxSize::Tx32x32,
+    };
+
+    assert_eq!(fixed_tx_type(&frame, chroma), Some(TxType::DctDct));
+    assert_eq!(fixed_tx_type(&frame, large), Some(TxType::DctDct));
+
+    let frame = sample_frame(20);
+    let luma_small = TransformBlock {
+        plane: 0,
+        x: 0,
+        y: 0,
+        tx_size: TxSize::Tx4x4,
+    };
+    assert_eq!(fixed_tx_type(&frame, luma_small), None);
+}
+
+#[test]
+fn fixed_tx_type_uses_dct_for_coded_lossless_luma() {
+    let frame = sample_frame(0);
+    let transform = TransformBlock {
+        plane: 0,
+        x: 0,
+        y: 0,
+        tx_size: TxSize::Tx4x4,
+    };
+
+    assert_eq!(fixed_tx_type(&frame, transform), Some(TxType::DctDct));
+}
+
+fn sample_frame(base_q_idx: u8) -> FrameHeader {
+    FrameHeader {
+        frame_type: FrameType::Key,
+        show_existing_frame: false,
+        show_frame: true,
+        showable_frame: false,
+        error_resilient_mode: true,
+        disable_cdf_update: false,
+        allow_screen_content_tools: false,
+        force_integer_mv: 2,
+        frame_size_override_flag: false,
+        order_hint: 0,
+        primary_ref_frame: 7,
+        refresh_frame_flags: 0xff,
+        frame_width: 64,
+        frame_height: 64,
+        upscaled_width: 64,
+        render_width: 64,
+        render_height: 64,
+        allow_intrabc: false,
+        disable_frame_end_update_cdf: false,
+        tile_info: TileInfo {
+            uniform_tile_spacing: true,
+            tile_cols: 1,
+            tile_rows: 1,
+            tile_cols_log2: 0,
+            tile_rows_log2: 0,
+            tile_size_bytes: 0,
+            context_update_tile_id: 0,
+            mi_col_starts: vec![0, 16],
+            mi_row_starts: vec![0, 16],
+        },
+        base_q_idx,
+        quantization: QuantizationParams {
+            base_q_idx,
+            delta_q_y_dc: 0,
+            delta_q_u_dc: 0,
+            delta_q_u_ac: 0,
+            delta_q_v_dc: 0,
+            delta_q_v_ac: 0,
+        },
+        delta_q: DeltaQParams {
+            present: false,
+            res: 0,
+        },
+        delta_lf: DeltaLfParams {
+            present: false,
+            res: 0,
+            multi: false,
+        },
+        loop_filter: LoopFilterParams {
+            levels: [0; 4],
+            sharpness: 0,
+            delta_enabled: false,
+            delta_update: false,
+        },
+        cdef: CdefParams {
+            enabled: false,
+            damping: 0,
+            bits: 0,
+            strengths: [crate::av1::frame::CdefStrength {
+                y_pri: 0,
+                y_sec: 0,
+                uv_pri: 0,
+                uv_sec: 0,
+            }; 8],
+        },
+        restoration: RestorationParams {
+            uses_lr: false,
+            lr_type: [0; 3],
+            unit_shift: 0,
+        },
+        tx_mode: TxMode::Only4x4,
+        reduced_tx_set: false,
+        uncompressed_header_bits: 0,
+        payload_after_header_offset: 0,
+    }
 }

@@ -196,6 +196,84 @@ pub fn reconstruct_transform_block(
     })
 }
 
+pub fn reconstruct_lossless_transform_block(
+    plane: &mut PlaneBuffer,
+    quantized: &QuantizedTransform,
+    plane_quant: PlaneQuant,
+    prediction: &[u16],
+    bit_depth: u8,
+) -> Result<ReconstructedTransform, DecoderError> {
+    if quantized.block.tx_size != TxSize::Tx4x4 {
+        return Err(DecoderError::Unsupported(
+            "AV1 lossless transform must be 4x4".to_string(),
+        ));
+    }
+    if quantized.coefficients.len() != TxSize::Tx4x4.sample_count()
+        || prediction.len() != TxSize::Tx4x4.sample_count()
+    {
+        return Err(DecoderError::InvalidParam(
+            "AV1 lossless transform input size does not match 4x4".to_string(),
+        ));
+    }
+
+    let non_zero_coefficients = quantized
+        .coefficients
+        .iter()
+        .filter(|coefficient| **coefficient != 0)
+        .count();
+    let dequant = dequantize_coefficients(
+        &quantized.coefficients,
+        plane_quant,
+        bit_depth,
+        TxSize::Tx4x4.dq_denom(),
+    );
+    let residual = inverse_lossless_transform_4x4(&dequant);
+    let reconstructed = add_residual_to_prediction(prediction, &residual, bit_depth)?;
+    write_plane_block(
+        plane,
+        quantized.block.x,
+        quantized.block.y,
+        4,
+        4,
+        &reconstructed,
+    )?;
+
+    Ok(ReconstructedTransform {
+        block: quantized.block,
+        tx_type: quantized.tx_type,
+        non_zero_coefficients,
+    })
+}
+
+pub fn inverse_lossless_transform_4x4(dequant: &[i32]) -> Vec<i32> {
+    let mut block = [0i32; 16];
+    block.copy_from_slice(&dequant[..16]);
+
+    for column in 0..4 {
+        let a = block[column] + block[12 + column];
+        let b = block[4 + column] + block[8 + column];
+        let c = block[4 + column] - block[8 + column];
+        let d = block[column] - block[12 + column];
+        block[column] = a + b;
+        block[4 + column] = c + d;
+        block[8 + column] = a - b;
+        block[12 + column] = d - c;
+    }
+
+    for row in block.chunks_exact_mut(4) {
+        let a = row[0] + row[3];
+        let b = row[1] + row[2];
+        let c = row[1] - row[2];
+        let d = row[0] - row[3];
+        row[0] = round_shift_i64(i64::from(a + b), 2) as i32;
+        row[1] = round_shift_i64(i64::from(c + d), 2) as i32;
+        row[2] = round_shift_i64(i64::from(a - b), 2) as i32;
+        row[3] = round_shift_i64(i64::from(d - c), 2) as i32;
+    }
+
+    block.to_vec()
+}
+
 pub fn inverse_transform(
     tx_type: TxType,
     tx_size: TxSize,
@@ -1749,6 +1827,24 @@ mod tests {
         let residual = inverse_transform(TxType::Identity, TxSize::Tx4x4, &[64; 16], 8).unwrap();
 
         assert_eq!(residual, vec![8; 16]);
+    }
+
+    #[test]
+    fn lossless_wht_dc_basis_is_spread_over_the_block() {
+        let mut coefficients = [0i32; 16];
+        coefficients[0] = 4;
+
+        assert_eq!(inverse_lossless_transform_4x4(&coefficients), vec![1; 16]);
+    }
+
+    #[test]
+    fn lossless_wht_rounds_signed_basis_values() {
+        let coefficients = [4, -4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+        assert_eq!(
+            inverse_lossless_transform_4x4(&coefficients),
+            vec![0, 0, 2, 2, 0, 0, 2, 2, 0, 0, 2, 2, 0, 0, 2, 2]
+        );
     }
 
     #[test]

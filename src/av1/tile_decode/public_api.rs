@@ -10,10 +10,12 @@ use crate::av1::frame::FrameHeader;
 use crate::av1::predict::{IntraEdges, predict_intra};
 use crate::av1::quant::QuantState;
 use crate::av1::sequence::SequenceHeader;
-use crate::av1::syntax::{BlockSize, Partition};
+use crate::av1::syntax::Partition;
+use crate::av1::tile_decode::partition_syntax::root_block_size;
 use crate::av1::tile_group::{TileGroup, TilePayload};
 use crate::av1::transform::{
-    QuantizedTransform, plan_transform_blocks_with_tx_size, reconstruct_transform_block,
+    QuantizedTransform, plan_transform_blocks_with_tx_size, reconstruct_lossless_transform_block,
+    reconstruct_transform_block,
 };
 
 pub fn prepare_tile_entropy(
@@ -223,13 +225,23 @@ pub fn decode_first_luma_transform(
         .planes
         .get_mut(0)
         .ok_or_else(|| DecoderError::Bitstream("AV1 luma plane is missing".to_string()))?;
-    reconstruct_transform_block(
-        luma,
-        &quantized,
-        quant_state.plane(transform.plane),
-        &prediction,
-        sequence.color_config.bit_depth,
-    )?;
+    if frame.quantization.coded_lossless() {
+        reconstruct_lossless_transform_block(
+            luma,
+            &quantized,
+            quant_state.plane(transform.plane),
+            &prediction,
+            sequence.color_config.bit_depth,
+        )?;
+    } else {
+        reconstruct_transform_block(
+            luma,
+            &quantized,
+            quant_state.plane(transform.plane),
+            &prediction,
+            sequence.color_config.bit_depth,
+        )?;
+    }
 
     Ok(residual)
 }
@@ -322,7 +334,7 @@ pub fn decode_luma_root_block_prefix(
                     tile_plan,
                     plan,
                     buffers,
-                    BlockSize::Block128x128,
+                    root_block_size(sequence),
                     x,
                     y,
                     &mut block_budget,

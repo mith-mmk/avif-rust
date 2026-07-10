@@ -361,7 +361,7 @@ pub struct QuantizationParams {
 }
 
 impl QuantizationParams {
-    fn coded_lossless(&self) -> bool {
+    pub(crate) fn coded_lossless(&self) -> bool {
         self.base_q_idx == 0
             && self.delta_q_y_dc == 0
             && self.delta_q_u_dc == 0

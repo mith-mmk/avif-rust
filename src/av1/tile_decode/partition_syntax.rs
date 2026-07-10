@@ -11,7 +11,7 @@ impl<'a> TileDecoder<'a> {
         sequence: &SequenceHeader,
     ) -> Result<PartitionProbe, DecoderError> {
         self.read_restoration_units(sequence, tile.pixel_x, tile.pixel_y)?;
-        self.read_partition(tile, BlockSize::Block128x128, tile.pixel_x, tile.pixel_y)
+        self.read_partition(tile, root_block_size(sequence), tile.pixel_x, tile.pixel_y)
     }
 
     pub(super) fn read_first_leaf_partition(
@@ -88,6 +88,14 @@ impl<'a> TileDecoder<'a> {
             partition,
             bit_position_after: self.reader.bit_position(),
         })
+    }
+}
+
+pub(super) fn root_block_size(sequence: &SequenceHeader) -> BlockSize {
+    if sequence.use_128x128_superblock {
+        BlockSize::Block128x128
+    } else {
+        BlockSize::Block64x64
     }
 }
 

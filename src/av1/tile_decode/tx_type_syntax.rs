@@ -12,16 +12,12 @@ impl<'a> TileDecoder<'a> {
         block_mode: &BlockModeProbe,
         transform: TransformBlock,
     ) -> Result<TxTypeProbe, DecoderError> {
-        if transform.plane != 0
-            || frame.base_q_idx == 0
-            || transform.tx_size.width() >= 32
-            || transform.tx_size.height() >= 32
-        {
+        if let Some(tx_type) = fixed_tx_type(frame, transform) {
             return Ok(TxTypeProbe {
                 read: false,
                 set: None,
                 symbol: None,
-                tx_type: TxType::DctDct,
+                tx_type,
             });
         }
         let intra_mode = block_mode
@@ -70,6 +66,17 @@ impl<'a> TileDecoder<'a> {
             })
         }
     }
+}
+
+pub(super) fn fixed_tx_type(frame: &FrameHeader, transform: TransformBlock) -> Option<TxType> {
+    if frame.base_q_idx == 0
+        || transform.plane != 0
+        || transform.tx_size.width() >= 32
+        || transform.tx_size.height() >= 32
+    {
+        return Some(TxType::DctDct);
+    }
+    None
 }
 
 pub(super) fn intra_ext_tx_set_context(
