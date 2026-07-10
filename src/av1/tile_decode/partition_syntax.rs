@@ -80,10 +80,7 @@ impl<'a> TileDecoder<'a> {
             };
             (partition_symbol(partition), partition)
         };
-        if std::env::var_os("AVIF_TRACE_WML2_MODES").is_some()
-            && (64..96).contains(&x)
-            && y < 32
-        {
+        if std::env::var_os("AVIF_TRACE_WML2_MODES").is_some() && (64..96).contains(&x) && y < 32 {
             eprintln!(
                 "Rust partition x={x} size={block_size:?} context={context} part={partition:?} state={:?}",
                 self.reader.trace_state()

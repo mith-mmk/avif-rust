@@ -45,10 +45,8 @@ pub(super) fn decode_luma_leaf_block(
 ) -> Result<DecodedLumaBlock, DecoderError> {
     let block_mode =
         decoder.read_intra_frame_block_mode(sequence, frame, tile_plan, block_size, x, y)?;
-    if std::env::var_os("AVIF_TRACE_WML2_MODES").is_some()
-        && (64..96).contains(&x)
-        && y < 32
-    {
+    decoder.record_cdef_index(frame, x, y, block_mode.cdef_idx);
+    if std::env::var_os("AVIF_TRACE_WML2_MODES").is_some() && (64..96).contains(&x) && y < 32 {
         eprintln!(
             "Rust mode x={x} size={:?} skip={} y={:?} uv={:?} tx={:?} state={:?}",
             block_size,

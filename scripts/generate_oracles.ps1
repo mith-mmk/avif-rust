@@ -129,7 +129,10 @@ try {
     $rgbaRelative = "rgba/$FixtureId.rgba"
     $rgba16Relative = "rgba/$FixtureId.rgba16le"
 
-    Copy-Item -LiteralPath $sourcePath -Destination (Join-Path $outputPath $imageRelative) -Force
+    $imageDestination = Join-Path $outputPath $imageRelative
+    if ($sourcePath -ne [System.IO.Path]::GetFullPath($imageDestination)) {
+        Copy-Item -LiteralPath $sourcePath -Destination $imageDestination -Force
+    }
     for ($plane = 0; $plane -lt 3; $plane++) {
         $planeBytes = $gbrp[($plane * $planeSampleCount)..(($plane + 1) * $planeSampleCount - 1)]
         Write-U16FromByteSamples -Samples $planeBytes -Destination (Join-Path $outputPath $planeRelative[$plane])
@@ -143,11 +146,18 @@ try {
     $existingManifestLines = @()
     if (Test-Path -LiteralPath $manifestPath) {
         $existingManifestLines = @(Get-Content -LiteralPath $manifestPath | Where-Object {
-            $_ -and $_ -ne $manifestHeader -and $_ -notmatch "^$([regex]::Escape($FixtureId)),"
+            $_ -and $_ -ne $manifestHeader -and
+            $_.Split(',').Count -eq 10 -and
+            $_ -notmatch "^$([regex]::Escape($FixtureId)),"
         })
     }
-    $manifest = @($manifestHeader) + $existingManifestLines + $manifestLine
-    Write-Utf8NoBom -Path $manifestPath -Lines $manifest
+    $manifest = [System.Collections.Generic.List[string]]::new()
+    $manifest.Add($manifestHeader)
+    foreach ($line in $existingManifestLines) {
+        $manifest.Add([string]$line)
+    }
+    $manifest.Add($manifestLine)
+    Write-Utf8NoBom -Path $manifestPath -Lines $manifest.ToArray()
 
     $sourceHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $sourcePath).Hash.ToLowerInvariant()
     $sourceManifestPath = Join-Path $outputPath "oracles.sources.csv"
@@ -155,14 +165,20 @@ try {
     $existingSourceLines = @()
     if (Test-Path -LiteralPath $sourceManifestPath) {
         $existingSourceLines = @(Get-Content -LiteralPath $sourceManifestPath | Where-Object {
-            $_ -and $_ -ne $sourceManifestHeader -and $_ -notmatch "^$([regex]::Escape($FixtureId)),"
+            $_ -and $_ -ne $sourceManifestHeader -and
+            $_.Split(',').Count -eq 5 -and
+            $_ -notmatch "^$([regex]::Escape($FixtureId)),"
         })
     }
-    Write-Utf8NoBom -Path $sourceManifestPath -Lines @(
-        $sourceManifestHeader,
-        $existingSourceLines,
+    $sourceManifest = [System.Collections.Generic.List[string]]::new()
+    $sourceManifest.Add($sourceManifestHeader)
+    foreach ($line in $existingSourceLines) {
+        $sourceManifest.Add([string]$line)
+    }
+    $sourceManifest.Add(
         "$FixtureId,$([System.IO.Path]::GetFileName($sourcePath)),$sourceHash,gbrp,generate_oracles.ps1"
     )
+    Write-Utf8NoBom -Path $sourceManifestPath -Lines $sourceManifest.ToArray()
 
     Write-Host "generated oracle fixture $FixtureId ($width x $height, 8-bit gbrp)"
 }

@@ -14,6 +14,7 @@ mod decode_flow;
 mod diagnostic;
 mod palette;
 mod partition_syntax;
+mod post_filter_state;
 mod public_api;
 mod reconstruction;
 mod reconstruction_coverage;
@@ -131,6 +132,7 @@ pub struct TileDecoder<'a> {
     restoration: RestorationParams,
     wiener_refs: [[[i16; 3]; 2]; 3],
     sgrproj_refs: [[i16; 2]; 3],
+    cdef_units: Vec<post_filter_state::CdefUnit>,
 }
 
 impl<'a> TileDecoder<'a> {
@@ -175,6 +177,7 @@ impl<'a> TileDecoder<'a> {
             restoration: frame.restoration,
             wiener_refs: [[[3, -7, 15]; 2]; 3],
             sgrproj_refs: [[-32, 31]; 3],
+            cdef_units: Vec::new(),
         })
     }
 

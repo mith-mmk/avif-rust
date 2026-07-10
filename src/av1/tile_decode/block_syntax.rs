@@ -126,7 +126,10 @@ impl<'a> TileDecoder<'a> {
         let mut palette = palette;
         self.read_palette_tokens(sequence, block_size, x, y, &mut palette)?;
         if std::env::var_os("AVIF_TRACE_WML2_MODES").is_some() && x == 88 && y == 16 {
-            eprintln!("Rust x88 palette tokens state={:?}", self.reader.trace_state());
+            eprintln!(
+                "Rust x88 palette tokens state={:?}",
+                self.reader.trace_state()
+            );
         }
         let (tx_size_context, tx_size_symbol, tx_size) =
             self.read_intra_tx_size(frame, block_size, skip, x, y)?;
