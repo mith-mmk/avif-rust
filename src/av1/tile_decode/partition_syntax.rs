@@ -23,19 +23,9 @@ impl<'a> TileDecoder<'a> {
         loop {
             match probe.partition {
                 Partition::None => return Ok(probe),
-                Partition::Split => {
-                    let subsize = probe.block_size.split_subsize().ok_or_else(|| {
-                        DecoderError::Bitstream(format!(
-                            "AV1 cannot split first leaf block {:?}",
-                            probe.block_size
-                        ))
-                    })?;
-                    probe = self.read_partition(tile, subsize, tile.pixel_x, tile.pixel_y)?;
-                }
                 partition => {
-                    return Err(DecoderError::Unsupported(format!(
-                        "AV1 first-leaf traversal for partition {partition:?} is not supported yet"
-                    )));
+                    let subsize = first_partition_child_size(probe.block_size, partition)?;
+                    probe = self.read_partition(tile, subsize, tile.pixel_x, tile.pixel_y)?;
                 }
             }
         }
@@ -99,6 +89,29 @@ impl<'a> TileDecoder<'a> {
             bit_position_after: self.reader.bit_position(),
         })
     }
+}
+
+pub(super) fn first_partition_child_size(
+    block_size: BlockSize,
+    partition: Partition,
+) -> Result<BlockSize, DecoderError> {
+    let child = match partition {
+        Partition::None => Some(block_size),
+        Partition::Horizontal => block_size.horizontal_subsize(),
+        Partition::Vertical => block_size.vertical_subsize(),
+        Partition::Split => block_size.split_subsize(),
+        Partition::HorizontalA => block_size.split_subsize(),
+        Partition::HorizontalB => block_size.horizontal_subsize(),
+        Partition::VerticalA => block_size.split_subsize(),
+        Partition::VerticalB => block_size.vertical_subsize(),
+        Partition::Horizontal4 => block_size.horizontal_4_subsize(),
+        Partition::Vertical4 => block_size.vertical_4_subsize(),
+    };
+    child.ok_or_else(|| {
+        DecoderError::Unsupported(format!(
+            "AV1 first partition child for {partition:?} is not supported for {block_size:?}"
+        ))
+    })
 }
 
 fn restricted_partition_cdf(source: &[u16], has_rows: bool) -> [u16; 3] {

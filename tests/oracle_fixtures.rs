@@ -3,11 +3,17 @@ use std::path::{Component, Path, PathBuf};
 
 mod support;
 
-use support::{assert_rgba8_max_error, assert_rgba16_max_error, read_u16le_samples};
+use support::{
+    assert_exact_samples, assert_rgba8_max_error, assert_rgba16_max_error, read_u16le_samples,
+};
 
 const ORACLE_MANIFEST: &str = "oracles.csv";
 const ORACLE_HEADER: &str =
     "id,avif,width,height,bit_depth,plane_paths,plane_widths,plane_heights,rgba8,rgba16";
+
+fn oracle_requirement_enabled(value: Option<&str>) -> bool {
+    matches!(value, Some("1") | Some("true") | Some("TRUE"))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct OracleEntry {
@@ -310,6 +316,13 @@ fn external_supported_stream_oracles_match_when_present() {
     let root = test_data_dir();
     let manifest_path = root.join(ORACLE_MANIFEST);
     if !manifest_path.exists() {
+        let require_oracles =
+            oracle_requirement_enabled(std::env::var("AVIF_REQUIRE_ORACLES").ok().as_deref());
+        assert!(
+            !require_oracles,
+            "AVIF_REQUIRE_ORACLES is enabled but {} is missing",
+            manifest_path.display()
+        );
         return;
     }
 
@@ -343,10 +356,10 @@ fn external_supported_stream_oracles_match_when_present() {
 
             assert_eq!(plane.layout.width, width, "{} plane width", entry.id);
             assert_eq!(plane.layout.height, height, "{} plane height", entry.id);
-            assert_eq!(
-                plane.samples, expected_samples,
-                "{} plane {plane_index} samples",
-                entry.id
+            assert_exact_samples(
+                &plane.samples,
+                &expected_samples,
+                &format!("{} plane {plane_index} samples", entry.id),
             );
         }
 
@@ -364,4 +377,13 @@ fn external_supported_stream_oracles_match_when_present() {
         );
         assert_rgba16_max_error(&rgba16.rgba, &expected_rgba16, 1, &entry.id);
     }
+}
+
+#[test]
+fn oracle_requirement_flag_accepts_only_explicit_true_values() {
+    assert!(oracle_requirement_enabled(Some("1")));
+    assert!(oracle_requirement_enabled(Some("true")));
+    assert!(oracle_requirement_enabled(Some("TRUE")));
+    assert!(!oracle_requirement_enabled(Some("0")));
+    assert!(!oracle_requirement_enabled(None));
 }

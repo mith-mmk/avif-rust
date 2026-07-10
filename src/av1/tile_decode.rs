@@ -216,3 +216,7 @@ mod tx_type_syntax_tests;
 #[cfg(test)]
 #[path = "tile_decode/tests/tile_decode_reconstruction_coverage.rs"]
 mod reconstruction_coverage_tests;
+
+#[cfg(test)]
+#[path = "tile_decode/tests/tile_decode_partition.rs"]
+mod partition_tests;

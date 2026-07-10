@@ -36,9 +36,31 @@ pub fn assert_exact_decoded_planes(
             expected.stride,
             "plane {plane_index} stride"
         );
-        assert_eq!(
-            actual.samples, expected.samples,
-            "plane {plane_index} samples"
+        assert_exact_samples(
+            &actual.samples,
+            expected.samples,
+            &format!("plane {plane_index} samples"),
+        );
+    }
+}
+
+pub fn assert_exact_samples(actual: &[u16], expected: &[u16], label: &str) {
+    assert_eq!(actual.len(), expected.len(), "{label} length");
+    let mut mismatch_count = 0usize;
+    let mut first_mismatch = None;
+    for (index, (actual, expected)) in actual.iter().zip(expected.iter()).enumerate() {
+        if actual != expected {
+            mismatch_count += 1;
+            first_mismatch.get_or_insert((index, *actual, *expected));
+        }
+    }
+    if let Some((index, actual_sample, expected_sample)) = first_mismatch {
+        let window_start = index.saturating_sub(2);
+        let window_end = (index + 3).min(actual.len());
+        panic!(
+            "{label}: first mismatch at sample {index}: actual={actual_sample}, expected={expected_sample}; mismatches={mismatch_count}; actual_window={:?}; expected_window={:?}",
+            &actual[window_start..window_end],
+            &expected[window_start..window_end]
         );
     }
 }
