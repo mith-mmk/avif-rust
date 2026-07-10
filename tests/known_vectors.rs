@@ -65,6 +65,24 @@ fn cdf_known_vectors_match_default_av1_tables() {
     assert_eq!(context.coeff_base[4][1][22][3], 32768);
     assert_eq!(context.coeff_br[4][1][20][3], 32768);
     assert_eq!(context.dc_sign[1][2][1], 32768);
+    assert_eq!(
+        context.uv_mode_cfl_allowed[0],
+        [
+            10407, 11208, 12900, 13181, 13823, 14175, 14899, 15656, 15986, 20086, 20995, 22455,
+            24212, 32768, 0,
+        ]
+    );
+    assert_eq!(
+        context.cfl_sign,
+        [1418, 2123, 13340, 18405, 26972, 28343, 32294, 32768, 0]
+    );
+    assert_eq!(
+        context.cfl_alpha[0],
+        [
+            7637, 20719, 31401, 32481, 32657, 32688, 32692, 32696, 32700, 32704, 32708, 32712,
+            32716, 32720, 32724, 32768, 0,
+        ]
+    );
 }
 
 #[test]

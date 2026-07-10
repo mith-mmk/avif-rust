@@ -1,4 +1,5 @@
 use super::*;
+use crate::av1::tile_decode::block_syntax::{cfl_is_allowed, cfl_signs};
 use crate::av1::transform::plan_transform_blocks_with_tx_size;
 use crate::av1::{
     BlockSize, Partition, PredictionMode, TxSize, UvPredictionMode, build_still_decode_plan,
@@ -6,6 +7,35 @@ use crate::av1::{
 };
 use crate::container::parse_avif;
 use crate::obu::{ObuType, find_obu_payload};
+
+#[test]
+fn cfl_availability_matches_lossless_and_block_size_rules() {
+    assert!(cfl_is_allowed(true, BlockSize::Block4x4));
+    assert!(!cfl_is_allowed(true, BlockSize::Block8x8));
+    assert!(cfl_is_allowed(false, BlockSize::Block32x16));
+    assert!(!cfl_is_allowed(false, BlockSize::Block64x32));
+}
+
+#[test]
+fn cfl_joint_signs_match_av1_symbol_order() {
+    let signs = (0..8)
+        .map(|joint_sign| cfl_signs(joint_sign).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        signs,
+        vec![
+            (0, 1),
+            (0, 2),
+            (1, 0),
+            (1, 1),
+            (1, 2),
+            (2, 0),
+            (2, 1),
+            (2, 2)
+        ]
+    );
+    assert!(cfl_signs(8).is_err());
+}
 
 #[test]
 fn reads_sample_root_partition_symbol() {

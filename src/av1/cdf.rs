@@ -1605,6 +1605,60 @@ pub const DEFAULT_UV_MODE_CFL_NOT_ALLOWED_CDF: [[u16; INTRA_MODES + 1]; INTRA_MO
     ],
 ];
 
+pub const DEFAULT_UV_MODE_CFL_ALLOWED_CDF: [[u16; INTRA_MODES + 2]; INTRA_MODES] = [
+    [
+        10407, 11208, 12900, 13181, 13823, 14175, 14899, 15656, 15986, 20086, 20995, 22455, 24212,
+        32768, 0,
+    ],
+    [
+        4532, 19780, 20057, 20215, 20428, 21071, 21199, 21451, 22099, 24228, 24693, 27032, 29472,
+        32768, 0,
+    ],
+    [
+        5273, 5379, 20177, 20270, 20385, 20439, 20949, 21695, 21774, 23138, 24256, 24703, 26679,
+        32768, 0,
+    ],
+    [
+        6740, 7167, 7662, 14152, 14536, 14785, 15034, 16741, 18371, 21520, 22206, 23389, 24182,
+        32768, 0,
+    ],
+    [
+        4987, 5368, 5928, 6068, 19114, 20315, 21857, 22253, 22411, 24911, 25380, 26027, 26376,
+        32768, 0,
+    ],
+    [
+        5370, 6889, 7247, 7393, 9498, 21114, 21402, 21753, 21981, 24780, 25386, 26517, 27176,
+        32768, 0,
+    ],
+    [
+        4816, 4961, 7204, 7326, 8765, 8930, 20169, 20682, 20803, 23188, 23763, 24455, 24940, 32768,
+        0,
+    ],
+    [
+        6608, 6740, 8529, 9049, 9257, 9356, 9735, 18827, 19059, 22336, 23204, 23964, 24793, 32768,
+        0,
+    ],
+    [
+        5998, 7419, 7781, 8933, 9255, 9549, 9753, 10417, 18898, 22494, 23139, 24764, 25989, 32768,
+        0,
+    ],
+    [
+        10660, 11298, 12550, 12957, 13322, 13624, 14040, 15004, 15534, 20714, 21789, 23443, 24861,
+        32768, 0,
+    ],
+    [
+        10522, 11530, 12552, 12963, 13378, 13779, 14245, 15235, 15902, 20102, 22696, 23774, 25838,
+        32768, 0,
+    ],
+    [
+        10099, 10691, 12639, 13049, 13386, 13665, 14125, 15163, 15636, 19676, 20474, 23519, 25208,
+        32768, 0,
+    ],
+    [
+        3144, 5087, 7382, 7504, 7593, 7690, 7801, 8064, 8232, 9248, 9875, 10521, 29048, 32768, 0,
+    ],
+];
+
 pub const DEFAULT_ANGLE_DELTA_CDF: [[u16; 8]; DIRECTIONAL_MODES] = [
     [2180, 5032, 7567, 22776, 26989, 30217, 32768, 0],
     [2301, 5608, 8801, 23487, 26974, 30330, 32768, 0],
@@ -1614,6 +1668,36 @@ pub const DEFAULT_ANGLE_DELTA_CDF: [[u16; 8]; DIRECTIONAL_MODES] = [
     [2664, 10176, 12485, 17650, 21600, 30495, 32768, 0],
     [2240, 11096, 15453, 20341, 22561, 28917, 32768, 0],
     [3605, 10428, 12459, 17676, 21244, 30655, 32768, 0],
+];
+
+pub const DEFAULT_CFL_SIGN_CDF: [u16; 9] =
+    [1418, 2123, 13340, 18405, 26972, 28343, 32294, 32768, 0];
+
+pub const DEFAULT_CFL_ALPHA_CDF: [[u16; 17]; 6] = [
+    [
+        7637, 20719, 31401, 32481, 32657, 32688, 32692, 32696, 32700, 32704, 32708, 32712, 32716,
+        32720, 32724, 32768, 0,
+    ],
+    [
+        14365, 23603, 28135, 31168, 32167, 32395, 32487, 32573, 32620, 32647, 32668, 32672, 32676,
+        32680, 32684, 32768, 0,
+    ],
+    [
+        11532, 22380, 28445, 31360, 32349, 32523, 32584, 32649, 32673, 32677, 32681, 32685, 32689,
+        32693, 32697, 32768, 0,
+    ],
+    [
+        26990, 31402, 32282, 32571, 32692, 32696, 32700, 32704, 32708, 32712, 32716, 32720, 32724,
+        32728, 32732, 32768, 0,
+    ],
+    [
+        17248, 26058, 28904, 30608, 31305, 31877, 32126, 32321, 32394, 32464, 32516, 32560, 32576,
+        32593, 32622, 32768, 0,
+    ],
+    [
+        14738, 21678, 25779, 27901, 29024, 30302, 30980, 31843, 32144, 32413, 32520, 32594, 32622,
+        32656, 32660, 32768, 0,
+    ],
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1638,6 +1722,9 @@ pub struct CdfContext {
     pub intra_frame_y_mode: [[[u16; INTRA_MODES + 1]; INTRA_MODE_CONTEXTS]; INTRA_MODE_CONTEXTS],
     pub y_mode: [[u16; INTRA_MODES + 1]; BLOCK_SIZE_GROUPS],
     pub uv_mode_cfl_not_allowed: [[u16; INTRA_MODES + 1]; INTRA_MODES],
+    pub uv_mode_cfl_allowed: [[u16; INTRA_MODES + 2]; INTRA_MODES],
+    pub cfl_sign: [u16; 9],
+    pub cfl_alpha: [[u16; 17]; 6],
     pub use_filter_intra: [[u16; 3]; FILTER_INTRA_BLOCK_CONTEXTS],
     pub filter_intra_mode: [u16; FILTER_INTRA_MODES + 1],
     pub angle_delta: [[u16; 8]; DIRECTIONAL_MODES],
@@ -1691,6 +1778,9 @@ impl CdfContext {
             intra_frame_y_mode: DEFAULT_INTRA_FRAME_Y_MODE_CDF,
             y_mode: DEFAULT_Y_MODE_CDF,
             uv_mode_cfl_not_allowed: DEFAULT_UV_MODE_CFL_NOT_ALLOWED_CDF,
+            uv_mode_cfl_allowed: DEFAULT_UV_MODE_CFL_ALLOWED_CDF,
+            cfl_sign: DEFAULT_CFL_SIGN_CDF,
+            cfl_alpha: DEFAULT_CFL_ALPHA_CDF,
             use_filter_intra: DEFAULT_USE_FILTER_INTRA_CDF,
             filter_intra_mode: DEFAULT_FILTER_INTRA_MODE_CDF,
             angle_delta: DEFAULT_ANGLE_DELTA_CDF,
@@ -1795,6 +1885,18 @@ impl CdfContext {
 
     pub fn uv_mode_cfl_not_allowed_cdf_mut(&mut self, y_mode_symbol: usize) -> &mut [u16] {
         &mut self.uv_mode_cfl_not_allowed[y_mode_symbol]
+    }
+
+    pub fn uv_mode_cfl_allowed_cdf_mut(&mut self, y_mode_symbol: usize) -> &mut [u16] {
+        &mut self.uv_mode_cfl_allowed[y_mode_symbol]
+    }
+
+    pub fn cfl_sign_cdf_mut(&mut self) -> &mut [u16] {
+        &mut self.cfl_sign
+    }
+
+    pub fn cfl_alpha_cdf_mut(&mut self, context: usize) -> &mut [u16] {
+        &mut self.cfl_alpha[context]
     }
 
     pub fn use_filter_intra_cdf_mut(&mut self, block_size_index: usize) -> &mut [u16] {
@@ -1930,6 +2032,7 @@ mod tests {
         assert_eq!(context.intra_frame_y_mode[0][0][12], 32768);
         assert_eq!(context.y_mode[0][12], 32768);
         assert_eq!(context.uv_mode_cfl_not_allowed[0][12], 32768);
+        assert_eq!(context.uv_mode_cfl_allowed[0][13], 32768);
         assert_eq!(context.angle_delta[0][6], 32768);
         assert_eq!(context.txb_skip[0][0][1], 32768);
         assert_eq!(context.txb_skip[4][12][1], 32768);

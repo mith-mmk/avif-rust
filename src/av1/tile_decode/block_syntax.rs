@@ -1,4 +1,4 @@
-use super::{BlockModeProbe, TileDecoder};
+use super::{BlockModeProbe, CflParams, TileDecoder};
 use crate::DecoderError;
 use crate::av1::decode::TileDecodePlan;
 use crate::av1::frame::{FrameHeader, TxMode};
@@ -18,6 +18,7 @@ impl<'a> TileDecoder<'a> {
         x: usize,
         y: usize,
     ) -> Result<BlockModeProbe, DecoderError> {
+        self.current_cfl = None;
         if frame.delta_q.present {
             return Err(DecoderError::Unsupported(
                 "AV1 delta-q block syntax is not supported yet".to_string(),
@@ -58,16 +59,19 @@ impl<'a> TileDecoder<'a> {
         };
         let has_chroma = !sequence.color_config.monochrome;
         let (uv_mode_symbol, uv_mode, angle_delta_uv) = if has_chroma {
-            let uv_symbol = self
-                .reader
-                .read_symbol(self.cdf.uv_mode_cfl_not_allowed_cdf_mut(y_mode_symbol))?;
+            let cfl_allowed = cfl_is_allowed(frame.quantization.coded_lossless(), block_size);
+            let uv_symbol = if cfl_allowed {
+                self.reader
+                    .read_symbol(self.cdf.uv_mode_cfl_allowed_cdf_mut(y_mode_symbol))?
+            } else {
+                self.reader
+                    .read_symbol(self.cdf.uv_mode_cfl_not_allowed_cdf_mut(y_mode_symbol))?
+            };
             let uv_mode = UvPredictionMode::from_symbol(uv_symbol).ok_or_else(|| {
                 DecoderError::Bitstream(format!("AV1 uv_mode symbol {uv_symbol} is invalid"))
             })?;
             if uv_mode == UvPredictionMode::Cfl {
-                return Err(DecoderError::Unsupported(
-                    "AV1 CFL chroma prediction is not supported yet".to_string(),
-                ));
+                self.current_cfl = Some(self.read_cfl_params()?);
             }
             let angle_delta = if use_angle_delta && uv_mode.is_directional() {
                 Some(self.read_angle_delta(uv_mode.directional_index().unwrap())?)
@@ -78,8 +82,19 @@ impl<'a> TileDecoder<'a> {
         } else {
             (None, None, None)
         };
+        if std::env::var_os("AVIF_TRACE_WML2_MODES").is_some() && x == 88 && y == 16 {
+            eprintln!("Rust x88 after uv state={:?}", self.reader.trace_state());
+        }
         let palette =
             self.read_palette_mode_info(sequence, frame, block_size, x, y, y_mode, uv_mode)?;
+        if std::env::var_os("AVIF_TRACE_WML2_MODES").is_some() && x == 88 && y == 16 {
+            eprintln!(
+                "Rust x88 palette y={:?} uv={:?} state={:?}",
+                palette.y.as_ref().map(|value| value.colors.len()),
+                palette.uv.as_ref().map(|value| value.colors.len() / 2),
+                self.reader.trace_state()
+            );
+        }
         let mut filter_intra_mode = None;
         if sequence.enable_filter_intra
             && block_size.width() <= 32
@@ -110,6 +125,9 @@ impl<'a> TileDecoder<'a> {
         self.set_skip_context(x, y, block_size, skip);
         let mut palette = palette;
         self.read_palette_tokens(sequence, block_size, x, y, &mut palette)?;
+        if std::env::var_os("AVIF_TRACE_WML2_MODES").is_some() && x == 88 && y == 16 {
+            eprintln!("Rust x88 palette tokens state={:?}", self.reader.trace_state());
+        }
         let (tx_size_context, tx_size_symbol, tx_size) =
             self.read_intra_tx_size(frame, block_size, skip, x, y)?;
 
@@ -215,6 +233,43 @@ impl<'a> TileDecoder<'a> {
         Ok(symbol as i8 - 3)
     }
 
+    fn read_cfl_params(&mut self) -> Result<CflParams, DecoderError> {
+        let joint_sign = self.reader.read_symbol(self.cdf.cfl_sign_cdf_mut())?;
+        let (sign_u, sign_v) = cfl_signs(joint_sign)?;
+        let alpha_u_q3 = self.read_cfl_alpha(joint_sign, sign_u, true)?;
+        let alpha_v_q3 = self.read_cfl_alpha(joint_sign, sign_v, false)?;
+        Ok(CflParams {
+            alpha_u_q3,
+            alpha_v_q3,
+        })
+    }
+
+    fn read_cfl_alpha(
+        &mut self,
+        joint_sign: usize,
+        sign: usize,
+        is_u: bool,
+    ) -> Result<i8, DecoderError> {
+        if sign == 0 {
+            return Ok(0);
+        }
+        let context = if is_u {
+            joint_sign.saturating_sub(2)
+        } else {
+            let (sign_u, sign_v) = cfl_signs(joint_sign)?;
+            sign_v * 3 + sign_u - 3
+        };
+        let magnitude = self
+            .reader
+            .read_symbol(self.cdf.cfl_alpha_cdf_mut(context))?
+            + 1;
+        Ok(if sign == 1 {
+            -(magnitude as i8)
+        } else {
+            magnitude as i8
+        })
+    }
+
     fn above_y_mode_context(&self, x: usize, y: usize) -> usize {
         if y < 4 {
             return 0;
@@ -286,4 +341,23 @@ impl<'a> TileDecoder<'a> {
         };
         has_smooth_neighbour(grid, self.mi_cols, self.mi_rows, x, y)
     }
+}
+
+pub(super) fn cfl_is_allowed(coded_lossless: bool, block_size: BlockSize) -> bool {
+    if coded_lossless {
+        block_size == BlockSize::Block4x4
+    } else {
+        block_size.width() <= 32 && block_size.height() <= 32
+    }
+}
+
+pub(super) fn cfl_signs(joint_sign: usize) -> Result<(usize, usize), DecoderError> {
+    if joint_sign >= 8 {
+        return Err(DecoderError::Bitstream(format!(
+            "AV1 CFL joint sign {joint_sign} is invalid"
+        )));
+    }
+    let sign_u = ((joint_sign + 1) * 11) >> 5;
+    let sign_v = joint_sign + 1 - 3 * sign_u;
+    Ok((sign_u, sign_v))
 }

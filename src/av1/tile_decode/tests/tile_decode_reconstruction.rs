@@ -1,10 +1,48 @@
 use super::*;
+use crate::av1::decode::{PlaneBuffer, PlaneLayout};
+use crate::av1::tile_decode::reconstruction::apply_cfl_prediction;
 use crate::av1::{
     alloc_frame_buffers, build_still_decode_plan, parse_frame_header, parse_sequence_header,
     parse_tile_group,
 };
 use crate::container::parse_avif;
 use crate::obu::{ObuType, find_obu_payload};
+
+#[test]
+fn cfl_prediction_applies_signed_q3_luma_ac() {
+    let luma = PlaneBuffer {
+        layout: PlaneLayout {
+            plane: 0,
+            width: 4,
+            height: 4,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 16,
+        },
+        samples: (0..16).collect(),
+    };
+    let mut positive = vec![128; 16];
+    apply_cfl_prediction(&mut positive, &luma, 0, 0, 4, 4, 8, 8).unwrap();
+    assert_eq!(
+        positive,
+        vec![
+            120, 121, 122, 123, 124, 125, 126, 127, 129, 130, 131, 132, 133, 134, 135, 136
+        ]
+    );
+
+    let mut negative = vec![128; 16];
+    apply_cfl_prediction(&mut negative, &luma, 0, 0, 4, 4, -8, 8).unwrap();
+    assert_eq!(
+        negative,
+        vec![
+            136, 135, 134, 133, 132, 131, 130, 129, 127, 126, 125, 124, 123, 122, 121, 120
+        ]
+    );
+
+    let mut zero = vec![128; 16];
+    apply_cfl_prediction(&mut zero, &luma, 0, 0, 4, 4, 0, 8).unwrap();
+    assert_eq!(zero, vec![128; 16]);
+}
 
 #[test]
 fn decodes_sample_first_luma_transform_into_frame_buffer() {
@@ -173,7 +211,7 @@ fn decodes_sample_prefix_through_palette_blocks() {
     )
     .unwrap();
 
-    assert_eq!(prefix.blocks.len(), 2037);
+    assert_eq!(prefix.blocks.len(), 2704);
     assert_eq!(prefix.next_unsupported, None);
     let palette_blocks = prefix
         .blocks

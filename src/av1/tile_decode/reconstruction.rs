@@ -27,6 +27,7 @@ pub(super) fn decode_plane_block(
     angle_delta: Option<i8>,
     filter_intra_mode: Option<usize>,
     smooth_neighbour: bool,
+    cfl_alpha_q3: Option<i8>,
     x: usize,
     y: usize,
     quant_state: QuantState,
@@ -39,11 +40,26 @@ pub(super) fn decode_plane_block(
             "AV1 subsampled chroma block reconstruction is not supported yet".to_string(),
         ));
     }
-    let plane = buffers.planes.get_mut(plane_index).ok_or_else(|| {
-        DecoderError::Bitstream(format!("AV1 plane {plane_index} buffer is missing"))
-    })?;
-    let tx_size = if plane_index > 0 && block_mode.tx_size == TxSize::Tx64x64 {
-        TxSize::Tx32x32
+    let (luma_plane, plane) = if plane_index == 0 {
+        let plane = buffers.planes.get_mut(0).ok_or_else(|| {
+            DecoderError::Bitstream("AV1 luma plane buffer is missing".to_string())
+        })?;
+        (None, plane)
+    } else {
+        let (preceding, target) = buffers.planes.split_at_mut(plane_index);
+        let luma = preceding.first().ok_or_else(|| {
+            DecoderError::Bitstream("AV1 luma plane buffer is missing".to_string())
+        })?;
+        let plane = target.first_mut().ok_or_else(|| {
+            DecoderError::Bitstream(format!("AV1 plane {plane_index} buffer is missing"))
+        })?;
+        (Some(luma), plane)
+    };
+    let tx_size = if plane_index > 0 && !frame.quantization.coded_lossless() {
+        match block_mode.block_size.largest_supported_tx_size() {
+            TxSize::Tx64x64 => TxSize::Tx32x32,
+            tx_size => tx_size,
+        }
     } else {
         block_mode.tx_size
     };
@@ -79,6 +95,8 @@ pub(super) fn decode_plane_block(
                 smooth_neighbour,
                 top_right_available,
                 bottom_left_available,
+                luma_plane,
+                cfl_alpha_q3,
             )?;
             write_plane_block(
                 plane,
@@ -96,12 +114,29 @@ pub(super) fn decode_plane_block(
     let mut decoded = Vec::new();
     for transform in transforms {
         let txb_context = decoder.txb_context(block_mode.block_size, transform);
+        if std::env::var_os("AVIF_TRACE_WML2_MODES").is_some() && x == 80 && y == 0 {
+            eprintln!(
+                "Rust coeff before plane={} tx={:?} at=({}, {}) context={txb_context:?} state={:?}",
+                transform.plane,
+                transform.tx_size,
+                transform.x,
+                transform.y,
+                decoder.reader.trace_state()
+            );
+        }
         let all_zero_symbol = decoder.reader.read_symbol(
             decoder
                 .cdf
                 .txb_skip_cdf_mut(transform.tx_size.coeff_cdf_index(), txb_context.skip),
         )?;
         if all_zero_symbol != 0 {
+            if std::env::var_os("AVIF_TRACE_WML2_MODES").is_some() && x == 80 && y == 0 {
+                eprintln!(
+                    "Rust coeff after plane={} zero=true state={:?}",
+                    transform.plane,
+                    decoder.reader.trace_state()
+                );
+            }
             decoder.set_txb_entropy_context(transform, 0);
             let (top_right_available, bottom_left_available) =
                 decoder.reconstructed_extension_availability(plane, transform)?;
@@ -123,6 +158,8 @@ pub(super) fn decode_plane_block(
                 smooth_neighbour,
                 top_right_available,
                 bottom_left_available,
+                luma_plane,
+                cfl_alpha_q3,
             )?;
             write_plane_block(
                 plane,
@@ -138,6 +175,20 @@ pub(super) fn decode_plane_block(
 
         let decoded_transform =
             decoder.read_decoded_transform(frame, block_mode, transform, txb_context.dc_sign)?;
+        if std::env::var_os("AVIF_TRACE_WML2_MODES").is_some() && x == 80 && y == 0 {
+            eprintln!(
+                "Rust coeff after plane={} zero=false tx_type={:?} nonzero={:?} state={:?}",
+                transform.plane,
+                decoded_transform.tx_type,
+                decoded_transform
+                    .coefficients
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, value)| **value != 0)
+                    .collect::<Vec<_>>(),
+                decoder.reader.trace_state()
+            );
+        }
         decoder.set_txb_entropy_context(
             transform,
             coefficient_entropy_context(&decoded_transform.coefficients),
@@ -162,6 +213,8 @@ pub(super) fn decode_plane_block(
             smooth_neighbour,
             top_right_available,
             bottom_left_available,
+            luma_plane,
+            cfl_alpha_q3,
         )?;
         let quantized = QuantizedTransform {
             block: decoded_transform.transform,
@@ -277,6 +330,8 @@ fn predict_plane_block(
     smooth_neighbour: bool,
     top_right_available: bool,
     bottom_left_available: bool,
+    luma_plane: Option<&PlaneBuffer>,
+    cfl_alpha_q3: Option<i8>,
 ) -> Result<Vec<u16>, DecoderError> {
     if filter_intra_mode.is_none() && prediction_mode == PredictionMode::Dc {
         let palette_prediction = if plane_index == 0 {
@@ -311,7 +366,7 @@ fn predict_plane_block(
             }
         }
     }
-    predict_block(
+    let mut prediction = predict_block(
         plane,
         prediction_mode,
         x,
@@ -325,7 +380,78 @@ fn predict_plane_block(
         smooth_neighbour,
         top_right_available,
         bottom_left_available,
-    )
+    )?;
+    if let Some(alpha_q3) = cfl_alpha_q3 {
+        let luma_plane = luma_plane.ok_or_else(|| {
+            DecoderError::Bitstream("AV1 CFL prediction is missing its luma plane".to_string())
+        })?;
+        apply_cfl_prediction(
+            &mut prediction,
+            luma_plane,
+            x,
+            y,
+            width,
+            height,
+            alpha_q3,
+            bit_depth,
+        )?;
+    }
+    Ok(prediction)
+}
+
+pub(super) fn apply_cfl_prediction(
+    prediction: &mut [u16],
+    luma_plane: &PlaneBuffer,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    alpha_q3: i8,
+    bit_depth: u8,
+) -> Result<(), DecoderError> {
+    let sample_count = width.checked_mul(height).ok_or_else(|| {
+        DecoderError::InvalidParam("AV1 CFL transform dimensions are too large".to_string())
+    })?;
+    if prediction.len() != sample_count || sample_count == 0 {
+        return Err(DecoderError::InvalidParam(
+            "AV1 CFL prediction dimensions are invalid".to_string(),
+        ));
+    }
+    let luma_width = luma_plane.layout.width;
+    let luma_height = luma_plane.layout.height;
+    if luma_width == 0 || luma_height == 0 {
+        return Err(DecoderError::Bitstream(
+            "AV1 CFL luma plane is empty".to_string(),
+        ));
+    }
+
+    let mut luma_q3 = Vec::with_capacity(sample_count);
+    let mut sum = 0i64;
+    for row in 0..height {
+        let source_y = (y + row).min(luma_height - 1);
+        for col in 0..width {
+            let source_x = (x + col).min(luma_width - 1);
+            let value_q3 = i32::from(luma_plane.samples[source_y * luma_width + source_x]) << 3;
+            luma_q3.push(value_q3);
+            sum += i64::from(value_q3);
+        }
+    }
+    let average_q3 = ((sum + sample_count as i64 / 2) / sample_count as i64) as i32;
+    let maximum = (1i32 << bit_depth) - 1;
+    for (destination, value_q3) in prediction.iter_mut().zip(luma_q3) {
+        let scaled = round_power_of_two_signed(i32::from(alpha_q3) * (value_q3 - average_q3), 6);
+        *destination = (i32::from(*destination) + scaled).clamp(0, maximum) as u16;
+    }
+    Ok(())
+}
+
+fn round_power_of_two_signed(value: i32, bits: u32) -> i32 {
+    let rounding = 1i32 << (bits - 1);
+    if value < 0 {
+        -((-value + rounding) >> bits)
+    } else {
+        (value + rounding) >> bits
+    }
 }
 
 fn predict_palette_block(
@@ -342,9 +468,9 @@ fn predict_palette_block(
     let palette_size = palette_size.min(PALETTE_MAX_SIZE);
     let mut prediction = Vec::with_capacity(width * height);
     for row in 0..height {
-        let map_row = (y + row).saturating_sub(block_y) / 4;
+        let map_row = (y + row).saturating_sub(block_y);
         for col in 0..width {
-            let map_col = (x + col).saturating_sub(block_x) / 4;
+            let map_col = (x + col).saturating_sub(block_x);
             let map_index = map_row.min(palette.map_height - 1) * palette.map_width
                 + map_col.min(palette.map_width - 1);
             let color_index = usize::from(palette.color_map[map_index]).min(palette_size - 1);
@@ -456,15 +582,13 @@ mod tests {
     }
 
     #[test]
-    fn palette_prediction_expands_color_map_cells() {
+    fn palette_prediction_uses_per_pixel_color_map() {
+        let color_map = (0..64).map(|index| (index % 3) as u8).collect();
         let palette = PalettePlaneInfo {
             colors: vec![10, 20, 30],
-            color_map: vec![
-                0, 1, //
-                2, 1,
-            ],
-            map_width: 2,
-            map_height: 2,
+            color_map,
+            map_width: 8,
+            map_height: 8,
         };
 
         let prediction = predict_palette_block(&palette, 0, 3, 0, 0, 0, 0, 8, 8);
@@ -472,12 +596,10 @@ mod tests {
         assert_eq!(prediction.len(), 64);
         for row in 0..8 {
             for col in 0..8 {
-                let expected = match (row / 4, col / 4) {
-                    (0, 0) => 10,
-                    (0, 1) => 20,
-                    (1, 0) => 30,
-                    (1, 1) => 20,
-                    _ => unreachable!(),
+                let expected = match (row * 8 + col) % 3 {
+                    0 => 10,
+                    1 => 20,
+                    _ => 30,
                 };
                 assert_eq!(prediction[row * 8 + col], expected);
             }
@@ -486,11 +608,12 @@ mod tests {
 
     #[test]
     fn palette_prediction_uses_chroma_color_offset() {
+        let color_map = (0..4).flat_map(|_| [0, 0, 0, 0, 1, 1, 1, 1]).collect();
         let palette = PalettePlaneInfo {
             colors: vec![100, 200, 300, 400],
-            color_map: vec![0, 1],
-            map_width: 2,
-            map_height: 1,
+            color_map,
+            map_width: 8,
+            map_height: 4,
         };
 
         let prediction = predict_palette_block(&palette, 2, 2, 0, 0, 0, 0, 8, 4);

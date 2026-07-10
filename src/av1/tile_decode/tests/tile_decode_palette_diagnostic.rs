@@ -1,4 +1,22 @@
 use super::{PaletteBlockInfo, PalettePlaneInfo};
+use crate::av1::syntax::BlockSize;
+use crate::av1::tile_decode::palette::palette_map_dimensions;
+
+#[test]
+fn palette_map_dimensions_are_per_pixel_and_clip_at_frame_edges() {
+    assert_eq!(
+        palette_map_dimensions(BlockSize::Block8x8, 0, 0, 16, 16, false, false),
+        (8, 8, 8, 8)
+    );
+    assert_eq!(
+        palette_map_dimensions(BlockSize::Block8x8, 8, 8, 3, 3, false, false),
+        (8, 8, 4, 4)
+    );
+    assert_eq!(
+        palette_map_dimensions(BlockSize::Block16x8, 16, 8, 5, 3, true, true),
+        (8, 4, 2, 2)
+    );
+}
 
 #[test]
 fn palette_diagnostic_accessors_expose_read_only_plane_metadata() {

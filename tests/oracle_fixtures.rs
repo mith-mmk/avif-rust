@@ -3,6 +3,12 @@ use std::path::{Component, Path, PathBuf};
 
 mod support;
 
+use avif_rust::av1::{
+    alloc_frame_buffers, build_still_decode_plan, decode_luma_root_block_prefix,
+    parse_frame_header, parse_sequence_header, parse_tile_group,
+};
+use avif_rust::container::parse_avif;
+use avif_rust::obu::{ObuType, find_obu_payload};
 use support::{
     assert_exact_samples, assert_rgba8_max_error, assert_rgba16_max_error, read_u16le_samples,
 };
@@ -31,6 +37,54 @@ struct OracleEntry {
 
 fn test_data_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test_data")
+}
+
+fn assert_palette_fixture_exercises_palette(avif_data: &[u8], fixture_id: &str) {
+    let info = parse_avif(avif_data).expect("palette fixture container should parse");
+    let sequence_payload = find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
+        .expect("palette fixture sequence OBU lookup should succeed")
+        .expect("palette fixture sequence OBU should exist");
+    let sequence =
+        parse_sequence_header(sequence_payload).expect("palette fixture sequence should parse");
+    let frame_payload = find_obu_payload(&info.primary_item_payload, ObuType::Frame)
+        .expect("palette fixture frame OBU lookup should succeed")
+        .expect("palette fixture frame OBU should exist");
+    let frame =
+        parse_frame_header(frame_payload, &sequence).expect("palette fixture frame should parse");
+    let tile_group = parse_tile_group(
+        frame_payload,
+        frame.uncompressed_header_bits,
+        &frame.tile_info,
+    )
+    .expect("palette fixture tile group should parse");
+    let plan = build_still_decode_plan(&sequence, &frame, &tile_group)
+        .expect("palette fixture decode plan should build");
+    let mut buffers = alloc_frame_buffers(&plan).expect("palette fixture buffers should allocate");
+    let prefix = decode_luma_root_block_prefix(
+        frame_payload,
+        &tile_group,
+        &sequence,
+        &frame,
+        &plan,
+        &mut buffers,
+        plan.width.saturating_mul(plan.height),
+    )
+    .expect("palette fixture block diagnostics should decode");
+
+    assert!(
+        prefix
+            .blocks
+            .iter()
+            .any(|block| block.palette.has_palette()),
+        "{fixture_id} must contain at least one palette block"
+    );
+    assert!(
+        prefix
+            .blocks
+            .iter()
+            .any(|block| block.palette.has_non_empty_color_map()),
+        "{fixture_id} must contain a decoded palette color map"
+    );
 }
 
 fn parse_oracle_manifest(input: &str) -> Result<Vec<OracleEntry>, String> {
@@ -335,6 +389,10 @@ fn external_supported_stream_oracles_match_when_present() {
             .unwrap_or_else(|err| panic!("failed to read AVIF fixture {}: {err}", entry.id));
         let decoded =
             avif_rust::decode_frame_bytes(&avif_data).expect("AVIF fixture should decode");
+
+        if entry.id == "filter-disabled-palette" {
+            assert_palette_fixture_exercises_palette(&avif_data, &entry.id);
+        }
 
         assert_eq!(decoded.width, entry.width, "{} width", entry.id);
         assert_eq!(decoded.height, entry.height, "{} height", entry.id);

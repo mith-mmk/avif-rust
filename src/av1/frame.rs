@@ -67,14 +67,24 @@ pub fn parse_frame_header(
     let mut reader = BitReader::new(data);
 
     if sequence.reduced_still_picture_header {
+        let disable_cdf_update = reader.read_bool("disable_cdf_update")?;
+        let allow_screen_content_tools = read_allow_screen_content_tools(&mut reader, sequence)?;
+        let force_integer_mv =
+            read_force_integer_mv(&mut reader, sequence, allow_screen_content_tools)?;
         let frame_size = parse_frame_size(&mut reader, sequence, false)?;
         let render_size = parse_render_size(&mut reader, frame_size.width, frame_size.height)?;
+        let allow_intrabc =
+            if allow_screen_content_tools && frame_size.upscaled_width == frame_size.width {
+                reader.read_bool("allow_intrabc")?
+            } else {
+                false
+            };
         let tile_info =
             parse_tile_info(&mut reader, sequence, frame_size.width, frame_size.height)?;
         let trailing = parse_frame_header_trailing_params(
             &mut reader,
             sequence,
-            false,
+            allow_intrabc,
             frame_type_is_intra(FrameType::Key),
         )?;
         return Ok(FrameHeader {
@@ -83,9 +93,9 @@ pub fn parse_frame_header(
             show_frame: true,
             showable_frame: false,
             error_resilient_mode: true,
-            disable_cdf_update: false,
-            allow_screen_content_tools: false,
-            force_integer_mv: 2,
+            disable_cdf_update,
+            allow_screen_content_tools,
+            force_integer_mv,
             frame_size_override_flag: false,
             order_hint: 0,
             primary_ref_frame: 7,
@@ -95,7 +105,7 @@ pub fn parse_frame_header(
             upscaled_width: frame_size.upscaled_width,
             render_width: render_size.width,
             render_height: render_size.height,
-            allow_intrabc: false,
+            allow_intrabc,
             disable_frame_end_update_cdf: false,
             tile_info,
             base_q_idx: trailing.quantization.base_q_idx,

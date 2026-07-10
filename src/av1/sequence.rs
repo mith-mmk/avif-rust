@@ -110,7 +110,7 @@ pub fn parse_sequence_header(data: &[u8]) -> Result<SequenceHeader, DecoderError
     let enable_intra_edge_filter = reader.read_bool("enable_intra_edge_filter")?;
 
     let inter_tools = if reduced_still_picture_header {
-        InterTools::default()
+        InterTools::reduced_still()
     } else {
         parse_inter_tools(&mut reader)?
     };
@@ -210,6 +210,16 @@ struct InterTools {
     order_hint_bits: u8,
     seq_force_screen_content_tools: u8,
     seq_force_integer_mv: u8,
+}
+
+impl InterTools {
+    fn reduced_still() -> Self {
+        Self {
+            seq_force_screen_content_tools: 2,
+            seq_force_integer_mv: 2,
+            ..Self::default()
+        }
+    }
 }
 
 fn parse_inter_tools(reader: &mut BitReader<'_>) -> Result<InterTools, DecoderError> {

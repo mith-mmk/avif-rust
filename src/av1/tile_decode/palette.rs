@@ -442,21 +442,29 @@ impl<'a> TileDecoder<'a> {
         subsampling_x: bool,
         subsampling_y: bool,
     ) -> Result<(Vec<u8>, usize, usize), DecoderError> {
-        let plane_block_width = ((block_size.width() >> usize::from(subsampling_x)) + 3) >> 2;
-        let plane_block_height = ((block_size.height() >> usize::from(subsampling_y)) + 3) >> 2;
-        let frame_width = self.mi_cols << 2;
-        let frame_height = self.mi_rows << 2;
-        let cols_pixels = frame_width.saturating_sub(x).min(block_size.width());
-        let rows_pixels = frame_height.saturating_sub(y).min(block_size.height());
-        let cols = (((cols_pixels >> usize::from(subsampling_x)) + 3) >> 2)
-            .min(plane_block_width)
-            .max(1);
-        let rows = (((rows_pixels >> usize::from(subsampling_y)) + 3) >> 2)
-            .min(plane_block_height)
-            .max(1);
+        let (plane_block_width, plane_block_height, cols, rows) = palette_map_dimensions(
+            block_size,
+            x,
+            y,
+            self.mi_cols,
+            self.mi_rows,
+            subsampling_x,
+            subsampling_y,
+        );
 
         let mut color_map = vec![0u8; plane_block_width * plane_block_height];
         color_map[0] = self.reader.read_uniform(palette_size)? as u8;
+        let trace = std::env::var_os("AVIF_TRACE_WML2_MODES").is_some()
+            && plane == 0
+            && x == 88
+            && y == 16;
+        if trace {
+            eprintln!(
+                "Rust palette first={} state={:?}",
+                color_map[0],
+                self.reader.trace_state()
+            );
+        }
         for diagonal in 1..rows + cols - 1 {
             let start = diagonal.min(cols - 1);
             let end = diagonal.saturating_sub(rows - 1);
@@ -476,6 +484,13 @@ impl<'a> TileDecoder<'a> {
                         palette_size,
                         context,
                     ))?;
+                if trace && diagonal < 4 {
+                    eprintln!(
+                        "Rust palette diagonal={diagonal} col={col} ctx={context} idx={color_idx} order={:?} state={:?}",
+                        &color_order[..palette_size],
+                        self.reader.trace_state()
+                    );
+                }
                 color_map[row * plane_block_width + col] = color_order[color_idx] as u8;
             }
         }
@@ -553,6 +568,34 @@ impl<'a> TileDecoder<'a> {
                 .map(|palette| palette.colors[..palette.colors.len() / 2].to_vec()),
         );
     }
+}
+
+pub(super) fn palette_map_dimensions(
+    block_size: BlockSize,
+    x: usize,
+    y: usize,
+    mi_cols: usize,
+    mi_rows: usize,
+    subsampling_x: bool,
+    subsampling_y: bool,
+) -> (usize, usize, usize, usize) {
+    let subsampling_x = usize::from(subsampling_x);
+    let subsampling_y = usize::from(subsampling_y);
+    let plane_block_width = block_size.width() >> subsampling_x;
+    let plane_block_height = block_size.height() >> subsampling_y;
+    let plane_x = x >> subsampling_x;
+    let plane_y = y >> subsampling_y;
+    let plane_frame_width = (mi_cols << 2).div_ceil(1 << subsampling_x);
+    let plane_frame_height = (mi_rows << 2).div_ceil(1 << subsampling_y);
+    let cols = plane_frame_width
+        .saturating_sub(plane_x)
+        .min(plane_block_width)
+        .max(1);
+    let rows = plane_frame_height
+        .saturating_sub(plane_y)
+        .min(plane_block_height)
+        .max(1);
+    (plane_block_width, plane_block_height, cols, rows)
 }
 
 #[cfg(test)]

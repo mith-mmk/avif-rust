@@ -4,7 +4,7 @@ use crate::av1::decode::{FrameBuffers, FrameDecodePlan, TileDecodePlan};
 use crate::av1::frame::FrameHeader;
 use crate::av1::quant::QuantState;
 use crate::av1::sequence::SequenceHeader;
-use crate::av1::syntax::{BlockSize, Partition, UvPredictionMode};
+use crate::av1::syntax::{BlockSize, Partition, PredictionMode, UvPredictionMode};
 use crate::av1::tile_decode::reconstruction::decode_plane_block;
 
 pub(super) fn decode_luma_root_block(
@@ -45,6 +45,20 @@ pub(super) fn decode_luma_leaf_block(
 ) -> Result<DecodedLumaBlock, DecoderError> {
     let block_mode =
         decoder.read_intra_frame_block_mode(sequence, frame, tile_plan, block_size, x, y)?;
+    if std::env::var_os("AVIF_TRACE_WML2_MODES").is_some()
+        && (64..96).contains(&x)
+        && y < 32
+    {
+        eprintln!(
+            "Rust mode x={x} size={:?} skip={} y={:?} uv={:?} tx={:?} state={:?}",
+            block_size,
+            block_mode.skip,
+            block_mode.y_mode,
+            block_mode.uv_mode,
+            block_mode.tx_size,
+            decoder.reader.trace_state()
+        );
+    }
     let quant_state =
         QuantState::from_params(&frame.quantization, sequence.color_config.bit_depth)?;
     let decoded = decode_plane_block(
@@ -59,6 +73,7 @@ pub(super) fn decode_luma_leaf_block(
         block_mode.angle_delta_y,
         block_mode.filter_intra_mode,
         block_mode.y_smooth_neighbour,
+        None,
         x,
         y,
         quant_state,
@@ -68,10 +83,9 @@ pub(super) fn decode_luma_leaf_block(
         let uv_mode = block_mode.uv_mode.ok_or_else(|| {
             DecoderError::Bitstream("AV1 chroma block mode is missing".to_string())
         })?;
-        let UvPredictionMode::Intra(chroma_mode) = uv_mode else {
-            return Err(DecoderError::Unsupported(
-                "AV1 CFL chroma prediction is not supported yet".to_string(),
-            ));
+        let (chroma_mode, cfl) = match uv_mode {
+            UvPredictionMode::Intra(mode) => (mode, None),
+            UvPredictionMode::Cfl => (PredictionMode::Dc, decoder.current_cfl),
         };
         decode_plane_block(
             decoder,
@@ -85,6 +99,7 @@ pub(super) fn decode_luma_leaf_block(
             block_mode.angle_delta_uv,
             None,
             block_mode.uv_smooth_neighbour,
+            cfl.map(|params| params.alpha_u_q3),
             x,
             y,
             quant_state,
@@ -101,6 +116,7 @@ pub(super) fn decode_luma_leaf_block(
             block_mode.angle_delta_uv,
             None,
             block_mode.uv_smooth_neighbour,
+            cfl.map(|params| params.alpha_v_q3),
             x,
             y,
             quant_state,

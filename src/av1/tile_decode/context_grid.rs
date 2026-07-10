@@ -2,13 +2,14 @@ use crate::av1::syntax::{BlockSize, PredictionMode};
 
 pub(super) fn intra_mode_context(mode: PredictionMode) -> usize {
     match mode {
-        PredictionMode::Dc => 0,
-        PredictionMode::Vertical => 1,
-        PredictionMode::Horizontal => 2,
-        PredictionMode::Smooth
-        | PredictionMode::SmoothVertical
-        | PredictionMode::SmoothHorizontal => 3,
-        _ => 4,
+        PredictionMode::Dc | PredictionMode::Smooth | PredictionMode::Paeth => 0,
+        PredictionMode::Vertical | PredictionMode::SmoothVertical => 1,
+        PredictionMode::Horizontal | PredictionMode::SmoothHorizontal => 2,
+        PredictionMode::D45 | PredictionMode::D67 => 3,
+        PredictionMode::D135
+        | PredictionMode::D113
+        | PredictionMode::D157
+        | PredictionMode::D203 => 4,
     }
 }
 

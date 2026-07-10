@@ -246,32 +246,45 @@ pub fn reconstruct_lossless_transform_block(
 }
 
 pub fn inverse_lossless_transform_4x4(dequant: &[i32]) -> Vec<i32> {
-    let mut block = [0i32; 16];
-    block.copy_from_slice(&dequant[..16]);
-
+    let mut intermediate = [0i32; 16];
     for column in 0..4 {
-        let a = block[column] + block[12 + column];
-        let b = block[4 + column] + block[8 + column];
-        let c = block[4 + column] - block[8 + column];
-        let d = block[column] - block[12 + column];
-        block[column] = a + b;
-        block[4 + column] = c + d;
-        block[8 + column] = a - b;
-        block[12 + column] = d - c;
+        let transformed = inverse_wht4(
+            dequant[column] >> 2,
+            dequant[4 + column] >> 2,
+            dequant[8 + column] >> 2,
+            dequant[12 + column] >> 2,
+        );
+        for row in 0..4 {
+            intermediate[row * 4 + column] = transformed[row];
+        }
     }
 
-    for row in block.chunks_exact_mut(4) {
-        let a = row[0] + row[3];
-        let b = row[1] + row[2];
-        let c = row[1] - row[2];
-        let d = row[0] - row[3];
-        row[0] = round_shift_i64(i64::from(a + b), 2) as i32;
-        row[1] = round_shift_i64(i64::from(c + d), 2) as i32;
-        row[2] = round_shift_i64(i64::from(a - b), 2) as i32;
-        row[3] = round_shift_i64(i64::from(d - c), 2) as i32;
+    let mut block = [0i32; 16];
+    for row in 0..4 {
+        let offset = row * 4;
+        let transformed = inverse_wht4(
+            intermediate[offset],
+            intermediate[offset + 1],
+            intermediate[offset + 2],
+            intermediate[offset + 3],
+        );
+        for column in 0..4 {
+            block[column * 4 + row] = transformed[column];
+        }
     }
 
     block.to_vec()
+}
+
+fn inverse_wht4(mut a: i32, mut c: i32, mut d: i32, mut b: i32) -> [i32; 4] {
+    a += c;
+    d -= b;
+    let e = (a - d) >> 1;
+    b = e - b;
+    c = e - c;
+    a -= b;
+    d += c;
+    [a, b, c, d]
 }
 
 pub fn inverse_transform(
@@ -1832,18 +1845,20 @@ mod tests {
     #[test]
     fn lossless_wht_dc_basis_is_spread_over_the_block() {
         let mut coefficients = [0i32; 16];
-        coefficients[0] = 4;
+        coefficients[0] = 16;
 
         assert_eq!(inverse_lossless_transform_4x4(&coefficients), vec![1; 16]);
     }
 
     #[test]
-    fn lossless_wht_rounds_signed_basis_values() {
-        let coefficients = [4, -4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    fn lossless_wht_matches_aom_sparse_reference_vector() {
+        let coefficients = [
+            16, -8, 4, -12, 8, 0, -4, 12, -16, 20, 0, -8, 4, -20, 24, -28,
+        ];
 
         assert_eq!(
             inverse_lossless_transform_4x4(&coefficients),
-            vec![0, 0, 2, 2, 0, 0, 2, 2, 0, 0, 2, 2, 0, 0, 2, 2]
+            vec![0, 2, -2, 0, 1, 1, -1, 2, -2, 6, -1, -3, 5, -1, 9, -4]
         );
     }
 

@@ -77,6 +77,12 @@ pub struct PaletteBlockInfo {
     uv: Option<PalettePlaneInfo>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CflParams {
+    alpha_u_q3: i8,
+    alpha_v_q3: i8,
+}
+
 impl PaletteBlockInfo {
     pub fn y(&self) -> Option<&PalettePlaneInfo> {
         self.y.as_ref()
@@ -120,6 +126,7 @@ pub struct TileDecoder<'a> {
     above_txfm_context: Vec<usize>,
     left_txfm_context: Vec<usize>,
     reconstructed_mi_grid: [Vec<bool>; 3],
+    current_cfl: Option<CflParams>,
     plane_entropy_contexts: [PlaneEntropyContexts; 3],
     restoration: RestorationParams,
     wiener_refs: [[[i16; 3]; 2]; 3],
@@ -160,6 +167,7 @@ impl<'a> TileDecoder<'a> {
             above_txfm_context: vec![0; mi_cols],
             left_txfm_context: vec![0; mi_rows],
             reconstructed_mi_grid: std::array::from_fn(|_| vec![false; mi_count]),
+            current_cfl: None,
             plane_entropy_contexts: std::array::from_fn(|_| PlaneEntropyContexts {
                 above: vec![0; mi_cols],
                 left: vec![0; mi_rows],

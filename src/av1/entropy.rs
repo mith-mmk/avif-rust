@@ -54,7 +54,17 @@ impl<'a> EntropyDecoder<'a> {
         }
         let bits = usize::BITS as usize - (n - 1).leading_zeros() as usize;
         let threshold = (1usize << bits) - n;
-        let value = self.read_literal(bits - 1)? as usize;
+        let mut value = 0usize;
+        for bit_index in 0..bits - 1 {
+            let bit = usize::from(self.read_bool()?);
+            value = (value << 1) | bit;
+            if std::env::var_os("AVIF_TRACE_WML2_MODES").is_some() && n == 5 {
+                eprintln!(
+                    "Rust uniform bit={bit_index} value={value} state={:?}",
+                    self.trace_state()
+                );
+            }
+        }
         if value < threshold {
             Ok(value)
         } else {
@@ -132,6 +142,10 @@ impl<'a> EntropyDecoder<'a> {
 
     pub fn bit_position(&self) -> usize {
         self.bit_offset
+    }
+
+    pub(crate) fn trace_state(&self) -> (u32, u32, usize) {
+        (self.symbol_range, self.symbol_value, self.bit_offset)
     }
 
     fn renormalize(&mut self) -> Result<(), DecoderError> {

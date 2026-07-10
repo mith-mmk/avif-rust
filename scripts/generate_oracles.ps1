@@ -39,6 +39,23 @@ function Write-U16FromByteSamples {
     [System.IO.File]::WriteAllBytes($Destination, $output)
 }
 
+function Write-U16ExpandedFromByteSamples {
+    param(
+        [Parameter(Mandatory = $true)]
+        [byte[]]$Samples,
+        [Parameter(Mandatory = $true)]
+        [string]$Destination
+    )
+
+    $output = [byte[]]::new($Samples.Length * 2)
+    for ($index = 0; $index -lt $Samples.Length; $index++) {
+        # Expand the full 8-bit range to the full 16-bit range: x * 257.
+        $output[$index * 2] = $Samples[$index]
+        $output[$index * 2 + 1] = $Samples[$index]
+    }
+    [System.IO.File]::WriteAllBytes($Destination, $output)
+}
+
 function Write-Utf8NoBom {
     param(
         [Parameter(Mandatory = $true)]
@@ -90,10 +107,8 @@ New-Item -ItemType Directory -Force -Path $temporaryPath, $imagesPath, $planesPa
 try {
     $gbrpTemporary = Join-Path $temporaryPath "$FixtureId.gbrp"
     $rgbaTemporary = Join-Path $temporaryPath "$FixtureId.rgba"
-    $rgba16Temporary = Join-Path $temporaryPath "$FixtureId.rgba64le"
     Invoke-RawVideoExport -PixelFormat "gbrp" -Destination $gbrpTemporary
     Invoke-RawVideoExport -PixelFormat "rgba" -Destination $rgbaTemporary
-    Invoke-RawVideoExport -PixelFormat "rgba64le" -Destination $rgba16Temporary
 
     $gbrp = [System.IO.File]::ReadAllBytes($gbrpTemporary)
     $expectedGbrpLength = $planeSampleCount * 3
@@ -105,12 +120,6 @@ try {
     if ($rgba.Length -ne $expectedRgbaLength) {
         throw "rgba output length $($rgba.Length) does not match $expectedRgbaLength."
     }
-    $rgba16 = [System.IO.File]::ReadAllBytes($rgba16Temporary)
-    $expectedRgba16Length = $planeSampleCount * 8
-    if ($rgba16.Length -ne $expectedRgba16Length) {
-        throw "rgba64le output length $($rgba16.Length) does not match $expectedRgba16Length."
-    }
-
     $imageRelative = "images/$FixtureId.avif"
     $planeRelative = @(
         "planes/$FixtureId.y.u16le",
@@ -126,7 +135,7 @@ try {
         Write-U16FromByteSamples -Samples $planeBytes -Destination (Join-Path $outputPath $planeRelative[$plane])
     }
     [System.IO.File]::WriteAllBytes((Join-Path $outputPath $rgbaRelative), $rgba)
-    [System.IO.File]::WriteAllBytes((Join-Path $outputPath $rgba16Relative), $rgba16)
+    Write-U16ExpandedFromByteSamples -Samples $rgba -Destination (Join-Path $outputPath $rgba16Relative)
 
     $manifestPath = Join-Path $outputPath "oracles.csv"
     $manifestHeader = "id,avif,width,height,bit_depth,plane_paths,plane_widths,plane_heights,rgba8,rgba16"

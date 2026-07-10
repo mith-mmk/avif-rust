@@ -37,11 +37,13 @@ above this vertical slice until its native planes match the reference oracle.
 - [x] Add `AVIF_REQUIRE_ORACLES=1` strict mode so conformance runs fail when
   generated fixtures are absent, while normal parser/safety tests remain
   runnable without local test data.
-- [ ] Generate the first filter-disabled 8-bit 4:4:4 identity-GBR fixture.
-- [ ] Generate residual/partition/directional/palette fixtures in that same
+- [x] Generate the first filter-disabled 8-bit 4:4:4 identity-GBR fixture.
+- [x] Generate exact residual, partition and directional fixtures in that same
   profile.
-- [ ] Generate the `WML2Viewer.avif` native-plane and RGBA fixtures.
-- [ ] Make the strict oracle command part of the documented AVIF validation
+- [x] Generate the palette fixture in that same profile and assert that the
+  bitstream actually contains decoded palette blocks and color maps.
+- [x] Generate the `WML2Viewer.avif` native-plane and RGBA fixtures.
+- [x] Make the strict oracle command part of the documented AVIF validation
   gate.
 - [x] Capture and assert `wml2` draw callback bytes, dimensions and callback
   order in the AVIF integration test.
@@ -51,21 +53,26 @@ above this vertical slice until its native planes match the reference oracle.
 The following work is one atomic correctness track. Each item must pass an
 exact native-plane fixture before the next feature is enabled.
 
-- [ ] Align partition recursion and block traversal with the reference stream.
+- [x] Align partition recursion and block traversal with the filter-disabled
+  partition and directional reference streams.
 - [x] Route first-leaf traversal through the first child of vertical,
   horizontal, extended and four-way partitions.
 - [ ] Align transform-block placement for luma and chroma, including clipped
   frame edges and per-plane coordinates.
-- [ ] Verify transform-size selection and transform partition traversal for
-  every transform used by the first fixture set.
+- [x] Verify transform-size selection and transform partition traversal for
+  every transform used by the filter-disabled fixture set.
 - [ ] Verify entropy/CDF update state across blocks: partition, mode, txb skip,
   DC sign, EOB, coefficient base/range, signs and Golomb extension.
 - [ ] Verify coefficient scan selection and coefficient context for every
   enabled transform type in the first profile.
-- [ ] Replace diagnostic-only sample assertions with exact plane assertions
-  at the first failing fixture.
-- [ ] Complete the filter-disabled fixture set with exact Y/U/V plane matches.
+- [x] Replace diagnostic-only sample assertions with exact plane assertions
+  for the generated filter-disabled fixtures.
+- [x] Complete the filter-disabled fixture set with exact Y/U/V plane matches.
 - [ ] Complete the `WML2Viewer.avif` raw reconstruction comparison.
+- [x] Record the current first native-plane mismatch at plane 0, `(146, 0)`
+  after wiring CFL syntax/prediction and non-lossless chroma transform sizing;
+  keep this diagnostic fixture out of the passing strict manifest until raw
+  reconstruction and enabled filters are separated.
 
 Completed prerequisites retained as stable code:
 
@@ -77,6 +84,8 @@ Completed prerequisites retained as stable code:
   known-vector coverage.
 - [x] Partition-aware top-right/bottom-left availability is derived from live
   reconstructed-MI coverage.
+- [x] CFL-allowed UV mode CDFs, joint alpha syntax and 4:4:4 CFL prediction are
+  wired for the current non-subsampled reconstruction path.
 - [x] Existing transform dispatch and 8-bit reference anchors are retained.
 
 ## 3. Reconstruction filters
@@ -149,7 +158,7 @@ errors for unsupported tools and colour-management paths.
 ## Diagnostic history
 
 The previous single-sample RGB measurements remain investigation notes only.
-The latest retained `WML2Viewer.avif` average RGB absolute error was about
-`65.7132`; it is not a completion criterion. The next completion criterion is
+The latest retained `WML2Viewer.avif` average RGB absolute error is about
+`50.1617`; it is not a completion criterion. The next completion criterion is
 the first generated native-plane fixture, followed by the final sample after
 the normative filters are implemented.

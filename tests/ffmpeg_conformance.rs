@@ -327,6 +327,57 @@ fn report_current_wml2viewer_rgb_error() {
 }
 
 #[test]
+#[ignore = "requires AOM_PREFILTER_ORACLE from a decoder build with post-filters disabled"]
+fn report_current_wml2viewer_prefilter_plane_error() {
+    let Some(oracle_path) = std::env::var_os("AOM_PREFILTER_ORACLE") else {
+        eprintln!("AOM_PREFILTER_ORACLE is not set; skipping pre-filter plane diagnostic");
+        return;
+    };
+    let oracle = std::fs::read(&oracle_path).unwrap_or_else(|err| {
+        panic!(
+            "failed to read pre-filter oracle {}: {err}",
+            Path::new(&oracle_path).display()
+        )
+    });
+    assert_eq!(oracle.len(), SAMPLE_PIXELS * 3);
+
+    let avif_data =
+        std::fs::read(sample_path("WML2Viewer.avif")).expect("sample AVIF should exist");
+    let decoded = avif_rust::decode_frame_bytes(&avif_data).expect("AVIF should decode");
+    assert_eq!(decoded.buffers.planes.len(), 3);
+
+    for (plane_index, plane) in decoded.buffers.planes.iter().enumerate() {
+        assert_eq!(plane.layout.width, SAMPLE_WIDTH);
+        assert_eq!(plane.layout.height, SAMPLE_HEIGHT);
+        let expected = &oracle[plane_index * SAMPLE_PIXELS..(plane_index + 1) * SAMPLE_PIXELS];
+        let first_mismatch = plane
+            .samples
+            .iter()
+            .zip(expected)
+            .position(|(&actual, &expected)| actual != u16::from(expected));
+        let mismatches = plane
+            .samples
+            .iter()
+            .zip(expected)
+            .filter(|(actual, expected)| **actual != u16::from(**expected))
+            .count();
+        eprintln!(
+            "pre-filter plane {plane_index}: first mismatch={first_mismatch:?}, mismatches={mismatches}"
+        );
+        if let Some(index) = first_mismatch {
+            let row_start = index / SAMPLE_WIDTH * SAMPLE_WIDTH;
+            let start = index.saturating_sub(4).max(row_start);
+            let end = (index + 12).min(row_start + SAMPLE_WIDTH);
+            eprintln!(
+                "pre-filter plane {plane_index} window {start}..{end}: actual={:?} expected={:?}",
+                &plane.samples[start..end],
+                &expected[start..end]
+            );
+        }
+    }
+}
+
+#[test]
 #[ignore = "pure Rust output does not yet meet the AV1 conformance threshold"]
 fn pure_rust_decode_matches_ffmpeg_oracle_and_original_png() {
     let avif_data =
