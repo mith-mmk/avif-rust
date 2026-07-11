@@ -270,15 +270,15 @@ The targeted trace confirms that the preceding palette block's luma transforms
 are all-zero and the first mismatching `Tx16x16` uses the expected full-block
 `txb_skip` context `0` before decoding `all_zero=false`; context carry-over is
 therefore not the first divergence at this block.
-An AOM comparison at block `(80, 24)` is the next raw blocker: the first
-`Tx4x4` luma transform is all-zero and the second is `V_DCT` with `eob=16`;
-Rust reaches the same pre-coefficient range/value state but consumes 15 more
-entropy bits while decoding that coefficient token sequence. This points to
-  coefficient-token context/sign or literal handling, not partition traversal.
-  The earlier 1-D coefficient-context hypothesis was not sufficient to explain
-  the mismatch and remains an investigation note only. It is not a completion
-  criterion; the next raw work item is the first reproducible WML2Viewer
-  pre-filter mismatch and its exact entropy/reconstruction trace.
+The latest AOM/Rust traversal trace narrows the blocker further. AOM reaches
+the row-0 leaves at `(96,0)`, `(112,0)`, `(128,0)` and `(144,0)` as 16x16
+blocks (AOM `mi_col` 24, 28, 32 and 36), while Rust consumes a 32x32
+partition at `(96,0)` before eventually reaching `(128,0)` and `(144,0)`.
+The entropy state is already different before the `(144,0)` transform-size
+symbol, so its `Tx16x16`/non-zero coefficient is a downstream symptom rather
+than an isolated transform decode. This is now the first raw work item:
+reconcile partition traversal and coefficient consumption between `(80,0)`
+and `(96,0)` against the AOM trace before changing post-filter code.
   The ignored stage report currently measures the private pipeline at about
   `50.1617` RGB absolute error before filters and `50.1392` after
   deblock/CDEF/Wiener/SGRPROJ, confirming that raw reconstruction remains the
