@@ -498,6 +498,13 @@ impl<'a> TileDecoder<'a> {
                 color_map[row * plane_block_width + col] = color_order[color_idx] as u8;
             }
         }
+        extend_palette_color_map(
+            &mut color_map,
+            cols,
+            rows,
+            plane_block_width,
+            plane_block_height,
+        );
         Ok((color_map, plane_block_width, plane_block_height))
     }
 
@@ -602,6 +609,28 @@ pub(super) fn palette_map_dimensions(
     (plane_block_width, plane_block_height, cols, rows)
 }
 
+fn extend_palette_color_map(
+    color_map: &mut [u8],
+    orig_width: usize,
+    orig_height: usize,
+    new_width: usize,
+    new_height: usize,
+) {
+    if orig_width == new_width && orig_height == new_height {
+        return;
+    }
+    for row in 0..orig_height {
+        let row_start = row * new_width;
+        let last = color_map[row_start + orig_width - 1];
+        color_map[row_start + orig_width..row_start + new_width].fill(last);
+    }
+    let last_row = (orig_height - 1) * new_width;
+    for row in orig_height..new_height {
+        let dst = row * new_width;
+        color_map.copy_within(last_row..last_row + new_width, dst);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -620,5 +649,16 @@ mod tests {
             merge_cached_palette_colors(vec![25, 15, 35], 1, 3).unwrap(),
             vec![15, 25, 35]
         );
+    }
+
+    #[test]
+    fn palette_map_extension_repeats_last_valid_row_and_column() {
+        let mut map = vec![0u8; 4 * 3];
+        map[0] = 1;
+        map[1] = 2;
+        map[4] = 3;
+        map[5] = 4;
+        extend_palette_color_map(&mut map, 2, 2, 4, 3);
+        assert_eq!(&map, &[1, 2, 2, 2, 3, 4, 4, 4, 3, 4, 4, 4]);
     }
 }
