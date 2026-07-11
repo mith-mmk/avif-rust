@@ -142,9 +142,12 @@ impl<'a> EntropyDecoder<'a> {
         }
         let logical_offset = self.bit_offset.saturating_sub(14);
         let (trailing_bit_position, padding_end_position) = if self.symbol_max_bits > 0 {
+            let trailing_distance = usize::try_from(15.min(self.symbol_max_bits + 15)).unwrap();
+            let trailing = logical_offset.checked_sub(trailing_distance).ok_or_else(|| {
+                DecoderError::Bitstream("AV1 entropy trailing one bit is missing".to_string())
+            })?;
             (
-                logical_offset
-                    - usize::try_from(15.min(self.symbol_max_bits + 15)).unwrap(),
+                trailing,
                 logical_offset + self.symbol_max_bits as usize,
             )
         } else {
