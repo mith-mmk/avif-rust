@@ -266,6 +266,10 @@ samples respectively. The reproducible test-only report is
 Its first luma mismatch is in block `(144, 0)` with `Tx16x16`, `DctAdst`,
 and one decoded non-zero coefficient at raster index `16`; this remains an
 entropy/reconstruction investigation note, not a conformance result.
+The targeted trace confirms that the preceding palette block's luma transforms
+are all-zero and the first mismatching `Tx16x16` uses the expected full-block
+`txb_skip` context `0` before decoding `all_zero=false`; context carry-over is
+therefore not the first divergence at this block.
 An AOM comparison at block `(80, 24)` is the next raw blocker: the first
 `Tx4x4` luma transform is all-zero and the second is `V_DCT` with `eob=16`;
 Rust reaches the same pre-coefficient range/value state but consumes 15 more
