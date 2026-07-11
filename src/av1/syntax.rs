@@ -438,6 +438,8 @@ pub enum TxSize {
     Tx16x16,
     Tx32x32,
     Tx64x64,
+    /// AV1's first rectangular transform (8 columns by 4 rows).
+    Tx8x4,
 }
 
 impl TxSize {
@@ -456,11 +458,15 @@ impl TxSize {
             Self::Tx16x16 => 4,
             Self::Tx32x32 => 5,
             Self::Tx64x64 => 6,
+            Self::Tx8x4 => 3,
         }
     }
 
     pub fn height_log2(self) -> u8 {
-        self.width_log2()
+        match self {
+            Self::Tx8x4 => 2,
+            _ => self.width_log2(),
+        }
     }
 
     pub fn sample_count(self) -> usize {
@@ -472,6 +478,7 @@ impl TxSize {
             Self::Tx4x4 => 0,
             Self::Tx8x8 => 1,
             Self::Tx16x16 | Self::Tx32x32 | Self::Tx64x64 => 2,
+            Self::Tx8x4 => 1,
         }
     }
 
@@ -490,6 +497,7 @@ impl TxSize {
             Self::Tx16x16 => 2,
             Self::Tx32x32 => 3,
             Self::Tx64x64 => 4,
+            Self::Tx8x4 => 1,
         }
     }
 
@@ -500,6 +508,7 @@ impl TxSize {
             Self::Tx16x16 => Self::Tx8x8,
             Self::Tx8x8 => Self::Tx4x4,
             Self::Tx4x4 => Self::Tx4x4,
+            Self::Tx8x4 => Self::Tx4x4,
         }
     }
 }

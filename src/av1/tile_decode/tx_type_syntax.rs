@@ -121,7 +121,7 @@ pub(super) fn intra_ext_tx_set_context(
 ) -> Option<(usize, usize)> {
     match tx_size {
         TxSize::Tx4x4 => Some((if reduced_tx_set { 2 } else { 1 }, 0)),
-        TxSize::Tx8x8 => Some((if reduced_tx_set { 2 } else { 1 }, 1)),
+        TxSize::Tx8x8 | TxSize::Tx8x4 => Some((if reduced_tx_set { 2 } else { 1 }, 1)),
         TxSize::Tx16x16 => Some((2, 2)),
         TxSize::Tx32x32 | TxSize::Tx64x64 => None,
     }

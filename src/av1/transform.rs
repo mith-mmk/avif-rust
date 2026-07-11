@@ -308,6 +308,9 @@ pub fn inverse_transform(
     if tx_size == TxSize::Tx8x8 {
         return Ok(inverse_transform_8x8(tx_type, dequant, bit_depth));
     }
+    if tx_size == TxSize::Tx8x4 {
+        return Ok(inverse_transform_8x4(tx_type, dequant, bit_depth));
+    }
     if tx_size == TxSize::Tx16x16 {
         return Ok(inverse_transform_16x16(tx_type, dequant, bit_depth));
     }
@@ -327,7 +330,7 @@ pub fn inverse_transform(
     match tx_size {
         TxSize::Tx32x32 => inverse_transform_32x32_dct(dequant, bit_depth),
         TxSize::Tx64x64 => inverse_transform_64x64_dct(dequant, bit_depth),
-        TxSize::Tx4x4 | TxSize::Tx8x8 | TxSize::Tx16x16 => {
+        TxSize::Tx4x4 | TxSize::Tx8x8 | TxSize::Tx16x16 | TxSize::Tx8x4 => {
             unreachable!("small transforms are dispatched before large DCT fallback handling")
         }
     }
@@ -550,6 +553,31 @@ fn inverse_transform_8x8(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> Vec
         let input = std::array::from_fn(|row| clamp_signed(intermediate[row * 8 + column], 16));
         let transformed = inverse_staged_8(vertical, input, 16);
         for row in 0..8 {
+            output[row * 8 + column] =
+                round2_signed(transformed[row], 4).clamp(-residual_limit, residual_limit - 1);
+        }
+    }
+    output
+}
+
+fn inverse_transform_8x4(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> Vec<i32> {
+    let (vertical, horizontal) = staged_transform_pair(tx_type);
+    let row_range = if bit_depth == 10 { 18 } else { 16 };
+    let mut intermediate = [0i32; 32];
+    for row in 0..4 {
+        let input = std::array::from_fn(|column| clamp_signed(dequant[row * 8 + column], bit_depth + 8));
+        let transformed = inverse_staged_8(horizontal, input, row_range);
+        for column in 0..8 {
+            intermediate[row * 8 + column] = round2_signed(transformed[column], 1);
+        }
+    }
+
+    let residual_limit = 1i32 << (bit_depth + 7);
+    let mut output = vec![0i32; 32];
+    for column in 0..8 {
+        let input = std::array::from_fn(|row| clamp_signed(intermediate[row * 8 + column], 16));
+        let transformed = inverse_staged_4(vertical, input, 16);
+        for row in 0..4 {
             output[row * 8 + column] =
                 round2_signed(transformed[row], 4).clamp(-residual_limit, residual_limit - 1);
         }
@@ -1172,6 +1200,7 @@ mod tests {
             (TxSize::Tx4x4, 16),
             (TxSize::Tx8x8, 32),
             (TxSize::Tx16x16, 64),
+            (TxSize::Tx8x4, 32),
         ] {
             let mut coefficients = vec![0; tx_size.sample_count()];
             coefficients[0] = dc;

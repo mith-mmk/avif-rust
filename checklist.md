@@ -278,6 +278,12 @@ The corresponding AOM trace labels the `(80,24)` chroma residual as `TX_8X4`
 (enum value 6), while the Rust path currently decodes that plane as `Tx4x4`;
 this is the concrete next representation gap to close before revisiting
 post-filter pixels.
+The decoder now has a tested `Tx8x4` representation and inverse-transform
+primitive, but it is intentionally not wired into frame traversal yet: the
+first AOM-aligned probe still exposes an arithmetic/CDF-state mismatch after
+the preceding luma coefficient block. Wiring it before that state is fixed
+causes the next luma partition to diverge earlier, so the integration remains
+an explicit follow-up rather than a claimed conformance result.
   The ignored stage report currently measures the private pipeline at about
   `50.1617` RGB absolute error before filters and `50.1392` after
   deblock/CDEF/Wiener/SGRPROJ, confirming that raw reconstruction remains the
