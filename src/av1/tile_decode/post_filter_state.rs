@@ -1,6 +1,6 @@
 use super::TileDecoder;
 use crate::av1::frame::FrameHeader;
-use crate::av1::syntax::TxType;
+use crate::av1::syntax::{BlockSize, PredictionMode, TxType, UvPredictionMode};
 use crate::av1::tile_decode::DecodedLumaBlock;
 use crate::av1::transform::TransformBlock;
 
@@ -285,6 +285,52 @@ pub(crate) fn sgrproj_filter_unit(
         let y = y.clamp(0, height.saturating_sub(1) as isize) as usize;
         source[y * width + x] as i32
     };
+    let round_shift = |value: i64, shift: u32| -> i32 {
+        ((value + (1_i64 << shift.saturating_sub(1))) >> shift) as i32
+    };
+    let intermediate = |radius: usize, scale: i32| -> (Vec<i32>, Vec<i32>, usize) {
+        let stride = width + 4;
+        let mut a = vec![0i32; (height + 4) * stride];
+        let mut b = vec![0i32; (height + 4) * stride];
+        let side = radius * 2 + 1;
+        let n = (side * side) as i32;
+        for yy in 0..height + 4 {
+            for xx in 0..width + 4 {
+                let cx = xx as isize + origin_x as isize - 2;
+                let cy = yy as isize + origin_y as isize - 2;
+                let mut sum = 0i32;
+                let mut sum_sq = 0i32;
+                for dy in -(radius as isize)..=(radius as isize) {
+                    for dx in -(radius as isize)..=(radius as isize) {
+                        let value = sample(cx + dx, cy + dy);
+                        sum += value;
+                        sum_sq += value * value;
+                    }
+                }
+                let p = (sum_sq * n - sum * sum).max(0) as i64;
+                let z = round_shift(p * i64::from(scale), 20).clamp(0, 255);
+                let af = ((256 * z + z + 1) / (z + 1)).clamp(1, 256);
+                let bf = round_shift(
+                    i64::from(256 - af) * i64::from(sum) * i64::from((4096 + n / 2) / n),
+                    12,
+                );
+                let index = yy * stride + xx;
+                a[index] = af;
+                b[index] = bf;
+            }
+        }
+        (a, b, stride)
+    };
+    let (a0, b0, stride0) = if RADII[index][0] == 0 {
+        (Vec::new(), Vec::new(), 0)
+    } else {
+        intermediate(RADII[index][0], S[index][0])
+    };
+    let (a1, b1, stride1) = if RADII[index][1] == 0 {
+        (Vec::new(), Vec::new(), 0)
+    } else {
+        intermediate(RADII[index][1], S[index][1])
+    };
     let mut output = source.to_vec();
     let xq0 = if RADII[index][0] == 0 {
         0
@@ -301,66 +347,55 @@ pub(crate) fn sgrproj_filter_unit(
     let filter_at = |x: usize, y: usize, radius_index: usize| -> i32 {
         let radius = RADII[index][radius_index];
         if radius == 0 {
-            return sample(x as isize, y as isize) << 4;
+            return sample((origin_x + x) as isize, (origin_y + y) as isize) << 4;
         }
-        let coeff = |px: isize, py: isize| -> (i32, i32) {
-            let side = radius * 2 + 1;
-            let n = (side * side) as i32;
-            let mut sum = 0i32;
-            let mut sum_sq = 0i32;
-            for dy in -(radius as isize)..=(radius as isize) {
-                for dx in -(radius as isize)..=(radius as isize) {
-                    let value = sample(px + dx, py + dy);
-                    sum += value;
-                    sum_sq += value * value;
-                }
-            }
-            let p = (sum_sq * n - sum * sum).max(0);
-            let z = ((p * S[index][radius_index] + (1 << 19)) >> 20).clamp(0, 255);
-            let a = ((256 * z + z + 1) / (z + 1)).clamp(1, 256);
-            let recip = ((4096 + n / 2) / n).max(1);
-            let b = (((256 - a) * sum * recip) + 2048) >> 12;
-            (a, b)
-        };
-        let mut a = 0i32;
-        let mut b = 0i32;
-        let taps = if radius == 2 {
-            &[
-                (0, 0, 4),
-                (-1, 0, 4),
-                (1, 0, 4),
-                (0, -1, 4),
-                (0, 1, 4),
-                (-1, -1, 3),
-                (-1, 1, 3),
-                (1, -1, 3),
-                (1, 1, 3),
-            ][..]
+        let (a, b, stride) = if radius_index == 0 {
+            (&a0, &b0, stride0)
         } else {
-            &[
-                (0, 0, 4),
-                (-1, 0, 4),
-                (1, 0, 4),
-                (0, -1, 4),
-                (0, 1, 4),
-                (-1, -1, 3),
-                (-1, 1, 3),
-                (1, -1, 3),
-                (1, 1, 3),
-            ][..]
+            (&a1, &b1, stride1)
         };
-        for &(dy, dx, weight) in taps {
-            let (local_a, local_b) = coeff(x as isize + dx, y as isize + dy);
-            a += local_a * weight;
-            b += local_b * weight;
+        let k = (y + 2) * stride + x + 2;
+        let pixel = sample((origin_x + x) as isize, (origin_y + y) as isize);
+        if radius == 2 {
+            let aa = if y & 1 == 0 {
+                (a[k - stride] + a[k + stride]) * 6
+                    + (a[k - stride - 1]
+                        + a[k - stride + 1]
+                        + a[k + stride - 1]
+                        + a[k + stride + 1])
+                        * 5
+            } else {
+                a[k] * 6 + (a[k - 1] + a[k + 1]) * 5
+            };
+            let bb = if y & 1 == 0 {
+                (b[k - stride] + b[k + stride]) * 6
+                    + (b[k - stride - 1]
+                        + b[k - stride + 1]
+                        + b[k + stride - 1]
+                        + b[k + stride + 1])
+                        * 5
+            } else {
+                b[k] * 6 + (b[k - 1] + b[k + 1]) * 5
+            };
+            let shift = if y & 1 == 0 { 9 } else { 8 };
+            round_shift(i64::from(aa) * i64::from(pixel) + i64::from(bb), shift)
+        } else {
+            let aa = (a[k] + a[k - 1] + a[k + 1] + a[k - stride] + a[k + stride]) * 4
+                + (a[k - stride - 1] + a[k - stride + 1] + a[k + stride - 1] + a[k + stride + 1])
+                    * 3;
+            let bb = (b[k] + b[k - 1] + b[k + 1] + b[k - stride] + b[k + stride]) * 4
+                + (b[k - stride - 1] + b[k - stride + 1] + b[k + stride - 1] + b[k + stride + 1])
+                    * 3;
+            round_shift(i64::from(aa) * i64::from(pixel) + i64::from(bb), 9)
         }
-        ((a * (sample(x as isize, y as isize) << 4) + b) + (1 << 7)) >> 8
     };
-    for y in origin_y..(origin_y + unit_height).min(height) {
-        for x in origin_x..(origin_x + unit_width).min(width) {
+    for local_y in 0..unit_height.min(height.saturating_sub(origin_y)) {
+        for local_x in 0..unit_width.min(width.saturating_sub(origin_x)) {
+            let x = origin_x + local_x;
+            let y = origin_y + local_y;
             let u = sample(x as isize, y as isize) << 4;
-            let f0 = filter_at(x, y, 0);
-            let f1 = filter_at(x, y, 1);
+            let f0 = filter_at(local_x, local_y, 0);
+            let f1 = filter_at(local_x, local_y, 1);
             let value = (u << 7) + xq0 * (f0 - u) + xq1 * (f1 - u);
             output[y * width + x] = ((value + (1 << 10)) >> 11).clamp(0, u16::MAX as i32) as u16;
         }
@@ -467,11 +502,22 @@ pub(crate) struct RestorationUnit {
     pub(crate) sgrproj_index: Option<u8>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BlockFilterState {
+    pub(crate) x: usize,
+    pub(crate) y: usize,
+    pub(crate) block_size: BlockSize,
+    pub(crate) skip: bool,
+    pub(crate) y_mode: PredictionMode,
+    pub(crate) uv_mode: Option<UvPredictionMode>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct PostFilterState {
     pub(crate) cdef_units: Vec<CdefUnit>,
     pub(crate) transform_boundaries: Vec<TransformBoundary>,
     pub(crate) restoration_units: Vec<RestorationUnit>,
+    pub(crate) block_filter_states: Vec<BlockFilterState>,
 }
 
 impl PostFilterState {
@@ -507,6 +553,17 @@ impl PostFilterState {
                 self.restoration_units.push(unit);
             }
         }
+        for state in other.block_filter_states {
+            if let Some(existing) = self
+                .block_filter_states
+                .iter_mut()
+                .find(|existing| existing.x == state.x && existing.y == state.y)
+            {
+                *existing = state;
+            } else {
+                self.block_filter_states.push(state);
+            }
+        }
     }
 
     pub(crate) fn record_luma_blocks(&mut self, blocks: &[DecodedLumaBlock]) {
@@ -539,7 +596,27 @@ impl<'a> TileDecoder<'a> {
             cdef_units: self.cdef_units,
             transform_boundaries: Vec::new(),
             restoration_units: self.restoration_units,
+            block_filter_states: self.block_filter_states,
         }
+    }
+
+    pub(super) fn record_block_filter_state(
+        &mut self,
+        x: usize,
+        y: usize,
+        block_size: BlockSize,
+        skip: bool,
+        y_mode: PredictionMode,
+        uv_mode: Option<UvPredictionMode>,
+    ) {
+        self.block_filter_states.push(BlockFilterState {
+            x,
+            y,
+            block_size,
+            skip,
+            y_mode,
+            uv_mode,
+        });
     }
 
     pub(super) fn record_cdef_index(
@@ -582,6 +659,7 @@ mod tests {
         CdefUnit, PostFilterState, cdef_constrain, cdef_filter_block, cdef_find_direction,
         cdef_unit_origin, deblock_filter_edge, store_cdef_unit,
     };
+    use crate::av1::syntax::{BlockSize, PredictionMode, UvPredictionMode};
 
     #[test]
     fn cdef_filter_keeps_constant_block_unchanged() {
@@ -673,6 +751,7 @@ mod tests {
             }],
             transform_boundaries: Vec::new(),
             restoration_units: Vec::new(),
+            block_filter_states: Vec::new(),
         };
         state.merge(PostFilterState {
             cdef_units: vec![
@@ -689,6 +768,7 @@ mod tests {
             ],
             transform_boundaries: Vec::new(),
             restoration_units: Vec::new(),
+            block_filter_states: Vec::new(),
         });
 
         assert_eq!(
@@ -723,6 +803,7 @@ mod tests {
                 sgrproj: None,
                 sgrproj_index: None,
             }],
+            block_filter_states: Vec::new(),
         });
         state.merge(PostFilterState {
             cdef_units: Vec::new(),
@@ -736,10 +817,32 @@ mod tests {
                 sgrproj: Some([7, 8]),
                 sgrproj_index: Some(3),
             }],
+            block_filter_states: Vec::new(),
         });
         assert_eq!(state.restoration_units.len(), 1);
         assert_eq!(state.restoration_units[0].restoration_type, 2);
         assert_eq!(state.restoration_units[0].sgrproj, Some([7, 8]));
         assert_eq!(state.restoration_units[0].sgrproj_index, Some(3));
+    }
+
+    #[test]
+    fn post_filter_state_retains_block_mode_metadata() {
+        let mut state = PostFilterState::default();
+        state.merge(PostFilterState {
+            cdef_units: Vec::new(),
+            transform_boundaries: Vec::new(),
+            restoration_units: Vec::new(),
+            block_filter_states: vec![super::BlockFilterState {
+                x: 8,
+                y: 4,
+                block_size: BlockSize::Block8x8,
+                skip: true,
+                y_mode: PredictionMode::Dc,
+                uv_mode: Some(UvPredictionMode::Intra(PredictionMode::Dc)),
+            }],
+        });
+        assert_eq!(state.block_filter_states.len(), 1);
+        assert!(state.block_filter_states[0].skip);
+        assert_eq!(state.block_filter_states[0].block_size, BlockSize::Block8x8);
     }
 }

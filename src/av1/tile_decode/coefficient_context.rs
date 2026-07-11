@@ -205,44 +205,6 @@ pub(super) fn clamp_coefficient_level(level: usize) -> usize {
 
 const MAG_REF_OFFSET_WITH_TX_CLASS_2D: [(usize, usize); 3] = [(0, 1), (1, 0), (1, 1)];
 const SIG_REF_DIFF_OFFSET_2D: [(usize, usize); 5] = [(0, 1), (1, 0), (1, 1), (0, 2), (2, 0)];
-const COEFF_BASE_CTX_OFFSET_SQUARE: [[[usize; 5]; 5]; 5] = [
-    [
-        [0, 1, 6, 6, 0],
-        [1, 6, 6, 21, 0],
-        [6, 6, 21, 21, 0],
-        [6, 21, 21, 21, 0],
-        [0, 0, 0, 0, 0],
-    ],
-    [
-        [0, 1, 6, 6, 21],
-        [1, 6, 6, 21, 21],
-        [6, 6, 21, 21, 21],
-        [6, 21, 21, 21, 21],
-        [21, 21, 21, 21, 21],
-    ],
-    [
-        [0, 1, 6, 6, 21],
-        [1, 6, 6, 21, 21],
-        [6, 6, 21, 21, 21],
-        [6, 21, 21, 21, 21],
-        [21, 21, 21, 21, 21],
-    ],
-    [
-        [0, 1, 6, 6, 21],
-        [1, 6, 6, 21, 21],
-        [6, 6, 21, 21, 21],
-        [6, 21, 21, 21, 21],
-        [21, 21, 21, 21, 21],
-    ],
-    [
-        [0, 1, 6, 6, 21],
-        [1, 6, 6, 21, 21],
-        [6, 6, 21, 21, 21],
-        [6, 21, 21, 21, 21],
-        [21, 21, 21, 21, 21],
-    ],
-];
-
 pub(super) fn coeff_base_context_2d(
     tx_size: TxSize,
     position: usize,
@@ -277,7 +239,17 @@ pub(super) fn coeff_base_context_2d(
     }
 
     let context_delta = ((magnitude + 1) >> 1).min(4);
-    let offset = COEFF_BASE_CTX_OFFSET_SQUARE[tx_size.coeff_cdf_index()][row.min(4)][col.min(4)];
+    let offset = if width < height && row < 2 {
+        11
+    } else if width > height && col < 2 {
+        16
+    } else if row + col < 2 {
+        1
+    } else if row + col < 4 {
+        6
+    } else {
+        21
+    };
     Ok((context_delta + offset, magnitude))
 }
 

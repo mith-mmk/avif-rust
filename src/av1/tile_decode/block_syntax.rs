@@ -120,7 +120,6 @@ impl<'a> TileDecoder<'a> {
             && block_size.width() <= 32
             && block_size.height() <= 32
             && y_mode == PredictionMode::Dc
-            && palette.y.is_none()
         {
             let use_filter_intra = self.reader.read_symbol(
                 self.cdf

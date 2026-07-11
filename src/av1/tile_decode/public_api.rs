@@ -303,24 +303,62 @@ pub fn decode_luma_root_block_prefix(
     buffers: &mut FrameBuffers,
     max_blocks: usize,
 ) -> Result<DecodedBlockPrefix, DecoderError> {
-    decode_luma_root_block_prefix_with_post_filter_state(
-        data, tile_group, sequence, frame, plan, buffers, max_blocks,
-    )
-    .map(|(prefix, _)| prefix)
-}
-
-pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state(
-    data: &[u8],
-    tile_group: &TileGroup,
-    sequence: &SequenceHeader,
-    frame: &FrameHeader,
-    plan: &FrameDecodePlan,
-    buffers: &mut FrameBuffers,
-    max_blocks: usize,
-) -> Result<(DecodedBlockPrefix, PostFilterState), DecoderError> {
-    decode_luma_root_block_prefix_with_post_filter_state_and_entropy(
-        data, tile_group, sequence, frame, plan, buffers, max_blocks, false,
-    )
+    // Keep the diagnostic prefix path's entropy traversal independent from
+    // post-filter state aggregation. The public/test prefix oracle relies on
+    // returning at the same block boundary as the historical decoder.
+    if tile_group.tiles.is_empty() {
+        return Err(DecoderError::Bitstream(
+            "AV1 tile group has no tile payloads".to_string(),
+        ));
+    }
+    let mut blocks = Vec::new();
+    let mut block_budget = max_blocks;
+    for (tile_index, tile_payload) in tile_group.tiles.iter().enumerate() {
+        let payload = tile_payload_bytes(data, tile_payload)?;
+        let tile_plan = plan.tiles.get(tile_index).ok_or_else(|| {
+            DecoderError::Bitstream("AV1 tile decode plan is missing a tile".to_string())
+        })?;
+        let mut decoder = TileDecoder::new(payload, frame)?;
+        for sb_row in tile_plan.sb_row_start..tile_plan.sb_row_end {
+            for sb_col in tile_plan.sb_col_start..tile_plan.sb_col_end {
+                if block_budget == 0 {
+                    return Ok(DecodedBlockPrefix {
+                        blocks,
+                        next_unsupported: None,
+                    });
+                }
+                let x = (sb_col as usize * plan.superblock_size).min(plan.width);
+                let y = (sb_row as usize * plan.superblock_size).min(plan.height);
+                decoder.read_restoration_units(sequence, x, y)?;
+                let decoded = match decode_luma_block_tree(
+                    &mut decoder,
+                    sequence,
+                    frame,
+                    tile_plan,
+                    plan,
+                    buffers,
+                    root_block_size(sequence),
+                    x,
+                    y,
+                    &mut block_budget,
+                ) {
+                    Ok(blocks) => blocks,
+                    Err(err @ DecoderError::Unsupported(_)) if !blocks.is_empty() => {
+                        return Ok(DecodedBlockPrefix {
+                            blocks,
+                            next_unsupported: Some(err),
+                        });
+                    }
+                    Err(err) => return Err(err),
+                };
+                blocks.extend(decoded);
+            }
+        }
+    }
+    Ok(DecodedBlockPrefix {
+        blocks,
+        next_unsupported: None,
+    })
 }
 
 pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy(

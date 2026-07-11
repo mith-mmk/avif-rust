@@ -307,8 +307,8 @@ fn decode_still_frame_with_filter_policy(
         post_filter_state,
     } = decode_still_frame_with_filter_policy_and_state(headers, info, validate_filters)?;
     if validate_filters {
-        apply_cdef_stage(&mut frame, &headers.frame, &post_filter_state);
         apply_deblock_stage(&mut frame, &headers.frame, &post_filter_state);
+        apply_cdef_stage(&mut frame, &headers.frame, &post_filter_state);
         apply_wiener_stage(
             &mut frame,
             &post_filter_state,

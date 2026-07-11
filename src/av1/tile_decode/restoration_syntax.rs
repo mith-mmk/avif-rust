@@ -9,9 +9,6 @@ impl<'a> TileDecoder<'a> {
         x: usize,
         y: usize,
     ) -> Result<(), DecoderError> {
-        if std::env::var_os("AVIF_TRACE_REST_CALL").is_some() {
-            eprintln!("rest call ({x},{y}) uses={} shift={}", self.restoration.uses_lr, self.restoration.unit_shift);
-        }
         if !self.restoration.uses_lr {
             return Ok(());
         }
@@ -51,7 +48,6 @@ impl<'a> TileDecoder<'a> {
                     )));
                 }
             };
-            let sgrproj_index = None;
             match restoration_type {
                 0 => {}
                 1 => self.read_wiener_filter(plane)?,
