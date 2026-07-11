@@ -82,7 +82,7 @@ exact native-plane fixture before the next feature is enabled.
 - [ ] Verify entropy/CDF update state across blocks: partition, mode, txb skip,
       DC sign, EOB, coefficient base/range, signs and Golomb extension.
 - [ ] Verify palette-mode filter-intra exclusion, all 19 rectangular and square
-      transform sizes, chroma transform type derivation, 32x32/64x64 transforms,
+      transform sizes, 32x32/64x64 transforms,
       entropy termination and complete tile coverage against normative vectors.
 - [x] Verify the default zig-zag scan used by the supported 2-D
       `ADST_DCT`/`DCT_ADST` classes with known vectors.
@@ -93,8 +93,10 @@ exact native-plane fixture before the next feature is enabled.
 - [x] Verify palette and filter-intra syntax gating for the supported profile.
 - [ ] Support all 19 AV1 transform sizes, including rectangular transform
       placement and per-plane coordinates.
-- [ ] Derive chroma transform types from the signalled UV mode and transform
-      set; validate the 32x32/64x64 transforms against normative reference vectors.
+- [x] Derive intra chroma transform types from the signalled UV mode and transform
+      set for the supported sub-32 transform sizes.
+- [ ] Validate chroma transform derivation and the 32x32/64x64 transforms against
+      normative reference vectors.
 - [x] Reject partial tile groups before accepting a still-image decode.
 - [x] Require entropy termination/trailing-bit validation before accepting a
       decoded frame.
@@ -255,9 +257,10 @@ test-only and do not define the public decoded-frame contract.
 
 The previous single-sample RGB measurements remain investigation notes only.
 The latest retained `WML2Viewer.avif` average RGB absolute error is about
-`50.161736`; it is not a completion criterion. The current pre-filter
+`50.161736`; it is not a completion criterion. After intra chroma transform
+derivation, the current pre-filter
 diagnostic has first mismatches at plane 0 `(146, 0)`, plane 1 `(104, 0)` and
-plane 2 `(96, 0)`, with 780,827, 792,329 and 788,480 mismatched
+plane 2 `(96, 0)`, with 780,854, 790,281 and 786,079 mismatched
 samples respectively. The reproducible test-only report is
 `decoder::prefilter_diagnostic_tests::reports_wml2viewer_prefilter_mismatches`.
 Its first luma mismatch is in block `(144, 0)` with `Tx16x16`, `DctAdst`,
