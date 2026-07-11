@@ -15,7 +15,10 @@ mod diagnostic;
 mod palette;
 mod partition_syntax;
 mod post_filter_state;
-pub(crate) use post_filter_state::PostFilterState;
+pub(crate) use post_filter_state::{
+    PostFilterState, cdef_filter_block, cdef_find_direction, deblock_filter_edge,
+    sgrproj_filter_unit, wiener_filter_unit,
+};
 mod public_api;
 mod reconstruction;
 mod reconstruction_coverage;
@@ -135,6 +138,7 @@ pub struct TileDecoder<'a> {
     wiener_refs: [[[i16; 3]; 2]; 3],
     sgrproj_refs: [[i16; 2]; 3],
     cdef_units: Vec<post_filter_state::CdefUnit>,
+    restoration_units: Vec<post_filter_state::RestorationUnit>,
 }
 
 impl<'a> TileDecoder<'a> {
@@ -180,6 +184,7 @@ impl<'a> TileDecoder<'a> {
             wiener_refs: [[[3, -7, 15]; 2]; 3],
             sgrproj_refs: [[-32, 31]; 3],
             cdef_units: Vec::new(),
+            restoration_units: Vec::new(),
         })
     }
 

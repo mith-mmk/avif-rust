@@ -42,9 +42,9 @@ above this vertical slice until its native planes match the reference oracle.
 - [x] Add `AVIF_REQUIRE_ORACLES=1` strict mode so conformance runs fail when
       the manifest is absent, while normal parser/safety tests remain runnable
       without local test data.
-- [ ] Make strict mode reject a header-only/zero-entry manifest and require
+- [x] Make strict mode reject a header-only/zero-entry manifest and require
       the approved fixture IDs.
-- [ ] Require approved fixture source-manifest entries and validate SHA-256
+- [x] Require approved fixture source-manifest entries and validate SHA-256
       hash format in strict mode.
 - [x] Recompute source hashes and compare them with the source manifest using
       `scripts/verify_oracle_sources.ps1`.
@@ -54,16 +54,16 @@ above this vertical slice until its native planes match the reference oracle.
 - [x] Generate the palette fixture in that same profile and assert that the
       bitstream actually contains decoded palette blocks and color maps.
 - [ ] Generate the `WML2Viewer.avif` native-plane and RGBA fixtures.
-- [ ] Make diagnostic fixture generation opt-in for strict registration
+- [x] Make diagnostic fixture generation opt-in for strict registration
       (for example, `generate_oracles.ps1 -RegisterInStrictManifest`), and keep
       the default `WML2Viewer` generation out of `oracles.csv`.
-- [ ] Add one reproducible recipe/bootstrap for `BlackLossless` and the five
+- [x] Add one reproducible recipe/bootstrap for `BlackLossless` and the five
       filter-disabled fixtures from a fresh clone (`scripts/bootstrap_oracles.ps1`).
 - [x] Make the strict oracle command part of the documented AVIF validation
       gate.
 - [x] Capture and assert `wml2` draw callback bytes and dimensions in the
       AVIF integration test.
-- [ ] Assert callback order as `init -> draw -> terminate` on the
+- [x] Assert callback order as `init -> draw -> terminate` on the
       `filter-disabled-gbr` public fixture.
 
 ## 2. Raw block reconstruction: current priority
@@ -130,14 +130,25 @@ public decoded-frame shape.
 
 - [x] Collect CDEF indices within each tile during block traversal.
 - [x] Aggregate CDEF indices into frame-private post-filter state during full/prefix traversal; retain the state for the filter-application stage.
-- [ ] Retain transform boundaries, skip/mode state and restoration unit type
-      and coefficient information during frame decode.
+- [x] Retain transform boundaries and restoration unit type/coefficients
+      during frame decode.
+- [x] Retain transform-boundary skip/mode state during frame decode.
 - [ ] Integrate frame-level post-filter state and apply filters in fixed order:
       deblock -> CDEF -> loop restoration; verify each stage with plane oracles.
 - [ ] Implement deblocking in normative order with boundary and strength
       vectors.
+- [x] Implement the scalar 4-tap deblock edge kernel and limit/HEV mask.
+- [x] Connect deblock stage traversal to retained transform boundaries for
+      4:4:4 scalar frames.
+- [x] Implement the scalar CDEF constrain, direction search and 8x8 block
+      kernel.
 - [ ] Implement CDEF and apply the decoded per-block CDEF index.
 - [ ] Implement loop restoration and restoration-unit boundary handling.
+- [x] Implement the scalar Wiener restoration kernel and apply retained
+      Wiener units after CDEF.
+- [x] Retain the SGRPROJ parameter index and projection coefficients in
+      frame-private restoration state.
+- [ ] Implement SGRPROJ restoration and verify stripe/boundary behavior.
 - [ ] Verify the complete reconstruction/filter order against plane oracles.
 - [ ] Enable the `WML2Viewer.avif` final oracle only after the required filters
       are active and exact.
@@ -186,7 +197,7 @@ and RGBA gates.
 - [x] Validate `ispe` dimensions against the AV1 frame dimensions.
 - [x] Validate SDR `nclx` colour description and range against the AV1
       sequence header, while accepting CICP value `2` as unspecified.
-- [ ] Gate every AVIF integration target with `required-features =
+- [x] Gate every AVIF integration target with `required-features =
       ["avif"]`.
 - [x] Add an explicit feature-off test target and verify the AVIF-disabled
       library with `cargo test -p wml2 --lib --no-default-features`.

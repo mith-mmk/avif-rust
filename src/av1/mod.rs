@@ -22,7 +22,7 @@ pub use decode::{
     build_still_decode_plan,
 };
 pub use entropy::EntropyDecoder;
-pub use frame::{FrameHeader, FrameType, TxMode, parse_frame_header};
+pub use frame::{CdefStrength, FrameHeader, FrameType, TxMode, parse_frame_header};
 pub use predict::{IntraEdges, predict_intra};
 pub use quant::{PlaneQuant, QuantState, dequantize_coefficients};
 pub use reconstruct::{
@@ -45,6 +45,10 @@ pub use tile_decode::{
     decode_first_luma_transform, decode_luma_root_block_prefix, decode_luma_root_blocks,
     prepare_tile_entropy, probe_first_block_residuals, probe_tile_block_modes,
     probe_tile_partitions,
+};
+pub(crate) use tile_decode::{
+    cdef_filter_block, cdef_find_direction, deblock_filter_edge, sgrproj_filter_unit,
+    wiener_filter_unit,
 };
 pub use tile_group::{TileGroup, TilePayload, parse_tile_group};
 pub use transform::{

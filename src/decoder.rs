@@ -3,11 +3,12 @@ use crate::av1::PostFilterState;
 use crate::av1::{
     Av1CodecConfiguration, BlockModeProbe, ColorConfig, FrameBuffers, FrameDecodePlan, FrameHeader,
     PartitionProbe, QuantState, ResidualProbe, SequenceHeader, TileEntropyState, TileGroup,
-    alloc_frame_buffers, build_still_decode_plan,
-    decode_luma_root_block_prefix_with_post_filter_state_and_entropy, frame_buffers_to_rgba_8,
-    frame_buffers_to_rgba_16, parse_av1_config, parse_frame_header, parse_sequence_header,
-    parse_tile_group, plan_transform_blocks_with_tx_size, prepare_tile_entropy,
-    probe_first_block_residuals, probe_tile_block_modes, probe_tile_partitions,
+    alloc_frame_buffers, build_still_decode_plan, cdef_filter_block, cdef_find_direction,
+    deblock_filter_edge, decode_luma_root_block_prefix_with_post_filter_state_and_entropy,
+    frame_buffers_to_rgba_8, frame_buffers_to_rgba_16, parse_av1_config, parse_frame_header,
+    parse_sequence_header, parse_tile_group, plan_transform_blocks_with_tx_size,
+    prepare_tile_entropy, probe_first_block_residuals, probe_tile_block_modes,
+    probe_tile_partitions, sgrproj_filter_unit, wiener_filter_unit,
 };
 use crate::compat::{DataMap, DecodeOptions, InitOptions};
 use crate::container::{AvifInfo, ColorInformation, parse_avif};
@@ -301,8 +302,105 @@ fn decode_still_frame_with_filter_policy(
     info: Option<&AvifInfo>,
     validate_filters: bool,
 ) -> Result<DecodedFrame, DecoderError> {
-    let decoded = decode_still_frame_with_filter_policy_and_state(headers, info, validate_filters)?;
-    Ok(apply_post_filter_stage(decoded))
+    let DecodedStillFrame {
+        mut frame,
+        post_filter_state,
+    } = decode_still_frame_with_filter_policy_and_state(headers, info, validate_filters)?;
+    if validate_filters {
+        apply_cdef_stage(&mut frame, &headers.frame, &post_filter_state);
+        apply_deblock_stage(&mut frame, &headers.frame, &post_filter_state);
+        apply_wiener_stage(
+            &mut frame,
+            &post_filter_state,
+            headers.decode_plan.superblock_size << headers.frame.restoration.unit_shift,
+        );
+        apply_sgrproj_stage(
+            &mut frame,
+            &post_filter_state,
+            headers.decode_plan.superblock_size << headers.frame.restoration.unit_shift,
+        );
+    }
+    Ok(frame)
+}
+
+fn apply_deblock_stage(
+    frame: &mut DecodedFrame,
+    frame_header: &FrameHeader,
+    state: &PostFilterState,
+) {
+    for boundary in &state.transform_boundaries {
+        let block = boundary.block;
+        for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
+            let (vertical_level, horizontal_level) = if plane_index == 0 {
+                (
+                    frame_header.loop_filter.levels[0],
+                    frame_header.loop_filter.levels[1],
+                )
+            } else {
+                (
+                    frame_header.loop_filter.levels[2],
+                    frame_header.loop_filter.levels[3],
+                )
+            };
+            if block.x > 0 {
+                deblock_filter_edge(
+                    &mut plane.samples,
+                    plane.layout.width,
+                    plane.layout.height,
+                    block.x,
+                    block.y,
+                    true,
+                    vertical_level,
+                    frame_header.loop_filter.sharpness,
+                    frame.bit_depth,
+                );
+            }
+            if block.y > 0 {
+                deblock_filter_edge(
+                    &mut plane.samples,
+                    plane.layout.width,
+                    plane.layout.height,
+                    block.x,
+                    block.y,
+                    false,
+                    horizontal_level,
+                    frame_header.loop_filter.sharpness,
+                    frame.bit_depth,
+                );
+            }
+        }
+    }
+}
+
+fn apply_wiener_stage(frame: &mut DecodedFrame, state: &PostFilterState, unit_size: usize) {
+    for unit in state
+        .restoration_units
+        .iter()
+        .filter(|unit| unit.restoration_type == 1)
+    {
+        let Some(filters) = unit.wiener else { continue };
+        let Some(plane) = frame.buffers.planes.get_mut(unit.plane) else {
+            continue;
+        };
+        let source = plane.samples.clone();
+        let filtered = wiener_filter_unit(
+            &source,
+            plane.layout.width,
+            plane.layout.height,
+            unit.x,
+            unit.y,
+            unit_size,
+            unit_size,
+            filters,
+        );
+        for y in unit.y..(unit.y + unit_size).min(plane.layout.height) {
+            let start = y * plane.layout.width + unit.x.min(plane.layout.width);
+            let end = y * plane.layout.width + (unit.x + unit_size).min(plane.layout.width);
+            if start < end {
+                plane.samples[start..end].copy_from_slice(&filtered[start..end]);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -311,12 +409,89 @@ struct DecodedStillFrame {
     post_filter_state: PostFilterState,
 }
 
-fn apply_post_filter_stage(decoded: DecodedStillFrame) -> DecodedFrame {
-    let DecodedStillFrame {
-        frame,
-        post_filter_state: _post_filter_state,
-    } = decoded;
-    frame
+fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state: &PostFilterState) {
+    if !frame_header.cdef.enabled || state.cdef_units.is_empty() {
+        return;
+    }
+    let unit_mask = (1usize << frame_header.cdef.bits) - 1;
+    for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
+        let width = plane.layout.width;
+        let height = plane.layout.height;
+        let source = plane.samples.clone();
+        for y in (0..height).step_by(8) {
+            for x in (0..width).step_by(8) {
+                let unit_x = x & !63;
+                let unit_y = y & !63;
+                let index = state
+                    .cdef_units
+                    .iter()
+                    .find(|unit| unit.x == unit_x && unit.y == unit_y)
+                    .map_or(0, |unit| unit.index as usize & unit_mask);
+                let strength = &frame_header.cdef.strengths[index];
+                let direction = cdef_find_direction(&source, width, height, x, y, 0);
+                let filtered = cdef_filter_block(
+                    &source,
+                    width,
+                    height,
+                    x,
+                    y,
+                    (width - x).min(8),
+                    (height - y).min(8),
+                    direction,
+                    if plane_index == 0 {
+                        strength.y_pri
+                    } else {
+                        strength.uv_pri
+                    },
+                    if plane_index == 0 {
+                        strength.y_sec
+                    } else {
+                        strength.uv_sec
+                    },
+                    frame_header.cdef.damping,
+                );
+                for row in y..(y + (height - y).min(8)) {
+                    let start = row * width + x;
+                    let end = start + (width - x).min(8);
+                    plane.samples[start..end].copy_from_slice(&filtered[start..end]);
+                }
+            }
+        }
+    }
+}
+
+fn apply_sgrproj_stage(frame: &mut DecodedFrame, state: &PostFilterState, unit_size: usize) {
+    for unit in state
+        .restoration_units
+        .iter()
+        .filter(|unit| unit.restoration_type == 2)
+    {
+        let (Some(index), Some(xqd)) = (unit.sgrproj_index, unit.sgrproj) else {
+            continue;
+        };
+        let Some(plane) = frame.buffers.planes.get_mut(unit.plane) else {
+            continue;
+        };
+        let source = plane.samples.clone();
+        let filtered = sgrproj_filter_unit(
+            &source,
+            plane.layout.width,
+            plane.layout.height,
+            unit.x,
+            unit.y,
+            unit_size,
+            unit_size,
+            index,
+            xqd,
+        );
+        for y in unit.y..(unit.y + unit_size).min(plane.layout.height) {
+            let start = y * plane.layout.width + unit.x.min(plane.layout.width);
+            let end = y * plane.layout.width + (unit.x + unit_size).min(plane.layout.width);
+            if start < end {
+                plane.samples[start..end].copy_from_slice(&filtered[start..end]);
+            }
+        }
+    }
 }
 
 fn decode_still_frame_with_filter_policy_and_state(

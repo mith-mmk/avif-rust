@@ -1,4 +1,4 @@
-use super::{TileDecoder, palette::inv_recenter_finite_nonneg};
+use super::{TileDecoder, palette::inv_recenter_finite_nonneg, post_filter_state::RestorationUnit};
 use crate::DecoderError;
 use crate::av1::sequence::SequenceHeader;
 
@@ -9,6 +9,9 @@ impl<'a> TileDecoder<'a> {
         x: usize,
         y: usize,
     ) -> Result<(), DecoderError> {
+        if std::env::var_os("AVIF_TRACE_REST_CALL").is_some() {
+            eprintln!("rest call ({x},{y}) uses={} shift={}", self.restoration.uses_lr, self.restoration.unit_shift);
+        }
         if !self.restoration.uses_lr {
             return Ok(());
         }
@@ -28,6 +31,7 @@ impl<'a> TileDecoder<'a> {
             3
         };
         for plane in 0..planes {
+            let mut sgrproj_index = None;
             let restoration_type = match self.restoration.lr_type[plane] {
                 0 => continue,
                 1 => usize::from(self.reader.read_symbol(self.cdf.wiener_restore_cdf_mut())? != 0),
@@ -47,16 +51,28 @@ impl<'a> TileDecoder<'a> {
                     )));
                 }
             };
+            let sgrproj_index = None;
             match restoration_type {
                 0 => {}
                 1 => self.read_wiener_filter(plane)?,
-                2 => self.read_sgrproj_filter(plane)?,
+                2 => {
+                    sgrproj_index = Some(self.read_sgrproj_filter(plane)?);
+                }
                 value => {
                     return Err(DecoderError::Bitstream(format!(
                         "AV1 switchable restoration symbol {value} is invalid"
                     )));
                 }
             }
+            self.restoration_units.push(RestorationUnit {
+                x,
+                y,
+                plane,
+                restoration_type: restoration_type as u8,
+                wiener: (restoration_type == 1).then_some(self.wiener_refs[plane]),
+                sgrproj: (restoration_type == 2).then_some(self.sgrproj_refs[plane]),
+                sgrproj_index,
+            });
         }
         Ok(())
     }
@@ -82,7 +98,7 @@ impl<'a> TileDecoder<'a> {
         Ok(())
     }
 
-    fn read_sgrproj_filter(&mut self, plane: usize) -> Result<(), DecoderError> {
+    fn read_sgrproj_filter(&mut self, plane: usize) -> Result<u8, DecoderError> {
         const MIN: [i16; 2] = [-96, -32];
         const MAX: [i16; 2] = [31, 95];
         let index = self.reader.read_literal(4)? as usize;
@@ -107,7 +123,7 @@ impl<'a> TileDecoder<'a> {
             self.sgrproj_refs[plane][0] = read_value(self, 0)?;
             self.sgrproj_refs[plane][1] = read_value(self, 1)?;
         }
-        Ok(())
+        Ok(index as u8)
     }
 
     fn read_primitive_refsubexpfin(
