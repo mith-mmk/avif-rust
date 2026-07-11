@@ -104,11 +104,10 @@ exact native-plane fixture before the next feature is enabled.
       for the generated filter-disabled fixtures.
 - [x] Complete the filter-disabled fixture set with exact Y/U/V plane matches.
 - [ ] Complete the `WML2Viewer.avif` raw reconstruction comparison.
-- [x] Record the current first native-plane mismatch at plane 0, `(146, 0)`
-      after wiring CFL syntax/prediction and non-lossless chroma transform sizing;
-      plane 1 starts at `(104, 0)` and plane 2 at `(96, 0)`; keep this diagnostic
-      fixture out of the passing strict manifest until raw reconstruction and
-      enabled filters are separated.
+- [x] Record the current first native-plane mismatch at `(128, 0)` on all
+      planes after AOM-aligned palette filter-intra gating and rectangular tx
+      context selection; keep this diagnostic fixture out of the passing strict
+      manifest until raw reconstruction and enabled filters are separated.
 
 Completed prerequisites retained as stable code:
 
