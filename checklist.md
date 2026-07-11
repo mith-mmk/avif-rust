@@ -277,12 +277,14 @@ partition at `(96,0)` before eventually reaching `(128,0)` and `(144,0)`.
 The entropy state is already different before the `(144,0)` transform-size
 symbol, so its `Tx16x16`/non-zero coefficient is a downstream symptom rather
 than an isolated transform decode. The `(80,24)` orientation/skip difference
-appears immediately after the `(88,16)` palette block; the next raw work item
-is therefore to compare palette-map CDF state and token adaptation against AOM,
-then re-check partition traversal and coefficient consumption between `(80,0)`
-and `(96,0)` before changing post-filter code. A direct AOM-style CDF-update
-experiment was reverted after it caused `AV1 coeff golomb length exceeds 20
-bits`, so it is not an accepted fix or completion evidence.
+appears after the `(88,16)` palette block, but the saved AOM `mode` trace is
+emitted before palette-map token visitation; it therefore does not prove that
+palette CDF adaptation is the cause. The next raw work item is to add explicit
+pre-map/post-map anchors on both decoders, then re-check partition traversal and
+coefficient consumption between `(80,0)` and `(96,0)` before changing
+post-filter code. A direct AOM-style CDF-update experiment was reverted after
+it caused `AV1 coeff golomb length exceeds 20 bits`, so it is not an accepted
+fix or completion evidence.
   The ignored stage report currently measures the private pipeline at about
   `50.1617` RGB absolute error before filters and `50.1392` after
   deblock/CDEF/Wiener/SGRPROJ, confirming that raw reconstruction remains the
