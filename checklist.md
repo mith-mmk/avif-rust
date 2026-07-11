@@ -267,9 +267,13 @@ Its first luma mismatch is now in the large block `(128, 0)` with four
 note, not a conformance result.
 The AOM/Rust anchor now agrees through the `(88,16)` palette block, including
 palette-map pre/post entropy state and the `(80,24)` partition plus tx-size
-symbol. The remaining divergence is later in rectangular transform traversal;
-the current implementation still represents only square `TxSize` values, so
-the 19 rectangular transform forms remain an explicit raw-reconstruction task.
+symbol. The normative AOM `get_txb_ctx_general` skip/DC context table also
+matches Rust for the supported Tx4x4 blocks. The next divergence is after the
+four residual blocks of `(80,24)` and before the `(80,28)` mode; coefficient
+block order, per-plane traversal, and rectangular transform representation
+remain explicit raw-reconstruction tasks. The current implementation still
+represents only square `TxSize` values, so all 19 rectangular transform forms
+remain unfinished.
   The ignored stage report currently measures the private pipeline at about
   `50.1617` RGB absolute error before filters and `50.1392` after
   deblock/CDEF/Wiener/SGRPROJ, confirming that raw reconstruction remains the
