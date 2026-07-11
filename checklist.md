@@ -257,34 +257,20 @@ test-only and do not define the public decoded-frame contract.
 
 The previous single-sample RGB measurements remain investigation notes only.
 The latest retained `WML2Viewer.avif` average RGB absolute error is about
-`50.161736`; it is not a completion criterion. After intra chroma transform
-derivation, the current pre-filter
-diagnostic has first mismatches at plane 0 `(146, 0)`, plane 1 `(104, 0)` and
-plane 2 `(96, 0)`, with 780,854, 790,281 and 786,079 mismatched
+`50.161736`; it is not a completion criterion. After the AOM-aligned
+filter-intra palette exclusion and rectangular transform-context correction,
+the current pre-filter diagnostic has first mismatches at plane 0 `(128, 0)`,
+plane 1 `(128, 0)` and plane 2 `(128, 0)`, with 790,792, 774,349 and 771,959
 samples respectively. The reproducible test-only report is
 `decoder::prefilter_diagnostic_tests::reports_wml2viewer_prefilter_mismatches`.
-Its first luma mismatch is in block `(144, 0)` with `Tx16x16`, `DctAdst`,
-and one decoded non-zero coefficient at raster index `16`; this remains an
-entropy/reconstruction investigation note, not a conformance result.
-The targeted trace confirms that the preceding palette block's luma transforms
-are all-zero and the first mismatching `Tx16x16` uses the expected full-block
-`txb_skip` context `0` before decoding `all_zero=false`; context carry-over is
-therefore not the first divergence at this block.
-The latest AOM/Rust traversal trace narrows the blocker further. AOM reaches
-the row-0 leaves at `(96,0)`, `(112,0)`, `(128,0)` and `(144,0)` as 16x16
-blocks (AOM `mi_col` 24, 28, 32 and 36), while Rust consumes a 32x32
-partition at `(96,0)` before eventually reaching `(128,0)` and `(144,0)`.
-The entropy state is already different before the `(144,0)` transform-size
-symbol, so its `Tx16x16`/non-zero coefficient is a downstream symptom rather
-than an isolated transform decode. The `(80,24)` orientation/skip difference
-appears after the `(88,16)` palette block, but the saved AOM `mode` trace is
-emitted before palette-map token visitation; it therefore does not prove that
-palette CDF adaptation is the cause. The next raw work item is to add explicit
-pre-map/post-map anchors on both decoders, then re-check partition traversal and
-coefficient consumption between `(80,0)` and `(96,0)` before changing
-post-filter code. A direct AOM-style CDF-update experiment was reverted after
-it caused `AV1 coeff golomb length exceeds 20 bits`, so it is not an accepted
-fix or completion evidence.
+Its first luma mismatch is now in the large block `(128, 0)` with four
+`Tx64x64` transforms; this remains an entropy/reconstruction investigation
+note, not a conformance result.
+The AOM/Rust anchor now agrees through the `(88,16)` palette block, including
+palette-map pre/post entropy state and the `(80,24)` partition plus tx-size
+symbol. The remaining divergence is later in rectangular transform traversal;
+the current implementation still represents only square `TxSize` values, so
+the 19 rectangular transform forms remain an explicit raw-reconstruction task.
   The ignored stage report currently measures the private pipeline at about
   `50.1617` RGB absolute error before filters and `50.1392` after
   deblock/CDEF/Wiener/SGRPROJ, confirming that raw reconstruction remains the

@@ -163,6 +163,10 @@ impl BlockSize {
         }
     }
 
+    pub fn largest_supported_tx_dimensions(self) -> (usize, usize) {
+        (self.width().min(64), self.height().min(64))
+    }
+
     pub fn signals_tx_size(self) -> bool {
         self != Self::Block4x4
     }
@@ -573,6 +577,18 @@ mod tests {
             Some(BlockSize::Block128x32)
         );
         assert_eq!(BlockSize::from_dimensions(2, 4), None);
+    }
+
+    #[test]
+    fn rectangular_blocks_retain_transform_context_dimensions() {
+        assert_eq!(
+            BlockSize::Block8x4.largest_supported_tx_dimensions(),
+            (8, 4)
+        );
+        assert_eq!(
+            BlockSize::Block4x8.largest_supported_tx_dimensions(),
+            (4, 8)
+        );
     }
 
     #[test]

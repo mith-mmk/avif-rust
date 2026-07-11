@@ -211,7 +211,7 @@ fn decodes_sample_prefix_through_palette_blocks() {
     )
     .unwrap();
 
-    assert_eq!(prefix.blocks.len(), 2704);
+    assert_eq!(prefix.blocks.len(), 1692);
     assert_eq!(prefix.next_unsupported, None);
     let palette_blocks = prefix
         .blocks
