@@ -42,9 +42,9 @@ above this vertical slice until its native planes match the reference oracle.
 - [x] Add `AVIF_REQUIRE_ORACLES=1` strict mode so conformance runs fail when
       the manifest is absent, while normal parser/safety tests remain runnable
       without local test data.
-- [x] Make strict mode reject a header-only/zero-entry manifest and require
+- [ ] Make strict mode reject a header-only/zero-entry manifest and require
       the approved fixture IDs.
-- [x] Require approved fixture source-manifest entries and validate SHA-256
+- [ ] Require approved fixture source-manifest entries and validate SHA-256
       hash format in strict mode.
 - [x] Recompute source hashes and compare them with the source manifest using
       `scripts/verify_oracle_sources.ps1`.
@@ -63,7 +63,7 @@ above this vertical slice until its native planes match the reference oracle.
       gate.
 - [x] Capture and assert `wml2` draw callback bytes and dimensions in the
       AVIF integration test.
-- [x] Assert callback order as `init -> draw -> terminate` on the
+- [ ] Assert callback order as `init -> draw -> terminate` on the
       `filter-disabled-gbr` public fixture.
 
 ## 2. Raw block reconstruction: current priority
@@ -130,9 +130,9 @@ public decoded-frame shape.
 
 - [x] Collect CDEF indices within each tile during block traversal.
 - [x] Aggregate CDEF indices into frame-private post-filter state during full/prefix traversal; retain the state for the filter-application stage.
-- [x] Retain transform boundaries and restoration unit type/coefficients
+- [ ] Retain transform boundaries and restoration unit type/coefficients
       during frame decode.
-- [x] Retain transform-boundary skip/mode state during frame decode.
+- [ ] Retain transform-boundary skip/mode state during frame decode.
 - [ ] Integrate frame-level post-filter state and apply filters in fixed order:
       deblock -> CDEF -> loop restoration; verify each stage with plane oracles.
 - [ ] Implement deblocking in normative order with boundary and strength
@@ -267,11 +267,20 @@ An AOM comparison at block `(80, 24)` is the next raw blocker: the first
 `Tx4x4` luma transform is all-zero and the second is `V_DCT` with `eob=16`;
 Rust reaches the same pre-coefficient range/value state but consumes 15 more
 entropy bits while decoding that coefficient token sequence. This points to
-coefficient-token context/sign or literal handling, not partition traversal.
-The earlier 1-D coefficient-context hypothesis was not sufficient to explain
-the mismatch and remains an investigation note only. It is not a completion
-criterion; the next raw work item is the first reproducible WML2Viewer
-pre-filter mismatch and its exact entropy/reconstruction trace.
-The next completion criterion is exact WML2Viewer
+  coefficient-token context/sign or literal handling, not partition traversal.
+  The earlier 1-D coefficient-context hypothesis was not sufficient to explain
+  the mismatch and remains an investigation note only. It is not a completion
+  criterion; the next raw work item is the first reproducible WML2Viewer
+  pre-filter mismatch and its exact entropy/reconstruction trace.
+  The ignored stage report currently measures the private pipeline at about
+  `50.1617` RGB absolute error before filters and `50.1392` after
+  deblock/CDEF/Wiener/SGRPROJ, confirming that raw reconstruction remains the
+  dominant error. A direct FFmpeg `-skip_loop_filter all` diagnostic produces
+  the same plane mismatch counts as the generated fixture, so it is retained
+  as evidence only and is not promoted to a strict pre-filter oracle.
+  The frame header has `disable_cdf_update=false`; a test-only forced-CDF-update
+  run leaves the first mismatch and counts unchanged, so CDF update mode is
+  not currently supported as the primary explanation for the first block.
+  The next completion criterion is exact WML2Viewer
 pre-filter native planes, followed by the final sample after normative filters
 are implemented.

@@ -328,6 +328,7 @@ fn apply_deblock_stage(
     frame_header: &FrameHeader,
     state: &PostFilterState,
 ) {
+    let mut applied_edges = std::collections::HashSet::new();
     for boundary in &state.transform_boundaries {
         let block = boundary.block;
         for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
@@ -342,7 +343,7 @@ fn apply_deblock_stage(
                     frame_header.loop_filter.levels[3],
                 )
             };
-            if block.x > 0 {
+            if block.x > 0 && applied_edges.insert((plane_index, block.x, block.y, true)) {
                 deblock_filter_edge(
                     &mut plane.samples,
                     plane.layout.width,
@@ -355,7 +356,7 @@ fn apply_deblock_stage(
                     frame.bit_depth,
                 );
             }
-            if block.y > 0 {
+            if block.y > 0 && applied_edges.insert((plane_index, block.x, block.y, false)) {
                 deblock_filter_edge(
                     &mut plane.samples,
                     plane.layout.width,
@@ -423,10 +424,18 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
                 let unit_x = x & !63;
                 let unit_y = y & !63;
                 let index = state
-                    .cdef_units
+                    .cdef_blocks
                     .iter()
-                    .find(|unit| unit.x == unit_x && unit.y == unit_y)
-                    .map_or(0, |unit| unit.index as usize & unit_mask);
+                    .find(|block| block.x == unit_x && block.y == unit_y)
+                    .map(|block| block.index as usize & unit_mask)
+                    .or_else(|| {
+                        state
+                            .cdef_units
+                            .iter()
+                            .find(|unit| unit.x == unit_x && unit.y == unit_y)
+                            .map(|unit| unit.index as usize & unit_mask)
+                    })
+                    .unwrap_or(0);
                 let strength = &frame_header.cdef.strengths[index];
                 let direction = cdef_find_direction(&source, width, height, x, y, 0);
                 let filtered = cdef_filter_block(
@@ -1324,6 +1333,7 @@ mod color_metadata_tests {
 mod prefilter_diagnostic_tests {
     use super::*;
     use std::path::PathBuf;
+    use std::process::Command;
 
     #[test]
     #[ignore = "diagnostic comparison against the local WML2Viewer pre-filter oracle"]
@@ -1343,8 +1353,8 @@ mod prefilter_diagnostic_tests {
         let info = parse_avif(&data).unwrap();
         let headers = parse_av1_headers(&info).unwrap();
         eprintln!(
-            "diagnostic frame base_q_idx={} quant={:?}",
-            headers.frame.base_q_idx, headers.frame.quantization
+            "diagnostic frame base_q_idx={} disable_cdf_update={} quant={:?}",
+            headers.frame.base_q_idx, headers.frame.disable_cdf_update, headers.frame.quantization
         );
         let mut diagnostic_buffers = alloc_frame_buffers(&headers.decode_plan).unwrap();
         let (prefix, _) = decode_luma_root_block_prefix_with_post_filter_state_and_entropy(
@@ -1428,6 +1438,117 @@ mod prefilter_diagnostic_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    #[ignore = "diagnostic comparison against FFmpeg with loop filters disabled"]
+    fn reports_wml2viewer_against_ffmpeg_prefilter() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let avif_path = root.parent().unwrap().join("samples/WML2Viewer.avif");
+        if !avif_path.exists() {
+            eprintln!("WML2Viewer sample is unavailable");
+            return;
+        }
+        let data = std::fs::read(&avif_path).unwrap();
+        let info = parse_avif(&data).unwrap();
+        let headers = parse_av1_headers(&info).unwrap();
+        let decoded = decode_still_frame_prefilter_for_test(&headers, Some(&info)).unwrap();
+        let reference = Command::new("ffmpeg")
+            .args(["-v", "error", "-skip_loop_filter", "all", "-nostdin", "-i"])
+            .arg(&avif_path)
+            .args(["-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gbrp", "-"])
+            .output()
+            .expect("ffmpeg should be available for the diagnostic oracle");
+        assert!(reference.status.success());
+        let sample_count = decoded.buffers.width * decoded.buffers.height;
+        assert_eq!(reference.stdout.len(), sample_count * 3);
+        for plane_index in 0..3 {
+            let expected =
+                &reference.stdout[plane_index * sample_count..(plane_index + 1) * sample_count];
+            let actual = &decoded.buffers.planes[plane_index].samples;
+            let mismatches = actual
+                .iter()
+                .zip(expected)
+                .filter(|(actual, expected)| **actual != u16::from(**expected))
+                .count();
+            eprintln!("ffmpeg prefilter plane {plane_index}: mismatches={mismatches}");
+        }
+    }
+
+    #[test]
+    #[ignore = "diagnostic execution of the private post-filter pipeline"]
+    fn runs_wml2viewer_private_post_filter_pipeline() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let avif_path = root.parent().unwrap().join("samples/WML2Viewer.avif");
+        if !avif_path.exists() {
+            eprintln!("WML2Viewer sample is unavailable");
+            return;
+        }
+        let data = std::fs::read(avif_path).unwrap();
+        let info = parse_avif(&data).unwrap();
+        let headers = parse_av1_headers(&info).unwrap();
+        let DecodedStillFrame {
+            mut frame,
+            post_filter_state,
+        } = decode_still_frame_with_filter_policy_and_state(&headers, Some(&info), false).unwrap();
+        let reference = Command::new("ffmpeg")
+            .args(["-v", "error", "-nostdin", "-i"])
+            .arg(root.parent().unwrap().join("samples/WML2Viewer.avif"))
+            .args(["-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "-"])
+            .output()
+            .ok()
+            .filter(|output| output.status.success());
+        let report = |label: &str, frame: &DecodedFrame| {
+            let Some(reference) = reference.as_ref() else {
+                return;
+            };
+            let rgba = frame.to_rgba8().unwrap();
+            if reference.stdout.len() != rgba.rgba.len() {
+                return;
+            }
+            let mut sum = 0u64;
+            let mut max = 0u8;
+            for (index, (&actual, &expected)) in
+                rgba.rgba.iter().zip(reference.stdout.iter()).enumerate()
+            {
+                if index % 4 == 3 {
+                    continue;
+                }
+                let difference = actual.abs_diff(expected);
+                sum += u64::from(difference);
+                max = max.max(difference);
+            }
+            eprintln!(
+                "private {label} WML2Viewer vs ffmpeg: average_rgb_abs={}, max={max}",
+                sum as f64 / (frame.width * frame.height * 3) as f64
+            );
+        };
+        report("raw", &frame);
+        apply_deblock_stage(&mut frame, &headers.frame, &post_filter_state);
+        report("deblock", &frame);
+        apply_cdef_stage(&mut frame, &headers.frame, &post_filter_state);
+        report("cdef", &frame);
+        apply_wiener_stage(
+            &mut frame,
+            &post_filter_state,
+            headers.decode_plan.superblock_size << headers.frame.restoration.unit_shift,
+        );
+        report("wiener", &frame);
+        apply_sgrproj_stage(
+            &mut frame,
+            &post_filter_state,
+            headers.decode_plan.superblock_size << headers.frame.restoration.unit_shift,
+        );
+        report("sgrproj", &frame);
+        let rgba = frame.to_rgba8().unwrap();
+        eprintln!(
+            "private filtered WML2Viewer: {}x{}, rgba bytes={}, first={:?}",
+            frame.width,
+            frame.height,
+            rgba.rgba.len(),
+            &rgba.rgba[..4]
+        );
+        assert_eq!(rgba.rgba.len(), frame.width * frame.height * 4);
     }
 }
 

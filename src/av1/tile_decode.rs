@@ -138,6 +138,7 @@ pub struct TileDecoder<'a> {
     wiener_refs: [[[i16; 3]; 2]; 3],
     sgrproj_refs: [[i16; 2]; 3],
     cdef_units: Vec<post_filter_state::CdefUnit>,
+    cdef_blocks: Vec<post_filter_state::CdefBlockIndex>,
     restoration_units: Vec<post_filter_state::RestorationUnit>,
     block_filter_states: Vec<post_filter_state::BlockFilterState>,
 }
@@ -185,6 +186,7 @@ impl<'a> TileDecoder<'a> {
             wiener_refs: [[[3, -7, 15]; 2]; 3],
             sgrproj_refs: [[-32, 31]; 3],
             cdef_units: Vec::new(),
+            cdef_blocks: Vec::new(),
             restoration_units: Vec::new(),
             block_filter_states: Vec::new(),
         })

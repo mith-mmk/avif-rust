@@ -484,6 +484,13 @@ pub(crate) struct CdefUnit {
     pub(crate) index: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CdefBlockIndex {
+    pub(crate) x: usize,
+    pub(crate) y: usize,
+    pub(crate) index: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TransformBoundary {
     pub(crate) block: TransformBlock,
@@ -515,6 +522,7 @@ pub(crate) struct BlockFilterState {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct PostFilterState {
     pub(crate) cdef_units: Vec<CdefUnit>,
+    pub(crate) cdef_blocks: Vec<CdefBlockIndex>,
     pub(crate) transform_boundaries: Vec<TransformBoundary>,
     pub(crate) restoration_units: Vec<RestorationUnit>,
     pub(crate) block_filter_states: Vec<BlockFilterState>,
@@ -531,6 +539,17 @@ impl PostFilterState {
                 existing.index = unit.index;
             } else {
                 self.cdef_units.push(unit);
+            }
+        }
+        for block in other.cdef_blocks {
+            if let Some(existing) = self
+                .cdef_blocks
+                .iter_mut()
+                .find(|existing| existing.x == block.x && existing.y == block.y)
+            {
+                *existing = block;
+            } else {
+                self.cdef_blocks.push(block);
             }
         }
         for boundary in other.transform_boundaries {
@@ -594,6 +613,7 @@ impl<'a> TileDecoder<'a> {
     pub(super) fn take_post_filter_state(self) -> PostFilterState {
         PostFilterState {
             cdef_units: self.cdef_units,
+            cdef_blocks: self.cdef_blocks,
             transform_boundaries: Vec::new(),
             restoration_units: self.restoration_units,
             block_filter_states: self.block_filter_states,
@@ -632,6 +652,9 @@ impl<'a> TileDecoder<'a> {
 
         let (unit_x, unit_y) = cdef_unit_origin(x, y);
         store_cdef_unit(&mut self.cdef_units, unit_x, unit_y, index);
+        if let Some(index) = index {
+            store_cdef_block_index(&mut self.cdef_blocks, unit_x, unit_y, index);
+        }
     }
 }
 
@@ -651,6 +674,17 @@ fn store_cdef_unit(units: &mut Vec<CdefUnit>, x: usize, y: usize, index: Option<
         y,
         index: index.unwrap_or(0),
     });
+}
+
+fn store_cdef_block_index(blocks: &mut Vec<CdefBlockIndex>, x: usize, y: usize, index: u32) {
+    if let Some(existing) = blocks
+        .iter_mut()
+        .find(|existing| existing.x == x && existing.y == y)
+    {
+        existing.index = index;
+    } else {
+        blocks.push(CdefBlockIndex { x, y, index });
+    }
 }
 
 #[cfg(test)]
@@ -749,6 +783,7 @@ mod tests {
                 y: 0,
                 index: 1,
             }],
+            cdef_blocks: Vec::new(),
             transform_boundaries: Vec::new(),
             restoration_units: Vec::new(),
             block_filter_states: Vec::new(),
@@ -766,6 +801,7 @@ mod tests {
                     index: 2,
                 },
             ],
+            cdef_blocks: Vec::new(),
             transform_boundaries: Vec::new(),
             restoration_units: Vec::new(),
             block_filter_states: Vec::new(),
@@ -793,6 +829,7 @@ mod tests {
         let mut state = PostFilterState::default();
         state.merge(PostFilterState {
             cdef_units: Vec::new(),
+            cdef_blocks: Vec::new(),
             transform_boundaries: Vec::new(),
             restoration_units: vec![super::RestorationUnit {
                 x: 0,
@@ -807,6 +844,7 @@ mod tests {
         });
         state.merge(PostFilterState {
             cdef_units: Vec::new(),
+            cdef_blocks: Vec::new(),
             transform_boundaries: Vec::new(),
             restoration_units: vec![super::RestorationUnit {
                 x: 0,
@@ -830,6 +868,7 @@ mod tests {
         let mut state = PostFilterState::default();
         state.merge(PostFilterState {
             cdef_units: Vec::new(),
+            cdef_blocks: Vec::new(),
             transform_boundaries: Vec::new(),
             restoration_units: Vec::new(),
             block_filter_states: vec![super::BlockFilterState {
