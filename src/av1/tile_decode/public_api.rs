@@ -1,4 +1,5 @@
 use super::decode_flow::{decode_luma_block_tree, decode_luma_root_block};
+use super::post_filter_state::PostFilterState;
 use super::{
     BlockModeProbe, DecodedBlockPrefix, DecodedLumaBlock, DecodedTransform, PartitionProbe,
     ResidualProbe, TileDecoder, TileEntropyState,
@@ -302,6 +303,36 @@ pub fn decode_luma_root_block_prefix(
     buffers: &mut FrameBuffers,
     max_blocks: usize,
 ) -> Result<DecodedBlockPrefix, DecoderError> {
+    decode_luma_root_block_prefix_with_post_filter_state(
+        data, tile_group, sequence, frame, plan, buffers, max_blocks,
+    )
+    .map(|(prefix, _)| prefix)
+}
+
+pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state(
+    data: &[u8],
+    tile_group: &TileGroup,
+    sequence: &SequenceHeader,
+    frame: &FrameHeader,
+    plan: &FrameDecodePlan,
+    buffers: &mut FrameBuffers,
+    max_blocks: usize,
+) -> Result<(DecodedBlockPrefix, PostFilterState), DecoderError> {
+    decode_luma_root_block_prefix_with_post_filter_state_and_entropy(
+        data, tile_group, sequence, frame, plan, buffers, max_blocks, false,
+    )
+}
+
+pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy(
+    data: &[u8],
+    tile_group: &TileGroup,
+    sequence: &SequenceHeader,
+    frame: &FrameHeader,
+    plan: &FrameDecodePlan,
+    buffers: &mut FrameBuffers,
+    max_blocks: usize,
+    validate_entropy: bool,
+) -> Result<(DecodedBlockPrefix, PostFilterState), DecoderError> {
     if tile_group.tiles.is_empty() {
         return Err(DecoderError::Bitstream(
             "AV1 tile group has no tile payloads".to_string(),
@@ -309,6 +340,7 @@ pub fn decode_luma_root_block_prefix(
     }
     let mut blocks = Vec::new();
     let mut block_budget = max_blocks;
+    let mut post_filter_state = PostFilterState::default();
 
     for (tile_index, tile_payload) in tile_group.tiles.iter().enumerate() {
         let payload = tile_payload_bytes(data, tile_payload)?;
@@ -319,10 +351,14 @@ pub fn decode_luma_root_block_prefix(
         for sb_row in tile_plan.sb_row_start..tile_plan.sb_row_end {
             for sb_col in tile_plan.sb_col_start..tile_plan.sb_col_end {
                 if block_budget == 0 {
-                    return Ok(DecodedBlockPrefix {
-                        blocks,
-                        next_unsupported: None,
-                    });
+                    post_filter_state.merge(decoder.take_post_filter_state());
+                    return Ok((
+                        DecodedBlockPrefix {
+                            blocks,
+                            next_unsupported: None,
+                        },
+                        post_filter_state,
+                    ));
                 }
                 let x = (sb_col as usize * plan.superblock_size).min(plan.width);
                 let y = (sb_row as usize * plan.superblock_size).min(plan.height);
@@ -341,22 +377,34 @@ pub fn decode_luma_root_block_prefix(
                 ) {
                     Ok(blocks) => blocks,
                     Err(err @ DecoderError::Unsupported(_)) if !blocks.is_empty() => {
-                        return Ok(DecodedBlockPrefix {
-                            blocks,
-                            next_unsupported: Some(err),
-                        });
+                        post_filter_state.merge(decoder.take_post_filter_state());
+                        return Ok((
+                            DecodedBlockPrefix {
+                                blocks,
+                                next_unsupported: Some(err),
+                            },
+                            post_filter_state,
+                        ));
                     }
                     Err(err) => return Err(err),
                 };
+                post_filter_state.record_luma_blocks(&decoded);
                 blocks.extend(decoded);
             }
         }
+        if validate_entropy {
+            decoder.finish_entropy()?;
+        }
+        post_filter_state.merge(decoder.take_post_filter_state());
     }
 
-    Ok(DecodedBlockPrefix {
-        blocks,
-        next_unsupported: None,
-    })
+    Ok((
+        DecodedBlockPrefix {
+            blocks,
+            next_unsupported: None,
+        },
+        post_filter_state,
+    ))
 }
 
 fn tile_payload_bytes<'a>(

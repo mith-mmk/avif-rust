@@ -184,67 +184,22 @@ fn layered_conformance_helpers_compare_planes_and_rgba_max_error() {
 }
 
 #[test]
-fn pure_rust_decode_returns_sample_rgba_dimensions() {
+fn pure_rust_decode_rejects_sample_with_unimplemented_filters() {
     let avif_data =
         std::fs::read(sample_path("WML2Viewer.avif")).expect("sample AVIF should exist");
-    let decoded = avif_rust::image_from_bytes(&avif_data).expect("AVIF should decode");
-
-    assert_eq!(decoded.width, SAMPLE_WIDTH);
-    assert_eq!(decoded.height, SAMPLE_HEIGHT);
-    assert_eq!(decoded.rgba.len(), SAMPLE_RGBA_LEN);
-    assert!(decoded.rgba.chunks_exact(4).all(|pixel| pixel[3] == 255));
+    let error = avif_rust::image_from_bytes(&avif_data).unwrap_err();
     assert!(
-        decoded
-            .rgba
-            .chunks_exact(4)
-            .any(|pixel| pixel[0] != 0 || pixel[1] != 0 || pixel[2] != 0)
+        matches!(error, avif_rust::DecoderError::Unsupported(message) if message.contains("CDEF"))
     );
 }
 
 #[test]
-fn pure_rust_decode_exposes_source_planes_for_oracle_tests() {
+fn pure_rust_decode_rejects_source_plane_access_when_filters_are_active() {
     let avif_data =
         std::fs::read(sample_path("WML2Viewer.avif")).expect("sample AVIF should exist");
-    let decoded = avif_rust::decode_frame_bytes(&avif_data).expect("AVIF should decode");
-
-    assert_eq!(decoded.width, SAMPLE_WIDTH);
-    assert_eq!(decoded.height, SAMPLE_HEIGHT);
-    assert_eq!(decoded.render_width, SAMPLE_WIDTH);
-    assert_eq!(decoded.render_height, SAMPLE_HEIGHT);
-    assert_eq!(decoded.bit_depth, 8);
-    assert_eq!(decoded.buffers.planes.len(), 3);
-
-    let parsed_info = avif_rust::container::parse_avif(&avif_data).expect("AVIF should parse");
-    assert_eq!(decoded.color_information, parsed_info.color_information);
-    assert_eq!(decoded.alpha_premultiplied, parsed_info.alpha_premultiplied);
-
-    for (plane_index, plane) in decoded.buffers.planes.iter().enumerate() {
-        assert_eq!(usize::from(plane.layout.plane), plane_index);
-        assert_eq!(plane.layout.width, SAMPLE_WIDTH);
-        assert_eq!(plane.layout.height, SAMPLE_HEIGHT);
-        assert_eq!(plane.layout.stride(), SAMPLE_WIDTH);
-        assert_eq!(plane.layout.sample_count, SAMPLE_PIXELS);
-        assert_eq!(plane.samples.len(), SAMPLE_PIXELS);
-    }
-
-    let rgba8 = decoded
-        .to_rgba8()
-        .expect("identity GBR should convert to RGBA8");
-    assert_eq!(rgba8.width, SAMPLE_WIDTH);
-    assert_eq!(rgba8.height, SAMPLE_HEIGHT);
-    assert_eq!(rgba8.rgba.len(), SAMPLE_RGBA_LEN);
-
-    let rgba16 = decoded
-        .to_rgba16()
-        .expect("identity GBR should convert to RGBA16");
-    assert_eq!(rgba16.width, SAMPLE_WIDTH);
-    assert_eq!(rgba16.height, SAMPLE_HEIGHT);
-    assert_eq!(rgba16.rgba.len(), SAMPLE_RGBA_LEN);
+    let error = avif_rust::decode_frame_bytes(&avif_data).unwrap_err();
     assert!(
-        rgba16
-            .rgba
-            .chunks_exact(4)
-            .all(|pixel| pixel[3] == u16::MAX)
+        matches!(error, avif_rust::DecoderError::Unsupported(message) if message.contains("CDEF"))
     );
 }
 

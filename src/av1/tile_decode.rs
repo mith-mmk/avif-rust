@@ -15,6 +15,7 @@ mod diagnostic;
 mod palette;
 mod partition_syntax;
 mod post_filter_state;
+pub(crate) use post_filter_state::PostFilterState;
 mod public_api;
 mod reconstruction;
 mod reconstruction_coverage;
@@ -34,6 +35,7 @@ pub use diagnostic::{
     ResidualProbe, TileEntropyState,
 };
 use diagnostic::{CoeffBaseProbe, CoeffBaseRead, CoeffBrProbe, CoeffSignRead};
+pub(crate) use public_api::decode_luma_root_block_prefix_with_post_filter_state_and_entropy;
 pub use public_api::{
     decode_first_luma_block, decode_first_luma_transform, decode_luma_root_block_prefix,
     decode_luma_root_blocks, prepare_tile_entropy, probe_first_block_residuals,
@@ -193,6 +195,10 @@ impl<'a> TileDecoder<'a> {
     pub(super) fn set_txb_entropy_context(&mut self, transform: TransformBlock, value: u8) {
         let contexts = &mut self.plane_entropy_contexts[transform.plane];
         set_txb_entropy_context(transform, value, &mut contexts.above, &mut contexts.left);
+    }
+
+    pub(super) fn finish_entropy(&mut self) -> Result<usize, DecoderError> {
+        self.reader.exit()
     }
 }
 

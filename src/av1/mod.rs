@@ -37,6 +37,8 @@ pub use sequence::{
 pub use syntax::UvPredictionMode;
 pub use syntax::{BlockSize, Partition, PredictionMode, TxSize, TxType};
 pub use tile::TileInfo;
+pub(crate) use tile_decode::PostFilterState;
+pub(crate) use tile_decode::decode_luma_root_block_prefix_with_post_filter_state_and_entropy;
 pub use tile_decode::{
     BlockModeProbe, DecodedBlockPrefix, DecodedLumaBlock, DecodedTransform, PartitionProbe,
     ResidualProbe, TileDecoder, TileEntropyState, decode_first_luma_block,

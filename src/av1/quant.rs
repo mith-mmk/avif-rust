@@ -138,6 +138,7 @@ mod tests {
             delta_q_u_ac: 3,
             delta_q_v_dc: -2,
             delta_q_v_ac: -3,
+            using_qmatrix: false,
         };
 
         let state = QuantState::from_params(&params, 8).unwrap();

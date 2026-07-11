@@ -26,7 +26,7 @@ impl<'a> TileDecoder<'a> {
             true
         } else {
             let start = transform.x.saturating_add(width).min(plane.layout.width);
-            let end = start.saturating_add(height).min(plane.layout.width);
+            let end = start.saturating_add(width).min(plane.layout.width);
             horizontal_span_is_reconstructed(
                 grid,
                 self.mi_cols,
@@ -40,7 +40,7 @@ impl<'a> TileDecoder<'a> {
             true
         } else {
             let start = transform.y.saturating_add(height).min(plane.layout.height);
-            let end = start.saturating_add(width).min(plane.layout.height);
+            let end = start.saturating_add(height).min(plane.layout.height);
             vertical_span_is_reconstructed(
                 grid,
                 self.mi_cols,

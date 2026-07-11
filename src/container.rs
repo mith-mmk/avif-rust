@@ -157,6 +157,7 @@ struct ItemReference {
 struct ItemPropertyAssociation {
     item_id: u32,
     property_indices: Vec<u16>,
+    essential_property_indices: Vec<u16>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -220,6 +221,7 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
     })?;
 
     let primary_item_payload = primary_item_payload(data, &meta)?;
+    validate_primary_item_metadata(&meta)?;
     let alpha_auxiliary_items = alpha_auxiliary_items(data, &meta)?;
     let primary_grid = primary_grid(&primary_item_payload, &meta)?;
     let primary_transforms = primary_item_transforms(&meta);
@@ -590,14 +592,21 @@ fn parse_ipma(payload: &[u8]) -> Result<Vec<ItemPropertyAssociation>, DecoderErr
         let association_count = read_u8(payload, cursor)? as usize;
         cursor += 1;
         let mut property_indices = Vec::with_capacity(association_count);
+        let mut essential_property_indices = Vec::new();
         for _ in 0..association_count {
             let association = if large_property_index {
                 let value = read_u16(payload, cursor)?;
                 cursor += 2;
+                if value & 0x8000 != 0 {
+                    essential_property_indices.push(value & 0x7fff);
+                }
                 value & 0x7fff
             } else {
                 let value = read_u8(payload, cursor)?;
                 cursor += 1;
+                if value & 0x80 != 0 {
+                    essential_property_indices.push(u16::from(value & 0x7f));
+                }
                 u16::from(value & 0x7f)
             };
             if association != 0 {
@@ -607,9 +616,51 @@ fn parse_ipma(payload: &[u8]) -> Result<Vec<ItemPropertyAssociation>, DecoderErr
         associations.push(ItemPropertyAssociation {
             item_id,
             property_indices,
+            essential_property_indices,
         });
     }
     Ok(associations)
+}
+
+fn validate_primary_item_metadata(state: &MetaState) -> Result<(), DecoderError> {
+    let Some(primary_item_id) = state.primary_item_id else {
+        return Err(DecoderError::Bitstream(
+            "primary item is missing".to_string(),
+        ));
+    };
+    if !state
+        .item_infos
+        .iter()
+        .any(|item| item.item_id == primary_item_id)
+    {
+        return Err(DecoderError::Bitstream(format!(
+            "primary item {primary_item_id} has no item information"
+        )));
+    }
+    if !state
+        .item_locations
+        .iter()
+        .any(|location| location.item_id == primary_item_id)
+    {
+        return Err(DecoderError::Bitstream(format!(
+            "primary item {primary_item_id} has no item location"
+        )));
+    }
+    for association in &state.item_property_associations {
+        for index in association
+            .property_indices
+            .iter()
+            .chain(association.essential_property_indices.iter())
+        {
+            if *index == 0 || usize::from(*index) > state.item_properties.len() {
+                return Err(DecoderError::Bitstream(format!(
+                    "item {} property association index {} is out of range",
+                    association.item_id, index
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn parse_auxc(payload: &[u8]) -> Result<String, DecoderError> {
@@ -1227,6 +1278,7 @@ mod tests {
             item_property_associations: vec![ItemPropertyAssociation {
                 item_id: 2,
                 property_indices: vec![1],
+                essential_property_indices: Vec::new(),
             }],
             item_properties: vec![ItemProperty::AuxiliaryType(ALPHA_AUX_TYPE.to_string())],
             ..MetaState::default()
@@ -1294,7 +1346,40 @@ mod tests {
             vec![ItemPropertyAssociation {
                 item_id: 2,
                 property_indices: vec![1],
+                essential_property_indices: vec![1],
             }]
+        );
+    }
+
+    #[test]
+    fn rejects_primary_metadata_with_out_of_range_property_association() {
+        let state = MetaState {
+            primary_item_id: Some(1),
+            item_infos: vec![ItemInfo {
+                item_id: 1,
+                item_type: *b"av01",
+                item_name: "primary".to_string(),
+            }],
+            item_locations: vec![ItemLocation {
+                item_id: 1,
+                base_offset: 0,
+                extents: vec![ItemExtent {
+                    offset: 0,
+                    length: 1,
+                }],
+            }],
+            item_property_associations: vec![ItemPropertyAssociation {
+                item_id: 1,
+                property_indices: vec![2],
+                essential_property_indices: Vec::new(),
+            }],
+            item_properties: vec![ItemProperty::Other],
+            ..MetaState::default()
+        };
+
+        let error = validate_primary_item_metadata(&state).unwrap_err();
+        assert!(
+            matches!(error, DecoderError::Bitstream(message) if message.contains("out of range"))
         );
     }
 
@@ -1437,6 +1522,7 @@ mod tests {
             item_property_associations: vec![ItemPropertyAssociation {
                 item_id: 7,
                 property_indices: vec![1, 2, 3],
+                essential_property_indices: Vec::new(),
             }],
             item_properties: vec![
                 ItemProperty::CleanAperture(clap),

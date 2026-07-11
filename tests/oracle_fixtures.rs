@@ -14,6 +14,16 @@ use support::{
 };
 
 const ORACLE_MANIFEST: &str = "oracles.csv";
+const SOURCE_MANIFEST: &str = "oracles.sources.csv";
+const SOURCE_MANIFEST_HEADER: &str = "id,source,sha256,plane_format,generated_by";
+const REQUIRED_STRICT_FIXTURE_IDS: [&str; 6] = [
+    "BlackLossless",
+    "filter-disabled-gbr",
+    "filter-disabled-residual",
+    "filter-disabled-partition",
+    "filter-disabled-directional",
+    "filter-disabled-palette",
+];
 const ORACLE_HEADER: &str =
     "id,avif,width,height,bit_depth,plane_paths,plane_widths,plane_heights,rgba8,rgba16";
 
@@ -170,6 +180,79 @@ fn validate_oracle_entries(entries: &[OracleEntry]) -> Result<(), String> {
         validate_oracle_dimensions(entry)?;
     }
     Ok(())
+}
+
+fn validate_required_strict_fixture_ids(entries: &[OracleEntry]) -> Result<(), String> {
+    if entries.is_empty() {
+        return Err("strict oracle manifest must contain at least one fixture".to_string());
+    }
+
+    let ids: HashSet<_> = entries.iter().map(|entry| entry.id.as_str()).collect();
+    let missing: Vec<_> = REQUIRED_STRICT_FIXTURE_IDS
+        .iter()
+        .copied()
+        .filter(|id| !ids.contains(id))
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "strict oracle manifest is missing required fixtures: {}",
+            missing.join(", ")
+        ))
+    }
+}
+
+fn validate_source_manifest_text(input: &str) -> Result<(), String> {
+    let mut lines = input.lines().filter(|line| {
+        let trimmed = line.trim();
+        !trimmed.is_empty() && !trimmed.starts_with('#')
+    });
+    let header = lines
+        .next()
+        .ok_or_else(|| "source manifest is empty".to_string())?;
+    if header != SOURCE_MANIFEST_HEADER {
+        return Err(format!("unexpected source manifest header: {header}"));
+    }
+
+    let mut ids = HashSet::new();
+    for (line_index, line) in lines.enumerate() {
+        let line_number = line_index + 2;
+        let columns: Vec<_> = line.split(',').collect();
+        if columns.len() != 5 {
+            return Err(format!(
+                "source manifest line {line_number} has {} columns, expected 5",
+                columns.len()
+            ));
+        }
+        let id = required_column(line_number, "id", columns[0])?;
+        if !ids.insert(id.clone()) {
+            return Err(format!("duplicate source manifest id: {id}"));
+        }
+        required_column(line_number, "source", columns[1])?;
+        let hash = required_column(line_number, "sha256", columns[2])?;
+        if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(format!(
+                "source manifest line {line_number} has invalid sha256"
+            ));
+        }
+        required_column(line_number, "plane_format", columns[3])?;
+        required_column(line_number, "generated_by", columns[4])?;
+    }
+
+    let missing: Vec<_> = REQUIRED_STRICT_FIXTURE_IDS
+        .iter()
+        .copied()
+        .filter(|id| !ids.contains(*id))
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "source manifest is missing required fixtures: {}",
+            missing.join(", ")
+        ))
+    }
 }
 
 fn validate_oracle_dimensions(entry: &OracleEntry) -> Result<(), String> {
@@ -366,12 +449,53 @@ fn oracle_manifest_parser_rejects_sample_count_overflow() {
 }
 
 #[test]
+fn strict_oracle_validation_rejects_empty_manifest() {
+    let entries = Vec::new();
+
+    let err = validate_required_strict_fixture_ids(&entries).unwrap_err();
+
+    assert!(err.contains("at least one fixture"));
+}
+
+#[test]
+fn strict_oracle_validation_rejects_header_only_manifest() {
+    let entries = parse_oracle_manifest(ORACLE_HEADER).unwrap();
+
+    let err = validate_required_strict_fixture_ids(&entries).unwrap_err();
+
+    assert!(err.contains("at least one fixture"));
+}
+
+#[test]
+fn strict_oracle_validation_rejects_missing_required_fixture() {
+    let manifest = format!(
+        "{ORACLE_HEADER}\nBlackLossless,images/BlackLossless.avif,64,64,8,planes/y.u16le;planes/u.u16le;planes/v.u16le,64;64;64,64;64;64,rgba/a.rgba,rgba/a.rgba16le\n"
+    );
+    let entries = parse_oracle_manifest(&manifest).unwrap();
+
+    let err = validate_required_strict_fixture_ids(&entries).unwrap_err();
+
+    assert!(err.contains("filter-disabled-gbr"));
+}
+
+#[test]
+fn strict_source_manifest_rejects_invalid_hash() {
+    let manifest = format!(
+        "{SOURCE_MANIFEST_HEADER}\nBlackLossless,BlackLossless.avif,not-a-hash,gbrp,generate_oracles.ps1\n"
+    );
+
+    let err = validate_source_manifest_text(&manifest).unwrap_err();
+
+    assert!(err.contains("invalid sha256"));
+}
+
+#[test]
 fn external_supported_stream_oracles_match_when_present() {
     let root = test_data_dir();
     let manifest_path = root.join(ORACLE_MANIFEST);
+    let require_oracles =
+        oracle_requirement_enabled(std::env::var("AVIF_REQUIRE_ORACLES").ok().as_deref());
     if !manifest_path.exists() {
-        let require_oracles =
-            oracle_requirement_enabled(std::env::var("AVIF_REQUIRE_ORACLES").ok().as_deref());
         assert!(
             !require_oracles,
             "AVIF_REQUIRE_ORACLES is enabled but {} is missing",
@@ -383,6 +507,20 @@ fn external_supported_stream_oracles_match_when_present() {
     let manifest = std::fs::read_to_string(&manifest_path)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", manifest_path.display()));
     let entries = parse_oracle_manifest(&manifest).expect("oracle manifest should be valid");
+    if require_oracles {
+        validate_required_strict_fixture_ids(&entries)
+            .unwrap_or_else(|err| panic!("strict oracle validation failed: {err}"));
+        let source_manifest_path = root.join(SOURCE_MANIFEST);
+        let source_manifest =
+            std::fs::read_to_string(&source_manifest_path).unwrap_or_else(|err| {
+                panic!(
+                    "strict oracle source manifest {} is unavailable: {err}",
+                    source_manifest_path.display()
+                )
+            });
+        validate_source_manifest_text(&source_manifest)
+            .unwrap_or_else(|err| panic!("strict source manifest validation failed: {err}"));
+    }
 
     for entry in entries {
         let avif_data = std::fs::read(test_data_path(&root, &entry.avif))

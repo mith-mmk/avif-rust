@@ -4,6 +4,10 @@ param(
     [string]$FixtureId = "filter-disabled-gbr",
     [ValidateSet("Gray", "Black", "VerticalSplit", "TestPattern", "Palette")]
     [string]$Pattern = "Gray",
+    [ValidateRange(1, 4096)]
+    [int]$Width = 16,
+    [ValidateRange(1, 4096)]
+    [int]$Height = 16,
     [string]$FfmpegPath = "ffmpeg",
     [string]$FfprobePath = "ffprobe"
 )
@@ -20,14 +24,14 @@ if ([string]::IsNullOrWhiteSpace($OutputDir)) {
 $temporaryPath = Join-Path $repositoryRoot ".test-filter-disabled-fixture"
 $sourceAvif = Join-Path $temporaryPath "$FixtureId.avif"
 $sourceFilter = switch ($Pattern) {
-    "Gray" { "color=c=gray:size=16x16:rate=1" }
-    "Black" { "color=c=black:size=16x16:rate=1" }
+    "Gray" { "color=c=gray:size=${Width}x${Height}:rate=1" }
+    "Black" { "color=c=black:size=${Width}x${Height}:rate=1" }
     "VerticalSplit" {
-        "color=c=black:size=32x64:rate=1[left];color=c=white:size=32x64:rate=1[right];[left][right]hstack,format=gbrp"
+        "color=c=black:size=$([Math]::Max(1, [int]($Width / 2)))x${Height}:rate=1[left];color=c=white:size=$([Math]::Max(1, [int]($Width - [int]($Width / 2))))x${Height}:rate=1[right];[left][right]hstack,format=gbrp"
     }
-    "TestPattern" { "testsrc=size=64x64:rate=1" }
+    "TestPattern" { "testsrc=size=${Width}x${Height}:rate=1" }
     "Palette" {
-        "nullsrc=size=64x64:rate=1,format=rgb24,geq=r='255*mod(floor(X/4),2)':g='255*mod(floor(Y/4),2)':b='255*mod(floor(X/4)+floor(Y/4),2)',format=gbrp"
+        "nullsrc=size=${Width}x${Height}:rate=1,format=rgb24,geq=r='255*mod(floor(X/4),2)':g='255*mod(floor(Y/4),2)':b='255*mod(floor(X/4)+floor(Y/4),2)',format=gbrp"
     }
 }
 $enablePalette = [int]($Pattern -eq "Palette")
@@ -70,6 +74,7 @@ try {
         -SourceAvif $sourceAvif `
         -OutputDir $OutputDir `
         -FixtureId $FixtureId `
+        -RegisterInStrictManifest `
         -FfmpegPath $FfmpegPath `
         -FfprobePath $FfprobePath
 }

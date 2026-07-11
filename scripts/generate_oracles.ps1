@@ -3,6 +3,7 @@ param(
     [string]$SourceAvif = "",
     [string]$OutputDir = "",
     [string]$FixtureId = "WML2Viewer",
+    [switch]$RegisterInStrictManifest,
     [string]$FfmpegPath = "ffmpeg",
     [string]$FfprobePath = "ffprobe"
 )
@@ -140,24 +141,26 @@ try {
     [System.IO.File]::WriteAllBytes((Join-Path $outputPath $rgbaRelative), $rgba)
     Write-U16ExpandedFromByteSamples -Samples $rgba -Destination (Join-Path $outputPath $rgba16Relative)
 
-    $manifestPath = Join-Path $outputPath "oracles.csv"
-    $manifestHeader = "id,avif,width,height,bit_depth,plane_paths,plane_widths,plane_heights,rgba8,rgba16"
-    $manifestLine = "$FixtureId,$imageRelative,$width,$height,8,$($planeRelative -join ';'),$width;$width;$width,$height;$height;$height,$rgbaRelative,$rgba16Relative"
-    $existingManifestLines = @()
-    if (Test-Path -LiteralPath $manifestPath) {
-        $existingManifestLines = @(Get-Content -LiteralPath $manifestPath | Where-Object {
-            $_ -and $_ -ne $manifestHeader -and
-            $_.Split(',').Count -eq 10 -and
-            $_ -notmatch "^$([regex]::Escape($FixtureId)),"
-        })
+    if ($RegisterInStrictManifest) {
+        $manifestPath = Join-Path $outputPath "oracles.csv"
+        $manifestHeader = "id,avif,width,height,bit_depth,plane_paths,plane_widths,plane_heights,rgba8,rgba16"
+        $manifestLine = "$FixtureId,$imageRelative,$width,$height,8,$($planeRelative -join ';'),$width;$width;$width,$height;$height;$height,$rgbaRelative,$rgba16Relative"
+        $existingManifestLines = @()
+        if (Test-Path -LiteralPath $manifestPath) {
+            $existingManifestLines = @(Get-Content -LiteralPath $manifestPath | Where-Object {
+                $_ -and $_ -ne $manifestHeader -and
+                $_.Split(',').Count -eq 10 -and
+                $_ -notmatch "^$([regex]::Escape($FixtureId)),"
+            })
+        }
+        $manifest = [System.Collections.Generic.List[string]]::new()
+        $manifest.Add($manifestHeader)
+        foreach ($line in $existingManifestLines) {
+            $manifest.Add([string]$line)
+        }
+        $manifest.Add($manifestLine)
+        Write-Utf8NoBom -Path $manifestPath -Lines $manifest.ToArray()
     }
-    $manifest = [System.Collections.Generic.List[string]]::new()
-    $manifest.Add($manifestHeader)
-    foreach ($line in $existingManifestLines) {
-        $manifest.Add([string]$line)
-    }
-    $manifest.Add($manifestLine)
-    Write-Utf8NoBom -Path $manifestPath -Lines $manifest.ToArray()
 
     $sourceHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $sourcePath).Hash.ToLowerInvariant()
     $sourceManifestPath = Join-Path $outputPath "oracles.sources.csv"

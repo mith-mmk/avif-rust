@@ -51,13 +51,14 @@ impl<'a> TileDecoder<'a> {
     }
 
     pub(super) fn tx_size_context(&self, x: usize, y: usize, block_size: BlockSize) -> usize {
-        let max_tx_size = block_size.largest_supported_tx_size();
+        let max_tx_width = block_size.width().min(64);
+        let max_tx_height = block_size.height().min(64);
         let has_above = y >= 4;
         let has_left = x >= 4;
-        let above = has_above
-            && self.above_txfm_context.get(x >> 2).copied().unwrap_or(0) >= max_tx_size.width();
-        let left = has_left
-            && self.left_txfm_context.get(y >> 2).copied().unwrap_or(0) >= max_tx_size.height();
+        let above =
+            has_above && self.above_txfm_context.get(x >> 2).copied().unwrap_or(0) >= max_tx_width;
+        let left =
+            has_left && self.left_txfm_context.get(y >> 2).copied().unwrap_or(0) >= max_tx_height;
         match (has_above, has_left) {
             (true, true) => usize::from(above) + usize::from(left),
             (true, false) => usize::from(above),

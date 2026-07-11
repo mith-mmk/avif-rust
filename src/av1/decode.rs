@@ -83,6 +83,11 @@ pub fn build_still_decode_plan(
             "AV1 superres upscaling is not supported yet".to_string(),
         ));
     }
+    validate_complete_tile_group(
+        frame.tile_info.tile_cols,
+        frame.tile_info.tile_rows,
+        tile_group,
+    )?;
     if frame.frame_width == 0 || frame.frame_height == 0 {
         return Err(DecoderError::Bitstream(
             "AV1 frame dimensions must be non-zero".to_string(),
@@ -125,6 +130,26 @@ pub fn build_still_decode_plan(
         planes,
         tiles,
     })
+}
+
+fn validate_complete_tile_group(
+    tile_cols: u32,
+    tile_rows: u32,
+    tile_group: &TileGroup,
+) -> Result<(), DecoderError> {
+    let tile_count = tile_cols.checked_mul(tile_rows).ok_or_else(|| {
+        DecoderError::InvalidParam("AV1 tile count overflows the decoder limit".to_string())
+    })?;
+    if tile_count == 0
+        || tile_group.start_tile != 0
+        || tile_group.end_tile != tile_count - 1
+        || tile_group.tiles.len() != usize::try_from(tile_count).unwrap_or(usize::MAX)
+    {
+        return Err(DecoderError::Unsupported(
+            "AV1 partial tile groups are not supported for still-image decode".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 pub fn alloc_frame_buffers(plan: &FrameDecodePlan) -> Result<FrameBuffers, DecoderError> {
@@ -269,6 +294,7 @@ fn round_shift_u32(value: u32, shift: u8) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::av1::tile_group::TilePayload;
 
     #[test]
     fn rejects_frame_buffer_allocation_above_resource_limit() {
@@ -300,6 +326,26 @@ mod tests {
 
         assert!(
             matches!(err, DecoderError::InvalidParam(message) if message.contains("resource limit"))
+        );
+    }
+
+    #[test]
+    fn rejects_partial_tile_group_for_still_decode() {
+        let tile_group = TileGroup {
+            start_tile: 1,
+            end_tile: 1,
+            data_start_offset: 0,
+            tiles: vec![TilePayload {
+                tile_id: 1,
+                offset: 0,
+                len: 0,
+            }],
+        };
+
+        let err = validate_complete_tile_group(2, 1, &tile_group).unwrap_err();
+
+        assert!(
+            matches!(err, DecoderError::Unsupported(message) if message.contains("partial tile"))
         );
     }
 }

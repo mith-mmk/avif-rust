@@ -41,6 +41,14 @@ impl<'a> TileDecoder<'a> {
             .read_symbol(self.cdf.skip_cdf_mut(skip_context))?;
         let skip = skip_symbol != 0;
         let cdef_idx = self.read_cdef_index(sequence, frame, skip, x, y)?;
+        let trace_stage =
+            std::env::var_os("AVIF_TRACE_WML2_STAGES").is_some() && x == 80 && y == 28;
+        if trace_stage {
+            eprintln!(
+                "Rust stage skip ctx={skip_context} symbol={skip_symbol} state={:?}",
+                self.reader.trace_state()
+            );
+        }
 
         let y_above_context = self.above_y_mode_context(x, y);
         let y_left_context = self.left_y_mode_context(x, y);
@@ -51,6 +59,12 @@ impl<'a> TileDecoder<'a> {
         let y_mode = PredictionMode::from_intra_symbol(y_mode_symbol).ok_or_else(|| {
             DecoderError::Bitstream(format!("AV1 y_mode symbol {y_mode_symbol} is invalid"))
         })?;
+        if trace_stage {
+            eprintln!(
+                "Rust stage y_mode symbol={y_mode_symbol} mode={y_mode:?} state={:?}",
+                self.reader.trace_state()
+            );
+        }
         let use_angle_delta = block_size.width() >= 8 && block_size.height() >= 8;
         let angle_delta_y = if use_angle_delta && y_mode.is_directional() {
             Some(self.read_angle_delta(y_mode.directional_index().unwrap())?)
@@ -70,6 +84,12 @@ impl<'a> TileDecoder<'a> {
             let uv_mode = UvPredictionMode::from_symbol(uv_symbol).ok_or_else(|| {
                 DecoderError::Bitstream(format!("AV1 uv_mode symbol {uv_symbol} is invalid"))
             })?;
+            if trace_stage {
+                eprintln!(
+                    "Rust stage uv symbol={uv_symbol} mode={uv_mode:?} state={:?}",
+                    self.reader.trace_state()
+                );
+            }
             if uv_mode == UvPredictionMode::Cfl {
                 self.current_cfl = Some(self.read_cfl_params()?);
             }
@@ -100,6 +120,7 @@ impl<'a> TileDecoder<'a> {
             && block_size.width() <= 32
             && block_size.height() <= 32
             && y_mode == PredictionMode::Dc
+            && palette.y.is_none()
         {
             let use_filter_intra = self.reader.read_symbol(
                 self.cdf

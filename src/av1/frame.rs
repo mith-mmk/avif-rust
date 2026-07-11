@@ -368,6 +368,7 @@ pub struct QuantizationParams {
     pub delta_q_u_ac: i8,
     pub delta_q_v_dc: i8,
     pub delta_q_v_ac: i8,
+    pub using_qmatrix: bool,
 }
 
 impl QuantizationParams {
@@ -409,7 +410,8 @@ fn parse_quantization_params(
         }
     }
 
-    if reader.read_bool("using_qmatrix")? {
+    let using_qmatrix = reader.read_bool("using_qmatrix")?;
+    if using_qmatrix {
         let _qm_y = reader.read_bits(4, "qm_y")?;
         let _qm_u = reader.read_bits(4, "qm_u")?;
         if !sequence.color_config.separate_uv_delta_q {
@@ -424,6 +426,7 @@ fn parse_quantization_params(
         delta_q_u_ac,
         delta_q_v_dc,
         delta_q_v_ac,
+        using_qmatrix,
     })
 }
 

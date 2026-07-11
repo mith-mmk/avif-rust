@@ -1,11 +1,13 @@
+use crate::av1::ColorRange;
+use crate::av1::PostFilterState;
 use crate::av1::{
     Av1CodecConfiguration, BlockModeProbe, ColorConfig, FrameBuffers, FrameDecodePlan, FrameHeader,
     PartitionProbe, QuantState, ResidualProbe, SequenceHeader, TileEntropyState, TileGroup,
-    alloc_frame_buffers, build_still_decode_plan, decode_luma_root_block_prefix,
-    frame_buffers_to_rgba_8, frame_buffers_to_rgba_16, parse_av1_config, parse_frame_header,
-    parse_sequence_header, parse_tile_group, plan_transform_blocks_with_tx_size,
-    prepare_tile_entropy, probe_first_block_residuals, probe_tile_block_modes,
-    probe_tile_partitions,
+    alloc_frame_buffers, build_still_decode_plan,
+    decode_luma_root_block_prefix_with_post_filter_state_and_entropy, frame_buffers_to_rgba_8,
+    frame_buffers_to_rgba_16, parse_av1_config, parse_frame_header, parse_sequence_header,
+    parse_tile_group, plan_transform_blocks_with_tx_size, prepare_tile_entropy,
+    probe_first_block_residuals, probe_tile_block_modes, probe_tile_partitions,
 };
 use crate::compat::{DataMap, DecodeOptions, InitOptions};
 use crate::container::{AvifInfo, ColorInformation, parse_avif};
@@ -146,6 +148,7 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
     let sequence_payload = sequence_payload
         .ok_or_else(|| DecoderError::Bitstream("AV1 sequence header OBU is missing".to_string()))?;
     let sequence = parse_sequence_header(sequence_payload)?;
+    validate_color_metadata(info.color_information.as_ref(), &sequence.color_config)?;
     let config = info
         .av1_config
         .as_deref()
@@ -218,6 +221,22 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
             tile_group_payload,
         )
     };
+    if let Some(width) = info.width {
+        if width != frame.frame_width {
+            return Err(DecoderError::Bitstream(format!(
+                "AVIF ispe width {width} does not match AV1 frame width {}",
+                frame.frame_width
+            )));
+        }
+    }
+    if let Some(height) = info.height {
+        if height != frame.frame_height {
+            return Err(DecoderError::Bitstream(format!(
+                "AVIF ispe height {height} does not match AV1 frame height {}",
+                frame.frame_height
+            )));
+        }
+    }
     let decode_plan = build_still_decode_plan(&sequence, &frame, &tile_group_payload.group)?;
     let quant_state =
         QuantState::from_params(&frame.quantization, sequence.color_config.bit_depth)?;
@@ -266,6 +285,45 @@ fn decode_still_frame(
     headers: &Av1Headers,
     info: Option<&AvifInfo>,
 ) -> Result<DecodedFrame, DecoderError> {
+    decode_still_frame_with_filter_policy(headers, info, true)
+}
+
+#[cfg(test)]
+fn decode_still_frame_prefilter_for_test(
+    headers: &Av1Headers,
+    info: Option<&AvifInfo>,
+) -> Result<DecodedFrame, DecoderError> {
+    decode_still_frame_with_filter_policy(headers, info, false)
+}
+
+fn decode_still_frame_with_filter_policy(
+    headers: &Av1Headers,
+    info: Option<&AvifInfo>,
+    validate_filters: bool,
+) -> Result<DecodedFrame, DecoderError> {
+    let decoded = decode_still_frame_with_filter_policy_and_state(headers, info, validate_filters)?;
+    Ok(apply_post_filter_stage(decoded))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DecodedStillFrame {
+    frame: DecodedFrame,
+    post_filter_state: PostFilterState,
+}
+
+fn apply_post_filter_stage(decoded: DecodedStillFrame) -> DecodedFrame {
+    let DecodedStillFrame {
+        frame,
+        post_filter_state: _post_filter_state,
+    } = decoded;
+    frame
+}
+
+fn decode_still_frame_with_filter_policy_and_state(
+    headers: &Av1Headers,
+    info: Option<&AvifInfo>,
+    validate_filters: bool,
+) -> Result<DecodedStillFrame, DecoderError> {
     if info.is_some_and(|info| {
         info.clean_aperture.is_some() || info.rotation.is_some() || info.mirror.is_some()
     }) {
@@ -283,30 +341,73 @@ fn decode_still_frame(
             "AVIF alpha auxiliary item composition is not supported yet".to_string(),
         ));
     }
+    if validate_filters {
+        validate_public_decode_tools(headers)?;
+    }
     let mut buffers = alloc_frame_buffers(&headers.decode_plan)?;
-    let prefix = decode_luma_root_block_prefix(
-        &headers.tile_group.tile_data,
-        &headers.tile_group.group,
-        &headers.sequence,
-        &headers.frame,
-        &headers.decode_plan,
-        &mut buffers,
-        usize::MAX,
-    )?;
+    let (prefix, post_filter_state) =
+        decode_luma_root_block_prefix_with_post_filter_state_and_entropy(
+            &headers.tile_group.tile_data,
+            &headers.tile_group.group,
+            &headers.sequence,
+            &headers.frame,
+            &headers.decode_plan,
+            &mut buffers,
+            usize::MAX,
+            validate_filters,
+        )?;
     if let Some(err) = prefix.next_unsupported {
         return Err(err);
     }
-    Ok(DecodedFrame {
-        width: headers.decode_plan.width,
-        height: headers.decode_plan.height,
-        render_width: headers.decode_plan.render_width,
-        render_height: headers.decode_plan.render_height,
-        bit_depth: headers.decode_plan.bit_depth,
-        color_config: headers.sequence.color_config,
-        color_information: info.and_then(|info| info.color_information.clone()),
-        alpha_premultiplied: info.is_some_and(|info| info.alpha_premultiplied),
-        buffers,
+    Ok(DecodedStillFrame {
+        frame: DecodedFrame {
+            width: headers.decode_plan.width,
+            height: headers.decode_plan.height,
+            render_width: headers.decode_plan.render_width,
+            render_height: headers.decode_plan.render_height,
+            bit_depth: headers.decode_plan.bit_depth,
+            color_config: headers.sequence.color_config,
+            color_information: info.and_then(|info| info.color_information.clone()),
+            alpha_premultiplied: info.is_some_and(|info| info.alpha_premultiplied),
+            buffers,
+        },
+        post_filter_state,
     })
+}
+
+fn validate_public_decode_tools(headers: &Av1Headers) -> Result<(), DecoderError> {
+    if headers.decode_plan.uses_cdef {
+        return Err(DecoderError::Unsupported(
+            "AV1 CDEF filtering is not supported by public decode yet".to_string(),
+        ));
+    }
+    if headers.decode_plan.uses_restoration {
+        return Err(DecoderError::Unsupported(
+            "AV1 loop restoration is not supported by public decode yet".to_string(),
+        ));
+    }
+    if headers
+        .frame
+        .loop_filter
+        .levels
+        .iter()
+        .any(|level| *level != 0)
+    {
+        return Err(DecoderError::Unsupported(
+            "AV1 deblocking filter is not supported by public decode yet".to_string(),
+        ));
+    }
+    if headers.sequence.film_grain_params_present {
+        return Err(DecoderError::Unsupported(
+            "AV1 film grain is not supported by public decode yet".to_string(),
+        ));
+    }
+    if headers.frame.quantization.using_qmatrix {
+        return Err(DecoderError::Unsupported(
+            "AV1 quantization matrices are not supported by public decode yet".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_av1_config(
@@ -342,6 +443,47 @@ fn validate_av1_config(
     {
         return Err(DecoderError::Bitstream(
             "av1C chroma subsampling does not match sequence header".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_color_metadata(
+    color_information: Option<&ColorInformation>,
+    color_config: &ColorConfig,
+) -> Result<(), DecoderError> {
+    let Some(color_information) = color_information else {
+        return Ok(());
+    };
+    if &color_information.color_type != b"nclx" {
+        return Ok(());
+    }
+    let nclx = color_information.nclx().ok_or_else(|| {
+        DecoderError::Bitstream("AVIF nclx colour information is truncated".to_string())
+    })?;
+    if let Some(description) = color_config.color_description {
+        let primaries_mismatch = nclx.color_primaries != 2
+            && nclx.color_primaries != u16::from(description.color_primaries);
+        let transfer_mismatch = nclx.transfer_characteristics != 2
+            && nclx.transfer_characteristics != u16::from(description.transfer_characteristics);
+        let matrix_mismatch = nclx.matrix_coefficients != 2
+            && nclx.matrix_coefficients != u16::from(description.matrix_coefficients);
+        if primaries_mismatch || transfer_mismatch || matrix_mismatch {
+            return Err(DecoderError::Bitstream(format!(
+                "AVIF nclx colour description does not match AV1 sequence header: nclx=({}, {}, {}), av1=({}, {}, {})",
+                nclx.color_primaries,
+                nclx.transfer_characteristics,
+                nclx.matrix_coefficients,
+                description.color_primaries,
+                description.transfer_characteristics,
+                description.matrix_coefficients,
+            )));
+        }
+    }
+    let av1_full_range = matches!(color_config.color_range, ColorRange::Full);
+    if nclx.full_range_flag != av1_full_range {
+        return Err(DecoderError::Bitstream(
+            "AVIF nclx range does not match AV1 sequence header".to_string(),
         ));
     }
     Ok(())
@@ -948,6 +1090,170 @@ fn emit_metadata(
         )?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod color_metadata_tests {
+    use super::*;
+    use crate::av1::ColorDescription;
+
+    fn config() -> ColorConfig {
+        ColorConfig {
+            high_bitdepth: false,
+            twelve_bit: false,
+            bit_depth: 8,
+            monochrome: false,
+            color_description: Some(ColorDescription {
+                color_primaries: 1,
+                transfer_characteristics: 13,
+                matrix_coefficients: 0,
+            }),
+            color_range: ColorRange::Full,
+            subsampling_x: false,
+            subsampling_y: false,
+            chroma_sample_position: None,
+            separate_uv_delta_q: false,
+        }
+    }
+
+    fn nclx(primaries: u16, transfer: u16, matrix: u16, full_range: bool) -> ColorInformation {
+        ColorInformation {
+            color_type: *b"nclx",
+            payload: vec![
+                (primaries >> 8) as u8,
+                primaries as u8,
+                (transfer >> 8) as u8,
+                transfer as u8,
+                (matrix >> 8) as u8,
+                matrix as u8,
+                if full_range { 0x80 } else { 0 },
+            ],
+        }
+    }
+
+    #[test]
+    fn color_metadata_accepts_unspecified_nclx_codes() {
+        validate_color_metadata(Some(&nclx(2, 2, 2, true)), &config()).unwrap();
+    }
+
+    #[test]
+    fn color_metadata_rejects_explicit_nclx_mismatch() {
+        let error = validate_color_metadata(Some(&nclx(9, 13, 0, true)), &config()).unwrap_err();
+        assert!(
+            matches!(error, DecoderError::Bitstream(message) if message.contains("does not match"))
+        );
+    }
+}
+
+#[cfg(test)]
+mod prefilter_diagnostic_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    #[ignore = "diagnostic comparison against the local WML2Viewer pre-filter oracle"]
+    fn reports_wml2viewer_prefilter_mismatches() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let avif_path = root.parent().unwrap().join("samples/WML2Viewer.avif");
+        let plane_paths = [
+            root.join("test_data/planes/WML2Viewer.y.u16le"),
+            root.join("test_data/planes/WML2Viewer.u.u16le"),
+            root.join("test_data/planes/WML2Viewer.v.u16le"),
+        ];
+        if !avif_path.exists() || plane_paths.iter().any(|path| !path.exists()) {
+            eprintln!("WML2Viewer diagnostic fixtures are unavailable");
+            return;
+        }
+        let data = std::fs::read(avif_path).unwrap();
+        let info = parse_avif(&data).unwrap();
+        let headers = parse_av1_headers(&info).unwrap();
+        eprintln!(
+            "diagnostic frame base_q_idx={} quant={:?}",
+            headers.frame.base_q_idx, headers.frame.quantization
+        );
+        let mut diagnostic_buffers = alloc_frame_buffers(&headers.decode_plan).unwrap();
+        let (prefix, _) = decode_luma_root_block_prefix_with_post_filter_state_and_entropy(
+            &headers.tile_group.tile_data,
+            &headers.tile_group.group,
+            &headers.sequence,
+            &headers.frame,
+            &headers.decode_plan,
+            &mut diagnostic_buffers,
+            usize::MAX,
+            false,
+        )
+        .unwrap();
+        for block in prefix
+            .blocks
+            .iter()
+            .filter(|block| block.y == 0 && (128..160).contains(&block.x))
+        {
+            eprintln!(
+                "diagnostic block ({}, {}) size={:?} transforms={:?}",
+                block.x,
+                block.y,
+                block.block_size,
+                block
+                    .transforms
+                    .iter()
+                    .map(|transform| {
+                        (
+                            transform.transform.x,
+                            transform.transform.tx_size,
+                            transform.tx_type,
+                            transform
+                                .coefficients
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(index, coefficient)| {
+                                    (*coefficient != 0).then_some((index, *coefficient))
+                                })
+                                .collect::<Vec<_>>(),
+                            transform
+                                .coefficients
+                                .iter()
+                                .take(8)
+                                .copied()
+                                .collect::<Vec<_>>(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            );
+        }
+        let decoded = decode_still_frame_prefilter_for_test(&headers, Some(&info)).unwrap();
+        for (plane_index, path) in plane_paths.iter().enumerate() {
+            let expected = std::fs::read(path).unwrap();
+            let expected = expected
+                .chunks_exact(2)
+                .map(|sample| u16::from_le_bytes([sample[0], sample[1]]));
+            let actual = &decoded.buffers.planes[plane_index].samples;
+            let mut first = None;
+            let mut mismatches = 0usize;
+            for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+                if *actual != expected {
+                    first.get_or_insert(index);
+                    mismatches += 1;
+                }
+            }
+            eprintln!("prefilter plane {plane_index}: first={first:?}, mismatches={mismatches}");
+            if let Some(index) = first {
+                let width = decoded.buffers.planes[plane_index].layout.width;
+                let row_start = index / width * width;
+                let start = index.saturating_sub(4).max(row_start);
+                let end = (index + 12).min(row_start + width);
+                let expected = std::fs::read(path).unwrap();
+                let expected = expected
+                    .chunks_exact(2)
+                    .map(|sample| u16::from_le_bytes([sample[0], sample[1]]))
+                    .collect::<Vec<_>>();
+                eprintln!(
+                    "prefilter plane {plane_index} window {start}..{end}: actual={:?}, expected={:?}",
+                    &actual[start..end],
+                    &expected[start..end]
+                );
+            }
+        }
+    }
 }
 
 fn read_to_end<B: BinaryReader>(reader: &mut B) -> Result<Vec<u8>, DecoderError> {
