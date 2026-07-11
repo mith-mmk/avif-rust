@@ -2,7 +2,7 @@ use super::TileDecoder;
 use super::diagnostic::{BlockModeProbe, TxTypeProbe};
 use crate::DecoderError;
 use crate::av1::frame::FrameHeader;
-use crate::av1::syntax::{TxSize, TxType};
+use crate::av1::syntax::{PredictionMode, TxSize, TxType, UvPredictionMode};
 use crate::av1::transform::TransformBlock;
 
 impl<'a> TileDecoder<'a> {
@@ -12,6 +12,14 @@ impl<'a> TileDecoder<'a> {
         block_mode: &BlockModeProbe,
         transform: TransformBlock,
     ) -> Result<TxTypeProbe, DecoderError> {
+        if transform.plane > 0 {
+            return Ok(TxTypeProbe {
+                read: false,
+                set: None,
+                symbol: None,
+                tx_type: chroma_intra_tx_type(frame, block_mode, transform.tx_size),
+            });
+        }
         if let Some(tx_type) = fixed_tx_type(frame, transform) {
             return Ok(TxTypeProbe {
                 read: false,
@@ -65,6 +73,34 @@ impl<'a> TileDecoder<'a> {
                 tx_type,
             })
         }
+    }
+}
+
+fn chroma_intra_tx_type(
+    frame: &FrameHeader,
+    block_mode: &BlockModeProbe,
+    tx_size: TxSize,
+) -> TxType {
+    if frame.base_q_idx == 0 || tx_size.width() >= 32 || tx_size.height() >= 32 {
+        return TxType::DctDct;
+    }
+    let mode = match block_mode.uv_mode {
+        Some(UvPredictionMode::Intra(mode)) => mode,
+        Some(UvPredictionMode::Cfl) | None => PredictionMode::Dc,
+    };
+    match mode {
+        PredictionMode::Dc => TxType::DctDct,
+        PredictionMode::Vertical => TxType::AdstDct,
+        PredictionMode::Horizontal => TxType::DctAdst,
+        PredictionMode::D45 => TxType::DctDct,
+        PredictionMode::D135 => TxType::AdstAdst,
+        PredictionMode::D113 => TxType::AdstDct,
+        PredictionMode::D157 | PredictionMode::D203 => TxType::DctAdst,
+        PredictionMode::D67 => TxType::AdstDct,
+        PredictionMode::Smooth => TxType::AdstAdst,
+        PredictionMode::SmoothVertical => TxType::AdstDct,
+        PredictionMode::SmoothHorizontal => TxType::DctAdst,
+        PredictionMode::Paeth => TxType::AdstAdst,
     }
 }
 
