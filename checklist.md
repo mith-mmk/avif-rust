@@ -276,9 +276,13 @@ blocks (AOM `mi_col` 24, 28, 32 and 36), while Rust consumes a 32x32
 partition at `(96,0)` before eventually reaching `(128,0)` and `(144,0)`.
 The entropy state is already different before the `(144,0)` transform-size
 symbol, so its `Tx16x16`/non-zero coefficient is a downstream symptom rather
-than an isolated transform decode. This is now the first raw work item:
-reconcile partition traversal and coefficient consumption between `(80,0)`
-and `(96,0)` against the AOM trace before changing post-filter code.
+than an isolated transform decode. The `(80,24)` orientation/skip difference
+appears immediately after the `(88,16)` palette block; the next raw work item
+is therefore to compare palette-map CDF state and token adaptation against AOM,
+then re-check partition traversal and coefficient consumption between `(80,0)`
+and `(96,0)` before changing post-filter code. A direct AOM-style CDF-update
+experiment was reverted after it caused `AV1 coeff golomb length exceeds 20
+bits`, so it is not an accepted fix or completion evidence.
   The ignored stage report currently measures the private pipeline at about
   `50.1617` RGB absolute error before filters and `50.1392` after
   deblock/CDEF/Wiener/SGRPROJ, confirming that raw reconstruction remains the
