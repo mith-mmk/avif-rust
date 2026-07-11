@@ -280,10 +280,12 @@ this is the concrete next representation gap to close before revisiting
 post-filter pixels.
 The decoder now has a tested `Tx8x4` representation and inverse-transform
 primitive, but it is intentionally not wired into frame traversal yet: the
-first AOM-aligned probe still exposes an arithmetic/CDF-state mismatch after
-the preceding luma coefficient block. Wiring it before that state is fixed
-causes the next luma partition to diverge earlier, so the integration remains
-an explicit follow-up rather than a claimed conformance result.
+The entropy reader now retains AOM's full 32-bit arithmetic `dif` and uses the
+normative raw-bit probability for literals. The AOM-aligned probe still exposes
+a one-symbol/CDF-state mismatch after the preceding luma coefficient block;
+wiring `Tx8x4` before that state is fixed causes the next luma partition to
+diverge earlier, so the integration remains an explicit follow-up rather than
+a claimed conformance result.
   The ignored stage report currently measures the private pipeline at about
   `50.1617` RGB absolute error before filters and `50.1392` after
   deblock/CDEF/Wiener/SGRPROJ, confirming that raw reconstruction remains the

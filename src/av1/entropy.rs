@@ -8,8 +8,10 @@ pub struct EntropyDecoder<'a> {
     data: &'a [u8],
     bit_offset: usize,
     symbol_range: u32,
-    symbol_value: u32,
+    symbol_dif: u32,
     symbol_max_bits: i32,
+    refill_offset: usize,
+    refill_count: i32,
     disable_cdf_update: bool,
 }
 
@@ -22,16 +24,15 @@ impl<'a> EntropyDecoder<'a> {
         }
         let mut decoder = Self {
             data,
-            bit_offset: 0,
+            bit_offset: 15,
             symbol_range: 0x8000,
-            symbol_value: 0,
+            symbol_dif: 0x7fff_ffff,
             symbol_max_bits: data.len() as i32 * 8 - 15,
+            refill_offset: 0,
+            refill_count: -15,
             disable_cdf_update,
         };
-        let num_bits = (data.len() * 8).min(15);
-        let buf = decoder.read_bits_raw(num_bits, "entropy_init")?;
-        let padded_buf = buf << (15 - num_bits);
-        decoder.symbol_value = ((1 << 15) - 1) ^ padded_buf;
+        decoder.refill();
         Ok(decoder)
     }
 
@@ -43,7 +44,7 @@ impl<'a> EntropyDecoder<'a> {
     pub fn read_literal(&mut self, bits: usize) -> Result<u32, DecoderError> {
         let mut value = 0u32;
         for _ in 0..bits {
-            value = (value << 1) | u32::from(self.read_bool()?);
+            value = (value << 1) | u32::from(self.read_raw_bit()?);
         }
         Ok(value)
     }
@@ -56,7 +57,7 @@ impl<'a> EntropyDecoder<'a> {
         let threshold = (1usize << bits) - n;
         let mut value = 0usize;
         for bit_index in 0..bits - 1 {
-            let bit = usize::from(self.read_bool()?);
+            let bit = usize::from(self.read_raw_bit()?);
             value = (value << 1) | bit;
             if std::env::var_os("AVIF_TRACE_WML2_MODES").is_some() && n == 5 {
                 eprintln!(
@@ -85,6 +86,7 @@ impl<'a> EntropyDecoder<'a> {
             ));
         }
 
+        let coded = self.symbol_dif >> 16;
         let mut cur = self.symbol_range;
         let mut symbol = 0usize;
         let mut prev;
@@ -93,7 +95,7 @@ impl<'a> EntropyDecoder<'a> {
             let f = (1u32 << 15) - u32::from(cdf[symbol]);
             cur = ((self.symbol_range >> 8) * (f >> EC_PROB_SHIFT)) >> (7 - EC_PROB_SHIFT);
             cur += EC_MIN_PROB * (symbol_count - symbol - 1) as u32;
-            if self.symbol_value >= cur {
+            if coded >= cur {
                 break;
             }
             symbol += 1;
@@ -105,12 +107,31 @@ impl<'a> EntropyDecoder<'a> {
         }
 
         self.symbol_range = prev - cur;
-        self.symbol_value -= cur;
+        self.symbol_dif = self.symbol_dif.wrapping_sub(cur << 16);
         self.renormalize()?;
         if !self.disable_cdf_update {
             update_cdf(cdf, symbol);
         }
         Ok(symbol)
+    }
+
+    // AOM's literal bits use a binary probability of 128, which maps to the
+    // Q15 value 16384.
+    fn read_raw_bit(&mut self) -> Result<u8, DecoderError> {
+        let f = 16_384u32;
+        let split = (((self.symbol_range >> 8) * (f >> EC_PROB_SHIFT))
+            >> (7 - EC_PROB_SHIFT))
+            + EC_MIN_PROB;
+        let bit = if self.symbol_dif >> 16 >= split {
+            self.symbol_range -= split;
+            self.symbol_dif = self.symbol_dif.wrapping_sub(split << 16);
+            0
+        } else {
+            self.symbol_range = split;
+            1
+        };
+        self.renormalize()?;
+        Ok(bit)
     }
 
     pub fn exit(&mut self) -> Result<usize, DecoderError> {
@@ -119,12 +140,25 @@ impl<'a> EntropyDecoder<'a> {
                 "AV1 entropy decoder exited after too many padding bits".to_string(),
             ));
         }
-        let trailing_bit_position =
-            self.bit_offset - usize::try_from(15.min(self.symbol_max_bits + 15)).unwrap();
-        if self.symbol_max_bits > 0 {
-            self.bit_offset += self.symbol_max_bits as usize;
-        }
-        let padding_end_position = self.bit_offset;
+        let logical_offset = self.bit_offset.saturating_sub(14);
+        let (trailing_bit_position, padding_end_position) = if self.symbol_max_bits > 0 {
+            (
+                logical_offset
+                    - usize::try_from(15.min(self.symbol_max_bits + 15)).unwrap(),
+                logical_offset + self.symbol_max_bits as usize,
+            )
+        } else {
+            let end = self.data.len() * 8;
+            let trailing = (0..end)
+                .rev()
+                .find(|position| bit_at(self.data, *position).unwrap_or(0) == 1)
+                .ok_or_else(|| {
+                    DecoderError::Bitstream(
+                        "AV1 entropy trailing one bit is missing".to_string(),
+                    )
+                })?;
+            (trailing, end)
+        };
         if bit_at(self.data, trailing_bit_position)? != 1 {
             return Err(DecoderError::Bitstream(
                 "AV1 entropy trailing one bit is missing".to_string(),
@@ -145,33 +179,39 @@ impl<'a> EntropyDecoder<'a> {
     }
 
     pub(crate) fn trace_state(&self) -> (u32, u32, usize) {
-        (self.symbol_range, self.symbol_value, self.bit_offset)
+        (
+            self.symbol_range,
+            self.symbol_dif >> 16,
+            self.bit_offset.saturating_sub(14),
+        )
     }
 
     fn renormalize(&mut self) -> Result<(), DecoderError> {
         let bits = 15 - floor_log2(self.symbol_range);
         self.symbol_range <<= bits;
-        let num_bits = bits.min(self.symbol_max_bits.max(0) as u32);
-        let new_data = self.read_bits_raw(num_bits as usize, "entropy_renormalize")?;
-        let padded_data = new_data << (bits - num_bits);
-        self.symbol_value = padded_data ^ (((self.symbol_value + 1) << bits) - 1);
+        self.symbol_dif = self.symbol_dif.wrapping_add(1).wrapping_shl(bits) - 1;
+        self.refill_count -= bits as i32;
+        self.bit_offset += bits as usize;
         self.symbol_max_bits -= bits as i32;
+        if self.refill_count < 0 {
+            self.refill();
+        }
         Ok(())
     }
 
-    fn read_bits_raw(&mut self, bits: usize, name: &str) -> Result<u32, DecoderError> {
-        if bits > 32 {
-            return Err(DecoderError::InvalidParam(format!(
-                "{name} requests more than 32 bits"
-            )));
+    fn refill(&mut self) {
+        let mut shift = 23 - (self.refill_count + 15);
+        while shift >= 0 && self.refill_offset < self.data.len() {
+            self.symbol_dif ^= u32::from(self.data[self.refill_offset]) << shift;
+            self.refill_offset += 1;
+            self.refill_count += 8;
+            shift -= 8;
         }
-        let mut value = 0u32;
-        for _ in 0..bits {
-            value = (value << 1) | u32::from(bit_at(self.data, self.bit_offset)?);
-            self.bit_offset += 1;
+        if self.refill_offset >= self.data.len() {
+            self.refill_count = 0x4000;
         }
-        Ok(value)
     }
+
 }
 
 fn update_cdf(cdf: &mut [u16], symbol: usize) {
