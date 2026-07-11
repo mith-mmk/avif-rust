@@ -274,6 +274,10 @@ block order, per-plane traversal, and rectangular transform representation
 remain explicit raw-reconstruction tasks. The current implementation still
 represents only square `TxSize` values, so all 19 rectangular transform forms
 remain unfinished.
+The corresponding AOM trace labels the `(80,24)` chroma residual as `TX_8X4`
+(enum value 6), while the Rust path currently decodes that plane as `Tx4x4`;
+this is the concrete next representation gap to close before revisiting
+post-filter pixels.
   The ignored stage report currently measures the private pipeline at about
   `50.1617` RGB absolute error before filters and `50.1392` after
   deblock/CDEF/Wiener/SGRPROJ, confirming that raw reconstruction remains the
