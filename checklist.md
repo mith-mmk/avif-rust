@@ -287,3 +287,12 @@ does not change the first mismatch, so CDF update mode is not the primary
 explanation for the remaining raw-plane error. The next completion criterion is exact WML2Viewer
 pre-filter native planes, followed by the final sample after normative filters
 are implemented.
+
+The current first mismatch is now narrowed to the luma leaf at `(96,16)`:
+the block is `Block8x16`, `YMode=D203`, `AngleDeltaY=-1`, with an `8x8`
+transform signalled as `H_DCT`. The existing `coefficient_scan` path uses a
+row-major scan for square `HorizontalDct`, but AV1 `get_scan` selects the
+normative `Col_Scan_8x8` for `H_DCT` (and `Row_Scan_8x8` for `V_DCT`). The
+corresponding square row/column scan tables are the next source-code fix;
+this diagnosis is not yet marked complete until the exact-plane test is
+rerun and the mismatch moves or disappears.
