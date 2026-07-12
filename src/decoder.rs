@@ -1386,10 +1386,11 @@ mod prefilter_diagnostic_tests {
                 && target_y < block.y + block.block_size.height()
         }) {
             eprintln!(
-                "diagnostic block ({}, {}) size={:?} transforms={:?}",
+                "diagnostic block ({}, {}) size={:?} palette={:?} transforms={:?}",
                 block.x,
                 block.y,
                 block.block_size,
+                block.palette,
                 block
                     .transforms
                     .iter()

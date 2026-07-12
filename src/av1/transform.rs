@@ -215,7 +215,12 @@ pub(crate) fn remap_coefficients_for_inverse_storage(
 ) {
     let needs_remap = matches!(
         tx_type,
-        TxType::Identity | TxType::VerticalDct | TxType::HorizontalDct
+        TxType::AdstDct
+            | TxType::DctAdst
+            | TxType::AdstAdst
+            | TxType::Identity
+            | TxType::VerticalDct
+            | TxType::HorizontalDct
     );
     if coefficients.len() != tx_size.sample_count() || tx_size.is_rectangular() || !needs_remap {
         return;
@@ -1743,6 +1748,25 @@ mod tests {
         assert_eq!(
             add_residual_to_prediction(&prediction, &residual, 8).unwrap(),
             vec![0, 0, 0, 0, 0, 0, 0, 2, 0, 220, 208, 207, 178, 207, 210, 198]
+        );
+    }
+
+    #[test]
+    fn tx4x4_adst_adst_matches_aom_wml2viewer_block() {
+        let mut coefficients = vec![
+            420, 704, -704, -176, -704, -1056, 528, 880, 176, -528, 0, 528, 528, 352, -352, -176,
+        ];
+        remap_coefficients_for_inverse_storage(TxSize::Tx4x4, TxType::AdstAdst, &mut coefficients);
+        let prediction = vec![
+            1, 1, 1, 1, 98, 98, 98, 98, 157, 157, 157, 157, 176, 176, 176, 176,
+        ];
+        let residual =
+            inverse_transform(TxType::AdstAdst, TxSize::Tx4x4, &coefficients, 8).unwrap();
+        assert_eq!(
+            add_residual_to_prediction(&prediction, &residual, 8).unwrap(),
+            vec![
+                0, 0, 2, 0, 0, 0, 247, 236, 213, 127, 197, 227, 204, 156, 128, 147
+            ]
         );
     }
 
