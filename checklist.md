@@ -89,6 +89,8 @@ exact native-plane fixture before the next feature is enabled.
 - [x] Apply AOM's inverse `1/sqrt(2)` input normalization when a rectangular
       transform has an odd log2 aspect ratio; pin the Tx4x8 ADST_DCT path with
       a fixed residual vector.
+- [x] Match AOM inverse-transform `round_shift` semantics for negative values,
+      including negative half-step anchors shared by `round2`.
 - [x] Preserve the AOM `mrow`/`mcol` entropy scan for 1-D directional classes
       and transpose square coefficient storage at the inverse-transform
       boundary; cover the mapping with decoder vectors.
@@ -108,12 +110,13 @@ exact native-plane fixture before the next feature is enabled.
       for the generated filter-disabled fixtures.
 - [x] Complete the filter-disabled fixture set with exact Y/U/V plane matches.
 - [ ] Complete the `WML2Viewer.avif` raw reconstruction comparison.
+- [x] Add a private, ignored `AOM_PREFILTER_ORACLE` diagnostic that compares
+      all native planes with an AOM build whose deblock, CDEF and restoration
+      stages are disabled.
 - [x] Read AV1 angle deltas for every block size at or above `BLOCK_8X8`,
       including the rectangular `4x16` and `16x4` forms.
-- [x] Record the current first native-plane mismatch at `(128, 0)` on all
-      planes after AOM-aligned palette filter-intra gating and rectangular tx
-      context selection; keep this diagnostic fixture out of the passing strict
-      manifest until raw reconstruction and enabled filters are separated.
+- [x] Record the current first mismatch against the true AOM pre-filter output
+      and keep this diagnostic fixture out of the passing strict manifest.
 
 Completed prerequisites retained as stable code:
 
@@ -260,50 +263,34 @@ test-only and do not define the public decoded-frame contract.
 
 ## Diagnostic history
 
-The previous single-sample RGB measurements remain investigation notes only.
-The latest retained `WML2Viewer.avif` average RGB absolute error is
-`68.77400905349795` before filters and `68.7115646090535` after the private
-filter pipeline; these values are diagnostic only. After the AOM-aligned
-palette filter-intra gating, rectangular transform contexts and Tx4x16
-transform-type set selection and rectangular angle-delta syntax, the current
-fixture diagnostic reports first linear sample mismatches at plane 0 `14514`,
-plane 1 `672` and plane 2 `672`, with `720680`, `722711` and `714318`
-samples respectively (the fixture is 900x900). The reproducible test-only report is
-`decoder::prefilter_diagnostic_tests::reports_wml2viewer_prefilter_mismatches`.
-The AOM/Rust entropy anchor now agrees through the `(76,32)` Block4x16,
-including its Tx4x16 ADST_ADST luma coefficients and both chroma planes; the
-diagnostic prefix traverses 2110 luma blocks with no `Unsupported` boundary.
-The next completion criterion is the first remaining WML2Viewer pre-filter
-plane mismatch, not another synthetic fixture. Rectangular TxSize metadata,
-scan order, coefficient contexts and the small rectangular inverse-transform
-path are now covered, while the remaining 32/64-wide non-DCT and complete
-raw-plane equality work stay explicitly unfinished.
-The corresponding AOM trace labels the `(80,24)` chroma residual as `TX_8X4`
-(enum value 6), and the Rust traversal now preserves that rectangular plane
-transform; remaining differences are downstream raw reconstruction rather than
-the former square-only representation gap.
-The decoder now has tested rectangular TxSize representations and inverse
-transform anchors, but it is intentionally not wired as a final conformance
-oracle until all raw planes agree. The entropy reader retains AOM's full
-32-bit arithmetic `dif` and normative raw-bit probability for literals. The
-frame header has `disable_cdf_update=false`; a test-only forced-CDF-update run
-does not change the first mismatch, so CDF update mode is not the primary
-explanation for the remaining raw-plane error. The next completion criterion is exact WML2Viewer
-pre-filter native planes, followed by the final sample after normative filters
-are implemented.
+The local planes produced by the ordinary FFmpeg path are final filtered
+output. They remain useful for end-to-end investigation, but must not be
+described or registered as a pre-filter oracle. The retained RGB measurements
+(`68.77400905349795` before the private filter pipeline and
+`68.7115646090535` after it) compare against that final output and are
+diagnostic only.
 
-The previous first mismatch at the luma leaf `(96,16)` (`Block8x16`,
-`YMode=D203`, `AngleDeltaY=-1`, `H_DCT`) is now zero through the first eight
-samples of that row after the square directional storage transpose. The
-entropy reader still uses AOM's legacy `mrow`/`mcol` scan representation so
-the full prefix traversal remains synchronized; decoded square 1-D values are
-transposed into the row-major layout consumed by the inverse kernels. The
-mapping covers 4x4, 8x8 and 16x16 with a direct unit test and moves the luma
-first mismatch from `14496` to `14514` (`x=114,y=16`). The following
-rectangular inverse-transform correction applies AOM's `1/sqrt(2)` input
-normalization to odd log2 aspect ratios. It keeps the strict fixture gate green,
-reduces luma pre-filter mismatches to `720680`, moves the first chroma mismatch
-from `160` to `672`, and reduces U/V mismatches to `722711`/`714318`. Exact
-native-plane equality remains unfinished; the next raw unit is the remaining
-Tx4x8 ADST_DCT residual at the luma boundary, followed by chroma reconstruction
-and the remaining wide/rectangular mappings.
+The authoritative raw-reconstruction checkpoint uses
+`decoder::prefilter_diagnostic_tests::reports_wml2viewer_against_aom_prefilter_oracle`
+with `AOM_PREFILTER_ORACLE` set to planar 8-bit GBR emitted by an AOM build in
+which deblock, CDEF and restoration are disabled. After matching AOM's
+positive-bias inverse-transform rounding for negative values, the 900x900
+fixture reports:
+
+- plane 0: first linear mismatch `16834` (`x=634,y=18`), `718439` mismatches;
+- plane 1: first linear mismatch `672`, `714735` mismatches;
+- plane 2: first linear mismatch `672`, `712822` mismatches.
+
+The `reports_wml2viewer_raw_against_generated_final_planes` test compares raw
+Rust planes with final filtered FFmpeg planes and therefore does not define the
+raw acceptance gate. The diagnostic prefix still traverses 2110 luma blocks
+with no `Unsupported` boundary, and the filter-disabled strict fixtures remain
+the stable conformance set.
+
+The first remaining luma difference is within the `(632,16)` `Block4x8` and
+its 4x4 `H_DCT` reconstruction. A one-block experiment showed that removing
+the square horizontal coefficient transpose fixes that local residual, but it
+regresses earlier 4x4/8x8 directional blocks and was not retained. The next raw
+unit is to reconcile directional scan/context storage with the AOM inverse
+input for all square sizes, then advance the first mismatch. Post-filter work
+must not be used to mask this raw-plane difference.

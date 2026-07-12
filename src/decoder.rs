@@ -1336,8 +1336,8 @@ mod prefilter_diagnostic_tests {
     use std::process::Command;
 
     #[test]
-    #[ignore = "diagnostic comparison against the local WML2Viewer pre-filter oracle"]
-    fn reports_wml2viewer_prefilter_mismatches() {
+    #[ignore = "diagnostic comparison of raw Rust planes against generated final FFmpeg planes"]
+    fn reports_wml2viewer_raw_against_generated_final_planes() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let avif_path = root.parent().unwrap().join("samples/WML2Viewer.avif");
         let plane_paths = [
@@ -1368,8 +1368,10 @@ mod prefilter_diagnostic_tests {
             false,
         )
         .unwrap();
-        const TARGET_X: usize = 114;
-        const TARGET_Y: usize = 16;
+        // Current first luma mismatch against the AOM build with all
+        // post-filters disabled.
+        const TARGET_X: usize = 634;
+        const TARGET_Y: usize = 18;
         for block in prefix.blocks.iter().filter(|block| {
             block.x <= TARGET_X
                 && TARGET_X < block.x + block.block_size.width()
@@ -1423,7 +1425,7 @@ mod prefilter_diagnostic_tests {
                     mismatches += 1;
                 }
             }
-            eprintln!("prefilter plane {plane_index}: first={first:?}, mismatches={mismatches}");
+            eprintln!("raw-vs-final plane {plane_index}: first={first:?}, mismatches={mismatches}");
             if let Some(index) = first {
                 let width = decoded.buffers.planes[plane_index].layout.width;
                 let row_start = index / width * width;
@@ -1435,8 +1437,57 @@ mod prefilter_diagnostic_tests {
                     .map(|sample| u16::from_le_bytes([sample[0], sample[1]]))
                     .collect::<Vec<_>>();
                 eprintln!(
-                    "prefilter plane {plane_index} window {start}..{end}: actual={:?}, expected={:?}",
+                    "raw-vs-final plane {plane_index} window {start}..{end}: actual={:?}, expected={:?}",
                     &actual[start..end],
+                    &expected[start..end]
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires AOM_PREFILTER_ORACLE from an AOM build with post-filters disabled"]
+    fn reports_wml2viewer_against_aom_prefilter_oracle() {
+        let Some(oracle_path) = std::env::var_os("AOM_PREFILTER_ORACLE") else {
+            eprintln!("AOM_PREFILTER_ORACLE is unavailable");
+            return;
+        };
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let avif_path = root.parent().unwrap().join("samples/WML2Viewer.avif");
+        if !avif_path.exists() {
+            eprintln!("WML2Viewer sample is unavailable");
+            return;
+        }
+        let data = std::fs::read(avif_path).unwrap();
+        let info = parse_avif(&data).unwrap();
+        let headers = parse_av1_headers(&info).unwrap();
+        let decoded = decode_still_frame_prefilter_for_test(&headers, Some(&info)).unwrap();
+        let oracle = std::fs::read(oracle_path).unwrap();
+        let sample_count = decoded.buffers.width * decoded.buffers.height;
+        assert_eq!(oracle.len(), sample_count * decoded.buffers.planes.len());
+
+        for (plane_index, plane) in decoded.buffers.planes.iter().enumerate() {
+            let expected = &oracle[plane_index * sample_count..(plane_index + 1) * sample_count];
+            let mut first = None;
+            let mut mismatches = 0usize;
+            for (index, (&actual, &expected)) in
+                plane.samples.iter().zip(expected.iter()).enumerate()
+            {
+                if actual != u16::from(expected) {
+                    first.get_or_insert(index);
+                    mismatches += 1;
+                }
+            }
+            eprintln!(
+                "AOM prefilter plane {plane_index}: first={first:?}, mismatches={mismatches}"
+            );
+            if let Some(index) = first {
+                let row_start = index / plane.layout.width * plane.layout.width;
+                let start = index.saturating_sub(4).max(row_start);
+                let end = (index + 12).min(row_start + plane.layout.width);
+                eprintln!(
+                    "AOM prefilter plane {plane_index} window {start}..{end}: actual={:?}, expected={:?}",
+                    &plane.samples[start..end],
                     &expected[start..end]
                 );
             }

@@ -1248,10 +1248,8 @@ fn clamp_signed(value: i32, bits: u8) -> i32 {
 fn round_shift_i64(value: i64, bits: u8) -> i64 {
     if bits == 0 {
         value
-    } else if value >= 0 {
-        (value + (1i64 << (bits - 1))) >> bits
     } else {
-        -((-value + (1i64 << (bits - 1))) >> bits)
+        (value + (1i64 << (bits - 1))) >> bits
     }
 }
 
@@ -1260,17 +1258,7 @@ const NEW_INV_SQRT2: i64 = 2896;
 const NEW_SQRT2_BITS: u8 = 12;
 
 fn round2_signed(value: i32, bits: u8) -> i32 {
-    if bits == 0 {
-        value
-    } else {
-        let value = i64::from(value);
-        let rounded = if value >= 0 {
-            (value + (1i64 << (bits - 1))) >> bits
-        } else {
-            -((-value + (1i64 << (bits - 1))) >> bits)
-        };
-        rounded.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
-    }
+    round_shift_i64(i64::from(value), bits).clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
 }
 
 #[cfg(test)]
@@ -1481,9 +1469,16 @@ mod tests {
             inverse_transform(TxType::AdstDct, TxSize::Tx4x8, &coefficients, 8).unwrap(),
             vec![
                 -5, -3, -1, 1, -8, -4, 3, 7, -3, 3, 11, 18, -1, 6, 15, 21, -6, -1, 7, 12, -11, -8,
-                -4, 0, -8, -7, -5, -4, -1, -1, -1, -1,
+                -3, 0, -8, -7, -5, -4, -1, -1, -1, -1,
             ]
         );
+    }
+
+    #[test]
+    fn transform_round_shift_matches_aom_negative_ties() {
+        assert_eq!(round_shift_i64(-8, 4), 0);
+        assert_eq!(round_shift_i64(-24, 4), -1);
+        assert_eq!(round2_signed(-8, 4), 0);
     }
 
     #[test]
@@ -2106,7 +2101,7 @@ mod tests {
             (TxSize::Tx16x16, TxType::DctAdst, [0, 0, 0, 0, 1]),
             (TxSize::Tx16x16, TxType::AdstAdst, [0, 0, 0, 0, 1]),
             (TxSize::Tx16x16, TxType::Identity, [8, -2, 1, 0, 0]),
-            (TxSize::Tx16x16, TxType::VerticalDct, [2, -1, 2, -1, 0]),
+            (TxSize::Tx16x16, TxType::VerticalDct, [2, 0, 2, 0, 0]),
             (TxSize::Tx16x16, TxType::HorizontalDct, [1, 1, 0, 0, 0]),
             (TxSize::Tx32x32, TxType::DctDct, [1, 1, 1, 1, 2]),
             (TxSize::Tx64x64, TxType::DctDct, [1, 1, 1, 1, 1]),
