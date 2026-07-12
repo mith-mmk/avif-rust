@@ -86,6 +86,9 @@ exact native-plane fixture before the next feature is enabled.
       entropy termination and complete tile coverage against normative vectors.
 - [x] Verify the default zig-zag scan used by the supported 2-D
       `ADST_DCT`/`DCT_ADST` classes with known vectors.
+- [x] Apply AOM's inverse `1/sqrt(2)` input normalization when a rectangular
+      transform has an odd log2 aspect ratio; pin the Tx4x8 ADST_DCT path with
+      a fixed residual vector.
 - [x] Preserve the AOM `mrow`/`mcol` entropy scan for 1-D directional classes
       and transpose square coefficient storage at the inverse-transform
       boundary; cover the mapping with decoder vectors.
@@ -259,12 +262,12 @@ test-only and do not define the public decoded-frame contract.
 
 The previous single-sample RGB measurements remain investigation notes only.
 The latest retained `WML2Viewer.avif` average RGB absolute error is
-`69.95263991769548` before filters and `69.88625679012345` after the private
+`68.77400905349795` before filters and `68.7115646090535` after the private
 filter pipeline; these values are diagnostic only. After the AOM-aligned
 palette filter-intra gating, rectangular transform contexts and Tx4x16
 transform-type set selection and rectangular angle-delta syntax, the current
 fixture diagnostic reports first linear sample mismatches at plane 0 `14514`,
-plane 1 `160` and plane 2 `160`, with `721177`, `754993` and `749831`
+plane 1 `672` and plane 2 `672`, with `720680`, `722711` and `714318`
 samples respectively (the fixture is 900x900). The reproducible test-only report is
 `decoder::prefilter_diagnostic_tests::reports_wml2viewer_prefilter_mismatches`.
 The AOM/Rust entropy anchor now agrees through the `(76,32)` Block4x16,
@@ -296,7 +299,11 @@ entropy reader still uses AOM's legacy `mrow`/`mcol` scan representation so
 the full prefix traversal remains synchronized; decoded square 1-D values are
 transposed into the row-major layout consumed by the inverse kernels. The
 mapping covers 4x4, 8x8 and 16x16 with a direct unit test and moves the luma
-first mismatch from `14496` to `14514` (`x=114,y=16`), reducing luma
-pre-filter mismatches to `721177`. Exact native-plane equality remains
-unfinished; the next raw unit is the new luma boundary mismatch, followed by
-the chroma directional blocks and remaining wide/rectangular mappings.
+first mismatch from `14496` to `14514` (`x=114,y=16`). The following
+rectangular inverse-transform correction applies AOM's `1/sqrt(2)` input
+normalization to odd log2 aspect ratios. It keeps the strict fixture gate green,
+reduces luma pre-filter mismatches to `720680`, moves the first chroma mismatch
+from `160` to `672`, and reduces U/V mismatches to `722711`/`714318`. Exact
+native-plane equality remains unfinished; the next raw unit is the remaining
+Tx4x8 ADST_DCT residual at the luma boundary, followed by chroma reconstruction
+and the remaining wide/rectangular mappings.

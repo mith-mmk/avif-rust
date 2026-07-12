@@ -481,10 +481,22 @@ fn inverse_transform_rect(
         _ => unreachable!("rectangular transform dimensions are unsupported"),
     };
     let row_range = if bit_depth == 10 { 18 } else { 16 };
+    // AOM normalizes rectangular transforms whose log2 aspect ratio is odd
+    // with 1/sqrt(2) before the row transform.
+    let rect_log_ratio = width.ilog2().abs_diff(height.ilog2());
+    let scale_rectangular_input = rect_log_ratio % 2 == 1;
     let mut intermediate = vec![0i32; width * height];
     for row in 0..height {
         let input = (0..width)
-            .map(|column| clamp_signed(dequant[column * height + row], bit_depth + 8))
+            .map(|column| {
+                let value = dequant[column * height + row];
+                let value = if scale_rectangular_input {
+                    round_shift_i64(i64::from(value) * NEW_INV_SQRT2, NEW_SQRT2_BITS) as i32
+                } else {
+                    value
+                };
+                clamp_signed(value, bit_depth + 8)
+            })
             .collect::<Vec<_>>();
         let values = inverse_staged_dynamic(horizontal, &input, row_range);
         for column in 0..width {
@@ -763,35 +775,6 @@ fn inverse_transform_8x8(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> Vec
         let input = std::array::from_fn(|row| clamp_signed(intermediate[row * 8 + column], 16));
         let transformed = inverse_staged_8(vertical, input, 16);
         for row in 0..8 {
-            output[row * 8 + column] =
-                round2_signed(transformed[row], 4).clamp(-residual_limit, residual_limit - 1);
-        }
-    }
-    output
-}
-
-fn inverse_transform_8x4(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> Vec<i32> {
-    let (vertical, horizontal) = staged_transform_pair(tx_type);
-    let row_range = if bit_depth == 10 { 18 } else { 16 };
-    let mut intermediate = [0i32; 32];
-    for row in 0..4 {
-        // Rectangular AV1 transforms store coefficients column-major.  This
-        // is also the layout consumed by AOM's `input[c * tx_height + r]`
-        // row pass; square transforms happen to hide the distinction.
-        let input =
-            std::array::from_fn(|column| clamp_signed(dequant[column * 4 + row], bit_depth + 8));
-        let transformed = inverse_staged_8(horizontal, input, row_range);
-        for column in 0..8 {
-            intermediate[row * 8 + column] = round2_signed(transformed[column], 1);
-        }
-    }
-
-    let residual_limit = 1i32 << (bit_depth + 7);
-    let mut output = vec![0i32; 32];
-    for column in 0..8 {
-        let input = std::array::from_fn(|row| clamp_signed(intermediate[row * 8 + column], 16));
-        let transformed = inverse_staged_4(vertical, input, 16);
-        for row in 0..4 {
             output[row * 8 + column] =
                 round2_signed(transformed[row], 4).clamp(-residual_limit, residual_limit - 1);
         }
@@ -1273,6 +1256,7 @@ fn round_shift_i64(value: i64, bits: u8) -> i64 {
 }
 
 const NEW_SQRT2: i64 = 5793;
+const NEW_INV_SQRT2: i64 = 2896;
 const NEW_SQRT2_BITS: u8 = 12;
 
 fn round2_signed(value: i32, bits: u8) -> i32 {
@@ -1483,6 +1467,23 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn tx4x8_adst_dct_matches_rectangular_inverse_reference() {
+        let mut coefficients = vec![0; TxSize::Tx4x8.sample_count()];
+        coefficients[1] = 176;
+        coefficients[3] = -176;
+        coefficients[8] = -176;
+        coefficients[9] = -176;
+
+        assert_eq!(
+            inverse_transform(TxType::AdstDct, TxSize::Tx4x8, &coefficients, 8).unwrap(),
+            vec![
+                -5, -3, -1, 1, -8, -4, 3, 7, -3, 3, 11, 18, -1, 6, 15, 21, -6, -1, 7, 12, -11, -8,
+                -4, 0, -8, -7, -5, -4, -1, -1, -1, -1,
+            ]
+        );
     }
 
     #[test]

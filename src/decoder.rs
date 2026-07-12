@@ -1368,11 +1368,14 @@ mod prefilter_diagnostic_tests {
             false,
         )
         .unwrap();
-        for block in prefix
-            .blocks
-            .iter()
-            .filter(|block| block.y == 0 && (128..160).contains(&block.x))
-        {
+        const TARGET_X: usize = 114;
+        const TARGET_Y: usize = 16;
+        for block in prefix.blocks.iter().filter(|block| {
+            block.x <= TARGET_X
+                && TARGET_X < block.x + block.block_size.width()
+                && block.y <= TARGET_Y
+                && TARGET_Y < block.y + block.block_size.height()
+        }) {
             eprintln!(
                 "diagnostic block ({}, {}) size={:?} transforms={:?}",
                 block.x,
