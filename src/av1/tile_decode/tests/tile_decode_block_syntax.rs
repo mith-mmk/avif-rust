@@ -1,5 +1,5 @@
 use super::*;
-use crate::av1::tile_decode::block_syntax::{cfl_is_allowed, cfl_signs};
+use crate::av1::tile_decode::block_syntax::{cfl_is_allowed, cfl_signs, use_angle_delta};
 use crate::av1::transform::plan_transform_blocks_with_tx_size;
 use crate::av1::{
     BlockSize, Partition, PredictionMode, TxSize, UvPredictionMode, build_still_decode_plan,
@@ -35,6 +35,16 @@ fn cfl_joint_signs_match_av1_symbol_order() {
         ]
     );
     assert!(cfl_signs(8).is_err());
+}
+
+#[test]
+fn angle_delta_availability_matches_av1_block_size_order() {
+    assert!(!use_angle_delta(BlockSize::Block4x4));
+    assert!(!use_angle_delta(BlockSize::Block4x8));
+    assert!(!use_angle_delta(BlockSize::Block8x4));
+    assert!(use_angle_delta(BlockSize::Block8x8));
+    assert!(use_angle_delta(BlockSize::Block4x16));
+    assert!(use_angle_delta(BlockSize::Block16x4));
 }
 
 #[test]

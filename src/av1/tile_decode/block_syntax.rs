@@ -59,13 +59,13 @@ impl<'a> TileDecoder<'a> {
         let y_mode = PredictionMode::from_intra_symbol(y_mode_symbol).ok_or_else(|| {
             DecoderError::Bitstream(format!("AV1 y_mode symbol {y_mode_symbol} is invalid"))
         })?;
+        let use_angle_delta = use_angle_delta(block_size);
         if trace_stage {
             eprintln!(
                 "Rust stage y_mode symbol={y_mode_symbol} mode={y_mode:?} state={:?}",
                 self.reader.trace_state()
             );
         }
-        let use_angle_delta = block_size.width() >= 8 && block_size.height() >= 8;
         let angle_delta_y = if use_angle_delta && y_mode.is_directional() {
             Some(self.read_angle_delta(y_mode.directional_index().unwrap())?)
         } else {
@@ -373,6 +373,13 @@ pub(super) fn cfl_is_allowed(coded_lossless: bool, block_size: BlockSize) -> boo
     } else {
         block_size.width() <= 32 && block_size.height() <= 32
     }
+}
+
+pub(super) fn use_angle_delta(block_size: BlockSize) -> bool {
+    !matches!(
+        block_size,
+        BlockSize::Block4x4 | BlockSize::Block4x8 | BlockSize::Block8x4
+    )
 }
 
 pub(super) fn cfl_signs(joint_sign: usize) -> Result<(usize, usize), DecoderError> {

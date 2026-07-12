@@ -104,6 +104,8 @@ exact native-plane fixture before the next feature is enabled.
       for the generated filter-disabled fixtures.
 - [x] Complete the filter-disabled fixture set with exact Y/U/V plane matches.
 - [ ] Complete the `WML2Viewer.avif` raw reconstruction comparison.
+- [x] Read AV1 angle deltas for every block size at or above `BLOCK_8X8`,
+      including the rectangular `4x16` and `16x4` forms.
 - [x] Record the current first native-plane mismatch at `(128, 0)` on all
       planes after AOM-aligned palette filter-intra gating and rectangular tx
       context selection; keep this diagnostic fixture out of the passing strict
@@ -259,14 +261,14 @@ The latest retained `WML2Viewer.avif` average RGB absolute error is
 `62.484393827160496` before filters and `62.4219378600823` after the private
 filter pipeline; these values are diagnostic only. After the AOM-aligned
 palette filter-intra gating, rectangular transform contexts and Tx4x16
-transform-type set selection, the current pre-filter diagnostic reports first
-linear sample mismatches at plane 0 `384`, plane 1 `8032` and plane 2 `13597`,
-with `762668`, `754638` and `747874` samples respectively (the fixture is
-900x900). The reproducible test-only report is
+transform-type set selection and rectangular angle-delta syntax, the current
+fixture diagnostic reports first linear sample mismatches at plane 0 `14496`,
+plane 1 `672` and plane 2 `13597`, with `744272`, `737056` and `713634`
+samples respectively (the fixture is 900x900). The reproducible test-only report is
 `decoder::prefilter_diagnostic_tests::reports_wml2viewer_prefilter_mismatches`.
 The AOM/Rust entropy anchor now agrees through the `(76,32)` Block4x16,
 including its Tx4x16 ADST_ADST luma coefficients and both chroma planes; the
-diagnostic prefix traverses 1929 luma blocks with no `Unsupported` boundary.
+diagnostic prefix traverses 2110 luma blocks with no `Unsupported` boundary.
 The next completion criterion is the first remaining WML2Viewer pre-filter
 plane mismatch, not another synthetic fixture. Rectangular TxSize metadata,
 scan order, coefficient contexts and the small rectangular inverse-transform

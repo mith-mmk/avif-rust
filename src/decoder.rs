@@ -1456,7 +1456,15 @@ mod prefilter_diagnostic_tests {
         let reference = Command::new("ffmpeg")
             .args(["-v", "error", "-skip_loop_filter", "all", "-nostdin", "-i"])
             .arg(&avif_path)
-            .args(["-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gbrp", "-"])
+            .args([
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "yuv444p",
+                "-",
+            ])
             .output()
             .expect("ffmpeg should be available for the diagnostic oracle");
         assert!(reference.status.success());

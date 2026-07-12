@@ -212,7 +212,7 @@ fn decodes_sample_prefix_through_palette_blocks() {
     .unwrap();
 
     // Rectangular Tx4x16 traversal now reaches the complete luma tree.
-    assert_eq!(prefix.blocks.len(), 1929);
+    assert_eq!(prefix.blocks.len(), 2110);
     assert_eq!(prefix.next_unsupported, None);
     let palette_blocks = prefix
         .blocks
