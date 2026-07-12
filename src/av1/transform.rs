@@ -213,15 +213,16 @@ pub(crate) fn remap_coefficients_for_inverse_storage(
     tx_type: TxType,
     coefficients: &mut [i32],
 ) {
-    let needs_remap = matches!(
-        tx_type,
-        TxType::AdstDct
-            | TxType::DctAdst
-            | TxType::AdstAdst
-            | TxType::Identity
-            | TxType::VerticalDct
-            | TxType::HorizontalDct
-    );
+    let needs_remap = (tx_type == TxType::DctDct && tx_size == TxSize::Tx8x8)
+        || matches!(
+            tx_type,
+            TxType::AdstDct
+                | TxType::DctAdst
+                | TxType::AdstAdst
+                | TxType::Identity
+                | TxType::VerticalDct
+                | TxType::HorizontalDct
+        );
     if coefficients.len() != tx_size.sample_count() || tx_size.is_rectangular() || !needs_remap {
         return;
     }
@@ -1740,6 +1741,31 @@ mod tests {
             add_residual_to_prediction(&prediction, &residual, 8).unwrap(),
             vec![
                 0, 0, 2, 0, 0, 0, 247, 236, 213, 127, 197, 227, 204, 156, 128, 147
+            ]
+        );
+    }
+
+    #[test]
+    fn tx8x8_dct_dct_matches_aom_wml2viewer_palette_block() {
+        let mut coefficients = vec![0; TxSize::Tx8x8.sample_count()];
+        coefficients[16] = 176;
+        coefficients[47] = 176;
+        coefficients[54] = 176;
+        coefficients[55] = -176;
+        remap_coefficients_for_inverse_storage(TxSize::Tx8x8, TxType::DctDct, &mut coefficients);
+        let prediction = vec![
+            0, 0, 0, 0, 0, 0, 0, 0, 207, 207, 0, 0, 0, 0, 0, 0, 176, 176, 176, 207, 207, 0, 0, 0,
+            114, 114, 176, 207, 207, 0, 0, 0, 39, 78, 142, 142, 142, 207, 207, 0, 39, 39, 39, 78,
+            114, 176, 207, 142, 39, 39, 39, 39, 78, 114, 114, 142, 39, 39, 39, 39, 39, 0, 78, 78,
+        ];
+        let residual = inverse_transform(TxType::DctDct, TxSize::Tx8x8, &coefficients, 8).unwrap();
+        assert_eq!(
+            add_residual_to_prediction(&prediction, &residual, 8).unwrap(),
+            vec![
+                5, 0, 0, 0, 0, 0, 2, 3, 208, 213, 0, 0, 0, 0, 0, 5, 182, 173, 176, 207, 200, 0, 6,
+                1, 116, 118, 177, 198, 207, 3, 0, 8, 43, 81, 135, 146, 137, 198, 221, 0, 44, 36,
+                46, 67, 111, 184, 195, 152, 41, 45, 31, 41, 75, 104, 126, 141, 43, 39, 40, 33, 35,
+                2, 76, 83,
             ]
         );
     }

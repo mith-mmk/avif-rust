@@ -92,11 +92,14 @@ exact native-plane fixture before the next feature is enabled.
 - [x] Match AOM inverse-transform `round_shift` semantics for negative values,
       including negative half-step anchors shared by `round2`.
 - [x] Preserve the AOM `mrow`/`mcol` entropy scan for 1-D directional classes
-      and transpose square ADST, 1-D and identity coefficient storage at the
-      inverse-transform boundary; keep square `DctDct` storage in its existing
-      raster orientation and cover both cases with decoder vectors.
+      and transpose square ADST, 1-D, identity and 8x8 `DctDct` coefficient
+      storage at the inverse-transform boundary; keep the other square
+      `DctDct` sizes in their validated orientation and cover both cases with
+      decoder vectors.
 - [x] Pin the dense 4x4 `ADST_ADST` block feeding the former first
       `WML2Viewer` mismatch against AOM prediction, dequant and output vectors.
+- [x] Pin the 8x8 `DctDct` residual inside a palette block against AOM palette
+      prediction, dequant input and all 64 output samples.
 - [x] Route non-zero angle deltas on vertical/horizontal modes through the
       directional predictor and use AOM's zone-specific top-right/bottom-left
       edge lengths.
@@ -290,9 +293,9 @@ positive-bias inverse-transform rounding, staged 32-point DCT,
 large-rectangular dequant shift, directional angle-delta routing and zone edge
 lengths, the 900x900 fixture reports:
 
-- plane 0: first linear mismatch `36177` (`x=177,y=40`), `683917` mismatches;
-- plane 1: first linear mismatch `672`, `708794` mismatches;
-- plane 2: first linear mismatch `16302`, `681263` mismatches.
+- plane 0: first linear mismatch `57813` (`x=213,y=64`), `683783` mismatches;
+- plane 1: first linear mismatch `28882` (`x=82,y=32`), `661711` mismatches;
+- plane 2: first linear mismatch `28882` (`x=82,y=32`), `665151` mismatches.
 
 The `reports_wml2viewer_raw_against_generated_final_planes` test compares raw
 Rust planes with final filtered FFmpeg planes and therefore does not define the
@@ -304,8 +307,9 @@ The former first luma difference in the `(632,16)` `Block4x8` was caused by an
 upstream dense 4x4 `ADST_ADST` transform. Its AOM prediction, dequant input and
 output now match through an explicit square-ADST storage transpose. The former
 32x32 DC-only mismatch also matches after routing it through the staged
-32-point transform. The next raw unit is the first luma mismatch at
-`(177,40)`. Transposing square
-`DctDct` storage can reduce aggregate diagnostic counts but breaks the exact
-`filter-disabled-directional` oracle and is therefore explicitly rejected.
+32-point transform. The following palette-block 8x8 `DctDct` mismatch matches
+after a size-specific square storage transpose. The next raw unit is the first
+luma mismatch at `(213,64)`. Transposing every square `DctDct` size still
+breaks the exact `filter-disabled-directional` oracle and is therefore
+explicitly rejected.
 Post-filter work must not be used to mask this raw-plane difference.
