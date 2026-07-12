@@ -86,8 +86,9 @@ exact native-plane fixture before the next feature is enabled.
       entropy termination and complete tile coverage against normative vectors.
 - [x] Verify the default zig-zag scan used by the supported 2-D
       `ADST_DCT`/`DCT_ADST` classes with known vectors.
-- [ ] Verify the normative `mrow`/`mcol` scan mapping for the 1-D directional
-      transform classes against the AV1 scan table and decoder vectors.
+- [x] Preserve the AOM `mrow`/`mcol` entropy scan for 1-D directional classes
+      and transpose square coefficient storage at the inverse-transform
+      boundary; cover the mapping with decoder vectors.
 - [x] Verify coefficient context selection with known vectors for the enabled
       transform sizes and plane types.
 - [x] Verify palette and filter-intra syntax gating for the supported profile.
@@ -258,12 +259,12 @@ test-only and do not define the public decoded-frame contract.
 
 The previous single-sample RGB measurements remain investigation notes only.
 The latest retained `WML2Viewer.avif` average RGB absolute error is
-`62.484393827160496` before filters and `62.4219378600823` after the private
+`69.95263991769548` before filters and `69.88625679012345` after the private
 filter pipeline; these values are diagnostic only. After the AOM-aligned
 palette filter-intra gating, rectangular transform contexts and Tx4x16
 transform-type set selection and rectangular angle-delta syntax, the current
-fixture diagnostic reports first linear sample mismatches at plane 0 `14496`,
-plane 1 `672` and plane 2 `13597`, with `744272`, `737056` and `713634`
+fixture diagnostic reports first linear sample mismatches at plane 0 `14514`,
+plane 1 `160` and plane 2 `160`, with `721177`, `754993` and `749831`
 samples respectively (the fixture is 900x900). The reproducible test-only report is
 `decoder::prefilter_diagnostic_tests::reports_wml2viewer_prefilter_mismatches`.
 The AOM/Rust entropy anchor now agrees through the `(76,32)` Block4x16,
@@ -288,18 +289,14 @@ explanation for the remaining raw-plane error. The next completion criterion is 
 pre-filter native planes, followed by the final sample after normative filters
 are implemented.
 
-The current first mismatch is narrowed to the luma leaf at `(96,16)`: the
-block is `Block8x16`, `YMode=D203`, `AngleDeltaY=-1`, with an `8x8` transform
-signalled as `H_DCT`. AV1 `get_scan` selects the normative `Col_Scan_8x8` for
-`H_DCT` (and `Row_Scan_8x8` for `V_DCT`); the tested remap for this diagnosis
-is recorded below, while exact-plane equality remains unfinished.
-
-The entropy reader keeps the legacy scan representation so the AOM transcript
-and full prefix traversal remain synchronized, while decoded square 1-D
-coefficients are now remapped into the normative AV1 Row/Col positions before
-inverse reconstruction. The remap covers 4x4, 8x8, and 16x16 and has a direct
-unit test. This reduces the WML2Viewer luma pre-filter mismatch count from
-`744272` to `734497` without changing the public API or the strict fixture
-gate. The first mismatch remains at linear sample `14496` (`x=96,y=16`), so
-the next raw-reconstruction unit is the residual/transform output of that
-H_DCT leaf, followed by the remaining wide/rectangular transform mappings.
+The previous first mismatch at the luma leaf `(96,16)` (`Block8x16`,
+`YMode=D203`, `AngleDeltaY=-1`, `H_DCT`) is now zero through the first eight
+samples of that row after the square directional storage transpose. The
+entropy reader still uses AOM's legacy `mrow`/`mcol` scan representation so
+the full prefix traversal remains synchronized; decoded square 1-D values are
+transposed into the row-major layout consumed by the inverse kernels. The
+mapping covers 4x4, 8x8 and 16x16 with a direct unit test and moves the luma
+first mismatch from `14496` to `14514` (`x=114,y=16`), reducing luma
+pre-filter mismatches to `721177`. Exact native-plane equality remains
+unfinished; the next raw unit is the new luma boundary mismatch, followed by
+the chroma directional blocks and remaining wide/rectangular mappings.

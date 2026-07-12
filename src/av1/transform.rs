@@ -150,6 +150,7 @@ pub fn coefficient_scan(tx_size: TxSize, tx_type: TxType) -> Vec<usize> {
     }
 }
 
+#[cfg(test)]
 fn normative_square_row_scan(tx_size: TxSize) -> Vec<usize> {
     match tx_size {
         TxSize::Tx4x4 => vec![0, 1, 4, 2, 5, 3, 6, 8, 9, 7, 12, 10, 13, 11, 14, 15],
@@ -178,6 +179,7 @@ fn normative_square_row_scan(tx_size: TxSize) -> Vec<usize> {
     }
 }
 
+#[cfg(test)]
 fn normative_square_col_scan(tx_size: TxSize) -> Vec<usize> {
     match tx_size {
         TxSize::Tx4x4 => vec![0, 4, 8, 1, 12, 5, 2, 9, 6, 3, 13, 10, 7, 14, 11, 15],
@@ -216,9 +218,14 @@ pub(crate) fn remap_directional_coefficients(
     {
         return;
     }
-    let normative = match tx_type {
-        TxType::VerticalDct => normative_square_row_scan(tx_size),
-        TxType::HorizontalDct => normative_square_col_scan(tx_size),
+    let normative: Vec<usize> = match tx_type {
+        // Entropy keeps AOM's mrow/mcol ordering. Square inverse kernels use
+        // column-major input slots, so horizontal row-major values need a
+        // transpose while vertical column-major values already match.
+        TxType::VerticalDct => (0..tx_size.sample_count()).collect(),
+        TxType::HorizontalDct => (0..tx_size.sample_count())
+            .map(|index| (index % tx_size.height()) * tx_size.width() + index / tx_size.height())
+            .collect(),
         _ => return,
     };
     if tx_size.is_rectangular() || normative.len() != coefficients.len() {
@@ -1421,7 +1428,7 @@ mod tests {
     }
 
     #[test]
-    fn remaps_legacy_directional_coefficients_to_normative_square_positions() {
+    fn transposes_directional_coefficients_for_square_inverse_storage() {
         let mut coefficients = vec![0; TxSize::Tx8x8.sample_count()];
         for (index, position) in coefficient_scan(TxSize::Tx8x8, TxType::HorizontalDct)
             .into_iter()
@@ -1430,7 +1437,17 @@ mod tests {
             coefficients[position] = index as i32;
         }
         remap_directional_coefficients(TxSize::Tx8x8, TxType::HorizontalDct, &mut coefficients);
-        assert_eq!(&coefficients[..8], &[0, 3, 8, 15, 22, 32, 40, 47]);
+        assert_eq!(&coefficients[..8], &[0, 8, 16, 24, 32, 40, 48, 56]);
+
+        let mut coefficients = vec![0; TxSize::Tx8x8.sample_count()];
+        for (index, position) in coefficient_scan(TxSize::Tx8x8, TxType::VerticalDct)
+            .into_iter()
+            .enumerate()
+        {
+            coefficients[position] = index as i32;
+        }
+        remap_directional_coefficients(TxSize::Tx8x8, TxType::VerticalDct, &mut coefficients);
+        assert_eq!(&coefficients[..8], &[0, 1, 2, 3, 4, 5, 6, 7]);
     }
 
     #[test]
