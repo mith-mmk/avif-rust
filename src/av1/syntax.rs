@@ -550,9 +550,9 @@ impl TxSize {
     }
 
     pub fn dq_denom(self) -> i32 {
-        match self {
-            Self::Tx32x32 => 2,
-            Self::Tx64x64 => 4,
+        match self.sample_count() {
+            samples if samples > 1024 => 4,
+            samples if samples > 256 => 2,
             _ => 1,
         }
     }

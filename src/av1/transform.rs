@@ -208,37 +208,24 @@ fn normative_square_col_scan(tx_size: TxSize) -> Vec<usize> {
     }
 }
 
-pub(crate) fn remap_directional_coefficients(
+pub(crate) fn remap_coefficients_for_inverse_storage(
     tx_size: TxSize,
     tx_type: TxType,
     coefficients: &mut [i32],
 ) {
-    if coefficients.len() != tx_size.sample_count()
-        || !matches!(tx_type, TxType::VerticalDct | TxType::HorizontalDct)
-    {
+    let needs_remap = matches!(
+        tx_type,
+        TxType::Identity | TxType::VerticalDct | TxType::HorizontalDct
+    );
+    if coefficients.len() != tx_size.sample_count() || tx_size.is_rectangular() || !needs_remap {
         return;
     }
-    let normative: Vec<usize> = match tx_type {
-        // Entropy keeps AOM's mrow/mcol ordering. Square inverse kernels use
-        // column-major input slots, so horizontal row-major values need a
-        // transpose while vertical column-major values already match.
-        TxType::VerticalDct => (0..tx_size.sample_count()).collect(),
-        TxType::HorizontalDct => (0..tx_size.sample_count())
-            .map(|index| (index % tx_size.height()) * tx_size.width() + index / tx_size.height())
-            .collect(),
-        _ => return,
-    };
-    if tx_size.is_rectangular() || normative.len() != coefficients.len() {
-        return;
-    }
-    let legacy = coefficient_scan(tx_size, tx_type);
-    let scanned = legacy
-        .iter()
-        .map(|position| coefficients[*position])
-        .collect::<Vec<_>>();
-    coefficients.fill(0);
-    for (index, position) in normative.into_iter().enumerate() {
-        coefficients[position] = scanned[index];
+    let side = tx_size.width();
+    let column_major = coefficients.to_vec();
+    for row in 0..side {
+        for column in 0..side {
+            coefficients[row * side + column] = column_major[column * side + row];
+        }
     }
 }
 
@@ -526,23 +513,266 @@ fn inverse_staged_dynamic(transform: StagedTransform, input: &[i32], range: u8) 
         16 => {
             inverse_staged_16(transform, input.try_into().expect("length checked"), range).to_vec()
         }
-        32 if transform == StagedTransform::Dct => inverse_dct32_1d(input, range),
+        32 if transform == StagedTransform::Dct => {
+            inverse_dct32(input.try_into().expect("length checked"), range).to_vec()
+        }
         64 if transform == StagedTransform::Dct => inverse_dct64_1d(input, range),
         _ => unreachable!("rectangular transform stage length is unsupported"),
     }
 }
 
-fn inverse_dct32_1d(input: &[i32], range: u8) -> Vec<i32> {
-    const BASIS_BITS: u8 = 12;
-    let basis = inverse_dct32_basis_table();
-    (0..32)
-        .map(|sample| {
-            let sum = (0..32)
-                .map(|coeff| i64::from(basis[sample * 32 + coeff]) * i64::from(input[coeff]))
-                .sum::<i64>();
-            round_shift_i64(sum, BASIS_BITS).clamp(-(1i64 << range), (1i64 << range) - 1) as i32
-        })
-        .collect()
+fn inverse_dct32(i: [i32; 32], r: u8) -> [i32; 32] {
+    const B: u8 = 12;
+    let p = [
+        i[0], i[16], i[8], i[24], i[4], i[20], i[12], i[28], i[2], i[18], i[10], i[26], i[6],
+        i[22], i[14], i[30], i[1], i[17], i[9], i[25], i[5], i[21], i[13], i[29], i[3], i[19],
+        i[11], i[27], i[7], i[23], i[15], i[31],
+    ];
+    let a = [
+        p[0],
+        p[1],
+        p[2],
+        p[3],
+        p[4],
+        p[5],
+        p[6],
+        p[7],
+        p[8],
+        p[9],
+        p[10],
+        p[11],
+        p[12],
+        p[13],
+        p[14],
+        p[15],
+        half_btf(cospi(62), p[16], -cospi(2), p[31], B),
+        half_btf(cospi(30), p[17], -cospi(34), p[30], B),
+        half_btf(cospi(46), p[18], -cospi(18), p[29], B),
+        half_btf(cospi(14), p[19], -cospi(50), p[28], B),
+        half_btf(cospi(54), p[20], -cospi(10), p[27], B),
+        half_btf(cospi(22), p[21], -cospi(42), p[26], B),
+        half_btf(cospi(38), p[22], -cospi(26), p[25], B),
+        half_btf(cospi(6), p[23], -cospi(58), p[24], B),
+        half_btf(cospi(58), p[23], cospi(6), p[24], B),
+        half_btf(cospi(26), p[22], cospi(38), p[25], B),
+        half_btf(cospi(42), p[21], cospi(22), p[26], B),
+        half_btf(cospi(10), p[20], cospi(54), p[27], B),
+        half_btf(cospi(50), p[19], cospi(14), p[28], B),
+        half_btf(cospi(18), p[18], cospi(46), p[29], B),
+        half_btf(cospi(34), p[17], cospi(30), p[30], B),
+        half_btf(cospi(2), p[16], cospi(62), p[31], B),
+    ];
+    let b = [
+        a[0],
+        a[1],
+        a[2],
+        a[3],
+        a[4],
+        a[5],
+        a[6],
+        a[7],
+        half_btf(cospi(60), a[8], -cospi(4), a[15], B),
+        half_btf(cospi(28), a[9], -cospi(36), a[14], B),
+        half_btf(cospi(44), a[10], -cospi(20), a[13], B),
+        half_btf(cospi(12), a[11], -cospi(52), a[12], B),
+        half_btf(cospi(52), a[11], cospi(12), a[12], B),
+        half_btf(cospi(20), a[10], cospi(44), a[13], B),
+        half_btf(cospi(36), a[9], cospi(28), a[14], B),
+        half_btf(cospi(4), a[8], cospi(60), a[15], B),
+        clamp_signed(a[16] + a[17], r),
+        clamp_signed(a[16] - a[17], r),
+        clamp_signed(-a[18] + a[19], r),
+        clamp_signed(a[18] + a[19], r),
+        clamp_signed(a[20] + a[21], r),
+        clamp_signed(a[20] - a[21], r),
+        clamp_signed(-a[22] + a[23], r),
+        clamp_signed(a[22] + a[23], r),
+        clamp_signed(a[24] + a[25], r),
+        clamp_signed(a[24] - a[25], r),
+        clamp_signed(-a[26] + a[27], r),
+        clamp_signed(a[26] + a[27], r),
+        clamp_signed(a[28] + a[29], r),
+        clamp_signed(a[28] - a[29], r),
+        clamp_signed(-a[30] + a[31], r),
+        clamp_signed(a[30] + a[31], r),
+    ];
+    let c = [
+        b[0],
+        b[1],
+        b[2],
+        b[3],
+        half_btf(cospi(56), b[4], -cospi(8), b[7], B),
+        half_btf(cospi(24), b[5], -cospi(40), b[6], B),
+        half_btf(cospi(40), b[5], cospi(24), b[6], B),
+        half_btf(cospi(8), b[4], cospi(56), b[7], B),
+        clamp_signed(b[8] + b[9], r),
+        clamp_signed(b[8] - b[9], r),
+        clamp_signed(-b[10] + b[11], r),
+        clamp_signed(b[10] + b[11], r),
+        clamp_signed(b[12] + b[13], r),
+        clamp_signed(b[12] - b[13], r),
+        clamp_signed(-b[14] + b[15], r),
+        clamp_signed(b[14] + b[15], r),
+        b[16],
+        half_btf(-cospi(8), b[17], cospi(56), b[30], B),
+        half_btf(-cospi(56), b[18], -cospi(8), b[29], B),
+        b[19],
+        b[20],
+        half_btf(-cospi(40), b[21], cospi(24), b[26], B),
+        half_btf(-cospi(24), b[22], -cospi(40), b[25], B),
+        b[23],
+        b[24],
+        half_btf(-cospi(40), b[22], cospi(24), b[25], B),
+        half_btf(cospi(24), b[21], cospi(40), b[26], B),
+        b[27],
+        b[28],
+        half_btf(-cospi(8), b[18], cospi(56), b[29], B),
+        half_btf(cospi(56), b[17], cospi(8), b[30], B),
+        b[31],
+    ];
+    let d = [
+        half_btf(cospi(32), c[0], cospi(32), c[1], B),
+        half_btf(cospi(32), c[0], -cospi(32), c[1], B),
+        half_btf(cospi(48), c[2], -cospi(16), c[3], B),
+        half_btf(cospi(16), c[2], cospi(48), c[3], B),
+        clamp_signed(c[4] + c[5], r),
+        clamp_signed(c[4] - c[5], r),
+        clamp_signed(-c[6] + c[7], r),
+        clamp_signed(c[6] + c[7], r),
+        c[8],
+        half_btf(-cospi(16), c[9], cospi(48), c[14], B),
+        half_btf(-cospi(48), c[10], -cospi(16), c[13], B),
+        c[11],
+        c[12],
+        half_btf(-cospi(16), c[10], cospi(48), c[13], B),
+        half_btf(cospi(48), c[9], cospi(16), c[14], B),
+        c[15],
+        clamp_signed(c[16] + c[19], r),
+        clamp_signed(c[17] + c[18], r),
+        clamp_signed(c[17] - c[18], r),
+        clamp_signed(c[16] - c[19], r),
+        clamp_signed(-c[20] + c[23], r),
+        clamp_signed(-c[21] + c[22], r),
+        clamp_signed(c[21] + c[22], r),
+        clamp_signed(c[20] + c[23], r),
+        clamp_signed(c[24] + c[27], r),
+        clamp_signed(c[25] + c[26], r),
+        clamp_signed(c[25] - c[26], r),
+        clamp_signed(c[24] - c[27], r),
+        clamp_signed(-c[28] + c[31], r),
+        clamp_signed(-c[29] + c[30], r),
+        clamp_signed(c[29] + c[30], r),
+        clamp_signed(c[28] + c[31], r),
+    ];
+    let e = [
+        clamp_signed(d[0] + d[3], r),
+        clamp_signed(d[1] + d[2], r),
+        clamp_signed(d[1] - d[2], r),
+        clamp_signed(d[0] - d[3], r),
+        d[4],
+        half_btf(-cospi(32), d[5], cospi(32), d[6], B),
+        half_btf(cospi(32), d[5], cospi(32), d[6], B),
+        d[7],
+        clamp_signed(d[8] + d[11], r),
+        clamp_signed(d[9] + d[10], r),
+        clamp_signed(d[9] - d[10], r),
+        clamp_signed(d[8] - d[11], r),
+        clamp_signed(-d[12] + d[15], r),
+        clamp_signed(-d[13] + d[14], r),
+        clamp_signed(d[13] + d[14], r),
+        clamp_signed(d[12] + d[15], r),
+        d[16],
+        d[17],
+        half_btf(-cospi(16), d[18], cospi(48), d[29], B),
+        half_btf(-cospi(16), d[19], cospi(48), d[28], B),
+        half_btf(-cospi(48), d[20], -cospi(16), d[27], B),
+        half_btf(-cospi(48), d[21], -cospi(16), d[26], B),
+        d[22],
+        d[23],
+        d[24],
+        d[25],
+        half_btf(-cospi(16), d[21], cospi(48), d[26], B),
+        half_btf(-cospi(16), d[20], cospi(48), d[27], B),
+        half_btf(cospi(48), d[19], cospi(16), d[28], B),
+        half_btf(cospi(48), d[18], cospi(16), d[29], B),
+        d[30],
+        d[31],
+    ];
+    let f = [
+        clamp_signed(e[0] + e[7], r),
+        clamp_signed(e[1] + e[6], r),
+        clamp_signed(e[2] + e[5], r),
+        clamp_signed(e[3] + e[4], r),
+        clamp_signed(e[3] - e[4], r),
+        clamp_signed(e[2] - e[5], r),
+        clamp_signed(e[1] - e[6], r),
+        clamp_signed(e[0] - e[7], r),
+        e[8],
+        e[9],
+        half_btf(-cospi(32), e[10], cospi(32), e[13], B),
+        half_btf(-cospi(32), e[11], cospi(32), e[12], B),
+        half_btf(cospi(32), e[11], cospi(32), e[12], B),
+        half_btf(cospi(32), e[10], cospi(32), e[13], B),
+        e[14],
+        e[15],
+        clamp_signed(e[16] + e[23], r),
+        clamp_signed(e[17] + e[22], r),
+        clamp_signed(e[18] + e[21], r),
+        clamp_signed(e[19] + e[20], r),
+        clamp_signed(e[19] - e[20], r),
+        clamp_signed(e[18] - e[21], r),
+        clamp_signed(e[17] - e[22], r),
+        clamp_signed(e[16] - e[23], r),
+        clamp_signed(-e[24] + e[31], r),
+        clamp_signed(-e[25] + e[30], r),
+        clamp_signed(-e[26] + e[29], r),
+        clamp_signed(-e[27] + e[28], r),
+        clamp_signed(e[27] + e[28], r),
+        clamp_signed(e[26] + e[29], r),
+        clamp_signed(e[25] + e[30], r),
+        clamp_signed(e[24] + e[31], r),
+    ];
+    let g = [
+        clamp_signed(f[0] + f[15], r),
+        clamp_signed(f[1] + f[14], r),
+        clamp_signed(f[2] + f[13], r),
+        clamp_signed(f[3] + f[12], r),
+        clamp_signed(f[4] + f[11], r),
+        clamp_signed(f[5] + f[10], r),
+        clamp_signed(f[6] + f[9], r),
+        clamp_signed(f[7] + f[8], r),
+        clamp_signed(f[7] - f[8], r),
+        clamp_signed(f[6] - f[9], r),
+        clamp_signed(f[5] - f[10], r),
+        clamp_signed(f[4] - f[11], r),
+        clamp_signed(f[3] - f[12], r),
+        clamp_signed(f[2] - f[13], r),
+        clamp_signed(f[1] - f[14], r),
+        clamp_signed(f[0] - f[15], r),
+        f[16],
+        f[17],
+        f[18],
+        f[19],
+        half_btf(-cospi(32), f[20], cospi(32), f[27], B),
+        half_btf(-cospi(32), f[21], cospi(32), f[26], B),
+        half_btf(-cospi(32), f[22], cospi(32), f[25], B),
+        half_btf(-cospi(32), f[23], cospi(32), f[24], B),
+        half_btf(cospi(32), f[23], cospi(32), f[24], B),
+        half_btf(cospi(32), f[22], cospi(32), f[25], B),
+        half_btf(cospi(32), f[21], cospi(32), f[26], B),
+        half_btf(cospi(32), f[20], cospi(32), f[27], B),
+        f[28],
+        f[29],
+        f[30],
+        f[31],
+    ];
+    std::array::from_fn(|x| {
+        if x < 16 {
+            clamp_signed(g[x] + g[31 - x], r)
+        } else {
+            clamp_signed(g[31 - x] - g[x], r)
+        }
+    })
 }
 
 fn inverse_dct64_1d(input: &[i32], range: u8) -> Vec<i32> {
@@ -1400,7 +1630,7 @@ mod tests {
     }
 
     #[test]
-    fn transposes_directional_coefficients_for_square_inverse_storage() {
+    fn remaps_one_dimensional_and_identity_square_coefficients() {
         let mut coefficients = vec![0; TxSize::Tx8x8.sample_count()];
         for (index, position) in coefficient_scan(TxSize::Tx8x8, TxType::HorizontalDct)
             .into_iter()
@@ -1408,7 +1638,11 @@ mod tests {
         {
             coefficients[position] = index as i32;
         }
-        remap_directional_coefficients(TxSize::Tx8x8, TxType::HorizontalDct, &mut coefficients);
+        remap_coefficients_for_inverse_storage(
+            TxSize::Tx8x8,
+            TxType::HorizontalDct,
+            &mut coefficients,
+        );
         assert_eq!(&coefficients[..8], &[0, 8, 16, 24, 32, 40, 48, 56]);
 
         let mut coefficients = vec![0; TxSize::Tx8x8.sample_count()];
@@ -1418,8 +1652,23 @@ mod tests {
         {
             coefficients[position] = index as i32;
         }
-        remap_directional_coefficients(TxSize::Tx8x8, TxType::VerticalDct, &mut coefficients);
+        remap_coefficients_for_inverse_storage(
+            TxSize::Tx8x8,
+            TxType::VerticalDct,
+            &mut coefficients,
+        );
         assert_eq!(&coefficients[..8], &[0, 1, 2, 3, 4, 5, 6, 7]);
+
+        let mut identity = (0..TxSize::Tx4x4.sample_count() as i32).collect::<Vec<_>>();
+        remap_coefficients_for_inverse_storage(TxSize::Tx4x4, TxType::Identity, &mut identity);
+        assert_eq!(
+            identity,
+            vec![0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15]
+        );
+
+        let mut two_dimensional = (0..TxSize::Tx4x4.sample_count() as i32).collect::<Vec<_>>();
+        remap_coefficients_for_inverse_storage(TxSize::Tx4x4, TxType::DctDct, &mut two_dimensional);
+        assert_eq!(two_dimensional, (0..16).collect::<Vec<_>>());
     }
 
     #[test]
@@ -1479,6 +1728,39 @@ mod tests {
         assert_eq!(round_shift_i64(-8, 4), 0);
         assert_eq!(round_shift_i64(-24, 4), -1);
         assert_eq!(round2_signed(-8, 4), 0);
+    }
+
+    #[test]
+    fn tx4x4_horizontal_dct_matches_aom_wml2viewer_block() {
+        // AOM stores transform coefficients column-major. Transpose the
+        // traced input into the row-major storage consumed by this module.
+        let coefficients = vec![
+            0, 0, 0, 0, 0, 0, 0, 0, 2112, -704, -1056, -528, 1936, 176, 0, 0,
+        ];
+        let prediction = vec![0, 0, 0, 0, 0, 0, 0, 2, 0, 3, 29, 66, 43, 80, 95, 91];
+        let residual =
+            inverse_transform(TxType::HorizontalDct, TxSize::Tx4x4, &coefficients, 8).unwrap();
+        assert_eq!(
+            add_residual_to_prediction(&prediction, &residual, 8).unwrap(),
+            vec![0, 0, 0, 0, 0, 0, 0, 2, 0, 220, 208, 207, 178, 207, 210, 198]
+        );
+    }
+
+    #[test]
+    fn tx32x16_dct_dc_matches_aom_wml2viewer_chroma_block() {
+        let mut quantized = vec![0; TxSize::Tx32x16.sample_count()];
+        quantized[0] = -1;
+        let coefficients = dequantize_coefficients(
+            &quantized,
+            PlaneQuant { dc: 140, ac: 176 },
+            8,
+            TxSize::Tx32x16.dq_denom(),
+        );
+        assert_eq!(coefficients[0], -70);
+        assert_eq!(
+            inverse_transform(TxType::DctDct, TxSize::Tx32x16, &coefficients, 8).unwrap(),
+            vec![-1; TxSize::Tx32x16.sample_count()]
+        );
     }
 
     #[test]

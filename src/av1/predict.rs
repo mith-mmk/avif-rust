@@ -30,9 +30,15 @@ pub(crate) fn predict_intra_with_edge_filter(
 ) -> Result<Vec<u16>, DecoderError> {
     match mode {
         PredictionMode::Dc => Ok(predict_dc(width, height, edges)),
-        PredictionMode::Vertical => copy_above(width, height, edges),
-        PredictionMode::Horizontal => copy_left(width, height, edges),
-        PredictionMode::D45
+        PredictionMode::Vertical if angle_delta.unwrap_or(0) == 0 => {
+            copy_above(width, height, edges)
+        }
+        PredictionMode::Horizontal if angle_delta.unwrap_or(0) == 0 => {
+            copy_left(width, height, edges)
+        }
+        PredictionMode::Vertical
+        | PredictionMode::Horizontal
+        | PredictionMode::D45
         | PredictionMode::D67
         | PredictionMode::D113
         | PredictionMode::D135
@@ -293,9 +299,10 @@ fn predict_directional(
         return copy_left(width, height, edges);
     }
 
-    let edge_len = width + height;
-    let mut above = extended_edge(above, above_left, edge_len);
-    let mut left = extended_edge(left, above_left, edge_len);
+    let above_len = width + usize::from(angle < 90) * height;
+    let left_len = height + usize::from(angle > 180) * width;
+    let mut above = extended_edge(above, above_left, above_len);
+    let mut left = extended_edge(left, above_left, left_len);
     if enable_intra_edge_filter && angle != 90 && angle != 180 {
         if angle > 90 && angle < 180 && width + height >= 24 {
             above_left = filter_intra_edge_corner(above_left, above[0], left[0]);
@@ -318,7 +325,7 @@ fn predict_directional(
     let above = DirectionalEdge::new(
         &above,
         above_left,
-        edge_len,
+        above_len,
         use_directional_edge_upsample(
             width,
             height,
@@ -331,7 +338,7 @@ fn predict_directional(
     let left = DirectionalEdge::new(
         &left,
         above_left,
-        edge_len,
+        left_len,
         use_directional_edge_upsample(
             height,
             width,
@@ -600,6 +607,8 @@ fn directional_interpolate(first: u16, second: u16, shift: u32) -> u16 {
 
 fn directional_base_angle(mode: PredictionMode) -> Option<i32> {
     match mode {
+        PredictionMode::Vertical => Some(90),
+        PredictionMode::Horizontal => Some(180),
         PredictionMode::D45 => Some(45),
         PredictionMode::D67 => Some(67),
         PredictionMode::D113 => Some(113),
@@ -911,6 +920,56 @@ mod tests {
 
         assert_eq!(vertical, vec![1, 2, 3, 1, 2, 3]);
         assert_eq!(horizontal, vec![4, 4, 4, 5, 5, 5]);
+    }
+
+    #[test]
+    fn horizontal_angle_delta_matches_aom_zone2_prediction() {
+        let prediction = predict_intra_with_edge_filter(
+            PredictionMode::Horizontal,
+            Some(-3),
+            4,
+            4,
+            IntraEdges {
+                above: Some(&[28, 22, 22, 29, 23, 42, 58, 87]),
+                left: Some(&[38, 39, 38, 38, 38, 38, 38, 38]),
+                above_left: Some(39),
+                bit_depth: 8,
+            },
+            true,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            prediction,
+            vec![
+                38, 38, 38, 38, 39, 39, 39, 39, 38, 39, 39, 39, 38, 38, 38, 38
+            ]
+        );
+    }
+
+    #[test]
+    fn zone2_ignores_bottom_left_extension_samples() {
+        let prediction = predict_intra_with_edge_filter(
+            PredictionMode::D157,
+            None,
+            4,
+            4,
+            IntraEdges {
+                above: Some(&[0, 0, 0, 0, 0, 0, 0, 0]),
+                left: Some(&[0, 3, 236, 214, 135, 38, 29, 36]),
+                above_left: Some(0),
+                bit_depth: 8,
+            },
+            true,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            prediction,
+            vec![0, 0, 0, 0, 0, 0, 0, 0, 139, 40, 1, 0, 236, 237, 175, 77]
+        );
     }
 
     #[test]

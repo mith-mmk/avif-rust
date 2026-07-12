@@ -42,9 +42,9 @@ above this vertical slice until its native planes match the reference oracle.
 - [x] Add `AVIF_REQUIRE_ORACLES=1` strict mode so conformance runs fail when
       the manifest is absent, while normal parser/safety tests remain runnable
       without local test data.
-- [ ] Make strict mode reject a header-only/zero-entry manifest and require
+- [x] Make strict mode reject a header-only/zero-entry manifest and require
       the approved fixture IDs.
-- [ ] Require approved fixture source-manifest entries and validate SHA-256
+- [x] Require approved fixture source-manifest entries and validate SHA-256
       hash format in strict mode.
 - [x] Recompute source hashes and compare them with the source manifest using
       `scripts/verify_oracle_sources.ps1`.
@@ -92,8 +92,12 @@ exact native-plane fixture before the next feature is enabled.
 - [x] Match AOM inverse-transform `round_shift` semantics for negative values,
       including negative half-step anchors shared by `round2`.
 - [x] Preserve the AOM `mrow`/`mcol` entropy scan for 1-D directional classes
-      and transpose square coefficient storage at the inverse-transform
-      boundary; cover the mapping with decoder vectors.
+      and transpose square 1-D/identity coefficient storage at the
+      inverse-transform boundary; keep 2-D DCT/ADST storage in its existing
+      raster orientation and cover both cases with decoder vectors.
+- [x] Route non-zero angle deltas on vertical/horizontal modes through the
+      directional predictor and use AOM's zone-specific top-right/bottom-left
+      edge lengths.
 - [x] Verify coefficient context selection with known vectors for the enabled
       transform sizes and plane types.
 - [x] Verify palette and filter-intra syntax gating for the supported profile.
@@ -101,8 +105,11 @@ exact native-plane fixture before the next feature is enabled.
       placement and per-plane coordinates.
 - [x] Derive intra chroma transform types from the signalled UV mode and transform
       set for the supported sub-32 transform sizes.
-- [ ] Validate chroma transform derivation and the 32x32/64x64 transforms against
-      normative reference vectors.
+- [x] Match AOM's staged 32-point inverse DCT and sample-count-based dequant
+      shift for large rectangular transforms; pin the `Tx32x16` chroma DC
+      reconstruction used by `WML2Viewer.avif`.
+- [ ] Validate the remaining chroma transform derivation and 32x32/64x64
+      transform paths against normative reference vectors.
 - [x] Reject partial tile groups before accepting a still-image decode.
 - [x] Require entropy termination/trailing-bit validation before accepting a
       decoded frame.
@@ -274,12 +281,13 @@ The authoritative raw-reconstruction checkpoint uses
 `decoder::prefilter_diagnostic_tests::reports_wml2viewer_against_aom_prefilter_oracle`
 with `AOM_PREFILTER_ORACLE` set to planar 8-bit GBR emitted by an AOM build in
 which deblock, CDEF and restoration are disabled. After matching AOM's
-positive-bias inverse-transform rounding for negative values, the 900x900
-fixture reports:
+positive-bias inverse-transform rounding, staged 32-point DCT,
+large-rectangular dequant shift, directional angle-delta routing and zone edge
+lengths, the 900x900 fixture reports:
 
-- plane 0: first linear mismatch `16834` (`x=634,y=18`), `718439` mismatches;
-- plane 1: first linear mismatch `672`, `714735` mismatches;
-- plane 2: first linear mismatch `672`, `712822` mismatches.
+- plane 0: first linear mismatch `16834` (`x=634,y=18`), `720436` mismatches;
+- plane 1: first linear mismatch `672`, `714888` mismatches;
+- plane 2: first linear mismatch `672`, `708132` mismatches.
 
 The `reports_wml2viewer_raw_against_generated_final_planes` test compares raw
 Rust planes with final filtered FFmpeg planes and therefore does not define the
@@ -288,9 +296,10 @@ with no `Unsupported` boundary, and the filter-disabled strict fixtures remain
 the stable conformance set.
 
 The first remaining luma difference is within the `(632,16)` `Block4x8` and
-its 4x4 `H_DCT` reconstruction. A one-block experiment showed that removing
-the square horizontal coefficient transpose fixes that local residual, but it
-regresses earlier 4x4/8x8 directional blocks and was not retained. The next raw
-unit is to reconcile directional scan/context storage with the AOM inverse
-input for all square sizes, then advance the first mismatch. Post-filter work
-must not be used to mask this raw-plane difference.
+its 4x4 `H_DCT` reconstruction. The AOM-traced inverse-transform input,
+prediction and output are pinned as a passing unit vector, so the next raw unit
+is to reconcile the live decoded prediction/coefficient inputs feeding this
+block and then advance the first mismatch. Transposing 2-D `DctDct` storage can
+move the diagnostic mismatch but breaks the exact
+`filter-disabled-directional` oracle and is therefore explicitly rejected.
+Post-filter work must not be used to mask this raw-plane difference.

@@ -1368,15 +1368,22 @@ mod prefilter_diagnostic_tests {
             false,
         )
         .unwrap();
-        // Current first luma mismatch against the AOM build with all
-        // post-filters disabled.
-        const TARGET_X: usize = 634;
-        const TARGET_Y: usize = 18;
+        // Default to the current first luma mismatch against the AOM build
+        // with all post-filters disabled, while allowing an upstream edge to
+        // be selected without editing the diagnostic.
+        let target_x = std::env::var("AVIF_DIAGNOSTIC_X")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(634);
+        let target_y = std::env::var("AVIF_DIAGNOSTIC_Y")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(18);
         for block in prefix.blocks.iter().filter(|block| {
-            block.x <= TARGET_X
-                && TARGET_X < block.x + block.block_size.width()
-                && block.y <= TARGET_Y
-                && TARGET_Y < block.y + block.block_size.height()
+            block.x <= target_x
+                && target_x < block.x + block.block_size.width()
+                && block.y <= target_y
+                && target_y < block.y + block.block_size.height()
         }) {
             eprintln!(
                 "diagnostic block ({}, {}) size={:?} transforms={:?}",
@@ -1389,6 +1396,7 @@ mod prefilter_diagnostic_tests {
                     .map(|transform| {
                         (
                             transform.transform.x,
+                            transform.transform.y,
                             transform.transform.tx_size,
                             transform.tx_type,
                             transform
@@ -1462,6 +1470,19 @@ mod prefilter_diagnostic_tests {
         let info = parse_avif(&data).unwrap();
         let headers = parse_av1_headers(&info).unwrap();
         let decoded = decode_still_frame_prefilter_for_test(&headers, Some(&info)).unwrap();
+        if let Some(output_path) = std::env::var_os("AVIF_RUST_PREFILTER_OUTPUT") {
+            let output = decoded
+                .buffers
+                .planes
+                .iter()
+                .flat_map(|plane| {
+                    plane.samples.iter().map(|sample| {
+                        u8::try_from(*sample).expect("8-bit diagnostic sample should fit in u8")
+                    })
+                })
+                .collect::<Vec<_>>();
+            std::fs::write(output_path, output).unwrap();
+        }
         let oracle = std::fs::read(oracle_path).unwrap();
         let sample_count = decoded.buffers.width * decoded.buffers.height;
         assert_eq!(oracle.len(), sample_count * decoded.buffers.planes.len());
