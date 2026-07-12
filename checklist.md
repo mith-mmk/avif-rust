@@ -110,6 +110,9 @@ exact native-plane fixture before the next feature is enabled.
 - [x] Match AOM's staged 32-point inverse DCT and sample-count-based dequant
       shift for large rectangular transforms; pin the `Tx32x16` chroma DC
       reconstruction used by `WML2Viewer.avif`.
+- [x] Replace the approximate 32x32 fixed-basis/DC shortcut with the staged
+      32-point row/column transform and pin the `WML2Viewer` luma DC block;
+      use `bit_depth + 8` for the row-stage range through 12-bit paths.
 - [ ] Validate the remaining chroma transform derivation and 32x32/64x64
       transform paths against normative reference vectors.
 - [x] Reject partial tile groups before accepting a still-image decode.
@@ -287,9 +290,9 @@ positive-bias inverse-transform rounding, staged 32-point DCT,
 large-rectangular dequant shift, directional angle-delta routing and zone edge
 lengths, the 900x900 fixture reports:
 
-- plane 0: first linear mismatch `29408` (`x=608,y=32`), `693821` mismatches;
-- plane 1: first linear mismatch `672`, `708680` mismatches;
-- plane 2: first linear mismatch `16302`, `686326` mismatches.
+- plane 0: first linear mismatch `36177` (`x=177,y=40`), `683917` mismatches;
+- plane 1: first linear mismatch `672`, `708794` mismatches;
+- plane 2: first linear mismatch `16302`, `681263` mismatches.
 
 The `reports_wml2viewer_raw_against_generated_final_planes` test compares raw
 Rust planes with final filtered FFmpeg planes and therefore does not define the
@@ -299,8 +302,10 @@ the stable conformance set.
 
 The former first luma difference in the `(632,16)` `Block4x8` was caused by an
 upstream dense 4x4 `ADST_ADST` transform. Its AOM prediction, dequant input and
-output now match through an explicit square-ADST storage transpose. The next
-raw unit is the first luma mismatch at `(608,32)`. Transposing square
+output now match through an explicit square-ADST storage transpose. The former
+32x32 DC-only mismatch also matches after routing it through the staged
+32-point transform. The next raw unit is the first luma mismatch at
+`(177,40)`. Transposing square
 `DctDct` storage can reduce aggregate diagnostic counts but breaks the exact
 `filter-disabled-directional` oracle and is therefore explicitly rejected.
 Post-filter work must not be used to mask this raw-plane difference.

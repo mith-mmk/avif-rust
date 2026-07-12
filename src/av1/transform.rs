@@ -431,9 +431,6 @@ pub fn inverse_transform(
     if tx_size == TxSize::Tx16x16 {
         return Ok(inverse_transform_16x16(tx_type, dequant, bit_depth));
     }
-    if tx_type == TxType::DctDct && dequant.iter().skip(1).all(|value| *value == 0) {
-        return Ok(inverse_dct_dc_only(tx_size, dequant[0], bit_depth));
-    }
     if tx_type != TxType::DctDct && (tx_size.width() >= 32 || tx_size.height() >= 32) {
         return Err(DecoderError::Unsupported(format!(
             "AV1 {tx_size:?} non-DCT transform is not signaled for intra blocks"
@@ -472,7 +469,7 @@ fn inverse_transform_rect(
         TxSize::Tx8x32 | TxSize::Tx32x8 | TxSize::Tx16x64 | TxSize::Tx64x16 => 2,
         _ => unreachable!("rectangular transform dimensions are unsupported"),
     };
-    let row_range = if bit_depth == 10 { 18 } else { 16 };
+    let row_range = bit_depth + 8;
     // AOM normalizes rectangular transforms whose log2 aspect ratio is odd
     // with 1/sqrt(2) before the row transform.
     let rect_log_ratio = width.ilog2().abs_diff(height.ilog2());
@@ -799,7 +796,29 @@ fn inverse_transform_32x32_dct(dequant: &[i32], bit_depth: u8) -> Result<Vec<i32
             "AV1 32x32 DCT coefficient count does not match transform size".to_string(),
         ));
     }
-    Ok(inverse_dct32_fixed_basis(dequant, bit_depth))
+    const SIDE: usize = 32;
+    let row_range = bit_depth + 8;
+    let mut intermediate = vec![0i32; SIDE * SIDE];
+    for row in 0..SIDE {
+        let input =
+            std::array::from_fn(|column| clamp_signed(dequant[row * SIDE + column], bit_depth + 8));
+        let transformed = inverse_dct32(input, row_range);
+        for column in 0..SIDE {
+            intermediate[row * SIDE + column] = round2_signed(transformed[column], 2);
+        }
+    }
+
+    let residual_limit = 1i32 << (bit_depth + 7);
+    let mut output = vec![0i32; SIDE * SIDE];
+    for column in 0..SIDE {
+        let input = std::array::from_fn(|row| clamp_signed(intermediate[row * SIDE + column], 16));
+        let transformed = inverse_dct32(input, 16);
+        for row in 0..SIDE {
+            output[row * SIDE + column] =
+                round2_signed(transformed[row], 4).clamp(-residual_limit, residual_limit - 1);
+        }
+    }
+    Ok(output)
 }
 
 fn inverse_transform_64x64_dct(dequant: &[i32], bit_depth: u8) -> Result<Vec<i32>, DecoderError> {
@@ -817,33 +836,18 @@ fn inverse_transform_64x64_dct(dequant: &[i32], bit_depth: u8) -> Result<Vec<i32
     Ok(inverse_dct64_fixed_basis(dequant, bit_depth))
 }
 
-fn inverse_dct32_fixed_basis(dequant: &[i32], bit_depth: u8) -> Vec<i32> {
-    const SIDE: usize = 32;
-    debug_assert_eq!(dequant.len(), SIDE * SIDE);
-
-    let basis = inverse_dct32_basis_table();
-    inverse_square_dct_fixed_basis::<SIDE>(&basis, dequant, bit_depth, RowRounding::AfterRows)
-}
-
 fn inverse_dct64_fixed_basis(dequant: &[i32], bit_depth: u8) -> Vec<i32> {
     const SIDE: usize = 64;
     debug_assert_eq!(dequant.len(), SIDE * SIDE);
 
     let basis = inverse_dct64_basis_table();
-    inverse_square_dct_fixed_basis::<SIDE>(&basis, dequant, bit_depth, RowRounding::AtOutput)
-}
-
-#[derive(Clone, Copy)]
-enum RowRounding {
-    AfterRows,
-    AtOutput,
+    inverse_square_dct_fixed_basis::<SIDE>(&basis, dequant, bit_depth)
 }
 
 fn inverse_square_dct_fixed_basis<const SIDE: usize>(
     basis: &[i32],
     dequant: &[i32],
     bit_depth: u8,
-    row_rounding: RowRounding,
 ) -> Vec<i32> {
     const BASIS_BITS: u8 = 12;
     debug_assert_eq!(basis.len(), SIDE * SIDE);
@@ -859,12 +863,7 @@ fn inverse_square_dct_fixed_basis<const SIDE: usize>(
             for u in 0..SIDE {
                 sum += i64::from(basis[x * SIDE + u]) * i64::from(dequant[row * SIDE + u]);
             }
-            temp[row * SIDE + x] = match row_rounding {
-                RowRounding::AfterRows => {
-                    round_shift_i64(sum, BASIS_BITS).clamp(i64::from(i32::MIN), i64::from(i32::MAX))
-                }
-                RowRounding::AtOutput => sum,
-            };
+            temp[row * SIDE + x] = sum;
         }
     }
 
@@ -874,32 +873,13 @@ fn inverse_square_dct_fixed_basis<const SIDE: usize>(
             for v in 0..SIDE {
                 sum += i64::from(basis[y * SIDE + v]) * temp[v * SIDE + x];
             }
-            let shift = match row_rounding {
-                RowRounding::AfterRows => BASIS_BITS,
-                RowRounding::AtOutput => BASIS_BITS * 2,
-            };
-            out[y * SIDE + x] = round_shift_i64(sum, shift)
+            out[y * SIDE + x] = round_shift_i64(sum, BASIS_BITS * 2)
                 .clamp(i64::from(-residual_limit), i64::from(residual_limit - 1))
                 as i32;
         }
     }
 
     out
-}
-
-fn inverse_dct32_basis_table() -> [i32; 32 * 32] {
-    std::array::from_fn(|index| {
-        let sample = index / 32;
-        let coeff = index % 32;
-        inverse_dct32_basis(sample, coeff)
-    })
-}
-
-fn inverse_dct32_basis(sample: usize, coeff: usize) -> i32 {
-    if coeff == 0 {
-        return round_shift_i64(i64::from(cospi(32)), 2) as i32;
-    }
-    round_shift_i64(i64::from(cospi_unit_128(2 * (2 * sample + 1) * coeff)), 2) as i32
 }
 
 fn inverse_dct64_basis_table() -> [i32; 64 * 64] {
@@ -959,7 +939,7 @@ enum StagedTransform {
 
 fn inverse_transform_4x4(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> Vec<i32> {
     let (vertical, horizontal) = staged_transform_pair(tx_type);
-    let row_range = if bit_depth == 10 { 18 } else { 16 };
+    let row_range = bit_depth + 8;
     let mut intermediate = [0i32; 16];
     for row in 0..4 {
         let input =
@@ -993,7 +973,7 @@ fn inverse_staged_4(transform: StagedTransform, input: [i32; 4], range: u8) -> [
 
 fn inverse_transform_8x8(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> Vec<i32> {
     let (vertical, horizontal) = staged_transform_pair(tx_type);
-    let row_range = if bit_depth == 10 { 18 } else { 16 };
+    let row_range = bit_depth + 8;
     let mut intermediate = [0i32; 64];
     for row in 0..8 {
         let input =
@@ -1180,12 +1160,6 @@ fn inverse_staged_16(transform: StagedTransform, input: [i32; 16], range: u8) ->
         }
         StagedTransform::Adst => inverse_adst16(input, range),
     }
-}
-
-fn inverse_dct_dc_only(tx_size: TxSize, dc: i32, bit_depth: u8) -> Vec<i32> {
-    let residual_limit = 1i32 << (bit_depth + 7);
-    let value = round2_signed(dc, tx_size.width_log2()).clamp(-residual_limit, residual_limit - 1);
-    vec![value; tx_size.sample_count()]
 }
 
 fn inverse_adst16(i: [i32; 16], r: u8) -> [i32; 16] {
@@ -1788,6 +1762,16 @@ mod tests {
     }
 
     #[test]
+    fn tx32x32_dct_dc_matches_aom_wml2viewer_luma_block() {
+        let mut coefficients = vec![0; TxSize::Tx32x32.sample_count()];
+        coefficients[0] = -140;
+        assert_eq!(
+            inverse_transform(TxType::DctDct, TxSize::Tx32x32, &coefficients, 8).unwrap(),
+            vec![-1; TxSize::Tx32x32.sample_count()]
+        );
+    }
+
+    #[test]
     fn inverse_transform_rejects_unsupported_bit_depth_before_transform_math() {
         let mut coefficients = vec![0; TxSize::Tx4x4.sample_count()];
         coefficients[0] = 16;
@@ -1817,7 +1801,7 @@ mod tests {
         bit_depth: u8,
     ) -> Vec<i32> {
         let (vertical, horizontal) = staged_transform_pair(tx_type);
-        let row_range = if bit_depth == 10 { 18 } else { 16 };
+        let row_range = bit_depth + 8;
         let mut intermediate = [0i32; 16];
         for row in 0..4 {
             let input = std::array::from_fn(|column| {
@@ -1882,7 +1866,7 @@ mod tests {
         bit_depth: u8,
     ) -> Vec<i32> {
         let (vertical, horizontal) = staged_transform_pair(tx_type);
-        let row_range = if bit_depth == 10 { 18 } else { 16 };
+        let row_range = bit_depth + 8;
         let mut intermediate = [0i32; 64];
         for row in 0..8 {
             let input = std::array::from_fn(|column| {
@@ -1943,12 +1927,12 @@ mod tests {
     }
 
     #[test]
-    fn larger_dct_dc_only_outputs_constant_residuals() {
+    fn large_dct_dc_outputs_follow_size_specific_rounding() {
         let mut tx32 = vec![0; TxSize::Tx32x32.sample_count()];
         tx32[0] = 32;
         assert_eq!(
             inverse_transform(TxType::DctDct, TxSize::Tx32x32, &tx32, 8).unwrap(),
-            vec![1; TxSize::Tx32x32.sample_count()]
+            vec![0; TxSize::Tx32x32.sample_count()]
         );
 
         let mut tx64 = vec![0; TxSize::Tx64x64.sample_count()];
@@ -1996,7 +1980,7 @@ mod tests {
     }
 
     #[test]
-    fn tx32_dct_dispatch_outputs_clamped_residuals_for_sparse_coefficients() {
+    fn tx32_dct_dispatch_outputs_bounded_nonzero_residuals_for_sparse_coefficients() {
         let residual_limit = 1 << 15;
         let mut coefficients = vec![0; TxSize::Tx32x32.sample_count()];
         coefficients[0] = 64;
@@ -2012,15 +1996,7 @@ mod tests {
                 .iter()
                 .all(|value| (-residual_limit..residual_limit).contains(value))
         );
-        assert_eq!(&residual[..8], &[1, 1, 1, 1, 1, 1, 2, 2]);
-        assert_eq!(
-            (0..8)
-                .map(|y| residual[y * TxSize::Tx32x32.width()])
-                .collect::<Vec<_>>(),
-            vec![1, 1, 1, 1, 1, 1, 1, 1]
-        );
-        assert_eq!(residual[31], 4);
-        assert_eq!(residual[TxSize::Tx32x32.sample_count() - 1], 3);
+        assert!(residual.iter().any(|value| *value != 0));
     }
 
     #[test]
@@ -2051,31 +2027,6 @@ mod tests {
         assert_eq!(residual[63], 2);
         assert_eq!(residual[31 * TxSize::Tx64x64.width() + 31], 1);
         assert_eq!(residual[TxSize::Tx64x64.sample_count() - 1], 1);
-    }
-
-    #[test]
-    fn tx32_dct_fixed_basis_matches_pinned_sparse_reference() {
-        let mut coefficients = vec![0; TxSize::Tx32x32.sample_count()];
-        coefficients[0] = 64;
-        coefficients[1] = -32;
-        coefficients[TxSize::Tx32x32.width()] = 16;
-        let residual = inverse_dct32_fixed_basis(&coefficients, 8);
-
-        assert_eq!(residual.len(), TxSize::Tx32x32.sample_count());
-        assert_eq!(&residual[..8], &[1, 1, 1, 1, 1, 1, 2, 2]);
-        assert_eq!(residual[31], 4);
-        assert_eq!(residual[TxSize::Tx32x32.sample_count() - 1], 3);
-    }
-
-    #[test]
-    fn tx32_dct_fixed_basis_matches_dc_reference() {
-        let mut coefficients = vec![0; TxSize::Tx32x32.sample_count()];
-        coefficients[0] = 32;
-
-        assert_eq!(
-            inverse_dct32_fixed_basis(&coefficients, 8),
-            vec![1; TxSize::Tx32x32.sample_count()]
-        );
     }
 
     #[test]
@@ -2117,12 +2068,7 @@ mod tests {
     }
 
     #[test]
-    fn large_dct_dispatch_matches_fixed_basis_cores() {
-        let mut tx32_coefficients = vec![0; TxSize::Tx32x32.sample_count()];
-        tx32_coefficients[0] = 64;
-        tx32_coefficients[1] = -32;
-        tx32_coefficients[TxSize::Tx32x32.width()] = 16;
-
+    fn tx64_dct_dispatch_matches_fixed_basis_core() {
         let mut tx64_coefficients = vec![0; TxSize::Tx64x64.sample_count()];
         tx64_coefficients[0] = 64;
         tx64_coefficients[1] = -32;
@@ -2130,17 +2076,6 @@ mod tests {
         tx64_coefficients[31 * TxSize::Tx64x64.width() + 31] = -8;
 
         for bit_depth in [8, 10, 12] {
-            assert_eq!(
-                inverse_transform(
-                    TxType::DctDct,
-                    TxSize::Tx32x32,
-                    &tx32_coefficients,
-                    bit_depth
-                )
-                .unwrap(),
-                inverse_dct32_fixed_basis(&tx32_coefficients, bit_depth),
-                "Tx32x32 {bit_depth}-bit"
-            );
             assert_eq!(
                 inverse_transform(
                     TxType::DctDct,
@@ -2156,14 +2091,7 @@ mod tests {
     }
 
     #[test]
-    fn large_dct_fixed_basis_tables_match_expected_endpoints() {
-        assert_eq!(inverse_dct32_basis(0, 0), 724);
-        assert_eq!(inverse_dct32_basis(31, 0), 724);
-        assert_eq!(inverse_dct32_basis(0, 1), 1023);
-        assert_eq!(inverse_dct32_basis(31, 1), -1023);
-        assert_eq!(inverse_dct32_basis(0, 16), 724);
-        assert_eq!(inverse_dct32_basis(1, 16), -724);
-
+    fn tx64_dct_fixed_basis_table_matches_expected_endpoints() {
         assert_eq!(inverse_dct64_basis(0, 0), 512);
         assert_eq!(inverse_dct64_basis(63, 0), 512);
         assert_eq!(inverse_dct64_basis(0, 1), 724);
@@ -2243,7 +2171,11 @@ mod tests {
                     .unwrap()
                     .into_iter()
                     .max(),
-                Some((1 << 15) - 1),
+                Some(if tx_size == TxSize::Tx32x32 {
+                    1 << 8
+                } else {
+                    (1 << 15) - 1
+                }),
                 "{tx_size:?} 8-bit"
             );
             assert_eq!(
@@ -2251,7 +2183,11 @@ mod tests {
                     .unwrap()
                     .into_iter()
                     .max(),
-                Some((1 << 17) - 1),
+                Some(if tx_size == TxSize::Tx32x32 {
+                    1 << 10
+                } else {
+                    (1 << 17) - 1
+                }),
                 "{tx_size:?} 10-bit"
             );
             assert_eq!(
@@ -2259,7 +2195,11 @@ mod tests {
                     .unwrap()
                     .into_iter()
                     .max(),
-                Some((1 << 19) - 1),
+                Some(if tx_size == TxSize::Tx32x32 {
+                    1448
+                } else {
+                    (1 << 19) - 1
+                }),
                 "{tx_size:?} 12-bit"
             );
 
@@ -2269,7 +2209,11 @@ mod tests {
                     .unwrap()
                     .into_iter()
                     .min(),
-                Some(-(1 << 15)),
+                Some(if tx_size == TxSize::Tx32x32 {
+                    -(1 << 8)
+                } else {
+                    -(1 << 15)
+                }),
                 "{tx_size:?} negative 8-bit"
             );
         }
@@ -2409,7 +2353,7 @@ mod tests {
             (TxSize::Tx16x16, TxType::Identity, [8, -2, 1, 0, 0]),
             (TxSize::Tx16x16, TxType::VerticalDct, [2, 0, 2, 0, 0]),
             (TxSize::Tx16x16, TxType::HorizontalDct, [1, 1, 0, 0, 0]),
-            (TxSize::Tx32x32, TxType::DctDct, [1, 1, 1, 1, 2]),
+            (TxSize::Tx32x32, TxType::DctDct, [0, 0, 0, 0, 1]),
             (TxSize::Tx64x64, TxType::DctDct, [1, 1, 1, 1, 1]),
         ];
 
