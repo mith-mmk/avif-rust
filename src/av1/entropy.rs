@@ -119,8 +119,7 @@ impl<'a> EntropyDecoder<'a> {
     // Q15 value 16384.
     fn read_raw_bit(&mut self) -> Result<u8, DecoderError> {
         let f = 16_384u32;
-        let split = (((self.symbol_range >> 8) * (f >> EC_PROB_SHIFT))
-            >> (7 - EC_PROB_SHIFT))
+        let split = (((self.symbol_range >> 8) * (f >> EC_PROB_SHIFT)) >> (7 - EC_PROB_SHIFT))
             + EC_MIN_PROB;
         let bit = if self.symbol_dif >> 16 >= split {
             self.symbol_range -= split;
@@ -143,22 +142,19 @@ impl<'a> EntropyDecoder<'a> {
         let logical_offset = self.bit_offset.saturating_sub(14);
         let (trailing_bit_position, padding_end_position) = if self.symbol_max_bits > 0 {
             let trailing_distance = usize::try_from(15.min(self.symbol_max_bits + 15)).unwrap();
-            let trailing = logical_offset.checked_sub(trailing_distance).ok_or_else(|| {
-                DecoderError::Bitstream("AV1 entropy trailing one bit is missing".to_string())
-            })?;
-            (
-                trailing,
-                logical_offset + self.symbol_max_bits as usize,
-            )
+            let trailing = logical_offset
+                .checked_sub(trailing_distance)
+                .ok_or_else(|| {
+                    DecoderError::Bitstream("AV1 entropy trailing one bit is missing".to_string())
+                })?;
+            (trailing, logical_offset + self.symbol_max_bits as usize)
         } else {
             let end = self.data.len() * 8;
             let trailing = (0..end)
                 .rev()
                 .find(|position| bit_at(self.data, *position).unwrap_or(0) == 1)
                 .ok_or_else(|| {
-                    DecoderError::Bitstream(
-                        "AV1 entropy trailing one bit is missing".to_string(),
-                    )
+                    DecoderError::Bitstream("AV1 entropy trailing one bit is missing".to_string())
                 })?;
             (trailing, end)
         };
@@ -214,7 +210,6 @@ impl<'a> EntropyDecoder<'a> {
             self.refill_count = 0x4000;
         }
     }
-
 }
 
 fn update_cdf(cdf: &mut [u16], symbol: usize) {
@@ -224,15 +219,15 @@ fn update_cdf(cdf: &mut [u16], symbol: usize) {
         + u16::from(count > 15)
         + u16::from(count > 31)
         + floor_log2(symbol_count as u32).min(2) as u16;
-    let mut tmp = 0u16;
+    // CDF tables are stored in the normal cumulative form, while AOM's
+    // reader updates inverse CDF values.  Convert that update direction
+    // directly: entries before the decoded symbol move toward zero and the
+    // remaining cumulative entries move toward CDF_PROB_TOP.
     for (index, entry) in cdf.iter_mut().take(symbol_count - 1).enumerate() {
-        if index == symbol {
-            tmp = 1 << 15;
-        }
-        if tmp < *entry {
-            *entry -= (*entry - tmp) >> rate;
+        if index < symbol {
+            *entry -= *entry >> rate;
         } else {
-            *entry += (tmp - *entry) >> rate;
+            *entry += ((1 << 15) - *entry) >> rate;
         }
     }
     if cdf[symbol_count] < 32 {

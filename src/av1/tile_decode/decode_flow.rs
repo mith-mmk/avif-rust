@@ -153,7 +153,9 @@ pub(super) fn decode_luma_block_tree(
     if *block_budget == 0 || x >= plan.width || y >= plan.height {
         return Ok(Vec::new());
     }
-    if block_size == BlockSize::Block4x4 {
+    // AV1 does not signal a partition for blocks smaller than 8x8; they are
+    // implicit leaves even when one dimension is 4 pixels.
+    if block_size.width() < 8 || block_size.height() < 8 {
         let block = decode_luma_leaf_block(
             decoder, sequence, frame, tile_plan, plan, buffers, block_size, x, y,
         )?;

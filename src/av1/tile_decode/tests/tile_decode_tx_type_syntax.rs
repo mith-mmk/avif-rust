@@ -17,8 +17,22 @@ fn intra_ext_tx_set_context_uses_set2_for_tx16() {
         intra_ext_tx_set_context(false, TxSize::Tx16x16),
         Some((2, 2))
     );
+    assert_eq!(
+        intra_ext_tx_set_context(false, TxSize::Tx4x16),
+        Some((1, 0))
+    );
+    assert_eq!(
+        intra_ext_tx_set_context(false, TxSize::Tx8x32),
+        Some((1, 1))
+    );
+    assert_eq!(
+        intra_ext_tx_set_context(false, TxSize::Tx16x32),
+        Some((2, 2))
+    );
     assert_eq!(intra_ext_tx_set_context(true, TxSize::Tx4x4), Some((2, 0)));
     assert_eq!(intra_ext_tx_set_context(true, TxSize::Tx8x8), Some((2, 1)));
+    assert_eq!(intra_ext_tx_set_context(true, TxSize::Tx4x16), Some((2, 0)));
+    assert_eq!(intra_ext_tx_set_context(true, TxSize::Tx8x32), Some((2, 1)));
     assert_eq!(intra_ext_tx_set_context(false, TxSize::Tx32x32), None);
 }
 

@@ -235,7 +235,11 @@ fn directional_coefficient_contexts_follow_aom_1d_axes() {
     );
     assert_eq!(
         coeff_base_context_1d(tx_size, TxType::HorizontalDct, 0, &quant).unwrap(),
-        (0, 2)
+        (27, 2)
+    );
+    assert_eq!(
+        coeff_base_context_1d(tx_size, TxType::VerticalDct, 0, &quant).unwrap(),
+        (28, 3)
     );
     assert_eq!(
         coeff_br_context_1d(tx_size, TxType::VerticalDct, 0, &quant).unwrap(),

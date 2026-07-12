@@ -56,8 +56,12 @@ pub(super) fn decode_plane_block(
         (Some(luma), plane)
     };
     let tx_size = if plane_index > 0 && !frame.quantization.coded_lossless() {
-        match block_mode.block_size.largest_supported_tx_size() {
-            TxSize::Tx64x64 => TxSize::Tx32x32,
+        match block_mode.block_size.largest_supported_rect_tx_size() {
+            // AOM limits chroma transforms with a 64-pixel dimension to the
+            // corresponding 32-pixel form, while preserving other rectangles.
+            TxSize::Tx64x64 | TxSize::Tx64x32 | TxSize::Tx32x64 => TxSize::Tx32x32,
+            TxSize::Tx64x16 => TxSize::Tx32x16,
+            TxSize::Tx16x64 => TxSize::Tx16x32,
             tx_size => tx_size,
         }
     } else {
@@ -114,29 +118,11 @@ pub(super) fn decode_plane_block(
     let mut decoded = Vec::new();
     for transform in transforms {
         let txb_context = decoder.txb_context(block_mode.block_size, transform);
-        if std::env::var_os("AVIF_TRACE_WML2_MODES").is_some() && x == 80 && y == 0 {
-            eprintln!(
-                "Rust coeff before plane={} tx={:?} at=({}, {}) context={txb_context:?} state={:?}",
-                transform.plane,
-                transform.tx_size,
-                transform.x,
-                transform.y,
-                decoder.reader.trace_state()
-            );
-        }
-        let all_zero_symbol = decoder.reader.read_symbol(
-            decoder
-                .cdf
-                .txb_skip_cdf_mut(transform.tx_size.coeff_cdf_index(), txb_context.skip),
-        )?;
+        let skip_cdf = decoder
+            .cdf
+            .txb_skip_cdf_mut(transform.tx_size.coeff_cdf_index(), txb_context.skip);
+        let all_zero_symbol = decoder.reader.read_symbol(skip_cdf)?;
         if all_zero_symbol != 0 {
-            if std::env::var_os("AVIF_TRACE_WML2_MODES").is_some() && x == 80 && y == 0 {
-                eprintln!(
-                    "Rust coeff after plane={} zero=true state={:?}",
-                    transform.plane,
-                    decoder.reader.trace_state()
-                );
-            }
             decoder.set_txb_entropy_context(transform, 0);
             let (top_right_available, bottom_left_available) =
                 decoder.reconstructed_extension_availability(plane, transform)?;
@@ -175,20 +161,6 @@ pub(super) fn decode_plane_block(
 
         let decoded_transform =
             decoder.read_decoded_transform(frame, block_mode, transform, txb_context.dc_sign)?;
-        if std::env::var_os("AVIF_TRACE_WML2_MODES").is_some() && x == 80 && y == 0 {
-            eprintln!(
-                "Rust coeff after plane={} zero=false tx_type={:?} nonzero={:?} state={:?}",
-                transform.plane,
-                decoded_transform.tx_type,
-                decoded_transform
-                    .coefficients
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, value)| **value != 0)
-                    .collect::<Vec<_>>(),
-                decoder.reader.trace_state()
-            );
-        }
         decoder.set_txb_entropy_context(
             transform,
             coefficient_entropy_context(&decoded_transform.coefficients),

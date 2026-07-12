@@ -191,8 +191,10 @@ impl<'a> TileDecoder<'a> {
     ) -> Result<PaletteBlockInfo, DecoderError> {
         let mut palette = PaletteBlockInfo { y: None, uv: None };
         if !frame.allow_screen_content_tools
-            || block_size.width() < 8
-            || block_size.height() < 8
+            || matches!(
+                block_size,
+                BlockSize::Block4x4 | BlockSize::Block4x8 | BlockSize::Block8x4
+            )
             || block_size.width() > 64
             || block_size.height() > 64
         {

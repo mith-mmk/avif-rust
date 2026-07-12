@@ -199,6 +199,50 @@ pub(super) const MAX_BASE_BR_RANGE: usize = NUM_BASE_LEVELS + COEFF_BASE_RANGE +
 const BR_LEVEL_CAP: usize = COEFF_BASE_RANGE + NUM_BASE_LEVELS + 1;
 pub(super) const COEFFICIENT_LEVEL_MASK: usize = (1 << 20) - 1;
 
+fn coeff_context_coords(tx_size: TxSize, position: usize) -> (usize, usize) {
+    let width = tx_size.width();
+    let height = tx_size.height();
+    if width == height {
+        (position / width, position % width)
+    } else {
+        // Rectangular AV1 coefficient positions use the column-major layout
+        // used by AOM's padded level buffer (bhl is the height log2).
+        (position % height, position / height)
+    }
+}
+
+fn directional_coeff_coords(tx_size: TxSize, position: usize) -> (usize, usize) {
+    // get_txb_bhl() uses the adjusted transform for 64-wide variants.  The
+    // scan and levels buffer therefore split the coefficient index at the
+    // (possibly adjusted) transform height.
+    let bhl = match tx_size {
+        TxSize::Tx64x64 | TxSize::Tx64x32 | TxSize::Tx32x64 => 5,
+        TxSize::Tx64x16 => 4,
+        TxSize::Tx16x64 => 5,
+        _ => usize::from(tx_size.height_log2()),
+    };
+    let row_mask = (1usize << bhl) - 1;
+    (position & row_mask, position >> bhl)
+}
+
+fn directional_coeff_position(tx_size: TxSize, row: usize, col: usize) -> usize {
+    let height = match tx_size {
+        TxSize::Tx64x64 | TxSize::Tx64x32 | TxSize::Tx32x64 => 32,
+        TxSize::Tx64x16 => 16,
+        TxSize::Tx16x64 => 32,
+        _ => tx_size.height(),
+    };
+    col * height + row
+}
+
+fn coeff_context_position(tx_size: TxSize, row: usize, col: usize) -> usize {
+    if tx_size.width() == tx_size.height() {
+        row * tx_size.width() + col
+    } else {
+        col * tx_size.height() + row
+    }
+}
+
 pub(super) fn clamp_coefficient_level(level: usize) -> usize {
     level & COEFFICIENT_LEVEL_MASK
 }
@@ -223,14 +267,15 @@ pub(super) fn coeff_base_context_2d(
 
     let width = tx_size.width();
     let height = tx_size.height();
-    let row = position / width;
-    let col = position % width;
+    let (row, col) = coeff_context_coords(tx_size, position);
     let mut magnitude = 0usize;
     for (row_offset, col_offset) in SIG_REF_DIFF_OFFSET_2D {
         let ref_row = row + row_offset;
         let ref_col = col + col_offset;
         if ref_row < height && ref_col < width {
-            magnitude += quant[ref_row * width + ref_col].unsigned_abs().min(3) as usize;
+            magnitude += quant[coeff_context_position(tx_size, ref_row, ref_col)]
+                .unsigned_abs()
+                .min(3) as usize;
         }
     }
 
@@ -266,11 +311,13 @@ pub(super) fn coeff_base_context_1d(
     }
     let width = tx_size.width();
     let height = tx_size.height();
-    let row = position / width;
-    let col = position % width;
+    let (row, col) = directional_coeff_coords(tx_size, position);
+    // AV1's levels buffer is column-major.  The two directional classes use
+    // the same first two neighbours, then continue along their transform
+    // axis (see AOM's get_nz_mag()).
     let offsets: [(usize, usize); 5] = match tx_type {
-        TxType::VerticalDct => [(0, 1), (1, 0), (0, 2), (0, 3), (0, 4)],
-        TxType::HorizontalDct => [(0, 1), (1, 0), (2, 0), (3, 0), (4, 0)],
+        TxType::VerticalDct => [(0, 1), (1, 0), (2, 0), (3, 0), (4, 0)],
+        TxType::HorizontalDct => [(0, 1), (1, 0), (0, 2), (0, 3), (0, 4)],
         _ => {
             return Err(DecoderError::InvalidParam(
                 "AV1 1D coeff_base context requires a directional transform".to_string(),
@@ -282,17 +329,18 @@ pub(super) fn coeff_base_context_1d(
         .filter_map(|(dy, dx)| {
             let y = row + dy;
             let x = col + dx;
-            (y < height && x < width).then(|| quant[y * width + x].unsigned_abs().min(3) as usize)
+            (y < height && x < width).then(|| {
+                quant[directional_coeff_position(tx_size, y, x)]
+                    .unsigned_abs()
+                    .min(3) as usize
+            })
         })
         .sum::<usize>();
-    if position == 0 {
-        return Ok((0, magnitude));
-    }
     let delta = ((magnitude + 1) >> 1).min(4);
     let axis = if tx_type == TxType::HorizontalDct {
-        row
-    } else {
         col
+    } else {
+        row
     };
     let offset = if axis == 0 {
         26
@@ -322,15 +370,15 @@ pub(super) fn coeff_br_context_2d(
 
     let width = tx_size.width();
     let height = tx_size.height();
-    let row = position / width;
-    let col = position % width;
+    let (row, col) = coeff_context_coords(tx_size, position);
     let mut magnitude = 0usize;
     for (row_offset, col_offset) in MAG_REF_OFFSET_WITH_TX_CLASS_2D {
         let ref_row = row + row_offset;
         let ref_col = col + col_offset;
         if ref_row < height && ref_col < width {
-            magnitude +=
-                (quant[ref_row * width + ref_col].unsigned_abs() as usize).min(BR_LEVEL_CAP);
+            magnitude += (quant[coeff_context_position(tx_size, ref_row, ref_col)].unsigned_abs()
+                as usize)
+                .min(BR_LEVEL_CAP);
         }
     }
 
@@ -357,11 +405,10 @@ pub(super) fn coeff_br_context_1d(
     }
     let width = tx_size.width();
     let height = tx_size.height();
-    let row = position / width;
-    let col = position % width;
+    let (row, col) = directional_coeff_coords(tx_size, position);
     let offsets = match tx_type {
-        TxType::VerticalDct => [(0, 1), (1, 0), (0, 2)],
-        TxType::HorizontalDct => [(0, 1), (1, 0), (2, 0)],
+        TxType::VerticalDct => [(0, 1), (1, 0), (2, 0)],
+        TxType::HorizontalDct => [(0, 1), (1, 0), (0, 2)],
         _ => {
             return Err(DecoderError::InvalidParam(
                 "AV1 1D coeff_br context requires a directional transform".to_string(),
@@ -373,15 +420,17 @@ pub(super) fn coeff_br_context_1d(
         .filter_map(|(dy, dx)| {
             let y = row + dy;
             let x = col + dx;
-            (y < height && x < width)
-                .then(|| (quant[y * width + x].unsigned_abs() as usize).min(BR_LEVEL_CAP))
+            (y < height && x < width).then(|| {
+                (quant[directional_coeff_position(tx_size, y, x)].unsigned_abs() as usize)
+                    .min(BR_LEVEL_CAP)
+            })
         })
         .sum::<usize>();
     let delta = ((magnitude + 1) >> 1).min(6);
     if position == 0 {
         Ok(delta)
-    } else if (tx_type == TxType::HorizontalDct && row == 0)
-        || (tx_type == TxType::VerticalDct && col == 0)
+    } else if (tx_type == TxType::HorizontalDct && col == 0)
+        || (tx_type == TxType::VerticalDct && row == 0)
     {
         Ok(delta + 7)
     } else {

@@ -255,47 +255,33 @@ test-only and do not define the public decoded-frame contract.
 ## Diagnostic history
 
 The previous single-sample RGB measurements remain investigation notes only.
-The latest retained `WML2Viewer.avif` average RGB absolute error is about
-`50.161736`; it is not a completion criterion. After the AOM-aligned
-filter-intra palette exclusion and rectangular transform-context correction,
-the current pre-filter diagnostic has first mismatches at plane 0 `(128, 0)`,
-plane 1 `(128, 0)` and plane 2 `(128, 0)`, with 790,792, 774,349 and 771,959
-samples respectively. The reproducible test-only report is
+The latest retained `WML2Viewer.avif` average RGB absolute error is
+`62.484393827160496` before filters and `62.4219378600823` after the private
+filter pipeline; these values are diagnostic only. After the AOM-aligned
+palette filter-intra gating, rectangular transform contexts and Tx4x16
+transform-type set selection, the current pre-filter diagnostic reports first
+linear sample mismatches at plane 0 `384`, plane 1 `8032` and plane 2 `13597`,
+with `762668`, `754638` and `747874` samples respectively (the fixture is
+900x900). The reproducible test-only report is
 `decoder::prefilter_diagnostic_tests::reports_wml2viewer_prefilter_mismatches`.
-Its first luma mismatch is now in the large block `(128, 0)` with four
-`Tx64x64` transforms; this remains an entropy/reconstruction investigation
-note, not a conformance result.
-The AOM/Rust anchor now agrees through the `(88,16)` palette block, including
-palette-map pre/post entropy state and the `(80,24)` partition plus tx-size
-symbol. The normative AOM `get_txb_ctx_general` skip/DC context table also
-matches Rust for the supported Tx4x4 blocks. The next divergence is after the
-four residual blocks of `(80,24)` and before the `(80,28)` mode; coefficient
-block order, per-plane traversal, and rectangular transform representation
-remain explicit raw-reconstruction tasks. The current implementation still
-represents only square `TxSize` values, so all 19 rectangular transform forms
-remain unfinished.
+The AOM/Rust entropy anchor now agrees through the `(76,32)` Block4x16,
+including its Tx4x16 ADST_ADST luma coefficients and both chroma planes; the
+diagnostic prefix traverses 1929 luma blocks with no `Unsupported` boundary.
+The next completion criterion is the first remaining WML2Viewer pre-filter
+plane mismatch, not another synthetic fixture. Rectangular TxSize metadata,
+scan order, coefficient contexts and the small rectangular inverse-transform
+path are now covered, while the remaining 32/64-wide non-DCT and complete
+raw-plane equality work stay explicitly unfinished.
 The corresponding AOM trace labels the `(80,24)` chroma residual as `TX_8X4`
-(enum value 6), while the Rust path currently decodes that plane as `Tx4x4`;
-this is the concrete next representation gap to close before revisiting
-post-filter pixels.
-The decoder now has a tested `Tx8x4` representation and inverse-transform
-primitive, but it is intentionally not wired into frame traversal yet: the
-The entropy reader now retains AOM's full 32-bit arithmetic `dif` and uses the
-normative raw-bit probability for literals. The AOM-aligned probe still exposes
-a one-bit `tell` drift after the luma coefficient base/range symbols: the
-eob/base/range symbol sequence matches AOM, but the raw sign/Golomb interval
-ends at AOM `tell=394` versus Rust `tell=395`. Wiring `Tx8x4` before that state
-is fixed causes the next luma partition to diverge earlier, so the integration
-remains an explicit follow-up rather than a claimed conformance result.
-  The ignored stage report currently measures the private pipeline at about
-  `50.1617` RGB absolute error before filters and `50.1392` after
-  deblock/CDEF/Wiener/SGRPROJ, confirming that raw reconstruction remains the
-  dominant error. A direct FFmpeg `-skip_loop_filter all` diagnostic produces
-  the same plane mismatch counts as the generated fixture, so it is retained
-  as evidence only and is not promoted to a strict pre-filter oracle.
-  The frame header has `disable_cdf_update=false`; a test-only forced-CDF-update
-  run leaves the first mismatch and counts unchanged, so CDF update mode is
-  not currently supported as the primary explanation for the first block.
-  The next completion criterion is exact WML2Viewer
+(enum value 6), and the Rust traversal now preserves that rectangular plane
+transform; remaining differences are downstream raw reconstruction rather than
+the former square-only representation gap.
+The decoder now has tested rectangular TxSize representations and inverse
+transform anchors, but it is intentionally not wired as a final conformance
+oracle until all raw planes agree. The entropy reader retains AOM's full
+32-bit arithmetic `dif` and normative raw-bit probability for literals. The
+frame header has `disable_cdf_update=false`; a test-only forced-CDF-update run
+does not change the first mismatch, so CDF update mode is not the primary
+explanation for the remaining raw-plane error. The next completion criterion is exact WML2Viewer
 pre-filter native planes, followed by the final sample after normative filters
 are implemented.

@@ -163,6 +163,35 @@ impl BlockSize {
         }
     }
 
+    pub fn largest_supported_rect_tx_size(self) -> TxSize {
+        match self {
+            Self::Block4x4 => TxSize::Tx4x4,
+            Self::Block4x8 => TxSize::Tx4x8,
+            Self::Block8x4 => TxSize::Tx8x4,
+            Self::Block8x8 => TxSize::Tx8x8,
+            Self::Block8x16 => TxSize::Tx8x16,
+            Self::Block16x8 => TxSize::Tx16x8,
+            Self::Block16x16 => TxSize::Tx16x16,
+            Self::Block16x32 => TxSize::Tx16x32,
+            Self::Block32x16 => TxSize::Tx32x16,
+            Self::Block32x32 => TxSize::Tx32x32,
+            Self::Block32x64 => TxSize::Tx32x64,
+            Self::Block64x32 => TxSize::Tx64x32,
+            Self::Block64x64
+            | Self::Block32x128
+            | Self::Block128x32
+            | Self::Block64x128
+            | Self::Block128x64
+            | Self::Block128x128 => TxSize::Tx64x64,
+            Self::Block4x16 => TxSize::Tx4x16,
+            Self::Block16x4 => TxSize::Tx16x4,
+            Self::Block8x32 => TxSize::Tx8x32,
+            Self::Block32x8 => TxSize::Tx32x8,
+            Self::Block16x64 => TxSize::Tx16x64,
+            Self::Block64x16 => TxSize::Tx64x16,
+        }
+    }
+
     pub fn largest_supported_tx_dimensions(self) -> (usize, usize) {
         (self.width().min(64), self.height().min(64))
     }
@@ -208,7 +237,11 @@ impl BlockSize {
     }
 
     pub fn tx_size_from_depth(self, depth: usize) -> TxSize {
-        let mut tx_size = self.largest_supported_tx_size();
+        let mut tx_size = if self.width() == self.height() {
+            self.largest_supported_tx_size()
+        } else {
+            self.largest_supported_rect_tx_size()
+        };
         for _ in 0..depth.min(self.max_tx_size_depth()) {
             tx_size = tx_size.sub_size();
         }
@@ -438,8 +471,21 @@ pub enum TxSize {
     Tx16x16,
     Tx32x32,
     Tx64x64,
+    Tx4x8,
     /// AV1's first rectangular transform (8 columns by 4 rows).
     Tx8x4,
+    Tx8x16,
+    Tx16x8,
+    Tx16x32,
+    Tx32x16,
+    Tx32x64,
+    Tx64x32,
+    Tx4x16,
+    Tx16x4,
+    Tx8x32,
+    Tx32x8,
+    Tx16x64,
+    Tx64x16,
 }
 
 impl TxSize {
@@ -458,12 +504,25 @@ impl TxSize {
             Self::Tx16x16 => 4,
             Self::Tx32x32 => 5,
             Self::Tx64x64 => 6,
+            Self::Tx4x8 | Self::Tx4x16 => 2,
             Self::Tx8x4 => 3,
+            Self::Tx8x16 | Self::Tx8x32 => 3,
+            Self::Tx16x8 | Self::Tx16x32 | Self::Tx16x4 | Self::Tx16x64 => 4,
+            Self::Tx32x16 | Self::Tx32x64 | Self::Tx32x8 => 5,
+            Self::Tx64x32 | Self::Tx64x16 => 6,
         }
     }
 
     pub fn height_log2(self) -> u8 {
         match self {
+            Self::Tx4x8 => 3,
+            Self::Tx8x16 | Self::Tx4x16 => 4,
+            Self::Tx16x32 | Self::Tx8x32 => 5,
+            Self::Tx32x64 | Self::Tx16x64 => 6,
+            Self::Tx16x8 | Self::Tx32x8 => 3,
+            Self::Tx32x16 | Self::Tx64x16 => 4,
+            Self::Tx64x32 => 5,
+            Self::Tx16x4 => 2,
             Self::Tx8x4 => 2,
             _ => self.width_log2(),
         }
@@ -475,10 +534,18 @@ impl TxSize {
 
     pub fn row_shift(self) -> u8 {
         match self {
-            Self::Tx4x4 => 0,
-            Self::Tx8x8 => 1,
-            Self::Tx16x16 | Self::Tx32x32 | Self::Tx64x64 => 2,
-            Self::Tx8x4 => 1,
+            Self::Tx4x4 | Self::Tx4x8 | Self::Tx8x4 => 0,
+            Self::Tx8x8 | Self::Tx8x16 | Self::Tx16x8 => 1,
+            Self::Tx16x16
+            | Self::Tx32x32
+            | Self::Tx64x64
+            | Self::Tx16x32
+            | Self::Tx32x16
+            | Self::Tx32x64
+            | Self::Tx64x32
+            | Self::Tx4x16
+            | Self::Tx16x4 => 2,
+            Self::Tx8x32 | Self::Tx32x8 | Self::Tx16x64 | Self::Tx64x16 => 2,
         }
     }
 
@@ -493,11 +560,10 @@ impl TxSize {
     pub fn coeff_cdf_index(self) -> usize {
         match self {
             Self::Tx4x4 => 0,
-            Self::Tx8x8 => 1,
-            Self::Tx16x16 => 2,
-            Self::Tx32x32 => 3,
-            Self::Tx64x64 => 4,
-            Self::Tx8x4 => 1,
+            Self::Tx8x8 | Self::Tx4x8 | Self::Tx8x4 | Self::Tx4x16 | Self::Tx16x4 => 1,
+            Self::Tx16x16 | Self::Tx8x16 | Self::Tx16x8 | Self::Tx8x32 | Self::Tx32x8 => 2,
+            Self::Tx32x32 | Self::Tx16x32 | Self::Tx32x16 | Self::Tx16x64 | Self::Tx64x16 => 3,
+            Self::Tx64x64 | Self::Tx32x64 | Self::Tx64x32 => 4,
         }
     }
 
@@ -508,8 +574,21 @@ impl TxSize {
             Self::Tx16x16 => Self::Tx8x8,
             Self::Tx8x8 => Self::Tx4x4,
             Self::Tx4x4 => Self::Tx4x4,
-            Self::Tx8x4 => Self::Tx4x4,
+            Self::Tx4x8 | Self::Tx8x4 => Self::Tx4x4,
+            Self::Tx8x16 | Self::Tx16x8 => Self::Tx8x8,
+            Self::Tx16x32 | Self::Tx32x16 => Self::Tx16x16,
+            Self::Tx32x64 | Self::Tx64x32 => Self::Tx32x32,
+            Self::Tx4x16 => Self::Tx4x8,
+            Self::Tx16x4 => Self::Tx8x4,
+            Self::Tx8x32 => Self::Tx8x16,
+            Self::Tx32x8 => Self::Tx16x8,
+            Self::Tx16x64 => Self::Tx16x32,
+            Self::Tx64x16 => Self::Tx32x16,
         }
+    }
+
+    pub fn is_rectangular(self) -> bool {
+        self.width() != self.height()
     }
 }
 

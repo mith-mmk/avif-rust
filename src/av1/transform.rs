@@ -74,6 +74,28 @@ pub fn zig_zag_scan(tx_size: TxSize) -> Vec<usize> {
     let full_width = tx_size.width();
     let scan_width = full_width.min(32);
     let scan_height = tx_size.height().min(32);
+    if tx_size.is_rectangular() {
+        // AOM stores rectangular transform coefficients column-major.  Its
+        // default scan follows diagonals, reversing each diagonal when the
+        // transform is wider than tall.
+        let mut scan = Vec::with_capacity(scan_width * scan_height);
+        for diagonal in 0..=(scan_width + scan_height - 2) {
+            let first = (diagonal + 1).saturating_sub(scan_width);
+            let last = diagonal.min(scan_height - 1);
+            if scan_width >= scan_height {
+                for row in (first..=last).rev() {
+                    let column = diagonal - row;
+                    scan.push(column * tx_size.height() + row);
+                }
+            } else {
+                for row in first..=last {
+                    let column = diagonal - row;
+                    scan.push(column * tx_size.height() + row);
+                }
+            }
+        }
+        return scan;
+    }
     let mut scan = Vec::with_capacity(scan_width * scan_height);
     for diagonal in 0..=(scan_width + scan_height - 2) {
         if diagonal % 2 == 1 {
@@ -112,6 +134,12 @@ pub fn coefficient_scan(tx_size: TxSize, tx_type: TxType) -> Vec<usize> {
     let scan_width = width.min(32);
     let scan_height = tx_size.height().min(32);
     match tx_type {
+        TxType::VerticalDct if tx_size.is_rectangular() => (0..scan_height)
+            .flat_map(|row| (0..scan_width).map(move |column| column * tx_size.height() + row))
+            .collect(),
+        TxType::HorizontalDct if tx_size.is_rectangular() => {
+            (0..scan_width * scan_height).collect()
+        }
         TxType::VerticalDct => (0..scan_width)
             .flat_map(|column| (0..scan_height).map(move |row| row * width + column))
             .collect(),
@@ -308,8 +336,13 @@ pub fn inverse_transform(
     if tx_size == TxSize::Tx8x8 {
         return Ok(inverse_transform_8x8(tx_type, dequant, bit_depth));
     }
-    if tx_size == TxSize::Tx8x4 {
-        return Ok(inverse_transform_8x4(tx_type, dequant, bit_depth));
+    if tx_size.is_rectangular() {
+        if tx_size.width().max(tx_size.height()) > 16 && tx_type != TxType::DctDct {
+            return Err(DecoderError::Unsupported(format!(
+                "AV1 {tx_size:?} non-DCT transform is not signaled for intra blocks"
+            )));
+        }
+        return Ok(inverse_transform_rect(tx_type, tx_size, dequant, bit_depth));
     }
     if tx_size == TxSize::Tx16x16 {
         return Ok(inverse_transform_16x16(tx_type, dequant, bit_depth));
@@ -330,10 +363,95 @@ pub fn inverse_transform(
     match tx_size {
         TxSize::Tx32x32 => inverse_transform_32x32_dct(dequant, bit_depth),
         TxSize::Tx64x64 => inverse_transform_64x64_dct(dequant, bit_depth),
-        TxSize::Tx4x4 | TxSize::Tx8x8 | TxSize::Tx16x16 | TxSize::Tx8x4 => {
+        TxSize::Tx4x4 | TxSize::Tx8x8 | TxSize::Tx16x16 => {
             unreachable!("small transforms are dispatched before large DCT fallback handling")
         }
+        _ => Err(DecoderError::Unsupported(format!(
+            "AV1 {tx_size:?} rectangular transform is not supported yet"
+        ))),
     }
+}
+
+fn inverse_transform_rect(
+    tx_type: TxType,
+    tx_size: TxSize,
+    dequant: &[i32],
+    bit_depth: u8,
+) -> Vec<i32> {
+    let width = tx_size.width();
+    let height = tx_size.height();
+    let (vertical, horizontal) = staged_transform_pair(tx_type);
+    let row_shift = match tx_size {
+        TxSize::Tx4x8 | TxSize::Tx8x4 => 0,
+        TxSize::Tx8x16 | TxSize::Tx16x8 | TxSize::Tx4x16 | TxSize::Tx16x4 => 1,
+        TxSize::Tx16x32 | TxSize::Tx32x16 | TxSize::Tx32x64 | TxSize::Tx64x32 => 1,
+        TxSize::Tx8x32 | TxSize::Tx32x8 | TxSize::Tx16x64 | TxSize::Tx64x16 => 2,
+        _ => unreachable!("rectangular transform dimensions are unsupported"),
+    };
+    let row_range = if bit_depth == 10 { 18 } else { 16 };
+    let mut intermediate = vec![0i32; width * height];
+    for row in 0..height {
+        let input = (0..width)
+            .map(|column| clamp_signed(dequant[column * height + row], bit_depth + 8))
+            .collect::<Vec<_>>();
+        let values = inverse_staged_dynamic(horizontal, &input, row_range);
+        for column in 0..width {
+            intermediate[row * width + column] = round2_signed(values[column], row_shift);
+        }
+    }
+
+    let residual_limit = 1i32 << (bit_depth + 7);
+    let mut output = vec![0i32; width * height];
+    for column in 0..width {
+        let input = (0..height)
+            .map(|row| clamp_signed(intermediate[row * width + column], 16))
+            .collect::<Vec<_>>();
+        let values = inverse_staged_dynamic(vertical, &input, 16);
+        for row in 0..height {
+            output[row * width + column] =
+                round2_signed(values[row], 4).clamp(-residual_limit, residual_limit - 1);
+        }
+    }
+    output
+}
+
+fn inverse_staged_dynamic(transform: StagedTransform, input: &[i32], range: u8) -> Vec<i32> {
+    match input.len() {
+        4 => inverse_staged_4(transform, input.try_into().expect("length checked"), range).to_vec(),
+        8 => inverse_staged_8(transform, input.try_into().expect("length checked"), range).to_vec(),
+        16 => {
+            inverse_staged_16(transform, input.try_into().expect("length checked"), range).to_vec()
+        }
+        32 if transform == StagedTransform::Dct => inverse_dct32_1d(input, range),
+        64 if transform == StagedTransform::Dct => inverse_dct64_1d(input, range),
+        _ => unreachable!("rectangular transform stage length is unsupported"),
+    }
+}
+
+fn inverse_dct32_1d(input: &[i32], range: u8) -> Vec<i32> {
+    const BASIS_BITS: u8 = 12;
+    let basis = inverse_dct32_basis_table();
+    (0..32)
+        .map(|sample| {
+            let sum = (0..32)
+                .map(|coeff| i64::from(basis[sample * 32 + coeff]) * i64::from(input[coeff]))
+                .sum::<i64>();
+            round_shift_i64(sum, BASIS_BITS).clamp(-(1i64 << range), (1i64 << range) - 1) as i32
+        })
+        .collect()
+}
+
+fn inverse_dct64_1d(input: &[i32], range: u8) -> Vec<i32> {
+    const BASIS_BITS: u8 = 12;
+    let basis = inverse_dct64_basis_table();
+    (0..64)
+        .map(|sample| {
+            let sum = (0..64)
+                .map(|coeff| i64::from(basis[sample * 64 + coeff]) * i64::from(input[coeff]))
+                .sum::<i64>();
+            round_shift_i64(sum, BASIS_BITS).clamp(-(1i64 << range), (1i64 << range) - 1) as i32
+        })
+        .collect()
 }
 
 fn inverse_transform_32x32_dct(dequant: &[i32], bit_depth: u8) -> Result<Vec<i32>, DecoderError> {
@@ -565,7 +683,11 @@ fn inverse_transform_8x4(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> Vec
     let row_range = if bit_depth == 10 { 18 } else { 16 };
     let mut intermediate = [0i32; 32];
     for row in 0..4 {
-        let input = std::array::from_fn(|column| clamp_signed(dequant[row * 8 + column], bit_depth + 8));
+        // Rectangular AV1 transforms store coefficients column-major.  This
+        // is also the layout consumed by AOM's `input[c * tx_height + r]`
+        // row pass; square transforms happen to hide the distinction.
+        let input =
+            std::array::from_fn(|column| clamp_signed(dequant[column * 4 + row], bit_depth + 8));
         let transformed = inverse_staged_8(horizontal, input, row_range);
         for column in 0..8 {
             intermediate[row * 8 + column] = round2_signed(transformed[column], 1);
@@ -1106,6 +1228,17 @@ mod tests {
         assert_eq!(
             scan,
             vec![0, 4, 1, 2, 5, 8, 12, 9, 6, 3, 7, 10, 13, 14, 11, 15]
+        );
+    }
+
+    #[test]
+    fn zig_zag_scan_orders_aom_rectangular_transform() {
+        assert_eq!(
+            zig_zag_scan(TxSize::Tx8x4),
+            vec![
+                0, 1, 4, 2, 5, 8, 3, 6, 9, 12, 7, 10, 13, 16, 11, 14, 17, 20, 15, 18, 21, 24, 19,
+                22, 25, 28, 23, 26, 29, 27, 30, 31,
+            ]
         );
     }
 
