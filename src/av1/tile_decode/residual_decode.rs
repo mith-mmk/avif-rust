@@ -10,7 +10,7 @@ use crate::av1::frame::FrameHeader;
 use crate::av1::quant::QuantState;
 use crate::av1::syntax::{TxSize, TxType};
 use crate::av1::tile_decode::coefficient::CoefficientRead;
-use crate::av1::transform::TransformBlock;
+use crate::av1::transform::{TransformBlock, remap_directional_coefficients};
 
 impl<'a> TileDecoder<'a> {
     pub fn read_first_transform_residual(
@@ -149,8 +149,13 @@ impl<'a> TileDecoder<'a> {
             .read_intra_tx_type(frame, block_mode, transform)?
             .tx_type;
         let plane_type = usize::from(transform.plane > 0);
-        let coefficient_read =
+        let mut coefficient_read =
             self.read_coefficient_state(transform.tx_size, tx_type, plane_type, dc_sign_context)?;
+        remap_directional_coefficients(
+            transform.tx_size,
+            tx_type,
+            &mut coefficient_read.base.base_levels,
+        );
         Ok(DecodedTransform {
             transform,
             tx_type,

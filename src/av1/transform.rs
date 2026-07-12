@@ -150,6 +150,91 @@ pub fn coefficient_scan(tx_size: TxSize, tx_type: TxType) -> Vec<usize> {
     }
 }
 
+fn normative_square_row_scan(tx_size: TxSize) -> Vec<usize> {
+    match tx_size {
+        TxSize::Tx4x4 => vec![0, 1, 4, 2, 5, 3, 6, 8, 9, 7, 12, 10, 13, 11, 14, 15],
+        TxSize::Tx8x8 => vec![
+            0, 1, 2, 8, 9, 3, 16, 10, 4, 17, 11, 24, 5, 18, 25, 12, 19, 26, 32, 6, 13, 20, 33, 27,
+            7, 34, 40, 21, 28, 41, 14, 35, 48, 42, 29, 36, 49, 22, 43, 15, 56, 37, 50, 44, 30, 57,
+            23, 51, 58, 45, 38, 52, 31, 59, 53, 46, 60, 39, 61, 47, 54, 55, 62, 63,
+        ],
+        TxSize::Tx16x16 => vec![
+            0, 1, 2, 16, 3, 17, 4, 18, 32, 5, 33, 19, 6, 34, 48, 20, 49, 7, 35, 21, 50, 64, 8, 36,
+            65, 22, 51, 37, 80, 9, 66, 52, 23, 38, 81, 67, 10, 53, 24, 82, 68, 96, 39, 11, 54, 83,
+            97, 69, 25, 98, 84, 40, 112, 55, 12, 70, 99, 113, 85, 26, 41, 56, 114, 100, 13, 71,
+            128, 86, 27, 115, 101, 129, 42, 57, 72, 116, 14, 87, 130, 102, 144, 73, 131, 117, 28,
+            58, 15, 88, 43, 145, 103, 132, 146, 118, 74, 160, 89, 133, 104, 29, 59, 147, 119, 44,
+            161, 148, 90, 105, 134, 162, 120, 176, 75, 135, 149, 30, 60, 163, 177, 45, 121, 91,
+            106, 164, 178, 150, 192, 136, 165, 179, 31, 151, 193, 76, 122, 61, 137, 194, 107, 152,
+            180, 208, 46, 166, 167, 195, 92, 181, 138, 209, 123, 153, 224, 196, 77, 168, 210, 182,
+            240, 108, 197, 62, 154, 225, 183, 169, 211, 47, 139, 93, 184, 226, 212, 241, 198, 170,
+            124, 155, 199, 78, 213, 185, 109, 227, 200, 63, 228, 242, 140, 214, 171, 186, 156, 229,
+            243, 125, 94, 201, 244, 215, 216, 230, 141, 187, 202, 79, 172, 110, 157, 245, 217, 231,
+            95, 246, 232, 126, 203, 247, 233, 173, 218, 142, 111, 158, 188, 248, 127, 234, 219,
+            249, 189, 204, 143, 174, 159, 250, 235, 205, 220, 175, 190, 251, 221, 191, 206, 236,
+            207, 237, 252, 222, 253, 223, 238, 239, 254, 255,
+        ],
+        _ => (0..tx_size.sample_count()).collect(),
+    }
+}
+
+fn normative_square_col_scan(tx_size: TxSize) -> Vec<usize> {
+    match tx_size {
+        TxSize::Tx4x4 => vec![0, 4, 8, 1, 12, 5, 2, 9, 6, 3, 13, 10, 7, 14, 11, 15],
+        TxSize::Tx8x8 => vec![
+            0, 8, 16, 1, 24, 9, 32, 17, 2, 40, 25, 10, 33, 18, 48, 3, 26, 41, 11, 56, 19, 34, 4,
+            49, 27, 42, 12, 35, 20, 57, 50, 28, 5, 43, 13, 36, 58, 51, 21, 44, 6, 29, 59, 37, 14,
+            52, 22, 7, 45, 60, 30, 15, 38, 53, 23, 46, 31, 61, 39, 54, 47, 62, 55, 63,
+        ],
+        TxSize::Tx16x16 => vec![
+            0, 16, 32, 48, 1, 64, 17, 80, 33, 96, 49, 2, 65, 112, 18, 81, 34, 128, 50, 97, 3, 66,
+            144, 19, 113, 35, 82, 160, 98, 51, 129, 4, 67, 176, 20, 114, 145, 83, 36, 99, 130, 52,
+            192, 5, 161, 68, 115, 21, 146, 84, 208, 177, 37, 131, 100, 53, 162, 224, 69, 6, 116,
+            193, 147, 85, 22, 240, 132, 38, 178, 101, 163, 54, 209, 117, 70, 7, 148, 194, 86, 179,
+            225, 23, 133, 39, 164, 8, 102, 210, 241, 55, 195, 118, 149, 71, 180, 24, 87, 226, 134,
+            165, 211, 40, 103, 56, 72, 150, 196, 242, 119, 9, 181, 227, 88, 166, 25, 135, 41, 104,
+            212, 57, 151, 197, 120, 73, 243, 182, 136, 167, 213, 89, 10, 228, 105, 152, 198, 26,
+            42, 121, 183, 244, 168, 58, 137, 229, 74, 214, 90, 153, 199, 184, 11, 106, 245, 27,
+            122, 230, 169, 43, 215, 59, 200, 138, 185, 246, 75, 12, 91, 154, 216, 231, 107, 28, 44,
+            201, 123, 170, 60, 247, 232, 76, 139, 13, 92, 217, 186, 248, 155, 108, 29, 124, 45,
+            202, 233, 171, 61, 14, 77, 140, 15, 249, 93, 30, 187, 156, 218, 46, 109, 125, 62, 172,
+            78, 203, 31, 141, 234, 94, 47, 188, 63, 157, 110, 250, 219, 79, 126, 204, 173, 142, 95,
+            189, 111, 235, 158, 220, 251, 127, 174, 143, 205, 236, 159, 190, 221, 252, 175, 206,
+            237, 191, 253, 222, 238, 207, 254, 223, 239, 255,
+        ],
+        _ => (0..tx_size.sample_count()).collect(),
+    }
+}
+
+pub(crate) fn remap_directional_coefficients(
+    tx_size: TxSize,
+    tx_type: TxType,
+    coefficients: &mut [i32],
+) {
+    if coefficients.len() != tx_size.sample_count()
+        || !matches!(tx_type, TxType::VerticalDct | TxType::HorizontalDct)
+    {
+        return;
+    }
+    let normative = match tx_type {
+        TxType::VerticalDct => normative_square_row_scan(tx_size),
+        TxType::HorizontalDct => normative_square_col_scan(tx_size),
+        _ => return,
+    };
+    if tx_size.is_rectangular() || normative.len() != coefficients.len() {
+        return;
+    }
+    let legacy = coefficient_scan(tx_size, tx_type);
+    let scanned = legacy
+        .iter()
+        .map(|position| coefficients[*position])
+        .collect::<Vec<_>>();
+    coefficients.fill(0);
+    for (index, position) in normative.into_iter().enumerate() {
+        coefficients[position] = scanned[index];
+    }
+}
+
 pub fn coefficients_from_scan(
     tx_size: TxSize,
     tx_type: TxType,
@@ -1333,6 +1418,34 @@ mod tests {
             &coefficient_scan(TxSize::Tx8x8, TxType::HorizontalDct)[..8],
             &[0, 1, 2, 3, 4, 5, 6, 7]
         );
+    }
+
+    #[test]
+    fn remaps_legacy_directional_coefficients_to_normative_square_positions() {
+        let mut coefficients = vec![0; TxSize::Tx8x8.sample_count()];
+        for (index, position) in coefficient_scan(TxSize::Tx8x8, TxType::HorizontalDct)
+            .into_iter()
+            .enumerate()
+        {
+            coefficients[position] = index as i32;
+        }
+        remap_directional_coefficients(TxSize::Tx8x8, TxType::HorizontalDct, &mut coefficients);
+        assert_eq!(&coefficients[..8], &[0, 3, 8, 15, 22, 32, 40, 47]);
+    }
+
+    #[test]
+    fn normative_directional_scans_are_permutations_for_supported_square_sizes() {
+        for tx_size in [TxSize::Tx4x4, TxSize::Tx8x8, TxSize::Tx16x16] {
+            for scan in [
+                normative_square_row_scan(tx_size),
+                normative_square_col_scan(tx_size),
+            ] {
+                assert_eq!(scan.len(), tx_size.sample_count());
+                let mut sorted = scan;
+                sorted.sort_unstable();
+                assert_eq!(sorted, (0..tx_size.sample_count()).collect::<Vec<_>>());
+            }
+        }
     }
 
     #[test]
