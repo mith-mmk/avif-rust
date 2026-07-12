@@ -1325,6 +1325,14 @@ mod tests {
             &coefficient_scan(TxSize::Tx4x4, TxType::HorizontalDct)[..8],
             &[0, 1, 2, 3, 4, 5, 6, 7]
         );
+        assert_eq!(
+            &coefficient_scan(TxSize::Tx8x8, TxType::VerticalDct)[..8],
+            &[0, 8, 16, 24, 32, 40, 48, 56]
+        );
+        assert_eq!(
+            &coefficient_scan(TxSize::Tx8x8, TxType::HorizontalDct)[..8],
+            &[0, 1, 2, 3, 4, 5, 6, 7]
+        );
     }
 
     #[test]

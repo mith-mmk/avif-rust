@@ -296,3 +296,11 @@ normative `Col_Scan_8x8` for `H_DCT` (and `Row_Scan_8x8` for `V_DCT`). The
 corresponding square row/column scan tables are the next source-code fix;
 this diagnosis is not yet marked complete until the exact-plane test is
 rerun and the mismatch moves or disappears.
+
+An attempted replacement with the normative square `Row_Scan`/`Col_Scan` and
+`Default_Scan` tables was reverted: it changed the AOM coefficient transcript
+and sample-prefix regression counts, so this crate's current raster/scan
+representation needs a dedicated storage-mapping change before those tables
+can be wired in. With the current scan path, the first WML2Viewer mismatch is
+still the luma leaf at `(96,16)`; the next investigation should trace its
+residual/coverage path rather than change scan order in isolation.
