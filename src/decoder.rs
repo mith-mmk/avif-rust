@@ -496,10 +496,24 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
             } else {
                 strength.uv_pri
             };
-            let direction = if primary_strength == 0 {
+            // AOM keeps the detected direction when the configured primary
+            // strength is non-zero, even if variance adjustment reduces the
+            // effective luma strength to zero. Chroma uses direction zero
+            // when its configured primary strength is disabled.
+            let configured_primary = if plane_index == 0 {
+                strength.y_pri
+            } else {
+                strength.uv_pri
+            };
+            let direction = if configured_primary == 0 {
                 0
             } else {
                 detected_direction
+            };
+            let secondary_strength = if plane_index == 0 {
+                strength.y_sec
+            } else {
+                strength.uv_sec
             };
             let damping = frame_header
                 .cdef
@@ -515,11 +529,7 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
                 (height - y).min(8),
                 direction,
                 primary_strength,
-                if plane_index == 0 {
-                    strength.y_sec
-                } else {
-                    strength.uv_sec
-                },
+                secondary_strength,
                 damping,
                 true,
             );
