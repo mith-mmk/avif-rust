@@ -4,6 +4,8 @@ use super::reconstruct::{add_residual_to_prediction, write_plane_block};
 use super::syntax::{BlockSize, TxSize, TxType};
 use crate::DecoderError;
 
+mod dct64;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransformBlock {
     pub plane: usize,
@@ -782,27 +784,7 @@ fn inverse_dct32(i: [i32; 32], r: u8) -> [i32; 32] {
 }
 
 fn inverse_dct64_1d(input: &[i32], range: u8) -> Vec<i32> {
-    const BASIS_BITS: u8 = 12;
-    (0..64)
-        .map(|sample| {
-            let sum = (0..64)
-                .map(|coeff| {
-                    i64::from(inverse_dct64_core_basis(sample, coeff)) * i64::from(input[coeff])
-                })
-                .sum::<i64>();
-            round_shift_i64(sum, BASIS_BITS).clamp(-(1i64 << range), (1i64 << range) - 1) as i32
-        })
-        .collect()
-}
-
-fn inverse_dct64_core_basis(sample: usize, coeff: usize) -> i32 {
-    if coeff == 0 {
-        return cospi(32);
-    }
-    round_shift_i64(
-        i64::from(cospi_unit_128((2 * sample + 1) * coeff)) * NEW_SQRT2,
-        NEW_SQRT2_BITS,
-    ) as i32
+    dct64::inverse_dct64(input.try_into().expect("length checked"), range).to_vec()
 }
 
 fn inverse_transform_32x32_dct(dequant: &[i32], bit_depth: u8) -> Result<Vec<i32>, DecoderError> {
@@ -2066,7 +2048,7 @@ mod tests {
     }
 
     #[test]
-    fn tx16x64_dct_uses_unscaled_64_point_stage_basis() {
+    fn tx16x64_dct_uses_staged_64_point_rounding() {
         let mut coefficients = vec![0; TxSize::Tx16x64.sample_count()];
         coefficients[1] = 88;
         let residual =

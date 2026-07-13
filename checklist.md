@@ -124,7 +124,7 @@ exact native-plane fixture before the next feature is enabled.
 - [x] Match the two-stage rounding for DC-only `Tx64x64` and remove the
       square-transform `1/8` output scaling from the 64-point stage reused by
       rectangular transforms.
-- [ ] Port the normative staged 64-point inverse DCT, including intermediate
+- [x] Port the normative staged 64-point inverse DCT, including intermediate
       range clamps and rounding, and pin the `WML2Viewer` `Tx16x64` path.
 - [ ] Validate the remaining chroma transform derivation and 32x32/64x64
       transform paths against normative reference vectors.
@@ -311,7 +311,7 @@ lengths, 64x64-unit residual plane interleaving and restoration-unit edge
 rounding, exact partial directional-edge lengths, DC-only 64x64 rounding and
 64-point rectangular-stage scaling, the 900x900 fixture reports:
 
-- plane 0: first linear mismatch `249476` (`x=176,y=277`), `211926` mismatches;
+- plane 0: first linear mismatch `288541` (`x=541,y=320`), `211779` mismatches;
 - plane 1: first linear mismatch `28882` (`x=82,y=32`), `443615` mismatches;
 - plane 2: first linear mismatch `28882` (`x=82,y=32`), `364565` mismatches.
 
@@ -336,12 +336,13 @@ rounds the unit count to nearest and merges that remainder. Correcting both
 advanced the investigation to `(523,142)`. Exact partial bottom-left padding
 then fixed the `Tx16x4 DctAdst` block at `(448,152)`, while two-stage DC-only
 rounding fixed the `Tx64x64` block at `(192,192)`. Decode-order transform
-hashes now agree through index 2492; the first differing transform is index
-2493, the `Tx16x64 DctDct` block at `(176,256)`. Its prediction agrees with
-AOM, but a direct cosine-basis 64-point core cannot reproduce AOM's staged
-intermediate rounding. Port the normative staged DCT64 before advancing to
-post-filter pixels; the first raster-order luma mismatch produced by that
-block is `(176,277)`. Lossy 4x4 `DctDct` also uses the square transpose, while
+hashes agreed through index 2492; the former first differing transform was
+index 2493, the `Tx16x64 DctDct` block at `(176,256)`. Its prediction already
+agreed with AOM, while a direct cosine-basis 64-point core could not reproduce
+AOM's intermediate rounding. The staged DCT64 now fixes that block and
+advances the first raster-order luma mismatch from `(176,277)` to `(541,320)`.
+Investigate that new raw mismatch before advancing to post-filter pixels.
+Lossy 4x4 `DctDct` also uses the square transpose, while
 coded-lossless 4x4 WHT explicitly retains its original storage so the exact
 `filter-disabled-directional` oracle stays green. Post-filter work must not be
 used to mask this raw-plane difference.
