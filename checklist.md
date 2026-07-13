@@ -198,9 +198,12 @@ public decoded-frame shape.
 - [ ] Match normative CDEF frame preparation and block semantics: luma
       direction/variance is shared with chroma, luma primary strength uses the
       directional-variance adjustment, secondary strength `3` maps to `4`,
-      and frame-edge sentinel/clipping behavior remains to be made exact.
-- [ ] Generate a post-filter oracle with deblock enabled and restoration
-      disabled before treating CDEF stage metrics as authoritative.
+      and frame-edge sentinel/clipping behavior remains to be made exact. The
+      scalar direction table now follows AOM's axis order; 8-bit chroma damping
+      applies the normative one-step reduction.
+- [x] Generate a local diagnostic oracle with deblock enabled and restoration
+      disabled; keep the CDEF result non-authoritative until all plane values
+      are exact and add a reproducible bootstrap recipe before release.
 - [ ] Implement loop restoration and restoration-unit boundary handling.
 - [x] Implement the scalar Wiener restoration kernel with transmitted
       vertical/horizontal axis order, AOM's 3/11-bit intermediate rounding and
@@ -370,9 +373,9 @@ coded-lossless 4x4 WHT explicitly retains its original storage so the exact
 
 The current post-filter diagnostic compares each private stage with FFmpeg's
 final `gbrp` output. Raw RGB average absolute error is
-`0.14965555555555554`; the deblock and CDEF stages currently report
-`0.1328135802469136` and `0.10304238683127571`. A dedicated AOM oracle with
-deblock enabled and restoration disabled is now generated locally. The Rust
+`0.14965555555555554`; the deblock and CDEF stages now report
+`0.1328135802469136` and `0.06230658436213992`. A dedicated AOM oracle with
+deblock enabled and restoration disabled is generated locally. The Rust
 deblock stage still differs from that oracle by plane as follows:
 
 - plane 0: `mismatches=13944`, `average_abs=0.02335432098765432`;
@@ -380,14 +383,17 @@ deblock stage still differs from that oracle by plane as follows:
 - plane 2: `mismatches=9471`, `average_abs=0.01992962962962963`.
 
 Against the corresponding AOM deblock-plus-CDEF oracle, the Rust CDEF stage
-currently reports `59468/0.09584074074074074`, `69570/0.11351358024691358`
-and `59995/0.09977283950617284` mismatches/average absolute error for planes
-0/1/2 respectively.
+now reports `18302/0.025276543209876542`, `18678/0.02910246913580247` and
+`15338/0.02364567901234568` mismatches/average absolute error for planes
+0/1/2 respectively. Applying the Rust CDEF implementation to the exact AOM
+deblock input isolates the remaining CDEF differences to
+`1034/0.0012814814814814815`, `30/0.00003827160493827161` and
+`39/0.00004814814814814815` for planes 0/1/2.
 
 These are diagnostic checkpoints only; normative level derivation, boundary
 coverage and exact kernel behavior remain unfinished. Porting Wiener add-src precision,
-transmitted axis order and halo processing reduced the Wiener-stage error from
-`0.29293786008230455`/max `254` to `0.15343045267489713`/max `25` in the
-current diagnostic order. The combined restoration scaffold currently reports
-`0.14680576131687242`; normative stripe boundaries, deblock level derivation,
-CDEF exactness and SGRPROJ math remain before the final oracle can be enabled.
+transmitted axis order and halo processing reduced the Wiener-stage RGB error
+to `0.11815144032921811` in the current diagnostic order. The combined
+restoration scaffold now reports `0.10825185185185185`; normative stripe
+boundaries, deblock level derivation, CDEF exactness and SGRPROJ math remain
+before the final oracle can be enabled.
