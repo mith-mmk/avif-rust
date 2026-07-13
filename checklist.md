@@ -180,9 +180,11 @@ public decoded-frame shape.
 
 - [x] Collect CDEF indices within each tile during block traversal.
 - [x] Aggregate CDEF indices into frame-private post-filter state during full/prefix traversal; retain the state for the filter-application stage.
-- [ ] Retain transform boundaries and restoration unit type/coefficients
+- [x] Retain transform boundaries and restoration unit type/coefficients
       during frame decode.
-- [ ] Retain transform-boundary skip/mode state during frame decode.
+- [x] Retain transform-boundary skip/mode state during frame decode.
+- [ ] Use the retained skip/mode state when deriving normative deblock levels
+      and edge lengths.
 - [ ] Integrate frame-level post-filter state and apply filters in fixed order:
       deblock -> CDEF -> loop restoration; verify each stage with plane oracles.
 - [ ] Implement deblocking in normative order with boundary and strength
@@ -194,8 +196,10 @@ public decoded-frame shape.
       kernel.
 - [ ] Implement CDEF and apply the decoded per-block CDEF index.
 - [ ] Implement loop restoration and restoration-unit boundary handling.
-- [x] Implement the scalar Wiener restoration kernel and apply retained
-      Wiener units after CDEF.
+- [x] Implement the scalar Wiener restoration kernel with transmitted
+      vertical/horizontal axis order, AOM's 3/11-bit intermediate rounding and
+      vertical halo; apply every Wiener/SGRPROJ unit from one immutable CDEF
+      source snapshot.
 - [x] Retain the SGRPROJ parameter index and projection coefficients in
       frame-private restoration state.
 - [ ] Implement SGRPROJ restoration and verify stripe/boundary behavior.
@@ -357,3 +361,13 @@ masking a raw-plane difference.
 Lossy 4x4 `DctDct` also uses the square transpose, while
 coded-lossless 4x4 WHT explicitly retains its original storage so the exact
 `filter-disabled-directional` oracle stays green.
+
+The first post-filter checkpoint compares each private stage with FFmpeg's
+final `gbrp` output. Raw RGB average absolute error is `0.14965555555555554`;
+the current deblock and CDEF scaffolds reduce it to `0.14508477366255143` and
+`0.11774732510288066`. Porting Wiener add-src precision, transmitted axis
+order and halo processing reduced the Wiener-stage error from
+`0.29293786008230455`/max `254` to `0.16769300411522634`/max `25`. The combined
+restoration scaffold currently reports `0.1605934156378601`; normative stripe
+boundaries, deblock level derivation, CDEF block selection and SGRPROJ math
+remain before the final oracle can be enabled.

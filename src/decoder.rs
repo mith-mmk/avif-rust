@@ -312,15 +312,11 @@ fn decode_still_frame_with_filter_policy(
     if validate_filters {
         apply_deblock_stage(&mut frame, &headers.frame, &post_filter_state);
         apply_cdef_stage(&mut frame, &headers.frame, &post_filter_state);
-        apply_wiener_stage(
+        apply_loop_restoration_stage(
             &mut frame,
             &post_filter_state,
             headers.decode_plan.superblock_size << headers.frame.restoration.unit_shift,
-        );
-        apply_sgrproj_stage(
-            &mut frame,
-            &post_filter_state,
-            headers.decode_plan.superblock_size << headers.frame.restoration.unit_shift,
+            &[1, 2],
         );
     }
     Ok(frame)
@@ -371,37 +367,6 @@ fn apply_deblock_stage(
                     frame_header.loop_filter.sharpness,
                     frame.bit_depth,
                 );
-            }
-        }
-    }
-}
-
-fn apply_wiener_stage(frame: &mut DecodedFrame, state: &PostFilterState, unit_size: usize) {
-    for unit in state
-        .restoration_units
-        .iter()
-        .filter(|unit| unit.restoration_type == 1)
-    {
-        let Some(filters) = unit.wiener else { continue };
-        let Some(plane) = frame.buffers.planes.get_mut(unit.plane) else {
-            continue;
-        };
-        let source = plane.samples.clone();
-        let filtered = wiener_filter_unit(
-            &source,
-            plane.layout.width,
-            plane.layout.height,
-            unit.x,
-            unit.y,
-            unit_size,
-            unit_size,
-            filters,
-        );
-        for y in unit.y..(unit.y + unit_size).min(plane.layout.height) {
-            let start = y * plane.layout.width + unit.x.min(plane.layout.width);
-            let end = y * plane.layout.width + (unit.x + unit_size).min(plane.layout.width);
-            if start < end {
-                plane.samples[start..end].copy_from_slice(&filtered[start..end]);
             }
         }
     }
@@ -472,37 +437,61 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
     }
 }
 
-fn apply_sgrproj_stage(frame: &mut DecodedFrame, state: &PostFilterState, unit_size: usize) {
-    for unit in state
-        .restoration_units
-        .iter()
-        .filter(|unit| unit.restoration_type == 2)
-    {
-        let (Some(index), Some(xqd)) = (unit.sgrproj_index, unit.sgrproj) else {
-            continue;
-        };
-        let Some(plane) = frame.buffers.planes.get_mut(unit.plane) else {
-            continue;
-        };
+fn apply_loop_restoration_stage(
+    frame: &mut DecodedFrame,
+    state: &PostFilterState,
+    unit_size: usize,
+    enabled_types: &[u8],
+) {
+    for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
         let source = plane.samples.clone();
-        let filtered = sgrproj_filter_unit(
-            &source,
-            plane.layout.width,
-            plane.layout.height,
-            unit.x,
-            unit.y,
-            unit_size,
-            unit_size,
-            index,
-            xqd,
-        );
-        for y in unit.y..(unit.y + unit_size).min(plane.layout.height) {
-            let start = y * plane.layout.width + unit.x.min(plane.layout.width);
-            let end = y * plane.layout.width + (unit.x + unit_size).min(plane.layout.width);
-            if start < end {
-                plane.samples[start..end].copy_from_slice(&filtered[start..end]);
+        let mut output = source.clone();
+        for unit in state.restoration_units.iter().filter(|unit| {
+            unit.plane == plane_index && enabled_types.contains(&unit.restoration_type)
+        }) {
+            let filtered = match unit.restoration_type {
+                1 => {
+                    let Some(filters) = unit.wiener else {
+                        continue;
+                    };
+                    wiener_filter_unit(
+                        &source,
+                        plane.layout.width,
+                        plane.layout.height,
+                        unit.x,
+                        unit.y,
+                        unit_size,
+                        unit_size,
+                        filters,
+                    )
+                }
+                2 => {
+                    let (Some(index), Some(xqd)) = (unit.sgrproj_index, unit.sgrproj) else {
+                        continue;
+                    };
+                    sgrproj_filter_unit(
+                        &source,
+                        plane.layout.width,
+                        plane.layout.height,
+                        unit.x,
+                        unit.y,
+                        unit_size,
+                        unit_size,
+                        index,
+                        xqd,
+                    )
+                }
+                _ => continue,
+            };
+            for y in unit.y..(unit.y + unit_size).min(plane.layout.height) {
+                let start = y * plane.layout.width + unit.x.min(plane.layout.width);
+                let end = y * plane.layout.width + (unit.x + unit_size).min(plane.layout.width);
+                if start < end {
+                    output[start..end].copy_from_slice(&filtered[start..end]);
+                }
             }
         }
+        plane.samples = output;
     }
 }
 
@@ -676,6 +665,10 @@ fn validate_color_metadata(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "decoder_post_filter_tests.rs"]
+mod post_filter_tests;
 
 fn emit_metadata(
     info: &AvifInfo,
@@ -1586,6 +1579,13 @@ mod prefilter_diagnostic_tests {
             .output()
             .ok()
             .filter(|output| output.status.success());
+        let plane_reference = Command::new("ffmpeg")
+            .args(["-v", "error", "-nostdin", "-i"])
+            .arg(root.parent().unwrap().join("samples/WML2Viewer.avif"))
+            .args(["-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gbrp", "-"])
+            .output()
+            .ok()
+            .filter(|output| output.status.success());
         let report = |label: &str, frame: &DecodedFrame| {
             let Some(reference) = reference.as_ref() else {
                 return;
@@ -1610,24 +1610,71 @@ mod prefilter_diagnostic_tests {
                 "private {label} WML2Viewer vs ffmpeg: average_rgb_abs={}, max={max}",
                 sum as f64 / (frame.width * frame.height * 3) as f64
             );
+            let Some(plane_reference) = plane_reference.as_ref() else {
+                return;
+            };
+            let sample_count = frame.width * frame.height;
+            if plane_reference.stdout.len() != sample_count * 3 {
+                return;
+            }
+            for (plane_index, plane) in frame.buffers.planes.iter().enumerate() {
+                let expected = &plane_reference.stdout
+                    [plane_index * sample_count..(plane_index + 1) * sample_count];
+                let mut mismatches = 0usize;
+                let mut sum = 0u64;
+                let mut worst = (0usize, 0u16);
+                for (index, (&actual, &expected)) in plane.samples.iter().zip(expected).enumerate()
+                {
+                    let difference = actual.abs_diff(u16::from(expected));
+                    mismatches += usize::from(difference != 0);
+                    sum += u64::from(difference);
+                    if difference > worst.1 {
+                        worst = (index, difference);
+                    }
+                }
+                eprintln!(
+                    "private {label} plane {plane_index}: mismatches={mismatches}, average_abs={}, max={} at ({},{})",
+                    sum as f64 / sample_count as f64,
+                    worst.1,
+                    worst.0 % frame.width,
+                    worst.0 / frame.width
+                );
+            }
         };
+        eprintln!(
+            "private post-filter state: loop={:?}, cdef_units={}, cdef_blocks={}, boundaries={}, restoration={:?}, restoration_units={}",
+            headers.frame.loop_filter.levels,
+            post_filter_state.cdef_units.len(),
+            post_filter_state.cdef_blocks.len(),
+            post_filter_state.transform_boundaries.len(),
+            headers.frame.restoration,
+            post_filter_state.restoration_units.len()
+        );
+        eprintln!(
+            "private restoration unit sample={:?}",
+            &post_filter_state.restoration_units
+                [..post_filter_state.restoration_units.len().min(12)]
+        );
         report("raw", &frame);
         apply_deblock_stage(&mut frame, &headers.frame, &post_filter_state);
         report("deblock", &frame);
         apply_cdef_stage(&mut frame, &headers.frame, &post_filter_state);
         report("cdef", &frame);
-        apply_wiener_stage(
+        let mut wiener_frame = frame.clone();
+        apply_loop_restoration_stage(
+            &mut wiener_frame,
+            &post_filter_state,
+            headers.decode_plan.superblock_size << headers.frame.restoration.unit_shift,
+            &[1],
+        );
+        report("wiener-only", &wiener_frame);
+        apply_loop_restoration_stage(
             &mut frame,
             &post_filter_state,
             headers.decode_plan.superblock_size << headers.frame.restoration.unit_shift,
+            &[1, 2],
         );
-        report("wiener", &frame);
-        apply_sgrproj_stage(
-            &mut frame,
-            &post_filter_state,
-            headers.decode_plan.superblock_size << headers.frame.restoration.unit_shift,
-        );
-        report("sgrproj", &frame);
+        report("restoration", &frame);
         let rgba = frame.to_rgba8().unwrap();
         eprintln!(
             "private filtered WML2Viewer: {}x{}, rgba bytes={}, first={:?}",

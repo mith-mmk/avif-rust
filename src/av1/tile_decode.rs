@@ -15,6 +15,8 @@ mod diagnostic;
 mod palette;
 mod partition_syntax;
 mod post_filter_state;
+#[cfg(test)]
+pub(crate) use post_filter_state::RestorationUnit;
 pub(crate) use post_filter_state::{
     PostFilterState, cdef_filter_block, cdef_find_direction, deblock_filter_edge,
     sgrproj_filter_unit, wiener_filter_unit,

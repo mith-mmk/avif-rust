@@ -181,51 +181,76 @@ pub(crate) fn wiener_filter_unit(
     unit_height: usize,
     filters: [[i16; 3]; 2],
 ) -> Vec<u16> {
+    const FILTER_BITS: u32 = 7;
+    const ROUND_0_BITS: u32 = 3;
+    const ROUND_1_BITS: u32 = 2 * FILTER_BITS - ROUND_0_BITS;
+    let output_width = unit_width.min(width.saturating_sub(origin_x));
+    let output_height = unit_height.min(height.saturating_sub(origin_y));
+    if output_width == 0 || output_height == 0 {
+        return source.to_vec();
+    }
     let sample = |x: isize, y: isize| -> i32 {
         let x = x.clamp(0, width.saturating_sub(1) as isize) as usize;
         let y = y.clamp(0, height.saturating_sub(1) as isize) as usize;
         source[y * width + x] as i32
     };
-    let mut horizontal = source.to_vec();
-    let taps = |axis: usize| {
+    let residual_kernel = |axis: usize| {
+        let [outer, middle, inner] = filters[axis].map(i32::from);
         [
-            filters[axis][0] as i32,
-            filters[axis][1] as i32,
-            filters[axis][2] as i32,
+            outer,
+            middle,
+            inner,
+            -2 * (outer + middle + inner),
+            inner,
+            middle,
+            outer,
         ]
     };
-    for y in origin_y..(origin_y + unit_height).min(height) {
-        for x in origin_x..(origin_x + unit_width).min(width) {
-            let [a, b, c] = taps(0);
-            let center = 128 - 2 * (a + b + c);
-            let value = a * sample(x as isize - 3, y as isize)
-                + b * sample(x as isize - 2, y as isize)
-                + c * sample(x as isize - 1, y as isize)
-                + center * sample(x as isize, y as isize)
-                + c * sample(x as isize + 1, y as isize)
-                + b * sample(x as isize + 2, y as isize)
-                + a * sample(x as isize + 3, y as isize);
-            horizontal[y * width + x] = ((value + 64) >> 7).clamp(0, u16::MAX as i32) as u16;
+    // AV1 transmits the vertical filter first and the horizontal filter
+    // second. The separable convolution keeps extra precision between passes
+    // and includes the implicit +128 center tap through add-src offsets.
+    let horizontal_kernel = residual_kernel(1);
+    let vertical_kernel = residual_kernel(0);
+    let intermediate_height = output_height + 6;
+    let mut horizontal = vec![0i32; output_width * intermediate_height];
+    let horizontal_offset = 1 << (8 + FILTER_BITS - 1);
+    let horizontal_limit = (1 << (8 + 1 + FILTER_BITS - ROUND_0_BITS)) - 1;
+    for intermediate_y in 0..intermediate_height {
+        let source_y = origin_y as isize + intermediate_y as isize - 3;
+        for local_x in 0..output_width {
+            let source_x = origin_x + local_x;
+            let center = sample(source_x as isize, source_y);
+            let residual = horizontal_kernel
+                .iter()
+                .enumerate()
+                .map(|(tap, coefficient)| {
+                    coefficient * sample(source_x as isize + tap as isize - 3, source_y)
+                })
+                .sum::<i32>();
+            horizontal[intermediate_y * output_width + local_x] = ((residual
+                + (center << FILTER_BITS)
+                + horizontal_offset
+                + (1 << (ROUND_0_BITS - 1)))
+                >> ROUND_0_BITS)
+                .clamp(0, horizontal_limit);
         }
     }
-    let sample_horizontal = |x: isize, y: isize| -> i32 {
-        let x = x.clamp(0, width.saturating_sub(1) as isize) as usize;
-        let y = y.clamp(0, height.saturating_sub(1) as isize) as usize;
-        horizontal[y * width + x] as i32
-    };
+
     let mut output = source.to_vec();
-    for y in origin_y..(origin_y + unit_height).min(height) {
-        for x in origin_x..(origin_x + unit_width).min(width) {
-            let [a, b, c] = taps(1);
-            let center = 128 - 2 * (a + b + c);
-            let value = a * sample_horizontal(x as isize, y as isize - 3)
-                + b * sample_horizontal(x as isize, y as isize - 2)
-                + c * sample_horizontal(x as isize, y as isize - 1)
-                + center * sample_horizontal(x as isize, y as isize)
-                + c * sample_horizontal(x as isize, y as isize + 1)
-                + b * sample_horizontal(x as isize, y as isize + 2)
-                + a * sample_horizontal(x as isize, y as isize + 3);
-            output[y * width + x] = ((value + 64) >> 7).clamp(0, u16::MAX as i32) as u16;
+    let vertical_offset = 1 << (8 + ROUND_1_BITS - 1);
+    for local_y in 0..output_height {
+        for local_x in 0..output_width {
+            let center = horizontal[(local_y + 3) * output_width + local_x];
+            let residual = vertical_kernel
+                .iter()
+                .enumerate()
+                .map(|(tap, coefficient)| {
+                    coefficient * horizontal[(local_y + tap) * output_width + local_x]
+                })
+                .sum::<i32>();
+            let value = residual + (center << FILTER_BITS) - vertical_offset;
+            output[(origin_y + local_y) * width + origin_x + local_x] =
+                ((value + (1 << (ROUND_1_BITS - 1))) >> ROUND_1_BITS).clamp(0, 255) as u16;
         }
     }
     output
@@ -713,6 +738,25 @@ mod tests {
         let source = vec![200u16; 16 * 16];
         let filtered =
             super::wiener_filter_unit(&source, 16, 16, 0, 0, 16, 16, [[1, 2, 3], [3, -2, 1]]);
+        assert_eq!(filtered, source);
+    }
+
+    #[test]
+    fn wiener_zero_residual_filter_is_identity() {
+        let source = (0..16 * 16)
+            .map(|index| ((index * 37 + 11) & 255) as u16)
+            .collect::<Vec<_>>();
+        let filtered = super::wiener_filter_unit(&source, 16, 16, 0, 0, 16, 16, [[0; 3]; 2]);
+        assert_eq!(filtered, source);
+    }
+
+    #[test]
+    fn wiener_filter_treats_first_transmitted_axis_as_vertical() {
+        let source = (0..16)
+            .flat_map(|_| (0..16).map(|x| (x * 13) as u16))
+            .collect::<Vec<_>>();
+        let filtered =
+            super::wiener_filter_unit(&source, 16, 16, 0, 0, 16, 16, [[0, 0, 8], [0; 3]]);
         assert_eq!(filtered, source);
     }
 
