@@ -138,6 +138,10 @@ pub(super) fn decode_plane_block_unit(
             .txb_skip_cdf_mut(transform.tx_size.coeff_cdf_index(), txb_context.skip);
         let all_zero_symbol = decoder.reader.read_symbol(skip_cdf)?;
         if all_zero_symbol != 0 {
+            // Deblocking depends on transform boundaries even when the
+            // coefficient block is entirely zero; retain the transform
+            // geometry for the post-filter stage.
+            decoder.record_transform_boundary(transform, TxType::DctDct, 0);
             decoder.set_txb_entropy_context(transform, 0);
             let (top_right_available, bottom_left_available) =
                 decoder.reconstructed_extension_availability(plane, transform)?;

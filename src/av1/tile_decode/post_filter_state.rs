@@ -865,7 +865,11 @@ pub(crate) fn deblock_filter_edge_with_length(
                 continue;
             }
         }
-        let mut filter = (p1 - q1) * hev_mask + 3 * (q0 - p0);
+        // AOM clamps the outer-tap contribution to signed-byte range before
+        // adding the inner-tap term; clamping only the final sum changes the
+        // rounding for high-contrast edges.
+        let outer_filter = (p1 - q1).clamp(-128, 127) * hev_mask;
+        let mut filter = outer_filter + 3 * (q0 - p0);
         filter = filter.clamp(-128 << shift, 127 << shift);
         let f1 = (filter + 4).clamp(-128, 127) >> 3;
         let f2 = (filter + 3).clamp(-128, 127) >> 3;
