@@ -8,7 +8,7 @@ use crate::av1::predict::{IntraEdges, predict_filter_intra, predict_intra_with_e
 use crate::av1::quant::QuantState;
 use crate::av1::reconstruct::{read_intra_edges_with_extension_availability, write_plane_block};
 use crate::av1::sequence::SequenceHeader;
-use crate::av1::syntax::{PredictionMode, TxSize};
+use crate::av1::syntax::{PredictionMode, TxSize, TxType};
 use crate::av1::tile_decode::palette::PALETTE_MAX_SIZE;
 use crate::av1::transform::{
     QuantizedTransform, plan_transform_blocks_with_tx_size, reconstruct_lossless_transform_block,
@@ -88,6 +88,9 @@ pub(super) fn decode_plane_block_unit(
             && transform.y < unit_y.saturating_add(unit_height)
     })
     .collect::<Vec<_>>();
+    for transform in &transforms {
+        decoder.record_transform_boundary(*transform, TxType::DctDct, 0);
+    }
     if block_mode.skip {
         for transform in &transforms {
             decoder.set_txb_entropy_context(*transform, 0);
@@ -173,6 +176,15 @@ pub(super) fn decode_plane_block_unit(
 
         let decoded_transform =
             decoder.read_decoded_transform(frame, block_mode, transform, txb_context.dc_sign)?;
+        decoder.record_transform_boundary(
+            decoded_transform.transform,
+            decoded_transform.tx_type,
+            decoded_transform
+                .coefficients
+                .iter()
+                .filter(|coefficient| **coefficient != 0)
+                .count(),
+        );
         decoder.set_txb_entropy_context(
             transform,
             coefficient_entropy_context(&decoded_transform.coefficients),

@@ -535,9 +535,32 @@ pub(crate) fn deblock_filter_edge(
     sharpness: u8,
     bit_depth: u8,
 ) {
+    deblock_filter_edge_with_length(
+        samples, width, height, edge_x, edge_y, vertical, level, sharpness, bit_depth, 4,
+    );
+}
+
+pub(crate) fn deblock_filter_edge_with_length(
+    samples: &mut [u16],
+    width: usize,
+    height: usize,
+    edge_x: usize,
+    edge_y: usize,
+    vertical: bool,
+    level: u8,
+    sharpness: u8,
+    bit_depth: u8,
+    filter_length: u8,
+) {
+    let radius = match filter_length {
+        14 => 6,
+        8 => 3,
+        6 => 2,
+        _ => 1,
+    };
     if level == 0
-        || (vertical && (edge_x < 2 || edge_x + 1 >= width))
-        || (!vertical && (edge_y < 2 || edge_y + 1 >= height))
+        || (vertical && (edge_x < radius || edge_x + radius >= width))
+        || (!vertical && (edge_y < radius || edge_y + radius >= height))
     {
         return;
     }
@@ -549,13 +572,15 @@ pub(crate) fn deblock_filter_edge(
     let hev = (i32::from(level) >> 4) << shift;
     let max_sample = ((1u32 << bit_depth.min(16)) - 1) as i32;
     for lane in 0..4 {
-        let (p1, p0, q0, q1) = if vertical {
+        let (lane_x, lane_y, p1, p0, q0, q1) = if vertical {
             let x = edge_x;
             let y = edge_y + lane;
             if y >= height {
                 continue;
             }
             (
+                x,
+                y,
                 samples[y * width + x - 2] as i32,
                 samples[y * width + x - 1] as i32,
                 samples[y * width + x] as i32,
@@ -568,6 +593,8 @@ pub(crate) fn deblock_filter_edge(
                 continue;
             }
             (
+                x,
+                y,
                 samples[(y - 2) * width + x] as i32,
                 samples[(y - 1) * width + x] as i32,
                 samples[y * width + x] as i32,
@@ -581,18 +608,235 @@ pub(crate) fn deblock_filter_edge(
             continue;
         }
         let hev_mask = (i32::abs(p1 - p0) > hev || i32::abs(q1 - q0) > hev) as i32;
+        let filter_length = filter_length.min(14);
+        let (p2, q2) = if filter_length >= 6 {
+            if vertical {
+                (
+                    samples[lane_y * width + lane_x - 3] as i32,
+                    samples[lane_y * width + lane_x + 2] as i32,
+                )
+            } else {
+                (
+                    samples[(lane_y - 3) * width + lane_x] as i32,
+                    samples[(lane_y + 2) * width + lane_x] as i32,
+                )
+            }
+        } else {
+            (0, 0)
+        };
+        if filter_length >= 8 {
+            let (p3, q3) = if vertical {
+                (
+                    samples[lane_y * width + lane_x - 4] as i32,
+                    samples[lane_y * width + lane_x + 3] as i32,
+                )
+            } else {
+                (
+                    samples[(lane_y - 4) * width + lane_x] as i32,
+                    samples[(lane_y + 3) * width + lane_x] as i32,
+                )
+            };
+            let mask8 = i32::abs(p3 - p2) <= limit
+                && i32::abs(p2 - p1) <= limit
+                && i32::abs(p1 - p0) <= limit
+                && i32::abs(q1 - q0) <= limit
+                && i32::abs(q2 - q1) <= limit
+                && i32::abs(q3 - q2) <= limit
+                && 2 * i32::abs(p0 - q0) + i32::abs(p1 - q1) / 2 <= blimit;
+            let flat8 = i32::abs(p1 - p0) <= 1
+                && i32::abs(q1 - q0) <= 1
+                && i32::abs(p2 - p0) <= 1
+                && i32::abs(q2 - q0) <= 1
+                && i32::abs(p3 - p0) <= 1
+                && i32::abs(q3 - q0) <= 1;
+            if filter_length == 14 {
+                let (p4, p5, p6, q4, q5, q6) = if vertical {
+                    (
+                        samples[lane_y * width + lane_x - 5] as i32,
+                        samples[lane_y * width + lane_x - 6] as i32,
+                        samples[lane_y * width + lane_x - 7] as i32,
+                        samples[lane_y * width + lane_x + 4] as i32,
+                        samples[lane_y * width + lane_x + 5] as i32,
+                        samples[lane_y * width + lane_x + 6] as i32,
+                    )
+                } else {
+                    (
+                        samples[(lane_y - 5) * width + lane_x] as i32,
+                        samples[(lane_y - 6) * width + lane_x] as i32,
+                        samples[(lane_y - 7) * width + lane_x] as i32,
+                        samples[(lane_y + 4) * width + lane_x] as i32,
+                        samples[(lane_y + 5) * width + lane_x] as i32,
+                        samples[(lane_y + 6) * width + lane_x] as i32,
+                    )
+                };
+                let flat2 = i32::abs(p4 - p0) <= 1
+                    && i32::abs(q4 - q0) <= 1
+                    && i32::abs(p5 - p0) <= 1
+                    && i32::abs(q5 - q0) <= 1
+                    && i32::abs(p6 - p0) <= 1
+                    && i32::abs(q6 - q0) <= 1;
+                if mask8 && flat8 && flat2 {
+                    let filtered = [
+                        (p6 * 7 + p5 * 2 + p4 * 2 + p3 + p2 + p1 + p0 + q0 + 8) >> 4,
+                        (p6 * 5 + p5 * 2 + p4 * 2 + p3 * 2 + p2 + p1 + p0 + q0 + q1 + 8) >> 4,
+                        (p6 * 4 + p5 + p4 * 2 + p3 * 2 + p2 * 2 + p1 + p0 + q0 + q1 + q2 + 8) >> 4,
+                        (p6 * 3 + p5 + p4 + p3 * 2 + p2 * 2 + p1 * 2 + p0 + q0 + q1 + q2 + q3 + 8)
+                            >> 4,
+                        (p6 * 2
+                            + p5
+                            + p4
+                            + p3
+                            + p2 * 2
+                            + p1 * 2
+                            + p0 * 2
+                            + q0
+                            + q1
+                            + q2
+                            + q3
+                            + q4
+                            + 8)
+                            >> 4,
+                        (p6 + p5
+                            + p4
+                            + p3
+                            + p2
+                            + p1 * 2
+                            + p0 * 2
+                            + q0 * 2
+                            + q1
+                            + q2
+                            + q3
+                            + q4
+                            + q5
+                            + 8)
+                            >> 4,
+                        (p5 + p4
+                            + p3
+                            + p2
+                            + p1
+                            + p0 * 2
+                            + q0 * 2
+                            + q1 * 2
+                            + q2
+                            + q3
+                            + q4
+                            + q5
+                            + q6
+                            + 8)
+                            >> 4,
+                        (p4 + p3
+                            + p2
+                            + p1
+                            + p0
+                            + q0 * 2
+                            + q1 * 2
+                            + q2 * 2
+                            + q3
+                            + q4
+                            + q5
+                            + q6 * 2
+                            + 8)
+                            >> 4,
+                        (p3 + p2 + p1 + p0 + q0 + q1 * 2 + q2 * 2 + q3 * 2 + q4 + q5 + q6 * 3 + 8)
+                            >> 4,
+                        (p2 + p1 + p0 + q0 + q1 + q2 * 2 + q3 * 2 + q4 * 2 + q5 + q6 * 4 + 8) >> 4,
+                        (p1 + p0 + q0 + q1 + q2 + q3 * 2 + q4 * 2 + q5 * 2 + q6 * 5 + 8) >> 4,
+                        (p0 + q0 + q1 + q2 + q3 + q4 * 2 + q5 * 2 + q6 * 7 + 8) >> 4,
+                    ];
+                    if vertical {
+                        for (offset, value) in filtered.into_iter().enumerate() {
+                            samples[lane_y * width + lane_x - 6 + offset] =
+                                value.clamp(0, max_sample) as u16;
+                        }
+                    } else {
+                        for (offset, value) in filtered.into_iter().enumerate() {
+                            samples[(lane_y - 6 + offset) * width + lane_x] =
+                                value.clamp(0, max_sample) as u16;
+                        }
+                    }
+                    continue;
+                }
+            }
+            if mask8 && flat8 {
+                let filtered = [
+                    (p3 + p3 + p3 + 2 * p2 + p1 + p0 + q0 + 4) >> 3,
+                    (p3 + p3 + p2 + 2 * p1 + p0 + q0 + q1 + 4) >> 3,
+                    (p3 + p2 + p1 + 2 * p0 + q0 + q1 + q2 + 4) >> 3,
+                    (p2 + p1 + p0 + 2 * q0 + q1 + q2 + q3 + 4) >> 3,
+                    (p1 + p0 + q0 + 2 * q1 + q2 + q3 + q3 + 4) >> 3,
+                    (p0 + q0 + q1 + 2 * q2 + q3 + q3 + q3 + 4) >> 3,
+                ];
+                if vertical {
+                    for (offset, value) in filtered.into_iter().enumerate() {
+                        samples[lane_y * width + lane_x - 2 + offset] =
+                            value.clamp(0, max_sample) as u16;
+                    }
+                } else {
+                    for (offset, value) in filtered.into_iter().enumerate() {
+                        samples[(lane_y - 2 + offset) * width + lane_x] =
+                            value.clamp(0, max_sample) as u16;
+                    }
+                }
+                continue;
+            }
+            if !mask8 {
+                continue;
+            }
+        }
+        if filter_length >= 6 {
+            let mask6 = i32::abs(p2 - p1) <= limit
+                && i32::abs(p1 - p0) <= limit
+                && i32::abs(q1 - q0) <= limit
+                && i32::abs(q2 - q1) <= limit
+                && 2 * i32::abs(p0 - q0) + i32::abs(p1 - q1) / 2 <= blimit;
+            let flat6 = i32::abs(p2 - p0) <= 1
+                && i32::abs(p1 - p0) <= 1
+                && i32::abs(q1 - q0) <= 1
+                && i32::abs(q2 - q0) <= 1;
+            if filter_length == 6 && mask6 && flat6 {
+                let filtered = [
+                    (p2 * 3 + p1 * 2 + p0 * 2 + q0 + 4) >> 3,
+                    (p2 + p1 * 2 + p0 * 2 + q0 * 2 + q1 + 4) >> 3,
+                    (p1 + p0 * 2 + q0 * 2 + q1 * 2 + q2 + 4) >> 3,
+                    (p0 + q0 * 2 + q1 * 2 + q2 * 3 + 4) >> 3,
+                ];
+                if vertical {
+                    samples[lane_y * width + lane_x - 2] = filtered[0].clamp(0, max_sample) as u16;
+                    samples[lane_y * width + lane_x - 1] = filtered[1].clamp(0, max_sample) as u16;
+                    samples[lane_y * width + lane_x] = filtered[2].clamp(0, max_sample) as u16;
+                    samples[lane_y * width + lane_x + 1] = filtered[3].clamp(0, max_sample) as u16;
+                } else {
+                    samples[(lane_y - 2) * width + lane_x] =
+                        filtered[0].clamp(0, max_sample) as u16;
+                    samples[(lane_y - 1) * width + lane_x] =
+                        filtered[1].clamp(0, max_sample) as u16;
+                    samples[lane_y * width + lane_x] = filtered[2].clamp(0, max_sample) as u16;
+                    samples[(lane_y + 1) * width + lane_x] =
+                        filtered[3].clamp(0, max_sample) as u16;
+                }
+                continue;
+            }
+            if !mask6 {
+                continue;
+            }
+        }
         let mut filter = (p1 - q1) * hev_mask + 3 * (q0 - p0);
         filter = filter.clamp(-128 << shift, 127 << shift);
-        let f1 = (filter + 4).div_euclid(8);
-        let f2 = (filter + 3).div_euclid(8);
+        let f1 = (filter + 4).clamp(-128, 127) >> 3;
+        let f2 = (filter + 3).clamp(-128, 127) >> 3;
         let np0 = (p0 + f2).clamp(0, max_sample) as u16;
         let nq0 = (q0 - f1).clamp(0, max_sample) as u16;
+        let outer = if hev_mask == 0 { (f1 + 1) >> 1 } else { 0 };
         if vertical {
-            samples[(edge_y + lane) * width + edge_x - 1] = np0;
-            samples[(edge_y + lane) * width + edge_x] = nq0;
+            samples[lane_y * width + lane_x - 2] = (p1 + outer).clamp(0, max_sample) as u16;
+            samples[lane_y * width + lane_x - 1] = np0;
+            samples[lane_y * width + lane_x] = nq0;
+            samples[lane_y * width + lane_x + 1] = (q1 - outer).clamp(0, max_sample) as u16;
         } else {
-            samples[(edge_y - 1) * width + edge_x + lane] = np0;
-            samples[edge_y * width + edge_x + lane] = nq0;
+            samples[(lane_y - 2) * width + lane_x] = (p1 + outer).clamp(0, max_sample) as u16;
+            samples[(lane_y - 1) * width + lane_x] = np0;
+            samples[lane_y * width + lane_x] = nq0;
+            samples[(lane_y + 1) * width + lane_x] = (q1 - outer).clamp(0, max_sample) as u16;
         }
     }
 }
@@ -734,7 +978,7 @@ impl<'a> TileDecoder<'a> {
         PostFilterState {
             cdef_units: self.cdef_units,
             cdef_blocks: self.cdef_blocks,
-            transform_boundaries: Vec::new(),
+            transform_boundaries: self.transform_boundaries,
             restoration_units: self.restoration_units,
             block_filter_states: self.block_filter_states,
         }
@@ -756,6 +1000,19 @@ impl<'a> TileDecoder<'a> {
             skip,
             y_mode,
             uv_mode,
+        });
+    }
+
+    pub(super) fn record_transform_boundary(
+        &mut self,
+        block: TransformBlock,
+        tx_type: TxType,
+        non_zero_coefficients: usize,
+    ) {
+        self.transform_boundaries.push(TransformBoundary {
+            block,
+            tx_type,
+            non_zero_coefficients,
         });
     }
 

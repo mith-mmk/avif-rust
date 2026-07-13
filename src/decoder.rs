@@ -7,7 +7,7 @@ use crate::av1::{
     PartitionProbe, QuantState, ResidualProbe, SequenceHeader, TileEntropyState, TileGroup,
     alloc_coded_frame_buffers, build_still_decode_plan, cdef_adjust_primary_strength,
     cdef_filter_block_with_edge_mode, cdef_find_direction_with_variance,
-    crop_frame_buffers_to_plan, deblock_filter_edge,
+    crop_frame_buffers_to_plan, deblock_filter_edge_with_length,
     decode_luma_root_block_prefix_with_post_filter_state_and_entropy, frame_buffers_to_rgba_8,
     frame_buffers_to_rgba_16, parse_av1_config, parse_frame_header, parse_sequence_header,
     parse_tile_group, plan_transform_blocks_with_tx_size, prepare_tile_entropy,
@@ -329,44 +329,87 @@ fn apply_deblock_stage(
     state: &PostFilterState,
 ) {
     let mut applied_edges = std::collections::HashSet::new();
+    let mut previous_vertical =
+        std::collections::HashMap::<(usize, usize), Vec<(usize, usize, usize)>>::new();
+    let mut previous_horizontal =
+        std::collections::HashMap::<(usize, usize), Vec<(usize, usize, usize)>>::new();
     for boundary in &state.transform_boundaries {
         let block = boundary.block;
-        for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
-            let (vertical_level, horizontal_level) = if plane_index == 0 {
-                (
-                    frame_header.loop_filter.levels[0],
-                    frame_header.loop_filter.levels[1],
-                )
-            } else {
-                (
-                    frame_header.loop_filter.levels[2],
-                    frame_header.loop_filter.levels[3],
-                )
-            };
-            if block.x > 0 && applied_edges.insert((plane_index, block.x, block.y, true)) {
-                deblock_filter_edge(
+        previous_vertical
+            .entry((block.plane, block.x + block.tx_size.width()))
+            .or_default()
+            .push((block.y, block.tx_size.height(), block.tx_size.width()));
+        previous_horizontal
+            .entry((block.plane, block.y + block.tx_size.height()))
+            .or_default()
+            .push((block.x, block.tx_size.width(), block.tx_size.height()));
+    }
+    for vertical in [true, false] {
+        for boundary in &state.transform_boundaries {
+            let block = boundary.block;
+            for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
+                let level = if plane_index == 0 {
+                    frame_header.loop_filter.levels[usize::from(!vertical)]
+                } else {
+                    frame_header.loop_filter.levels[2 + usize::from(!vertical)]
+                };
+                let edge = if vertical { block.x } else { block.y };
+                if edge == 0 || !applied_edges.insert((plane_index, block.x, block.y, vertical)) {
+                    continue;
+                }
+                let dimension = if vertical {
+                    block.tx_size.width()
+                } else {
+                    block.tx_size.height()
+                };
+                let previous_dimension = if vertical {
+                    previous_vertical
+                        .get(&(plane_index, block.x))
+                        .into_iter()
+                        .flat_map(|entries| entries.iter())
+                        .filter(|(y, height, _)| {
+                            *y < block.y + block.tx_size.height() && *y + *height > block.y
+                        })
+                        .map(|(_, _, width)| *width)
+                        .min()
+                        .unwrap_or(dimension)
+                } else {
+                    previous_horizontal
+                        .get(&(plane_index, block.y))
+                        .into_iter()
+                        .flat_map(|entries| entries.iter())
+                        .filter(|(x, width, _)| {
+                            *x < block.x + block.tx_size.width() && *x + *width > block.x
+                        })
+                        .map(|(_, _, height)| *height)
+                        .min()
+                        .unwrap_or(dimension)
+                };
+                let dimension = dimension.min(previous_dimension);
+                let filter_length = if plane_index == 0 {
+                    if dimension <= 4 {
+                        4
+                    } else if dimension <= 8 {
+                        8
+                    } else {
+                        14
+                    }
+                } else if dimension <= 4 {
+                    4
+                } else {
+                    6
+                };
+                deblock_filter_edge_with_length(
                     &mut plane.samples,
                     plane.layout.width,
                     plane.layout.height,
                     block.x,
                     block.y,
-                    true,
-                    vertical_level,
+                    vertical,
+                    level,
                     frame_header.loop_filter.sharpness,
                     frame.bit_depth,
-                );
-            }
-            if block.y > 0 && applied_edges.insert((plane_index, block.x, block.y, false)) {
-                deblock_filter_edge(
-                    &mut plane.samples,
-                    plane.layout.width,
-                    plane.layout.height,
-                    block.x,
-                    block.y,
-                    false,
-                    horizontal_level,
-                    frame_header.loop_filter.sharpness,
-                    frame.bit_depth,
+                    filter_length,
                 );
             }
         }
@@ -1625,6 +1668,12 @@ mod prefilter_diagnostic_tests {
         let cdef_oracle = std::env::var_os("AOM_CDEF_ORACLE")
             .map(PathBuf::from)
             .and_then(|path| std::fs::read(path).ok());
+        let deblock_cdef_oracle = std::env::var_os("AOM_DEBLOCK_CDEF_ORACLE")
+            .map(PathBuf::from)
+            .and_then(|path| std::fs::read(path).ok());
+        let deblock_oracle = std::env::var_os("AOM_DEBLOCK_ORACLE")
+            .map(PathBuf::from)
+            .and_then(|path| std::fs::read(path).ok());
         let report = |label: &str, frame: &DecodedFrame| {
             let Some(reference) = reference.as_ref() else {
                 return;
@@ -1704,6 +1753,58 @@ mod prefilter_diagnostic_tests {
                 );
             }
         };
+        let report_deblock_cdef_oracle = |label: &str, frame: &DecodedFrame| {
+            let Some(expected) = deblock_cdef_oracle.as_ref() else {
+                return;
+            };
+            let sample_count = frame.width * frame.height;
+            if expected.len() != sample_count * 3 {
+                return;
+            }
+            for (plane_index, plane) in frame.buffers.planes.iter().enumerate() {
+                let oracle =
+                    &expected[plane_index * sample_count..(plane_index + 1) * sample_count];
+                let mut mismatches = 0usize;
+                let mut sum = 0u64;
+                for (&actual, &expected) in plane.samples.iter().zip(oracle) {
+                    let difference = actual.abs_diff(u16::from(expected));
+                    mismatches += usize::from(difference != 0);
+                    sum += u64::from(difference);
+                }
+                eprintln!(
+                    "AOM deblock+CDEF oracle {label} plane {plane_index}: mismatches={mismatches}, average_abs={}",
+                    sum as f64 / sample_count as f64
+                );
+            }
+        };
+        let report_deblock_oracle = |label: &str, frame: &DecodedFrame| {
+            let Some(expected) = deblock_oracle.as_ref() else {
+                return;
+            };
+            let sample_count = frame.width * frame.height;
+            if expected.len() != sample_count * 3 {
+                return;
+            }
+            for (plane_index, plane) in frame.buffers.planes.iter().enumerate() {
+                let oracle =
+                    &expected[plane_index * sample_count..(plane_index + 1) * sample_count];
+                let mut mismatches = 0usize;
+                let mut sum = 0u64;
+                let mut first = None;
+                for (index, (&actual, &expected)) in plane.samples.iter().zip(oracle).enumerate() {
+                    let difference = actual.abs_diff(u16::from(expected));
+                    mismatches += usize::from(difference != 0);
+                    sum += u64::from(difference);
+                    if difference != 0 && first.is_none() {
+                        first = Some((index, actual, expected));
+                    }
+                }
+                eprintln!(
+                    "AOM deblock oracle {label} plane {plane_index}: mismatches={mismatches}, average_abs={}, first={first:?}",
+                    sum as f64 / sample_count as f64
+                );
+            }
+        };
         eprintln!(
             "private post-filter state: loop={:?}, cdef_units={}, cdef_blocks={}, boundaries={}, restoration={:?}, restoration_units={}",
             headers.frame.loop_filter.levels,
@@ -1731,8 +1832,10 @@ mod prefilter_diagnostic_tests {
         report_cdef_oracle("raw", &frame);
         apply_deblock_stage(&mut frame, &headers.frame, &post_filter_state);
         report("deblock", &frame);
+        report_deblock_oracle("deblock", &frame);
         apply_cdef_stage(&mut frame, &headers.frame, &post_filter_state);
         report("cdef", &frame);
+        report_deblock_cdef_oracle("cdef", &frame);
         let mut wiener_frame = frame.clone();
         apply_loop_restoration_stage(
             &mut wiener_frame,

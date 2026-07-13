@@ -368,16 +368,21 @@ Lossy 4x4 `DctDct` also uses the square transpose, while
 coded-lossless 4x4 WHT explicitly retains its original storage so the exact
 `filter-disabled-directional` oracle stays green.
 
-The first post-filter checkpoint compares each private stage with FFmpeg's
-final `gbrp` output. Raw RGB average absolute error is `0.14965555555555554`;
-the deblock and CDEF stages currently report `0.14508477366255143` and
-`0.10787448559670781`. The temporary AOM CDEF-only oracle used for direction
-and raw-stage diagnostics has deblock disabled, so it is not an authoritative
-CDEF-stage comparison against the Rust deblock→CDEF order. A dedicated oracle
-with deblock enabled and restoration disabled is still required. Porting Wiener
-add-src precision,
+The current post-filter diagnostic compares each private stage with FFmpeg's
+final `gbrp` output. Raw RGB average absolute error is
+`0.14965555555555554`; the deblock and CDEF stages currently report
+`0.13863662551440328` and `0.10564567901234567`. A dedicated AOM oracle with
+deblock enabled and restoration disabled is now generated locally. The Rust
+deblock stage still differs from that oracle by plane as follows:
+
+- plane 0: `mismatches=15594`, `average_abs=0.02662716049382716`;
+- plane 1: `mismatches=21415`, `average_abs=0.038995061728395064`;
+- plane 2: `mismatches=18100`, `average_abs=0.033058024691358025`.
+
+These are diagnostic checkpoints only; normative level derivation, boundary
+coverage and exact kernel behavior remain unfinished. Porting Wiener add-src precision,
 transmitted axis order and halo processing reduced the Wiener-stage error from
-`0.29293786008230455`/max `254` to `0.15780205761316873`/max `25` in the
+`0.29293786008230455`/max `254` to `0.15565843621399178`/max `25` in the
 current diagnostic order. The combined restoration scaffold currently reports
-`0.1509292181069959`; normative stripe boundaries, deblock level derivation,
+`0.14908106995884773`; normative stripe boundaries, deblock level derivation,
 CDEF exactness and SGRPROJ math remain before the final oracle can be enabled.
