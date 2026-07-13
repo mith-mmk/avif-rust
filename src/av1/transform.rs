@@ -211,9 +211,12 @@ fn normative_square_col_scan(tx_size: TxSize) -> Vec<usize> {
 pub(crate) fn remap_coefficients_for_inverse_storage(
     tx_size: TxSize,
     tx_type: TxType,
+    coded_lossless: bool,
     coefficients: &mut [i32],
 ) {
-    let needs_remap = (tx_type == TxType::DctDct && tx_size == TxSize::Tx8x8)
+    let needs_remap = (tx_type == TxType::DctDct
+        && !coded_lossless
+        && matches!(tx_size, TxSize::Tx4x4 | TxSize::Tx8x8))
         || matches!(
             tx_type,
             TxType::AdstDct
@@ -1621,6 +1624,7 @@ mod tests {
         remap_coefficients_for_inverse_storage(
             TxSize::Tx8x8,
             TxType::HorizontalDct,
+            false,
             &mut coefficients,
         );
         assert_eq!(&coefficients[..8], &[0, 8, 16, 24, 32, 40, 48, 56]);
@@ -1635,20 +1639,42 @@ mod tests {
         remap_coefficients_for_inverse_storage(
             TxSize::Tx8x8,
             TxType::VerticalDct,
+            false,
             &mut coefficients,
         );
         assert_eq!(&coefficients[..8], &[0, 1, 2, 3, 4, 5, 6, 7]);
 
         let mut identity = (0..TxSize::Tx4x4.sample_count() as i32).collect::<Vec<_>>();
-        remap_coefficients_for_inverse_storage(TxSize::Tx4x4, TxType::Identity, &mut identity);
+        remap_coefficients_for_inverse_storage(
+            TxSize::Tx4x4,
+            TxType::Identity,
+            false,
+            &mut identity,
+        );
         assert_eq!(
             identity,
             vec![0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15]
         );
 
         let mut two_dimensional = (0..TxSize::Tx4x4.sample_count() as i32).collect::<Vec<_>>();
-        remap_coefficients_for_inverse_storage(TxSize::Tx4x4, TxType::DctDct, &mut two_dimensional);
+        remap_coefficients_for_inverse_storage(
+            TxSize::Tx4x4,
+            TxType::DctDct,
+            true,
+            &mut two_dimensional,
+        );
         assert_eq!(two_dimensional, (0..16).collect::<Vec<_>>());
+
+        remap_coefficients_for_inverse_storage(
+            TxSize::Tx4x4,
+            TxType::DctDct,
+            false,
+            &mut two_dimensional,
+        );
+        assert_eq!(
+            two_dimensional,
+            vec![0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15]
+        );
     }
 
     #[test]
@@ -1731,7 +1757,12 @@ mod tests {
         let mut coefficients = vec![
             420, 704, -704, -176, -704, -1056, 528, 880, 176, -528, 0, 528, 528, 352, -352, -176,
         ];
-        remap_coefficients_for_inverse_storage(TxSize::Tx4x4, TxType::AdstAdst, &mut coefficients);
+        remap_coefficients_for_inverse_storage(
+            TxSize::Tx4x4,
+            TxType::AdstAdst,
+            false,
+            &mut coefficients,
+        );
         let prediction = vec![
             1, 1, 1, 1, 98, 98, 98, 98, 157, 157, 157, 157, 176, 176, 176, 176,
         ];
@@ -1746,13 +1777,41 @@ mod tests {
     }
 
     #[test]
+    fn tx4x4_dct_dct_matches_aom_wml2viewer_block() {
+        let mut coefficients = vec![
+            0, -1056, -528, 0, 176, 1056, 176, 176, 0, -528, -352, -352, 0, 176, 352, 176,
+        ];
+        remap_coefficients_for_inverse_storage(
+            TxSize::Tx4x4,
+            TxType::DctDct,
+            false,
+            &mut coefficients,
+        );
+        let prediction = vec![
+            175, 185, 204, 185, 95, 139, 168, 182, 38, 48, 79, 123, 36, 37, 38, 43,
+        ];
+        let residual = inverse_transform(TxType::DctDct, TxSize::Tx4x4, &coefficients, 8).unwrap();
+        assert_eq!(
+            add_residual_to_prediction(&prediction, &residual, 8).unwrap(),
+            vec![
+                163, 167, 180, 1, 116, 147, 125, 191, 60, 80, 105, 181, 34, 27, 68, 132
+            ]
+        );
+    }
+
+    #[test]
     fn tx8x8_dct_dct_matches_aom_wml2viewer_palette_block() {
         let mut coefficients = vec![0; TxSize::Tx8x8.sample_count()];
         coefficients[16] = 176;
         coefficients[47] = 176;
         coefficients[54] = 176;
         coefficients[55] = -176;
-        remap_coefficients_for_inverse_storage(TxSize::Tx8x8, TxType::DctDct, &mut coefficients);
+        remap_coefficients_for_inverse_storage(
+            TxSize::Tx8x8,
+            TxType::DctDct,
+            false,
+            &mut coefficients,
+        );
         let prediction = vec![
             0, 0, 0, 0, 0, 0, 0, 0, 207, 207, 0, 0, 0, 0, 0, 0, 176, 176, 176, 207, 207, 0, 0, 0,
             114, 114, 176, 207, 207, 0, 0, 0, 39, 78, 142, 142, 142, 207, 207, 0, 39, 39, 39, 78,

@@ -154,6 +154,7 @@ impl<'a> TileDecoder<'a> {
         remap_coefficients_for_inverse_storage(
             transform.tx_size,
             tx_type,
+            frame.quantization.coded_lossless(),
             &mut coefficient_read.base.base_levels,
         );
         Ok(DecodedTransform {

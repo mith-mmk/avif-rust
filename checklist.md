@@ -92,14 +92,16 @@ exact native-plane fixture before the next feature is enabled.
 - [x] Match AOM inverse-transform `round_shift` semantics for negative values,
       including negative half-step anchors shared by `round2`.
 - [x] Preserve the AOM `mrow`/`mcol` entropy scan for 1-D directional classes
-      and transpose square ADST, 1-D, identity and 8x8 `DctDct` coefficient
-      storage at the inverse-transform boundary; keep the other square
-      `DctDct` sizes in their validated orientation and cover both cases with
+      and transpose square ADST, 1-D, identity and lossy 4x4/8x8 `DctDct`
+      coefficient storage at the inverse-transform boundary; preserve the
+      existing 4x4 storage for coded-lossless WHT and cover both paths with
       decoder vectors.
 - [x] Pin the dense 4x4 `ADST_ADST` block feeding the former first
       `WML2Viewer` mismatch against AOM prediction, dequant and output vectors.
 - [x] Pin the 8x8 `DctDct` residual inside a palette block against AOM palette
       prediction, dequant input and all 64 output samples.
+- [x] Pin a lossy 4x4 `DctDct` block against AOM prediction, dequant input and
+      output while keeping the strict lossless fixture exact.
 - [x] Route non-zero angle deltas on vertical/horizontal modes through the
       directional predictor and use AOM's zone-specific top-right/bottom-left
       edge lengths.
@@ -293,9 +295,9 @@ positive-bias inverse-transform rounding, staged 32-point DCT,
 large-rectangular dequant shift, directional angle-delta routing and zone edge
 lengths, the 900x900 fixture reports:
 
-- plane 0: first linear mismatch `57813` (`x=213,y=64`), `683783` mismatches;
-- plane 1: first linear mismatch `28882` (`x=82,y=32`), `661711` mismatches;
-- plane 2: first linear mismatch `28882` (`x=82,y=32`), `665151` mismatches.
+- plane 0: first linear mismatch `101696` (`x=896,y=112`), `673272` mismatches;
+- plane 1: first linear mismatch `28882` (`x=82,y=32`), `655105` mismatches;
+- plane 2: first linear mismatch `28882` (`x=82,y=32`), `657529` mismatches.
 
 The `reports_wml2viewer_raw_against_generated_final_planes` test compares raw
 Rust planes with final filtered FFmpeg planes and therefore does not define the
@@ -309,7 +311,7 @@ output now match through an explicit square-ADST storage transpose. The former
 32x32 DC-only mismatch also matches after routing it through the staged
 32-point transform. The following palette-block 8x8 `DctDct` mismatch matches
 after a size-specific square storage transpose. The next raw unit is the first
-luma mismatch at `(213,64)`. Transposing every square `DctDct` size still
-breaks the exact `filter-disabled-directional` oracle and is therefore
-explicitly rejected.
+luma mismatch at the clipped right edge `(896,112)`. Lossy 4x4 `DctDct` also
+uses the square transpose, while coded-lossless 4x4 WHT explicitly retains its
+original storage so the exact `filter-disabled-directional` oracle stays green.
 Post-filter work must not be used to mask this raw-plane difference.
