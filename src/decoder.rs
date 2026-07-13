@@ -7,7 +7,7 @@ use crate::av1::{
     PartitionProbe, QuantState, ResidualProbe, SequenceHeader, TileEntropyState, TileGroup,
     alloc_coded_frame_buffers, build_still_decode_plan, cdef_adjust_primary_strength,
     cdef_filter_block_with_edge_mode, cdef_find_direction_with_variance,
-    crop_frame_buffers_to_plan, deblock_filter_edge_with_length,
+    crop_frame_buffers_to_plan, deblock_filter_edge_with_visible_bounds,
     decode_luma_root_block_prefix_with_post_filter_state_and_entropy, frame_buffers_to_rgba_8,
     frame_buffers_to_rgba_16, parse_av1_config, parse_frame_header, parse_sequence_header,
     parse_tile_group, plan_transform_blocks_with_tx_size, prepare_tile_entropy,
@@ -319,6 +319,7 @@ fn decode_still_frame_with_filter_policy(
             headers.decode_plan.superblock_size << headers.frame.restoration.unit_shift,
             &[1, 2],
         );
+        crop_frame_buffers_to_plan(&mut frame.buffers, &headers.decode_plan)?;
     }
     Ok(frame)
 }
@@ -484,10 +485,12 @@ fn apply_deblock_stage(
                     } else {
                         (block.x + offset, block.y)
                     };
-                    deblock_filter_edge_with_length(
+                    deblock_filter_edge_with_visible_bounds(
                         &mut plane.samples,
                         plane.layout.width,
                         plane.layout.height,
+                        frame.width,
+                        frame.height,
                         edge_x,
                         edge_y,
                         vertical,
@@ -757,7 +760,9 @@ fn decode_still_frame_with_filter_policy_and_state(
     if let Some(err) = prefix.next_unsupported {
         return Err(err);
     }
-    crop_frame_buffers_to_plan(&mut buffers, &headers.decode_plan)?;
+    if !validate_filters {
+        crop_frame_buffers_to_plan(&mut buffers, &headers.decode_plan)?;
+    }
     Ok(DecodedStillFrame {
         frame: DecodedFrame {
             width: headers.decode_plan.width,

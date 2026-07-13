@@ -594,6 +594,36 @@ pub(crate) fn deblock_filter_edge_with_length(
     bit_depth: u8,
     filter_length: u8,
 ) {
+    deblock_filter_edge_with_visible_bounds(
+        samples,
+        width,
+        height,
+        width,
+        height,
+        edge_x,
+        edge_y,
+        vertical,
+        level,
+        sharpness,
+        bit_depth,
+        filter_length,
+    );
+}
+
+pub(crate) fn deblock_filter_edge_with_visible_bounds(
+    samples: &mut [u16],
+    width: usize,
+    _height: usize,
+    visible_width: usize,
+    visible_height: usize,
+    edge_x: usize,
+    edge_y: usize,
+    vertical: bool,
+    level: u8,
+    sharpness: u8,
+    bit_depth: u8,
+    filter_length: u8,
+) {
     let radius = match filter_length {
         14 => 6,
         8 => 3,
@@ -601,8 +631,8 @@ pub(crate) fn deblock_filter_edge_with_length(
         _ => 1,
     };
     if level == 0
-        || (vertical && (edge_x < radius || edge_x + radius >= width))
-        || (!vertical && (edge_y < radius || edge_y + radius >= height))
+        || (vertical && (edge_x < radius || edge_x + radius >= visible_width))
+        || (!vertical && (edge_y < radius || edge_y + radius >= visible_height))
     {
         return;
     }
@@ -620,7 +650,7 @@ pub(crate) fn deblock_filter_edge_with_length(
         let (lane_x, lane_y, p1, p0, q0, q1) = if vertical {
             let x = edge_x;
             let y = edge_y + lane;
-            if y >= height {
+            if y >= visible_height {
                 continue;
             }
             (
@@ -634,7 +664,7 @@ pub(crate) fn deblock_filter_edge_with_length(
         } else {
             let x = edge_x + lane;
             let y = edge_y;
-            if x >= width {
+            if x >= visible_width {
                 continue;
             }
             (
@@ -1118,7 +1148,8 @@ mod tests {
     use super::{
         CDEF_DIRECTIONS, CdefUnit, PostFilterState, cdef_adjust_primary_strength, cdef_constrain,
         cdef_filter_block, cdef_find_direction, cdef_unit_origin, deblock_filter_edge,
-        deblock_filter_edge_with_length, restoration_sample, sgr_x_by_xplus1, store_cdef_unit,
+        deblock_filter_edge_with_length, deblock_filter_edge_with_visible_bounds,
+        restoration_sample, sgr_x_by_xplus1, store_cdef_unit,
     };
     use crate::av1::syntax::{BlockSize, PredictionMode, UvPredictionMode};
 
@@ -1266,6 +1297,21 @@ mod tests {
         deblock_filter_edge_with_length(&mut samples, 16, 16, 8, 0, true, 23, 0, 8, 8);
         assert_eq!(samples[7], 39);
         assert_eq!(samples[8], 39);
+    }
+
+    #[test]
+    fn deblock_does_not_filter_coded_padding_outside_visible_width() {
+        let mut samples = vec![0u16; 16 * 4];
+        for y in 0..4 {
+            let row = y * 16;
+            samples[row + 6] = 210;
+            samples[row + 7] = 198;
+            samples[row + 8] = 187;
+            samples[row + 9] = 187;
+        }
+        let original = samples.clone();
+        deblock_filter_edge_with_visible_bounds(&mut samples, 16, 4, 8, 4, 8, 0, true, 23, 0, 8, 8);
+        assert_eq!(samples, original);
     }
 
     #[test]
