@@ -383,7 +383,7 @@ coded-lossless 4x4 WHT explicitly retains its original storage so the exact
 The current post-filter diagnostic compares each private stage with FFmpeg's
 final `gbrp` output. Raw RGB average absolute error is
 `0.14965555555555554`; the deblock and CDEF stages now report
-`0.1328135802469136` and `0.06230658436213992`. A dedicated AOM oracle with
+`0.1328135802469136` and `0.062083127572016464`. A dedicated AOM oracle with
 deblock enabled and restoration disabled is generated locally. The Rust
 deblock stage still differs from that oracle by plane as follows:
 
@@ -396,8 +396,10 @@ now reports `18302/0.025276543209876542`, `18678/0.02910246913580247` and
 `15338/0.02364567901234568` mismatches/average absolute error for planes
 0/1/2 respectively. Applying the Rust CDEF implementation to the exact AOM
 deblock input isolates the remaining CDEF differences to
-`1034/0.0012814814814814815`, `30/0.00003827160493827161` and
-`39/0.00004814814814814815` for planes 0/1/2.
+`23/0.00002839506172839506`, `30/0.00003827160493827161` and
+`39/0.00004814814814814815` for planes 0/1/2. The remaining CDEF
+differences are confined to frame-edge or block-boundary pixels; exact
+plane-oracle agreement is still required before this item is complete.
 
 These are diagnostic checkpoints only; normative level derivation, boundary
 coverage and exact kernel behavior remain unfinished. The current private
