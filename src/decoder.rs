@@ -1733,7 +1733,6 @@ mod prefilter_diagnostic_tests {
         report("deblock", &frame);
         apply_cdef_stage(&mut frame, &headers.frame, &post_filter_state);
         report("cdef", &frame);
-        report_cdef_oracle("cdef", &frame);
         let mut wiener_frame = frame.clone();
         apply_loop_restoration_stage(
             &mut wiener_frame,
