@@ -772,25 +772,15 @@ fn decode_still_frame_with_filter_policy_and_state(
 }
 
 fn validate_public_decode_tools(headers: &Av1Headers) -> Result<(), DecoderError> {
-    if headers.decode_plan.uses_cdef {
+    let color_config = &headers.sequence.color_config;
+    if color_config.bit_depth != 8 {
         return Err(DecoderError::Unsupported(
-            "AV1 CDEF filtering is not supported by public decode yet".to_string(),
+            "public AVIF decode currently supports 8-bit frames only".to_string(),
         ));
     }
-    if headers.decode_plan.uses_restoration {
+    if color_config.monochrome || color_config.subsampling_x || color_config.subsampling_y {
         return Err(DecoderError::Unsupported(
-            "AV1 loop restoration is not supported by public decode yet".to_string(),
-        ));
-    }
-    if headers
-        .frame
-        .loop_filter
-        .levels
-        .iter()
-        .any(|level| *level != 0)
-    {
-        return Err(DecoderError::Unsupported(
-            "AV1 deblocking filter is not supported by public decode yet".to_string(),
+            "public AVIF decode currently supports 4:4:4 color only".to_string(),
         ));
     }
     if headers.sequence.film_grain_params_present {

@@ -184,23 +184,27 @@ fn layered_conformance_helpers_compare_planes_and_rgba_max_error() {
 }
 
 #[test]
-fn pure_rust_decode_rejects_sample_with_unimplemented_filters() {
+fn pure_rust_decode_displays_sample_with_filters() {
     let avif_data =
         std::fs::read(sample_path("WML2Viewer.avif")).expect("sample AVIF should exist");
-    let error = avif_rust::image_from_bytes(&avif_data).unwrap_err();
-    assert!(
-        matches!(error, avif_rust::DecoderError::Unsupported(message) if message.contains("CDEF"))
-    );
+    let image = avif_rust::image_from_bytes(&avif_data).expect("AVIF sample should decode");
+    assert_eq!((image.width, image.height), (SAMPLE_WIDTH, SAMPLE_HEIGHT));
+    assert_eq!(image.rgba.len(), SAMPLE_RGBA_LEN);
 }
 
 #[test]
-fn pure_rust_decode_rejects_source_plane_access_when_filters_are_active() {
+fn pure_rust_decode_exposes_filtered_source_planes() {
     let avif_data =
         std::fs::read(sample_path("WML2Viewer.avif")).expect("sample AVIF should exist");
-    let error = avif_rust::decode_frame_bytes(&avif_data).unwrap_err();
-    assert!(
-        matches!(error, avif_rust::DecoderError::Unsupported(message) if message.contains("CDEF"))
-    );
+    let frame = avif_rust::decode_frame_bytes(&avif_data).expect("AVIF sample should decode");
+    assert_eq!((frame.width, frame.height), (SAMPLE_WIDTH, SAMPLE_HEIGHT));
+    assert_eq!(frame.buffers.planes.len(), 3);
+    for plane in &frame.buffers.planes {
+        assert_eq!(
+            (plane.layout.width, plane.layout.height),
+            (SAMPLE_WIDTH, SAMPLE_HEIGHT)
+        );
+    }
 }
 
 #[test]
@@ -333,7 +337,6 @@ fn report_current_wml2viewer_prefilter_plane_error() {
 }
 
 #[test]
-#[ignore = "pure Rust output does not yet meet the AV1 conformance threshold"]
 fn pure_rust_decode_matches_ffmpeg_oracle_and_original_png() {
     let avif_data =
         std::fs::read(sample_path("WML2Viewer.avif")).expect("sample AVIF should exist");

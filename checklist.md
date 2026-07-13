@@ -183,12 +183,13 @@ Completed prerequisites retained as stable code:
 
 Raw reconstruction now passes the filter-disabled fixtures and the complete
 `WML2Viewer` pre-filter oracle. Post-filter implementation is the current main
-work. Keep filter metadata in private reconstruction state; do not change the
+work. The supported 8-bit 4:4:4 path is now public; the integrated oracle and
+broader format gate remain. Keep filter metadata in private reconstruction state; do not change the
 public decoded-frame shape.
 
 - [x] Collect CDEF indices within each tile during block traversal.
 - [x] Aggregate CDEF indices into frame-private post-filter state during full/prefix traversal; retain the state for the filter-application stage.
-- [ ] Retain transform boundaries and restoration unit type/coefficients in
+- [x] Retain transform boundaries and restoration unit type/coefficients in
       the frame-level filter state used by every stage.
 - [ ] Retain transform-boundary skip/mode state and consume it when deriving
       normative deblock levels and edge lengths.
@@ -226,6 +227,8 @@ public decoded-frame shape.
       frame-private restoration state.
 - [x] Implement SGRPROJ restoration and verify stripe/boundary behavior
       against the WML2Viewer AOM restoration oracle.
+- [x] Enable public 8-bit 4:4:4 filtered decode and verify the WML2Viewer
+      image and `wml2` callback path through deblock, CDEF and restoration.
 - [ ] Verify the complete reconstruction/filter order against plane oracles.
 - [ ] Enable the `WML2Viewer.avif` final oracle only after the required filters
       are active and exact.
@@ -321,13 +324,16 @@ The current structural gate is green for the supported feature-on workspace,
 the AVIF-disabled `wml2` library, fuzz-bin compilation, AVIF-enabled `wml2`
 tests, and the Wasm check. The full feature-off integration run is not yet a
 success criterion because un-gated AVIF integration targets still fail to
-compile. Exact WML2Viewer pre-filter plane equality is complete; exact integrated
-deblock/CDEF/restoration output remains the release blocker.
+compile. The public 8-bit 4:4:4 WML2Viewer sample now decodes through
+deblock -> CDEF -> loop restoration and passes the FFmpeg/RGBA threshold gate.
+The permanent integrated plane oracle and broader format coverage remain
+release work.
 
-Until post-filters are implemented, `decode`, `image_from_bytes`,
-`decode_frame_bytes` and the `wml2` callback must fail with `Unsupported` for a
-stream requiring an unavailable filter. Prefilter diagnostics stay private or
-test-only and do not define the public decoded-frame contract.
+`decode`, `image_from_bytes`, `decode_frame_bytes` and the `wml2` callback now
+accept the implemented 8-bit 4:4:4 filter path. They remain fail-closed with
+`Unsupported` for unsupported bit depth/subsampling, film grain, qmatrix and
+other unavailable AV1 tools. Prefilter diagnostics stay private or test-only
+and do not define the public decoded-frame contract.
 
 ## Diagnostic history
 
@@ -411,7 +417,6 @@ pipeline reports a final-filter RGB average absolute error of about
 restoration stage exactly: all three planes report `mismatches=0` and
 `average_abs=0`.
 The remaining release work is the reproducible integrated filter-order oracle
-and public fail-closed gate; diagnostic generation must not enable it early.
-The public `WML2Viewer.avif` gate remains incomplete (the historical public
-RGB error was `50.161736...`), and no diagnostic generation may change the
-strict manifest.
+and broader format coverage. The public WML2Viewer image/callback gate now
+passes for the supported 8-bit 4:4:4 path; no diagnostic generation may change
+the strict manifest.
