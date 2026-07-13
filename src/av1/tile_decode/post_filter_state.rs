@@ -265,6 +265,35 @@ pub(crate) fn cdef_adjust_primary_strength(strength: u8, variance: i32) -> u8 {
     ((i32::from(strength) * (4 + i) + 8) >> 4) as u8
 }
 
+/// Read a restoration stripe with AOM's three-row stripe halo. Loop
+/// restoration stores only two rows at an internal stripe boundary and
+/// duplicates the outer row to provide the three convolution rows required by
+/// the 7-tap kernel. Frame edges continue to use the extended outermost row.
+fn restoration_sample(
+    source: &[u16],
+    width: usize,
+    height: usize,
+    x: isize,
+    y: isize,
+    origin_y: usize,
+    stripe_height: usize,
+) -> i32 {
+    let mut sample_y = y;
+    let stripe_start = origin_y as isize;
+    if origin_y > 0 {
+        if sample_y == stripe_start - 3 || sample_y == stripe_start - 2 {
+            sample_y = stripe_start - 2;
+        }
+    }
+    let stripe_end = (origin_y + stripe_height).min(height) as isize;
+    if stripe_end < height as isize && sample_y == stripe_end + 2 {
+        sample_y = stripe_end + 1;
+    }
+    let sample_x = x.clamp(0, width.saturating_sub(1) as isize) as usize;
+    let sample_y = sample_y.clamp(0, height.saturating_sub(1) as isize) as usize;
+    source[sample_y * width + sample_x] as i32
+}
+
 #[allow(dead_code)]
 pub(crate) fn wiener_filter_unit(
     source: &[u16],
@@ -284,10 +313,8 @@ pub(crate) fn wiener_filter_unit(
     if output_width == 0 || output_height == 0 {
         return source.to_vec();
     }
-    let sample = |x: isize, y: isize| -> i32 {
-        let x = x.clamp(0, width.saturating_sub(1) as isize) as usize;
-        let y = y.clamp(0, height.saturating_sub(1) as isize) as usize;
-        source[y * width + x] as i32
+    let sample = |x: isize, y: isize| {
+        restoration_sample(source, width, height, x, y, origin_y, output_height)
     };
     let residual_kernel = |axis: usize| {
         let [outer, middle, inner] = filters[axis].map(i32::from);
@@ -400,22 +427,25 @@ pub(crate) fn sgrproj_filter_unit(
         [22, -1],
     ];
     let index = usize::from(sgr_index.min(15));
-    let sample = |x: isize, y: isize| -> i32 {
-        let x = x.clamp(0, width.saturating_sub(1) as isize) as usize;
-        let y = y.clamp(0, height.saturating_sub(1) as isize) as usize;
-        source[y * width + x] as i32
+    let output_width = unit_width.min(width.saturating_sub(origin_x));
+    let output_height = unit_height.min(height.saturating_sub(origin_y));
+    if output_width == 0 || output_height == 0 {
+        return source.to_vec();
+    }
+    let sample = |x: isize, y: isize| {
+        restoration_sample(source, width, height, x, y, origin_y, output_height)
     };
     let round_shift = |value: i64, shift: u32| -> i32 {
         ((value + (1_i64 << shift.saturating_sub(1))) >> shift) as i32
     };
     let intermediate = |radius: usize, scale: i32| -> (Vec<i32>, Vec<i32>, usize) {
-        let stride = width + 4;
-        let mut a = vec![0i32; (height + 4) * stride];
-        let mut b = vec![0i32; (height + 4) * stride];
+        let stride = output_width + 4;
+        let mut a = vec![0i32; (output_height + 4) * stride];
+        let mut b = vec![0i32; (output_height + 4) * stride];
         let side = radius * 2 + 1;
         let n = (side * side) as i32;
-        for yy in 0..height + 4 {
-            for xx in 0..width + 4 {
+        for yy in 0..output_height + 4 {
+            for xx in 0..output_width + 4 {
                 let cx = xx as isize + origin_x as isize - 2;
                 let cy = yy as isize + origin_y as isize - 2;
                 let mut sum = 0i32;
@@ -511,8 +541,8 @@ pub(crate) fn sgrproj_filter_unit(
             round_shift(i64::from(aa) * i64::from(pixel) + i64::from(bb), 9)
         }
     };
-    for local_y in 0..unit_height.min(height.saturating_sub(origin_y)) {
-        for local_x in 0..unit_width.min(width.saturating_sub(origin_x)) {
+    for local_y in 0..output_height {
+        for local_x in 0..output_width {
             let x = origin_x + local_x;
             let y = origin_y + local_y;
             let u = sample(x as isize, y as isize) << 4;
@@ -528,6 +558,8 @@ pub(crate) fn sgrproj_filter_unit(
 fn sgr_x_by_xplus1(z: i32) -> i32 {
     if z == 0 {
         1
+    } else if z >= 255 {
+        256
     } else {
         ((256 * z + (z + 1) / 2) / (z + 1)).clamp(1, 256)
     }
@@ -1079,7 +1111,7 @@ mod tests {
     use super::{
         CDEF_DIRECTIONS, CdefUnit, PostFilterState, cdef_adjust_primary_strength, cdef_constrain,
         cdef_filter_block, cdef_find_direction, cdef_unit_origin, deblock_filter_edge,
-        sgr_x_by_xplus1, store_cdef_unit,
+        restoration_sample, sgr_x_by_xplus1, store_cdef_unit,
     };
     use crate::av1::syntax::{BlockSize, PredictionMode, UvPredictionMode};
 
@@ -1149,6 +1181,44 @@ mod tests {
         assert_eq!(sgr_x_by_xplus1(1), 128);
         assert_eq!(sgr_x_by_xplus1(2), 171);
         assert_eq!(sgr_x_by_xplus1(3), 192);
+        assert_eq!(sgr_x_by_xplus1(255), 256);
+    }
+
+    #[test]
+    fn restoration_sample_matches_aom_stripe_halo_rules() {
+        let width = 8;
+        let height = 128;
+        let source: Vec<u16> = (0..height)
+            .flat_map(|row| std::iter::repeat_n(row as u16, width))
+            .collect();
+        assert_eq!(
+            restoration_sample(&source, width, height, 2, 53, 56, 64),
+            54
+        );
+        assert_eq!(
+            restoration_sample(&source, width, height, 2, 54, 56, 64),
+            54
+        );
+        assert_eq!(
+            restoration_sample(&source, width, height, 2, 55, 56, 64),
+            55
+        );
+        assert_eq!(
+            restoration_sample(&source, width, height, 2, 56, 56, 64),
+            56
+        );
+        assert_eq!(
+            restoration_sample(&source, width, height, 2, 120, 56, 64),
+            120
+        );
+        assert_eq!(
+            restoration_sample(&source, width, height, 2, 121, 56, 64),
+            121
+        );
+        assert_eq!(
+            restoration_sample(&source, width, height, 2, 122, 56, 64),
+            121
+        );
     }
 
     #[test]

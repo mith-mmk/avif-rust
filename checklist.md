@@ -213,13 +213,16 @@ public decoded-frame shape.
 - [x] Generate a local diagnostic oracle with deblock enabled and restoration
       disabled; keep the CDEF result non-authoritative until all plane values
       are exact and add a reproducible bootstrap recipe before release.
-- [ ] Implement loop restoration and restoration-unit boundary handling.
+- [x] Implement loop restoration and restoration-unit boundary handling for
+      the 8-bit 4:4:4 diagnostic path, including AOM stripe halos and the
+      150%-sized final restoration unit.
 - [x] Implement the scalar Wiener restoration kernel with transmitted
       vertical/horizontal axis order, AOM's 3/11-bit intermediate rounding,
       chroma 5-tap outer-zero rule and vertical halo.
 - [x] Retain the SGRPROJ parameter index and projection coefficients in
       frame-private restoration state.
-- [ ] Implement SGRPROJ restoration and verify stripe/boundary behavior.
+- [x] Implement SGRPROJ restoration and verify stripe/boundary behavior
+      against the WML2Viewer AOM restoration oracle.
 - [ ] Verify the complete reconstruction/filter order against plane oracles.
 - [ ] Enable the `WML2Viewer.avif` final oracle only after the required filters
       are active and exact.
@@ -401,15 +404,13 @@ deblock input isolates the remaining CDEF differences to
 differences are confined to frame-edge or block-boundary pixels; exact
 plane-oracle agreement is still required before this item is complete.
 
-These are diagnostic checkpoints only; normative level derivation, boundary
-coverage and exact kernel behavior remain unfinished. The current private
-pipeline reports a final-filter RGB average absolute error of about `0.026`
-against FFmpeg. The restoration-only AOM oracle reports mismatches/average
-absolute error of `735/0.000908641975308642`, `2040/0.0025617283950617282` and
-`189/0.00023333333333333333` for planes 0/1/2 after the chroma 5-tap fix.
-Wiener-only residuals remain `5804/0.008323456790123456`,
-`23438/0.03442592592592593` and `5167/0.006903703703703704`; these are the
-next first mismatches to eliminate before enabling the public final oracle.
+These are diagnostic checkpoints only; normative deblock/CDEF derivation and
+the complete filter-order gate remain unfinished. The current private
+pipeline reports a final-filter RGB average absolute error of about `0.0247`
+against FFmpeg. The AOM restoration oracle now matches the Rust restoration
+stage exactly: all three planes report `mismatches=0` and `average_abs=0`.
+The remaining final-filter error is in deblock/CDEF and must be eliminated
+before enabling the public final oracle.
 The public `WML2Viewer.avif` gate remains incomplete (the historical public
 RGB error was `50.161736...`), and no diagnostic generation may change the
 strict manifest.

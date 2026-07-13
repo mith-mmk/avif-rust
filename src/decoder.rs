@@ -555,14 +555,21 @@ fn apply_loop_restoration_stage(
         for unit in state.restoration_units.iter().filter(|unit| {
             unit.plane == plane_index && enabled_types.contains(&unit.restoration_type)
         }) {
-            let unit_width = if unit.x + unit_size < plane.layout.width {
-                unit_size
+            let remaining_width = plane.layout.width.saturating_sub(unit.x);
+            let unit_width = if remaining_width < unit_size + unit_size / 2 {
+                remaining_width
             } else {
-                plane.layout.width.saturating_sub(unit.x)
+                unit_size
             };
             let origin_y = unit.y.saturating_sub(RESTORATION_UNIT_OFFSET);
-            let end_y = if unit.y + unit_size < plane.layout.height {
-                unit.y + unit_size - RESTORATION_UNIT_OFFSET
+            let remaining_height = plane.layout.height.saturating_sub(unit.y);
+            let unit_extent = if remaining_height < unit_size + unit_size / 2 {
+                remaining_height
+            } else {
+                unit_size
+            };
+            let end_y = if unit.y + unit_extent < plane.layout.height {
+                unit.y + unit_extent - RESTORATION_UNIT_OFFSET
             } else {
                 plane.layout.height
             };
@@ -575,51 +582,59 @@ fn apply_loop_restoration_stage(
                 let frame_stripe = (stripe_y + RESTORATION_UNIT_OFFSET) / 64;
                 let nominal_height = 64 - usize::from(frame_stripe == 0) * RESTORATION_UNIT_OFFSET;
                 let stripe_height = nominal_height.min(end_y - stripe_y);
-                let filtered = match unit.restoration_type {
-                    1 => {
-                        let Some(mut filters) = unit.wiener else {
-                            break;
-                        };
-                        if plane_index > 0 {
-                            filters[0][0] = 0;
-                            filters[1][0] = 0;
+                let procunit_width = 64;
+                let mut chunk_x = 0;
+                while chunk_x < unit_width {
+                    let x = unit.x + chunk_x;
+                    let chunk_width = procunit_width.min(unit_width - chunk_x);
+                    let filtered = match unit.restoration_type {
+                        1 => {
+                            let Some(mut filters) = unit.wiener else {
+                                break;
+                            };
+                            if plane_index > 0 {
+                                filters[0][0] = 0;
+                                filters[1][0] = 0;
+                            }
+                            wiener_filter_unit(
+                                &source,
+                                plane.layout.width,
+                                plane.layout.height,
+                                x,
+                                stripe_y,
+                                chunk_width,
+                                stripe_height,
+                                filters,
+                            )
                         }
-                        wiener_filter_unit(
-                            &source,
-                            plane.layout.width,
-                            plane.layout.height,
-                            unit.x,
-                            stripe_y,
-                            unit_width,
-                            stripe_height,
-                            filters,
-                        )
+                        2 => {
+                            let (Some(index), Some(xqd)) = (unit.sgrproj_index, unit.sgrproj)
+                            else {
+                                break;
+                            };
+                            sgrproj_filter_unit(
+                                &source,
+                                plane.layout.width,
+                                plane.layout.height,
+                                x,
+                                stripe_y,
+                                chunk_width,
+                                stripe_height,
+                                index,
+                                xqd,
+                            )
+                        }
+                        _ => break,
+                    };
+                    for y in stripe_y..stripe_y + stripe_height {
+                        let start = y * plane.layout.width + x.min(plane.layout.width);
+                        let end =
+                            y * plane.layout.width + (x + chunk_width).min(plane.layout.width);
+                        if start < end {
+                            output[start..end].copy_from_slice(&filtered[start..end]);
+                        }
                     }
-                    2 => {
-                        let (Some(index), Some(xqd)) = (unit.sgrproj_index, unit.sgrproj) else {
-                            break;
-                        };
-                        sgrproj_filter_unit(
-                            &source,
-                            plane.layout.width,
-                            plane.layout.height,
-                            unit.x,
-                            stripe_y,
-                            unit_width,
-                            stripe_height,
-                            index,
-                            xqd,
-                        )
-                    }
-                    _ => break,
-                };
-                for y in stripe_y..stripe_y + stripe_height {
-                    let start = y * plane.layout.width + unit.x.min(plane.layout.width);
-                    let end =
-                        y * plane.layout.width + (unit.x + unit_width).min(plane.layout.width);
-                    if start < end {
-                        output[start..end].copy_from_slice(&filtered[start..end]);
-                    }
+                    chunk_x += chunk_width;
                 }
                 stripe_y += stripe_height;
             }
