@@ -371,18 +371,23 @@ coded-lossless 4x4 WHT explicitly retains its original storage so the exact
 The current post-filter diagnostic compares each private stage with FFmpeg's
 final `gbrp` output. Raw RGB average absolute error is
 `0.14965555555555554`; the deblock and CDEF stages currently report
-`0.13863662551440328` and `0.10564567901234567`. A dedicated AOM oracle with
+`0.1328135802469136` and `0.10304238683127571`. A dedicated AOM oracle with
 deblock enabled and restoration disabled is now generated locally. The Rust
 deblock stage still differs from that oracle by plane as follows:
 
-- plane 0: `mismatches=15594`, `average_abs=0.02662716049382716`;
-- plane 1: `mismatches=21415`, `average_abs=0.038995061728395064`;
-- plane 2: `mismatches=18100`, `average_abs=0.033058024691358025`.
+- plane 0: `mismatches=13944`, `average_abs=0.02335432098765432`;
+- plane 1: `mismatches=12850`, `average_abs=0.026087654320987655`;
+- plane 2: `mismatches=9471`, `average_abs=0.01992962962962963`.
+
+Against the corresponding AOM deblock-plus-CDEF oracle, the Rust CDEF stage
+currently reports `59468/0.09584074074074074`, `69570/0.11351358024691358`
+and `59995/0.09977283950617284` mismatches/average absolute error for planes
+0/1/2 respectively.
 
 These are diagnostic checkpoints only; normative level derivation, boundary
 coverage and exact kernel behavior remain unfinished. Porting Wiener add-src precision,
 transmitted axis order and halo processing reduced the Wiener-stage error from
-`0.29293786008230455`/max `254` to `0.15565843621399178`/max `25` in the
+`0.29293786008230455`/max `254` to `0.15343045267489713`/max `25` in the
 current diagnostic order. The combined restoration scaffold currently reports
-`0.14908106995884773`; normative stripe boundaries, deblock level derivation,
+`0.14680576131687242`; normative stripe boundaries, deblock level derivation,
 CDEF exactness and SGRPROJ math remain before the final oracle can be enabled.

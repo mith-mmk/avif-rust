@@ -399,18 +399,30 @@ fn apply_deblock_stage(
                 } else {
                     6
                 };
-                deblock_filter_edge_with_length(
-                    &mut plane.samples,
-                    plane.layout.width,
-                    plane.layout.height,
-                    block.x,
-                    block.y,
-                    vertical,
-                    level,
-                    frame_header.loop_filter.sharpness,
-                    frame.bit_depth,
-                    filter_length,
-                );
+                let span = if vertical {
+                    block.tx_size.height()
+                } else {
+                    block.tx_size.width()
+                };
+                for offset in (0..span).step_by(4) {
+                    let (edge_x, edge_y) = if vertical {
+                        (block.x, block.y + offset)
+                    } else {
+                        (block.x + offset, block.y)
+                    };
+                    deblock_filter_edge_with_length(
+                        &mut plane.samples,
+                        plane.layout.width,
+                        plane.layout.height,
+                        edge_x,
+                        edge_y,
+                        vertical,
+                        level,
+                        frame_header.loop_filter.sharpness,
+                        frame.bit_depth,
+                        filter_length,
+                    );
+                }
             }
         }
     }
