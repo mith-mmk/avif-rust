@@ -538,52 +538,80 @@ fn apply_loop_restoration_stage(
     unit_size: usize,
     enabled_types: &[u8],
 ) {
+    const RESTORATION_UNIT_OFFSET: usize = 8;
     for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
         let source = plane.samples.clone();
         let mut output = source.clone();
         for unit in state.restoration_units.iter().filter(|unit| {
             unit.plane == plane_index && enabled_types.contains(&unit.restoration_type)
         }) {
-            let filtered = match unit.restoration_type {
-                1 => {
-                    let Some(filters) = unit.wiener else {
-                        continue;
-                    };
-                    wiener_filter_unit(
-                        &source,
-                        plane.layout.width,
-                        plane.layout.height,
-                        unit.x,
-                        unit.y,
-                        unit_size,
-                        unit_size,
-                        filters,
-                    )
-                }
-                2 => {
-                    let (Some(index), Some(xqd)) = (unit.sgrproj_index, unit.sgrproj) else {
-                        continue;
-                    };
-                    sgrproj_filter_unit(
-                        &source,
-                        plane.layout.width,
-                        plane.layout.height,
-                        unit.x,
-                        unit.y,
-                        unit_size,
-                        unit_size,
-                        index,
-                        xqd,
-                    )
-                }
-                _ => continue,
+            let unit_width = if unit.x + unit_size < plane.layout.width {
+                unit_size
+            } else {
+                plane.layout.width.saturating_sub(unit.x)
             };
-            for y in unit.y..(unit.y + unit_size).min(plane.layout.height) {
-                let start = y * plane.layout.width + unit.x.min(plane.layout.width);
-                let end = y * plane.layout.width + (unit.x + unit_size).min(plane.layout.width);
-                if start < end {
-                    output[start..end].copy_from_slice(&filtered[start..end]);
+            let origin_y = unit.y.saturating_sub(RESTORATION_UNIT_OFFSET);
+            let end_y = if unit.y + unit_size < plane.layout.height {
+                unit.y + unit_size - RESTORATION_UNIT_OFFSET
+            } else {
+                plane.layout.height
+            };
+            let unit_height = end_y.saturating_sub(origin_y);
+            if unit_width == 0 || unit_height == 0 {
+                continue;
+            }
+            let mut stripe_y = origin_y;
+            while stripe_y < end_y {
+                let frame_stripe = (stripe_y + RESTORATION_UNIT_OFFSET) / 64;
+                let nominal_height = 64 - usize::from(frame_stripe == 0) * RESTORATION_UNIT_OFFSET;
+                let stripe_height = nominal_height.min(end_y - stripe_y);
+                let filtered = match unit.restoration_type {
+                    1 => {
+                        let Some(mut filters) = unit.wiener else {
+                            break;
+                        };
+                        if plane_index > 0 {
+                            filters[0][0] = 0;
+                            filters[1][0] = 0;
+                        }
+                        wiener_filter_unit(
+                            &source,
+                            plane.layout.width,
+                            plane.layout.height,
+                            unit.x,
+                            stripe_y,
+                            unit_width,
+                            stripe_height,
+                            filters,
+                        )
+                    }
+                    2 => {
+                        let (Some(index), Some(xqd)) = (unit.sgrproj_index, unit.sgrproj) else {
+                            break;
+                        };
+                        sgrproj_filter_unit(
+                            &source,
+                            plane.layout.width,
+                            plane.layout.height,
+                            unit.x,
+                            stripe_y,
+                            unit_width,
+                            stripe_height,
+                            index,
+                            xqd,
+                        )
+                    }
+                    _ => break,
+                };
+                for y in stripe_y..stripe_y + stripe_height {
+                    let start = y * plane.layout.width + unit.x.min(plane.layout.width);
+                    let end =
+                        y * plane.layout.width + (unit.x + unit_width).min(plane.layout.width);
+                    if start < end {
+                        output[start..end].copy_from_slice(&filtered[start..end]);
+                    }
                 }
+                stripe_y += stripe_height;
             }
         }
         plane.samples = output;
@@ -1690,6 +1718,9 @@ mod prefilter_diagnostic_tests {
         let deblock_oracle = std::env::var_os("AOM_DEBLOCK_ORACLE")
             .map(PathBuf::from)
             .and_then(|path| std::fs::read(path).ok());
+        let restoration_oracle = std::env::var_os("AOM_RESTORATION_ORACLE")
+            .map(PathBuf::from)
+            .and_then(|path| std::fs::read(path).ok());
         let report = |label: &str, frame: &DecodedFrame| {
             let Some(reference) = reference.as_ref() else {
                 return;
@@ -1825,6 +1856,34 @@ mod prefilter_diagnostic_tests {
                 );
             }
         };
+        let report_restoration_oracle = |label: &str, frame: &DecodedFrame| {
+            let Some(expected) = restoration_oracle.as_ref() else {
+                return;
+            };
+            let sample_count = frame.width * frame.height;
+            if expected.len() != sample_count * 3 {
+                return;
+            }
+            for (plane_index, plane) in frame.buffers.planes.iter().enumerate() {
+                let oracle =
+                    &expected[plane_index * sample_count..(plane_index + 1) * sample_count];
+                let mut mismatches = 0usize;
+                let mut sum = 0u64;
+                let mut first = None;
+                for (index, (&actual, &expected)) in plane.samples.iter().zip(oracle).enumerate() {
+                    let difference = actual.abs_diff(u16::from(expected));
+                    mismatches += usize::from(difference != 0);
+                    sum += u64::from(difference);
+                    if difference != 0 && first.is_none() {
+                        first = Some((index, actual, expected));
+                    }
+                }
+                eprintln!(
+                    "AOM restoration oracle {label} plane {plane_index}: mismatches={mismatches}, average_abs={}, first={first:?}",
+                    sum as f64 / sample_count as f64
+                );
+            }
+        };
         let report_cdef_on_aom_deblock = |frame: &mut DecodedFrame| {
             let Some(path) = std::env::var_os("AOM_DEBLOCK_INPUT") else {
                 return;
@@ -1871,6 +1930,14 @@ mod prefilter_diagnostic_tests {
         );
         report("raw", &frame);
         report_cdef_oracle("raw", &frame);
+        let mut restoration_only = frame.clone();
+        apply_loop_restoration_stage(
+            &mut restoration_only,
+            &post_filter_state,
+            headers.decode_plan.superblock_size << headers.frame.restoration.unit_shift,
+            &[1, 2],
+        );
+        report_restoration_oracle("raw-input", &restoration_only);
         apply_deblock_stage(&mut frame, &headers.frame, &post_filter_state);
         report("deblock", &frame);
         report_deblock_oracle("deblock", &frame);

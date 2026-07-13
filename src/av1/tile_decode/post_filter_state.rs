@@ -519,7 +519,7 @@ pub(crate) fn sgrproj_filter_unit(
             let f0 = filter_at(local_x, local_y, 0);
             let f1 = filter_at(local_x, local_y, 1);
             let value = (u << 7) + xq0 * (f0 - u) + xq1 * (f1 - u);
-            output[y * width + x] = ((value + (1 << 10)) >> 11).clamp(0, u16::MAX as i32) as u16;
+            output[y * width + x] = ((value + (1 << 10)) >> 11).clamp(0, 255) as u16;
         }
     }
     output

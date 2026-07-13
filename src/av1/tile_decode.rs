@@ -181,7 +181,9 @@ impl<'a> TileDecoder<'a> {
                 left: vec![0; mi_rows],
             }),
             restoration: frame.restoration,
-            wiener_refs: [[[3, -7, 15]; 2]; 3],
+            // Chroma Wiener restoration uses the reduced 5-tap window, so
+            // its outer coefficient is implicit zero and is not signaled.
+            wiener_refs: [[[3, -7, 15]; 2], [[0, -7, 15]; 2], [[0, -7, 15]; 2]],
             sgrproj_refs: [[-32, 31]; 3],
             cdef_units: Vec::new(),
             cdef_blocks: Vec::new(),

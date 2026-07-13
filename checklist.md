@@ -44,10 +44,11 @@ until its final filtered planes match the reference oracle.
 - [x] Add `AVIF_REQUIRE_ORACLES=1` strict mode so conformance runs fail when
       the manifest is absent, while normal parser/safety tests remain runnable
       without local test data.
-- [x] Make strict mode reject a header-only/zero-entry manifest and require
-      the approved fixture IDs.
-- [x] Require approved fixture source-manifest entries and validate SHA-256
-      hash format in strict mode.
+- [ ] Make strict mode reject a header-only/zero-entry manifest and require
+      the approved fixture IDs; manifest absence is already a strict failure.
+- [ ] Add the future `-RegisterInStrictManifest` path to
+      `generate_oracles.ps1`; the default `WML2Viewer` output remains
+      diagnostic-only, while filter-disabled generation must opt in explicitly.
 - [x] Recompute source hashes and compare them with the source manifest using
       `scripts/verify_oracle_sources.ps1`.
 - [x] Generate the first filter-disabled 8-bit 4:4:4 identity-GBR fixture.
@@ -56,17 +57,18 @@ until its final filtered planes match the reference oracle.
 - [x] Generate the palette fixture in that same profile and assert that the
       bitstream actually contains decoded palette blocks and color maps.
 - [ ] Generate the `WML2Viewer.avif` native-plane and RGBA fixtures.
-- [x] Make diagnostic fixture generation opt-in for strict registration
+- [ ] Make diagnostic fixture generation opt-in for strict registration
       (for example, `generate_oracles.ps1 -RegisterInStrictManifest`), and keep
       the default `WML2Viewer` generation out of `oracles.csv`.
-- [x] Add one reproducible recipe/bootstrap for `BlackLossless` and the five
+- [ ] Add one reproducible recipe/bootstrap for `BlackLossless` and the five
       filter-disabled fixtures from a fresh clone (`scripts/bootstrap_oracles.ps1`).
 - [x] Make the strict oracle command part of the documented AVIF validation
       gate.
 - [x] Capture and assert `wml2` draw callback bytes and dimensions in the
       AVIF integration test.
-- [x] Assert callback order as `init -> draw -> terminate` on the
-      `filter-disabled-gbr` public fixture.
+- [ ] Assert callback order as `init -> draw -> terminate` on the
+      `filter-disabled-gbr` public fixture; callback bytes and dimensions are
+      already covered.
 
 ## 2. Raw block reconstruction: exact pre-filter checkpoint
 
@@ -157,6 +159,12 @@ exact native-plane fixture before the next feature is enabled.
 - [x] Record the true AOM pre-filter result (no mismatch in any plane) and keep
       this diagnostic fixture out of the passing strict manifest.
 
+Raw reconstruction is the fixed next correctness track for any remaining
+bitstream mismatch. Keep palette-mode filter-intra gating, all 19 rectangular
+and square TxSizes, chroma TxType derivation, 32/64-point transforms, entropy
+termination and complete tile coverage explicit in the vectors before moving
+the public decode gate to final filtered pixels.
+
 Completed prerequisites retained as stable code:
 
 - [x] Tile decoder responsibilities are split into syntax, entropy,
@@ -180,11 +188,10 @@ public decoded-frame shape.
 
 - [x] Collect CDEF indices within each tile during block traversal.
 - [x] Aggregate CDEF indices into frame-private post-filter state during full/prefix traversal; retain the state for the filter-application stage.
-- [x] Retain transform boundaries and restoration unit type/coefficients
-      during frame decode.
-- [x] Retain transform-boundary skip/mode state during frame decode.
-- [ ] Use the retained skip/mode state when deriving normative deblock levels
-      and edge lengths.
+- [ ] Retain transform boundaries and restoration unit type/coefficients in
+      the frame-level filter state used by every stage.
+- [ ] Retain transform-boundary skip/mode state and consume it when deriving
+      normative deblock levels and edge lengths.
 - [ ] Integrate frame-level post-filter state and apply filters in fixed order:
       deblock -> CDEF -> loop restoration; verify each stage with plane oracles.
 - [ ] Implement deblocking in normative order with boundary and strength
@@ -194,7 +201,9 @@ public decoded-frame shape.
       4:4:4 scalar frames.
 - [x] Implement the scalar CDEF constrain, direction search and 8x8 block
       kernel.
-- [ ] Implement CDEF and apply the decoded per-block CDEF index.
+- [x] Collect tile-local CDEF indices during traversal.
+- [ ] Integrate frame-level CDEF state and apply each decoded per-block index
+      after deblock; verify all planes against a CDEF oracle.
 - [ ] Match normative CDEF frame preparation and block semantics: luma
       direction/variance is shared with chroma, luma primary strength uses the
       directional-variance adjustment, secondary strength `3` maps to `4`,
@@ -206,9 +215,8 @@ public decoded-frame shape.
       are exact and add a reproducible bootstrap recipe before release.
 - [ ] Implement loop restoration and restoration-unit boundary handling.
 - [x] Implement the scalar Wiener restoration kernel with transmitted
-      vertical/horizontal axis order, AOM's 3/11-bit intermediate rounding and
-      vertical halo; apply every Wiener/SGRPROJ unit from one immutable CDEF
-      source snapshot.
+      vertical/horizontal axis order, AOM's 3/11-bit intermediate rounding,
+      chroma 5-tap outer-zero rule and vertical halo.
 - [x] Retain the SGRPROJ parameter index and projection coefficients in
       frame-private restoration state.
 - [ ] Implement SGRPROJ restoration and verify stripe/boundary behavior.
@@ -260,8 +268,9 @@ and RGBA gates.
 - [x] Validate `ispe` dimensions against the AV1 frame dimensions.
 - [x] Validate SDR `nclx` colour description and range against the AV1
       sequence header, while accepting CICP value `2` as unspecified.
-- [x] Gate every AVIF integration target with `required-features =
-      ["avif"]`.
+- [ ] Gate every AVIF integration target with `required-features =
+      ["avif"]`; the full feature-off integration run currently fails to
+      compile.
 - [x] Add an explicit feature-off test target and verify the AVIF-disabled
       library with `cargo test -p wml2 --lib --no-default-features`.
 - [ ] Gate every AVIF integration target so the full
@@ -391,9 +400,14 @@ deblock input isolates the remaining CDEF differences to
 `39/0.00004814814814814815` for planes 0/1/2.
 
 These are diagnostic checkpoints only; normative level derivation, boundary
-coverage and exact kernel behavior remain unfinished. Porting Wiener add-src precision,
-transmitted axis order and halo processing reduced the Wiener-stage RGB error
-to `0.11815144032921811` in the current diagnostic order. The combined
-restoration scaffold now reports `0.10825185185185185`; normative stripe
-boundaries, deblock level derivation, CDEF exactness and SGRPROJ math remain
-before the final oracle can be enabled.
+coverage and exact kernel behavior remain unfinished. The current private
+pipeline reports a final-filter RGB average absolute error of about `0.026`
+against FFmpeg. The restoration-only AOM oracle reports mismatches/average
+absolute error of `735/0.000908641975308642`, `2040/0.0025617283950617282` and
+`189/0.00023333333333333333` for planes 0/1/2 after the chroma 5-tap fix.
+Wiener-only residuals remain `5804/0.008323456790123456`,
+`23438/0.03442592592592593` and `5167/0.006903703703703704`; these are the
+next first mismatches to eliminate before enabling the public final oracle.
+The public `WML2Viewer.avif` gate remains incomplete (the historical public
+RGB error was `50.161736...`), and no diagnostic generation may change the
+strict manifest.
