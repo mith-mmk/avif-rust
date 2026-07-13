@@ -1,5 +1,6 @@
 use super::bitstream::BitReader;
 use super::sequence::SequenceHeader;
+use super::syntax::mi_dimension;
 use crate::DecoderError;
 
 const MAX_TILE_WIDTH: u32 = 4096;
@@ -24,8 +25,8 @@ pub(crate) fn parse_tile_info(
     frame_width: u32,
     frame_height: u32,
 ) -> Result<TileInfo, DecoderError> {
-    let mi_cols = align_power_of_two(frame_width, 3) >> 2;
-    let mi_rows = align_power_of_two(frame_height, 3) >> 2;
+    let mi_cols = mi_dimension(frame_width);
+    let mi_rows = mi_dimension(frame_height);
     let sb_size_log2 = if sequence.use_128x128_superblock {
         5
     } else {
@@ -197,11 +198,6 @@ fn uniform_starts(sb_count: u32, mi_count: u32, sb_size_log2: u8, tile_size_sb: 
     }
     starts.push(mi_count);
     starts
-}
-
-fn align_power_of_two(value: u32, align_bits: u8) -> u32 {
-    let align = 1u32 << align_bits;
-    (value + align - 1) & !(align - 1)
 }
 
 fn round_shift(value: u32, shift: u8) -> u32 {

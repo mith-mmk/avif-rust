@@ -1,14 +1,17 @@
 use crate::av1::ColorRange;
 use crate::av1::PostFilterState;
+#[cfg(test)]
+use crate::av1::alloc_frame_buffers;
 use crate::av1::{
     Av1CodecConfiguration, BlockModeProbe, ColorConfig, FrameBuffers, FrameDecodePlan, FrameHeader,
     PartitionProbe, QuantState, ResidualProbe, SequenceHeader, TileEntropyState, TileGroup,
-    alloc_frame_buffers, build_still_decode_plan, cdef_filter_block, cdef_find_direction,
-    deblock_filter_edge, decode_luma_root_block_prefix_with_post_filter_state_and_entropy,
-    frame_buffers_to_rgba_8, frame_buffers_to_rgba_16, parse_av1_config, parse_frame_header,
-    parse_sequence_header, parse_tile_group, plan_transform_blocks_with_tx_size,
-    prepare_tile_entropy, probe_first_block_residuals, probe_tile_block_modes,
-    probe_tile_partitions, sgrproj_filter_unit, wiener_filter_unit,
+    alloc_coded_frame_buffers, build_still_decode_plan, cdef_filter_block, cdef_find_direction,
+    crop_frame_buffers_to_plan, deblock_filter_edge,
+    decode_luma_root_block_prefix_with_post_filter_state_and_entropy, frame_buffers_to_rgba_8,
+    frame_buffers_to_rgba_16, parse_av1_config, parse_frame_header, parse_sequence_header,
+    parse_tile_group, plan_transform_blocks_with_tx_size, prepare_tile_entropy,
+    probe_first_block_residuals, probe_tile_block_modes, probe_tile_partitions,
+    sgrproj_filter_unit, wiener_filter_unit,
 };
 use crate::compat::{DataMap, DecodeOptions, InitOptions};
 use crate::container::{AvifInfo, ColorInformation, parse_avif};
@@ -528,7 +531,7 @@ fn decode_still_frame_with_filter_policy_and_state(
     if validate_filters {
         validate_public_decode_tools(headers)?;
     }
-    let mut buffers = alloc_frame_buffers(&headers.decode_plan)?;
+    let mut buffers = alloc_coded_frame_buffers(&headers.decode_plan)?;
     let (prefix, post_filter_state) =
         decode_luma_root_block_prefix_with_post_filter_state_and_entropy(
             &headers.tile_group.tile_data,
@@ -543,6 +546,7 @@ fn decode_still_frame_with_filter_policy_and_state(
     if let Some(err) = prefix.next_unsupported {
         return Err(err);
     }
+    crop_frame_buffers_to_plan(&mut buffers, &headers.decode_plan)?;
     Ok(DecodedStillFrame {
         frame: DecodedFrame {
             width: headers.decode_plan.width,

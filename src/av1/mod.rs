@@ -21,6 +21,7 @@ pub use decode::{
     FrameBuffers, FrameDecodePlan, PlaneBuffer, PlaneLayout, TileDecodePlan, alloc_frame_buffers,
     build_still_decode_plan,
 };
+pub(crate) use decode::{alloc_coded_frame_buffers, crop_frame_buffers_to_plan};
 pub use entropy::EntropyDecoder;
 pub use frame::{CdefStrength, FrameHeader, FrameType, TxMode, parse_frame_header};
 pub use predict::{IntraEdges, predict_intra};

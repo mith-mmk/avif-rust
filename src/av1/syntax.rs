@@ -1,3 +1,7 @@
+pub(crate) fn mi_dimension(frame_dimension: u32) -> u32 {
+    frame_dimension.div_ceil(8) * 2
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockSize {
     Block4x4,
@@ -632,6 +636,15 @@ impl TxType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mi_dimension_rounds_frames_to_complete_eight_pixel_units() {
+        assert_eq!(mi_dimension(1), 2);
+        assert_eq!(mi_dimension(4), 2);
+        assert_eq!(mi_dimension(8), 2);
+        assert_eq!(mi_dimension(9), 4);
+        assert_eq!(mi_dimension(900), 226);
+    }
 
     #[test]
     fn square_block_split_subsize_halves_dimensions() {

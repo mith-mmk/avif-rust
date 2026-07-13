@@ -1,7 +1,7 @@
 use super::cdf::CdfContext;
 use super::entropy::EntropyDecoder;
 use super::frame::{FrameHeader, RestorationParams};
-use super::syntax::{BlockSize, TxSize, TxType};
+use super::syntax::{BlockSize, TxSize, TxType, mi_dimension};
 use super::transform::{TransformBlock, coefficient_scan};
 use crate::DecoderError;
 
@@ -145,16 +145,10 @@ pub struct TileDecoder<'a> {
 
 impl<'a> TileDecoder<'a> {
     pub fn new(payload: &'a [u8], frame: &FrameHeader) -> Result<Self, DecoderError> {
-        let frame_width = usize::try_from(frame.frame_width)
+        let mi_cols = usize::try_from(mi_dimension(frame.frame_width))
             .map_err(|_| DecoderError::InvalidParam("AV1 frame width is too large".to_string()))?;
-        let frame_height = usize::try_from(frame.frame_height)
+        let mi_rows = usize::try_from(mi_dimension(frame.frame_height))
             .map_err(|_| DecoderError::InvalidParam("AV1 frame height is too large".to_string()))?;
-        let mi_cols = frame_width.checked_add(3).ok_or_else(|| {
-            DecoderError::InvalidParam("AV1 frame width is too large".to_string())
-        })? >> 2;
-        let mi_rows = frame_height.checked_add(3).ok_or_else(|| {
-            DecoderError::InvalidParam("AV1 frame height is too large".to_string())
-        })? >> 2;
         let mi_count = mi_cols.checked_mul(mi_rows).ok_or_else(|| {
             DecoderError::InvalidParam("AV1 frame dimensions are too large".to_string())
         })?;

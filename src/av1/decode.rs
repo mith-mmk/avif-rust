@@ -1,5 +1,6 @@
 use super::frame::{FrameHeader, TxMode};
 use super::sequence::SequenceHeader;
+use super::syntax::mi_dimension;
 use super::tile_group::TileGroup;
 use crate::DecoderError;
 
@@ -104,8 +105,10 @@ pub fn build_still_decode_plan(
         64
     };
     let superblock_mi: usize = superblock_size / 4;
-    let mi_cols = round_shift_usize(width, 2);
-    let mi_rows = round_shift_usize(height, 2);
+    let mi_cols = usize::try_from(mi_dimension(frame.frame_width))
+        .map_err(|_| DecoderError::InvalidParam("AV1 frame width is too large".to_string()))?;
+    let mi_rows = usize::try_from(mi_dimension(frame.frame_height))
+        .map_err(|_| DecoderError::InvalidParam("AV1 frame height is too large".to_string()))?;
     let superblock_cols = round_shift_usize(mi_cols, superblock_mi.trailing_zeros() as u8) as u32;
     let superblock_rows = round_shift_usize(mi_rows, superblock_mi.trailing_zeros() as u8) as u32;
     let planes = build_plane_layouts(sequence, width, height)?;
@@ -177,6 +180,60 @@ pub fn alloc_frame_buffers(plan: &FrameDecodePlan) -> Result<FrameBuffers, Decod
         height: plan.height,
         planes,
     })
+}
+
+pub(crate) fn alloc_coded_frame_buffers(
+    plan: &FrameDecodePlan,
+) -> Result<FrameBuffers, DecoderError> {
+    let coded_width =
+        usize::try_from(mi_dimension(u32::try_from(plan.width).map_err(|_| {
+            DecoderError::InvalidParam("AV1 frame width is too large".to_string())
+        })?))
+        .map_err(|_| DecoderError::InvalidParam("AV1 frame width is too large".to_string()))?
+            << 2;
+    let coded_height =
+        usize::try_from(mi_dimension(u32::try_from(plan.height).map_err(|_| {
+            DecoderError::InvalidParam("AV1 frame height is too large".to_string())
+        })?))
+        .map_err(|_| DecoderError::InvalidParam("AV1 frame height is too large".to_string()))?
+            << 2;
+    let mut coded_plan = plan.clone();
+    for layout in &mut coded_plan.planes {
+        layout.width = round_shift_usize(coded_width, layout.subsampling_x);
+        layout.height = round_shift_usize(coded_height, layout.subsampling_y);
+        layout.sample_count = layout.width.checked_mul(layout.height).ok_or_else(|| {
+            DecoderError::InvalidParam("AV1 coded plane dimensions are too large".to_string())
+        })?;
+    }
+    alloc_frame_buffers(&coded_plan)
+}
+
+pub(crate) fn crop_frame_buffers_to_plan(
+    buffers: &mut FrameBuffers,
+    plan: &FrameDecodePlan,
+) -> Result<(), DecoderError> {
+    if buffers.planes.len() != plan.planes.len() {
+        return Err(DecoderError::InvalidParam(
+            "AV1 frame buffer plane count does not match decode plan".to_string(),
+        ));
+    }
+    for (plane, target_layout) in buffers.planes.iter_mut().zip(&plan.planes) {
+        if plane.layout.width < target_layout.width || plane.layout.height < target_layout.height {
+            return Err(DecoderError::InvalidParam(
+                "AV1 coded plane is smaller than the visible frame".to_string(),
+            ));
+        }
+        let mut visible = vec![0; target_layout.sample_count];
+        for row in 0..target_layout.height {
+            let source = row * plane.layout.width;
+            let target = row * target_layout.width;
+            visible[target..target + target_layout.width]
+                .copy_from_slice(&plane.samples[source..source + target_layout.width]);
+        }
+        plane.layout = *target_layout;
+        plane.samples = visible;
+    }
+    Ok(())
 }
 
 fn build_plane_layouts(
@@ -347,5 +404,43 @@ mod tests {
         assert!(
             matches!(err, DecoderError::Unsupported(message) if message.contains("partial tile"))
         );
+    }
+
+    #[test]
+    fn coded_buffers_preserve_aligned_mi_padding_until_crop() {
+        let plan = FrameDecodePlan {
+            width: 900,
+            height: 900,
+            render_width: 900,
+            render_height: 900,
+            bit_depth: 8,
+            base_q_idx: 0,
+            tx_mode: TxMode::Largest,
+            superblock_size: 64,
+            superblock_cols: 15,
+            superblock_rows: 15,
+            uses_cdef: false,
+            uses_restoration: false,
+            planes: vec![PlaneLayout {
+                plane: 0,
+                width: 900,
+                height: 900,
+                subsampling_x: 0,
+                subsampling_y: 0,
+                sample_count: 900 * 900,
+            }],
+            tiles: Vec::new(),
+        };
+        let mut buffers = alloc_coded_frame_buffers(&plan).unwrap();
+        assert_eq!(buffers.planes[0].layout.width, 904);
+        assert_eq!(buffers.planes[0].layout.height, 904);
+        buffers.planes[0].samples[899] = 7;
+        buffers.planes[0].samples[900] = 9;
+
+        crop_frame_buffers_to_plan(&mut buffers, &plan).unwrap();
+
+        assert_eq!(buffers.planes[0].layout, plan.planes[0]);
+        assert_eq!(buffers.planes[0].samples.len(), 900 * 900);
+        assert_eq!(buffers.planes[0].samples[899], 7);
     }
 }

@@ -255,7 +255,9 @@ pub(super) fn decode_luma_block_tree(
     y: usize,
     block_budget: &mut usize,
 ) -> Result<Vec<DecodedLumaBlock>, DecoderError> {
-    if *block_budget == 0 || x >= plan.width || y >= plan.height {
+    let coded_width = decoder.mi_cols << 2;
+    let coded_height = decoder.mi_rows << 2;
+    if *block_budget == 0 || x >= coded_width || y >= coded_height {
         return Ok(Vec::new());
     }
     // AV1 does not signal a partition for blocks smaller than 8x8; they are
@@ -544,7 +546,7 @@ fn decode_luma_partition_runs(
         if *block_budget == 0 {
             return Ok(blocks);
         }
-        if sub_x >= plan.width || sub_y >= plan.height {
+        if sub_x >= decoder.mi_cols << 2 || sub_y >= decoder.mi_rows << 2 {
             continue;
         }
         let decoded = decode_luma_leaf_block(

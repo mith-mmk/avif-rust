@@ -11,8 +11,10 @@ profile exercised by `samples/WML2Viewer.avif`:
 - native decoded planes plus SDR RGBA8/RGBA16 output
 
 `WML2Viewer.avif` is a regression fixture, not the whole implementation
-target. No format expansion or additional architecture refactor is promoted
-above this vertical slice until its native planes match the reference oracle.
+target. Its raw native planes now match the filter-disabled AOM oracle exactly;
+the current priority is the normative post-filter pipeline. No format expansion
+or additional architecture refactor is promoted above this vertical slice
+until its final filtered planes match the reference oracle.
 
 ### other avif sample images
 
@@ -66,7 +68,7 @@ above this vertical slice until its native planes match the reference oracle.
 - [x] Assert callback order as `init -> draw -> terminate` on the
       `filter-disabled-gbr` public fixture.
 
-## 2. Raw block reconstruction: current priority
+## 2. Raw block reconstruction: exact pre-filter checkpoint
 
 The following work is one atomic correctness track. Each item must pass an
 exact native-plane fixture before the next feature is enabled.
@@ -75,15 +77,18 @@ exact native-plane fixture before the next feature is enabled.
       partition and directional reference streams.
 - [x] Route first-leaf traversal through the first child of vertical,
       horizontal, extended and four-way partitions.
-- [ ] Align transform-block placement for luma and chroma, including clipped
+- [x] Align transform-block placement for luma and chroma, including clipped
       frame edges and per-plane coordinates.
 - [x] Verify transform-size selection and transform partition traversal for
       every transform used by the filter-disabled fixture set.
-- [ ] Verify entropy/CDF update state across blocks: partition, mode, txb skip,
+- [x] Verify entropy/CDF update state across blocks in the current vertical
+      slice: partition, mode, txb skip,
       DC sign, EOB, coefficient base/range, signs and Golomb extension.
-- [ ] Verify palette-mode filter-intra exclusion, all 19 rectangular and square
-      transform sizes, 32x32/64x64 transforms,
-      entropy termination and complete tile coverage against normative vectors.
+- [x] Verify palette-mode filter-intra exclusion, entropy termination and
+      complete coded-tile coverage through the aligned MI edge for
+      `WML2Viewer.avif` and the strict filter-disabled fixtures.
+- [ ] Validate all 19 rectangular and square transform sizes, including
+      32x32/64x64 paths, against standalone normative vectors.
 - [x] Verify the default zig-zag scan used by the supported 2-D
       `ADST_DCT`/`DCT_ADST` classes with known vectors.
 - [x] Apply AOM's inverse `1/sqrt(2)` input normalization when a rectangular
@@ -142,14 +147,15 @@ exact native-plane fixture before the next feature is enabled.
 - [x] Replace diagnostic-only sample assertions with exact plane assertions
       for the generated filter-disabled fixtures.
 - [x] Complete the filter-disabled fixture set with exact Y/U/V plane matches.
-- [ ] Complete the `WML2Viewer.avif` raw reconstruction comparison.
+- [x] Complete the `WML2Viewer.avif` raw reconstruction comparison with exact
+      Y/U/V equality against the filter-disabled AOM oracle.
 - [x] Add a private, ignored `AOM_PREFILTER_ORACLE` diagnostic that compares
       all native planes with an AOM build whose deblock, CDEF and restoration
       stages are disabled.
 - [x] Read AV1 angle deltas for every block size at or above `BLOCK_8X8`,
       including the rectangular `4x16` and `16x4` forms.
-- [x] Record the current first mismatch against the true AOM pre-filter output
-      and keep this diagnostic fixture out of the passing strict manifest.
+- [x] Record the true AOM pre-filter result (no mismatch in any plane) and keep
+      this diagnostic fixture out of the passing strict manifest.
 
 Completed prerequisites retained as stable code:
 
@@ -167,8 +173,9 @@ Completed prerequisites retained as stable code:
 
 ## 3. Reconstruction filters
 
-Implement only after raw reconstruction passes the filter-disabled fixtures.
-Keep filter metadata in private reconstruction state; do not change the
+Raw reconstruction now passes the filter-disabled fixtures and the complete
+`WML2Viewer` pre-filter oracle. Post-filter implementation is the current main
+work. Keep filter metadata in private reconstruction state; do not change the
 public decoded-frame shape.
 
 - [x] Collect CDEF indices within each tile during block traversal.
@@ -286,8 +293,8 @@ The current structural gate is green for the supported feature-on workspace,
 the AVIF-disabled `wml2` library, fuzz-bin compilation, AVIF-enabled `wml2`
 tests, and the Wasm check. The full feature-off integration run is not yet a
 success criterion because un-gated AVIF integration targets still fail to
-compile. Exact WML2Viewer pre-filter plane equality remains the release
-blocker.
+compile. Exact WML2Viewer pre-filter plane equality is complete; exact
+deblock/CDEF/restoration output is now the release blocker.
 
 Until post-filters are implemented, `decode`, `image_from_bytes`,
 `decode_frame_bytes` and the `wml2` callback must fail with `Unsupported` for a
@@ -306,23 +313,18 @@ diagnostic only.
 The authoritative raw-reconstruction checkpoint uses
 `decoder::prefilter_diagnostic_tests::reports_wml2viewer_against_aom_prefilter_oracle`
 with `AOM_PREFILTER_ORACLE` set to planar 8-bit GBR emitted by an AOM build in
-which deblock, CDEF and restoration are disabled. After matching AOM's
-positive-bias inverse-transform rounding, staged 32-point DCT,
-large-rectangular dequant shift, directional angle-delta routing, zone edge
-lengths, 64x64-unit residual plane interleaving and restoration-unit edge
-rounding, exact partial directional-edge lengths, DC-only 64x64 rounding and
-64-point rectangular-stage scaling, the 900x900 fixture reports:
+which deblock, CDEF and restoration are disabled. The 900x900 fixture now
+reports:
 
-- plane 0: first linear mismatch `403760` (`x=560,y=448`), `198459` mismatches;
-- plane 1: first linear mismatch `28882` (`x=82,y=32`), `443680` mismatches;
-- plane 2: first linear mismatch `28882` (`x=82,y=32`), `364616` mismatches.
+- plane 0: `first=None`, `mismatches=0`;
+- plane 1: `first=None`, `mismatches=0`;
+- plane 2: `first=None`, `mismatches=0`.
 
 The `reports_wml2viewer_raw_against_generated_final_planes` test compares raw
 Rust planes with final filtered FFmpeg planes and therefore does not define the
-raw acceptance gate. The diagnostic prefix now traverses 3737 luma blocks
-with no `Unsupported` boundary; AOM traverses 3646, so a later entropy
-difference remains after the current first pixel mismatch. The filter-disabled
-strict fixtures remain the stable conformance set.
+raw acceptance gate. The filter-disabled strict fixtures remain the stable,
+reproducible conformance set; generating the diagnostic `WML2Viewer` fixture
+does not register it in the strict manifest.
 
 The former first luma difference in the `(632,16)` `Block4x8` was caused by an
 upstream dense 4x4 `ADST_ADST` transform. Its AOM prediction, dequant input and
@@ -345,10 +347,13 @@ AOM's intermediate rounding. The staged DCT64 now fixes that block and
 advances the first raster-order luma mismatch from `(176,277)` to `(541,320)`.
 The `(541,320)` mismatch was a non-DC `Tx64x64` block still using the old
 fixed-basis square path plus untransposed coefficient storage. Reusing the
-staged core for both dimensions and transposing lossy Tx64 storage advances
-the next luma investigation to `(560,448)`. Investigate that new raw mismatch
-before advancing to post-filter pixels.
+staged core for both dimensions and transposing lossy Tx64 storage advanced
+the next luma investigation to `(560,448)`. The remaining differences were
+resolved by using AV1's eight-pixel-aligned MI dimensions, traversing the full
+coded edge area, retaining coded padding until reconstruction completes, and
+mapping square Tx16/Tx32 plus rectangular Tx64 coefficient storage at the
+inverse-transform boundary. Post-filter pixels can now be implemented without
+masking a raw-plane difference.
 Lossy 4x4 `DctDct` also uses the square transpose, while
 coded-lossless 4x4 WHT explicitly retains its original storage so the exact
-`filter-disabled-directional` oracle stays green. Post-filter work must not be
-used to mask this raw-plane difference.
+`filter-disabled-directional` oracle stays green.

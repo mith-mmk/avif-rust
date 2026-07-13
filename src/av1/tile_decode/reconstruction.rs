@@ -77,8 +77,8 @@ pub(super) fn decode_plane_block_unit(
         y,
         block_mode.block_size,
         tx_size,
-        layout.width,
-        layout.height,
+        decoder.mi_cols << 2,
+        decoder.mi_rows << 2,
     )
     .into_iter()
     .filter(|transform| {
