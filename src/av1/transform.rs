@@ -218,7 +218,7 @@ pub(crate) fn remap_coefficients_for_inverse_storage(
 ) {
     let needs_remap = (tx_type == TxType::DctDct
         && !coded_lossless
-        && matches!(tx_size, TxSize::Tx4x4 | TxSize::Tx8x8))
+        && matches!(tx_size, TxSize::Tx4x4 | TxSize::Tx8x8 | TxSize::Tx64x64))
         || matches!(
             tx_type,
             TxType::AdstDct
@@ -830,98 +830,35 @@ fn inverse_transform_64x64_dct(dequant: &[i32], bit_depth: u8) -> Result<Vec<i32
             "AV1 64x64 DCT coefficient count does not match transform size".to_string(),
         ));
     }
-    Ok(inverse_dct64_fixed_basis(dequant, bit_depth))
+    Ok(inverse_dct64_staged(dequant, bit_depth))
 }
 
-fn inverse_dct64_fixed_basis(dequant: &[i32], bit_depth: u8) -> Vec<i32> {
+fn inverse_dct64_staged(dequant: &[i32], bit_depth: u8) -> Vec<i32> {
     const SIDE: usize = 64;
     debug_assert_eq!(dequant.len(), SIDE * SIDE);
 
-    if dequant[1..].iter().all(|coefficient| *coefficient == 0) {
-        return inverse_dct64_dc_only(dequant[0], bit_depth);
-    }
-
-    let basis = inverse_dct64_basis_table();
-    inverse_square_dct_fixed_basis::<SIDE>(&basis, dequant, bit_depth)
-}
-
-fn inverse_dct64_dc_only(dc: i32, bit_depth: u8) -> Vec<i32> {
-    const COS_BIT: u8 = 12;
-    let row = round_shift_i64(i64::from(dc) * i64::from(cospi(32)), COS_BIT) as i32;
-    let row = round2_signed(row, 2);
-    let column = round_shift_i64(i64::from(row) * i64::from(cospi(32)), COS_BIT) as i32;
-    let residual_limit = 1i32 << (bit_depth + 7);
-    let value = round2_signed(column, 4).clamp(-residual_limit, residual_limit - 1);
-    vec![value; TxSize::Tx64x64.sample_count()]
-}
-
-fn inverse_square_dct_fixed_basis<const SIDE: usize>(
-    basis: &[i32],
-    dequant: &[i32],
-    bit_depth: u8,
-) -> Vec<i32> {
-    const BASIS_BITS: u8 = 12;
-    debug_assert_eq!(basis.len(), SIDE * SIDE);
-    debug_assert_eq!(dequant.len(), SIDE * SIDE);
-
-    let mut temp = vec![0i64; SIDE * SIDE];
-    let mut out = vec![0i32; SIDE * SIDE];
-    let residual_limit = 1i32 << (bit_depth + 7);
-
+    let row_range = bit_depth + 8;
+    let mut intermediate = vec![0i32; SIDE * SIDE];
     for row in 0..SIDE {
-        for x in 0..SIDE {
-            let mut sum = 0i64;
-            for u in 0..SIDE {
-                sum += i64::from(basis[x * SIDE + u]) * i64::from(dequant[row * SIDE + u]);
-            }
-            temp[row * SIDE + x] = sum;
+        let input =
+            std::array::from_fn(|column| clamp_signed(dequant[row * SIDE + column], bit_depth + 8));
+        let transformed = dct64::inverse_dct64(input, row_range);
+        for column in 0..SIDE {
+            intermediate[row * SIDE + column] = round2_signed(transformed[column], 2);
         }
     }
 
-    for y in 0..SIDE {
-        for x in 0..SIDE {
-            let mut sum = 0i64;
-            for v in 0..SIDE {
-                sum += i64::from(basis[y * SIDE + v]) * temp[v * SIDE + x];
-            }
-            out[y * SIDE + x] = round_shift_i64(sum, BASIS_BITS * 2)
-                .clamp(i64::from(-residual_limit), i64::from(residual_limit - 1))
-                as i32;
+    let residual_limit = 1i32 << (bit_depth + 7);
+    let mut output = vec![0i32; SIDE * SIDE];
+    for column in 0..SIDE {
+        let input = std::array::from_fn(|row| clamp_signed(intermediate[row * SIDE + column], 16));
+        let transformed = dct64::inverse_dct64(input, 16);
+        for row in 0..SIDE {
+            output[row * SIDE + column] =
+                round2_signed(transformed[row], 4).clamp(-residual_limit, residual_limit - 1);
         }
     }
-
-    out
-}
-
-fn inverse_dct64_basis_table() -> [i32; 64 * 64] {
-    std::array::from_fn(|index| {
-        let sample = index / 64;
-        let coeff = index % 64;
-        inverse_dct64_basis(sample, coeff)
-    })
-}
-
-fn inverse_dct64_basis(sample: usize, coeff: usize) -> i32 {
-    if coeff == 0 {
-        return 512;
-    }
-    round_shift_i64(
-        i64::from(cospi_unit_128((2 * sample + 1) * coeff)) * NEW_SQRT2,
-        NEW_SQRT2_BITS + 3,
-    ) as i32
-}
-
-fn cospi_unit_128(unit: usize) -> i32 {
-    let unit = unit % 256;
-    let unit = if unit > 128 { 256 - unit } else { unit };
-    if unit == 64 {
-        return 0;
-    }
-    if unit <= 64 {
-        cospi(unit)
-    } else {
-        -cospi(128 - unit)
-    }
+    output
 }
 
 fn validate_transform_bit_depth(bit_depth: u8) -> Result<(), DecoderError> {
@@ -1682,6 +1619,12 @@ mod tests {
             two_dimensional,
             vec![0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15]
         );
+
+        let mut tx64 = vec![0; TxSize::Tx64x64.sample_count()];
+        tx64[64] = -1;
+        remap_coefficients_for_inverse_storage(TxSize::Tx64x64, TxType::DctDct, false, &mut tx64);
+        assert_eq!(tx64[1], -1);
+        assert_eq!(tx64[64], 0);
     }
 
     #[test]
@@ -2126,58 +2069,58 @@ mod tests {
                 .iter()
                 .all(|value| (-residual_limit..residual_limit).contains(value))
         );
-        assert_eq!(&residual[..8], &[1, 1, 1, 1, 1, 1, 1, 1]);
+        assert_eq!(&residual[..8], &[0; 8]);
         assert_eq!(
             (0..8)
                 .map(|y| residual[y * TxSize::Tx64x64.width()])
                 .collect::<Vec<_>>(),
-            vec![1, 1, 1, 1, 0, 1, 1, 1]
+            vec![0; 8]
         );
-        assert_eq!(residual[63], 2);
-        assert_eq!(residual[31 * TxSize::Tx64x64.width() + 31], 1);
+        assert_eq!(residual[63], 1);
+        assert_eq!(residual[31 * TxSize::Tx64x64.width() + 31], 0);
         assert_eq!(residual[TxSize::Tx64x64.sample_count() - 1], 1);
     }
 
     #[test]
-    fn tx64_dct_fixed_basis_matches_pinned_sparse_reference() {
+    fn tx64_staged_dct_matches_pinned_sparse_reference() {
         let mut coefficients = vec![0; TxSize::Tx64x64.sample_count()];
         coefficients[0] = 64;
         coefficients[1] = -32;
         coefficients[TxSize::Tx64x64.width()] = 16;
         coefficients[31 * TxSize::Tx64x64.width() + 31] = -8;
-        let residual = inverse_dct64_fixed_basis(&coefficients, 8);
+        let residual = inverse_dct64_staged(&coefficients, 8);
 
         assert_eq!(residual.len(), TxSize::Tx64x64.sample_count());
-        assert_eq!(&residual[..8], &[1, 1, 1, 1, 1, 1, 1, 1]);
+        assert_eq!(&residual[..8], &[0; 8]);
         assert_eq!(
             (0..8)
                 .map(|y| residual[y * TxSize::Tx64x64.width()])
                 .collect::<Vec<_>>(),
-            vec![1, 1, 1, 1, 0, 1, 1, 1]
+            vec![0; 8]
         );
-        assert_eq!(residual[63], 2);
-        assert_eq!(residual[31 * TxSize::Tx64x64.width() + 31], 1);
+        assert_eq!(residual[63], 1);
+        assert_eq!(residual[31 * TxSize::Tx64x64.width() + 31], 0);
         assert_eq!(residual[TxSize::Tx64x64.sample_count() - 1], 1);
     }
 
     #[test]
-    fn tx64_dct_fixed_basis_matches_dc_reference() {
+    fn tx64_staged_dct_matches_dc_reference() {
         let mut coefficients = vec![0; TxSize::Tx64x64.sample_count()];
         coefficients[0] = 64;
         assert_eq!(
-            inverse_dct64_fixed_basis(&coefficients, 8),
+            inverse_dct64_staged(&coefficients, 8),
             vec![1; TxSize::Tx64x64.sample_count()]
         );
 
         coefficients[0] = -192;
         assert_eq!(
-            inverse_dct64_fixed_basis(&coefficients, 8),
+            inverse_dct64_staged(&coefficients, 8),
             vec![-1; TxSize::Tx64x64.sample_count()]
         );
     }
 
     #[test]
-    fn tx64_dct_dispatch_matches_fixed_basis_core() {
+    fn tx64_dct_dispatch_matches_staged_core() {
         let mut tx64_coefficients = vec![0; TxSize::Tx64x64.sample_count()];
         tx64_coefficients[0] = 64;
         tx64_coefficients[1] = -32;
@@ -2193,29 +2136,10 @@ mod tests {
                     bit_depth
                 )
                 .unwrap(),
-                inverse_dct64_fixed_basis(&tx64_coefficients, bit_depth),
+                inverse_dct64_staged(&tx64_coefficients, bit_depth),
                 "Tx64x64 {bit_depth}-bit"
             );
         }
-    }
-
-    #[test]
-    fn tx64_dct_fixed_basis_table_matches_expected_endpoints() {
-        assert_eq!(inverse_dct64_basis(0, 0), 512);
-        assert_eq!(inverse_dct64_basis(63, 0), 512);
-        assert_eq!(inverse_dct64_basis(0, 1), 724);
-        assert_eq!(inverse_dct64_basis(63, 1), -724);
-        assert_eq!(inverse_dct64_basis(0, 32), 512);
-        assert_eq!(inverse_dct64_basis(1, 32), -512);
-    }
-
-    #[test]
-    fn cospi_unit_128_matches_quadrant_symmetry() {
-        assert_eq!(cospi_unit_128(0), cospi(0));
-        assert_eq!(cospi_unit_128(64), 0);
-        assert_eq!(cospi_unit_128(96), -cospi(32));
-        assert_eq!(cospi_unit_128(160), -cospi(32));
-        assert_eq!(cospi_unit_128(224), cospi(32));
     }
 
     #[test]
@@ -2280,11 +2204,7 @@ mod tests {
                     .unwrap()
                     .into_iter()
                     .max(),
-                Some(if tx_size == TxSize::Tx32x32 {
-                    1 << 8
-                } else {
-                    (1 << 15) - 1
-                }),
+                Some(1 << 8),
                 "{tx_size:?} 8-bit"
             );
             assert_eq!(
@@ -2292,11 +2212,7 @@ mod tests {
                     .unwrap()
                     .into_iter()
                     .max(),
-                Some(if tx_size == TxSize::Tx32x32 {
-                    1 << 10
-                } else {
-                    (1 << 17) - 1
-                }),
+                Some(1 << 10),
                 "{tx_size:?} 10-bit"
             );
             assert_eq!(
@@ -2304,11 +2220,7 @@ mod tests {
                     .unwrap()
                     .into_iter()
                     .max(),
-                Some(if tx_size == TxSize::Tx32x32 {
-                    1448
-                } else {
-                    (1 << 19) - 1
-                }),
+                Some(1448),
                 "{tx_size:?} 12-bit"
             );
 
@@ -2318,11 +2230,7 @@ mod tests {
                     .unwrap()
                     .into_iter()
                     .min(),
-                Some(if tx_size == TxSize::Tx32x32 {
-                    -(1 << 8)
-                } else {
-                    -(1 << 15)
-                }),
+                Some(-(1 << 8)),
                 "{tx_size:?} negative 8-bit"
             );
         }
@@ -2463,7 +2371,7 @@ mod tests {
             (TxSize::Tx16x16, TxType::VerticalDct, [2, 0, 2, 0, 0]),
             (TxSize::Tx16x16, TxType::HorizontalDct, [1, 1, 0, 0, 0]),
             (TxSize::Tx32x32, TxType::DctDct, [0, 0, 0, 0, 1]),
-            (TxSize::Tx64x64, TxType::DctDct, [1, 1, 1, 1, 1]),
+            (TxSize::Tx64x64, TxType::DctDct, [0, 1, 1, 0, 1]),
         ];
 
         for (tx_size, tx_type, expected) in cases {

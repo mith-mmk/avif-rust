@@ -126,6 +126,8 @@ exact native-plane fixture before the next feature is enabled.
       rectangular transforms.
 - [x] Port the normative staged 64-point inverse DCT, including intermediate
       range clamps and rounding, and pin the `WML2Viewer` `Tx16x64` path.
+- [x] Route `Tx64x64 DctDct` through the staged row/column core and transpose
+      its lossy coefficient storage at the inverse-transform boundary.
 - [ ] Validate the remaining chroma transform derivation and 32x32/64x64
       transform paths against normative reference vectors.
 - [x] Reject partial tile groups before accepting a still-image decode.
@@ -311,9 +313,9 @@ lengths, 64x64-unit residual plane interleaving and restoration-unit edge
 rounding, exact partial directional-edge lengths, DC-only 64x64 rounding and
 64-point rectangular-stage scaling, the 900x900 fixture reports:
 
-- plane 0: first linear mismatch `288541` (`x=541,y=320`), `211779` mismatches;
-- plane 1: first linear mismatch `28882` (`x=82,y=32`), `443615` mismatches;
-- plane 2: first linear mismatch `28882` (`x=82,y=32`), `364565` mismatches.
+- plane 0: first linear mismatch `403760` (`x=560,y=448`), `198459` mismatches;
+- plane 1: first linear mismatch `28882` (`x=82,y=32`), `443680` mismatches;
+- plane 2: first linear mismatch `28882` (`x=82,y=32`), `364616` mismatches.
 
 The `reports_wml2viewer_raw_against_generated_final_planes` test compares raw
 Rust planes with final filtered FFmpeg planes and therefore does not define the
@@ -341,7 +343,11 @@ index 2493, the `Tx16x64 DctDct` block at `(176,256)`. Its prediction already
 agreed with AOM, while a direct cosine-basis 64-point core could not reproduce
 AOM's intermediate rounding. The staged DCT64 now fixes that block and
 advances the first raster-order luma mismatch from `(176,277)` to `(541,320)`.
-Investigate that new raw mismatch before advancing to post-filter pixels.
+The `(541,320)` mismatch was a non-DC `Tx64x64` block still using the old
+fixed-basis square path plus untransposed coefficient storage. Reusing the
+staged core for both dimensions and transposing lossy Tx64 storage advances
+the next luma investigation to `(560,448)`. Investigate that new raw mismatch
+before advancing to post-filter pixels.
 Lossy 4x4 `DctDct` also uses the square transpose, while
 coded-lossless 4x4 WHT explicitly retains its original storage so the exact
 `filter-disabled-directional` oracle stays green. Post-filter work must not be
