@@ -25,13 +25,13 @@ pub(crate) fn cdef_constrain(diff: i32, threshold: u8, damping: u8) -> i32 {
 #[allow(dead_code)]
 const CDEF_DIRECTIONS: [[(isize, isize); 2]; 8] = [
     [(1, -1), (2, -2)],
-    [(1, 0), (2, -1)],
-    [(1, 0), (2, 0)],
-    [(1, 0), (2, 1)],
-    [(1, 1), (2, 2)],
-    [(0, 1), (1, 2)],
-    [(0, 1), (0, 2)],
     [(0, 1), (-1, 2)],
+    [(0, 1), (0, 2)],
+    [(0, 1), (1, 2)],
+    [(1, 1), (2, 2)],
+    [(1, 0), (2, 1)],
+    [(1, 0), (2, 0)],
+    [(1, 0), (2, -1)],
 ];
 
 /// Filter one CDEF block using a caller-selected direction and strengths.
@@ -1067,8 +1067,9 @@ fn store_cdef_block_index(blocks: &mut Vec<CdefBlockIndex>, x: usize, y: usize, 
 #[cfg(test)]
 mod tests {
     use super::{
-        CdefUnit, PostFilterState, cdef_adjust_primary_strength, cdef_constrain, cdef_filter_block,
-        cdef_find_direction, cdef_unit_origin, deblock_filter_edge, store_cdef_unit,
+        CDEF_DIRECTIONS, CdefUnit, PostFilterState, cdef_adjust_primary_strength, cdef_constrain,
+        cdef_filter_block, cdef_find_direction, cdef_unit_origin, deblock_filter_edge,
+        store_cdef_unit,
     };
     use crate::av1::syntax::{BlockSize, PredictionMode, UvPredictionMode};
 
@@ -1083,6 +1084,12 @@ mod tests {
     fn cdef_direction_is_stable_for_a_constant_block() {
         let source = vec![128u16; 8 * 8];
         assert_eq!(cdef_find_direction(&source, 8, 8, 0, 0, 0), 0);
+    }
+
+    #[test]
+    fn cdef_directions_match_aom_axis_order() {
+        assert_eq!(CDEF_DIRECTIONS[2], [(0, 1), (0, 2)]);
+        assert_eq!(CDEF_DIRECTIONS[6], [(1, 0), (2, 0)]);
     }
 
     #[test]

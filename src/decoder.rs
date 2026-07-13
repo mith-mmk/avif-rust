@@ -501,6 +501,10 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
             } else {
                 detected_direction
             };
+            let damping = frame_header
+                .cdef
+                .damping
+                .saturating_sub(u8::from(plane_index != 0));
             let filtered = cdef_filter_block_with_edge_mode(
                 &source,
                 width,
@@ -516,7 +520,7 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
                 } else {
                     strength.uv_sec
                 },
-                frame_header.cdef.damping,
+                damping,
                 true,
             );
             for row in y..(y + (height - y).min(8)) {
@@ -1778,13 +1782,17 @@ mod prefilter_diagnostic_tests {
                     &expected[plane_index * sample_count..(plane_index + 1) * sample_count];
                 let mut mismatches = 0usize;
                 let mut sum = 0u64;
-                for (&actual, &expected) in plane.samples.iter().zip(oracle) {
+                let mut first = None;
+                for (index, (&actual, &expected)) in plane.samples.iter().zip(oracle).enumerate() {
                     let difference = actual.abs_diff(u16::from(expected));
                     mismatches += usize::from(difference != 0);
                     sum += u64::from(difference);
+                    if difference != 0 && first.is_none() {
+                        first = Some((index, actual, expected));
+                    }
                 }
                 eprintln!(
-                    "AOM deblock+CDEF oracle {label} plane {plane_index}: mismatches={mismatches}, average_abs={}",
+                    "AOM deblock+CDEF oracle {label} plane {plane_index}: mismatches={mismatches}, average_abs={}, first={first:?}",
                     sum as f64 / sample_count as f64
                 );
             }
@@ -1817,6 +1825,27 @@ mod prefilter_diagnostic_tests {
                 );
             }
         };
+        let report_cdef_on_aom_deblock = |frame: &mut DecodedFrame| {
+            let Some(path) = std::env::var_os("AOM_DEBLOCK_INPUT") else {
+                return;
+            };
+            let Ok(expected) = std::fs::read(path) else {
+                return;
+            };
+            let sample_count = frame.width * frame.height;
+            if expected.len() != sample_count * 3 {
+                return;
+            }
+            for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
+                let oracle =
+                    &expected[plane_index * sample_count..(plane_index + 1) * sample_count];
+                for (sample, &value) in plane.samples.iter_mut().zip(oracle) {
+                    *sample = u16::from(value);
+                }
+            }
+            apply_cdef_stage(frame, &headers.frame, &post_filter_state);
+            report_deblock_cdef_oracle("cdef-on-aom-deblock", frame);
+        };
         eprintln!(
             "private post-filter state: loop={:?}, cdef_units={}, cdef_blocks={}, boundaries={}, restoration={:?}, restoration_units={}",
             headers.frame.loop_filter.levels,
@@ -1848,6 +1877,8 @@ mod prefilter_diagnostic_tests {
         apply_cdef_stage(&mut frame, &headers.frame, &post_filter_state);
         report("cdef", &frame);
         report_deblock_cdef_oracle("cdef", &frame);
+        let mut cdef_on_aom_deblock = frame.clone();
+        report_cdef_on_aom_deblock(&mut cdef_on_aom_deblock);
         let mut wiener_frame = frame.clone();
         apply_loop_restoration_stage(
             &mut wiener_frame,
