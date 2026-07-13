@@ -608,7 +608,10 @@ pub(crate) fn deblock_filter_edge_with_length(
     }
     let shift = u32::from(bit_depth.saturating_sub(8));
     let mut inside = i32::from(level) >> u32::from((sharpness > 0) as u8 + (sharpness > 4) as u8);
-    inside = inside.min(9 - i32::from(sharpness)).max(1) << shift;
+    if sharpness > 0 {
+        inside = inside.min(9 - i32::from(sharpness));
+    }
+    inside = inside.max(1) << shift;
     let blimit = (2 * (i32::from(level) + 2) + (inside >> shift)) << shift;
     let limit = inside;
     let hev = (i32::from(level) >> 4) << shift;
@@ -685,6 +688,9 @@ pub(crate) fn deblock_filter_edge_with_length(
                 && i32::abs(q2 - q1) <= limit
                 && i32::abs(q3 - q2) <= limit
                 && 2 * i32::abs(p0 - q0) + i32::abs(p1 - q1) / 2 <= blimit;
+            if !mask8 {
+                continue;
+            }
             let flat8 = i32::abs(p1 - p0) <= 1
                 && i32::abs(q1 - q0) <= 1
                 && i32::abs(p2 - p0) <= 1
@@ -810,18 +816,15 @@ pub(crate) fn deblock_filter_edge_with_length(
                 ];
                 if vertical {
                     for (offset, value) in filtered.into_iter().enumerate() {
-                        samples[lane_y * width + lane_x - 2 + offset] =
+                        samples[lane_y * width + lane_x - 3 + offset] =
                             value.clamp(0, max_sample) as u16;
                     }
                 } else {
                     for (offset, value) in filtered.into_iter().enumerate() {
-                        samples[(lane_y - 2 + offset) * width + lane_x] =
+                        samples[(lane_y - 3 + offset) * width + lane_x] =
                             value.clamp(0, max_sample) as u16;
                     }
                 }
-                continue;
-            }
-            if !mask8 {
                 continue;
             }
         }
@@ -835,6 +838,9 @@ pub(crate) fn deblock_filter_edge_with_length(
                 && i32::abs(p1 - p0) <= 1
                 && i32::abs(q1 - q0) <= 1
                 && i32::abs(q2 - q0) <= 1;
+            if filter_length == 6 && !mask6 {
+                continue;
+            }
             if filter_length == 6 && mask6 && flat6 {
                 let filtered = [
                     (p2 * 3 + p1 * 2 + p0 * 2 + q0 + 4) >> 3,
@@ -856,9 +862,6 @@ pub(crate) fn deblock_filter_edge_with_length(
                     samples[(lane_y + 1) * width + lane_x] =
                         filtered[3].clamp(0, max_sample) as u16;
                 }
-                continue;
-            }
-            if !mask6 {
                 continue;
             }
         }
@@ -1111,7 +1114,7 @@ mod tests {
     use super::{
         CDEF_DIRECTIONS, CdefUnit, PostFilterState, cdef_adjust_primary_strength, cdef_constrain,
         cdef_filter_block, cdef_find_direction, cdef_unit_origin, deblock_filter_edge,
-        restoration_sample, sgr_x_by_xplus1, store_cdef_unit,
+        deblock_filter_edge_with_length, restoration_sample, sgr_x_by_xplus1, store_cdef_unit,
     };
     use crate::av1::syntax::{BlockSize, PredictionMode, UvPredictionMode};
 
@@ -1227,6 +1230,38 @@ mod tests {
         deblock_filter_edge(&mut samples, 16, 16, 8, 0, true, 20, 0, 8);
         deblock_filter_edge(&mut samples, 16, 16, 0, 8, false, 20, 0, 8);
         assert!(samples.iter().all(|sample| *sample == 128));
+    }
+
+    #[test]
+    fn deblock_sharpness_zero_uses_the_full_level_limit() {
+        let mut samples = vec![0u16; 16 * 16];
+        for y in 0..4 {
+            let row = y * 16;
+            samples[row + 6] = 210;
+            samples[row + 7] = 198;
+            samples[row + 8] = 187;
+            samples[row + 9] = 187;
+        }
+        deblock_filter_edge(&mut samples, 16, 16, 8, 0, true, 23, 0, 8);
+        assert_eq!(samples[7], 197);
+        assert_eq!(samples[8], 188);
+    }
+
+    #[test]
+    fn deblock_eight_tap_output_starts_at_p3() {
+        let mut samples = vec![0u16; 16 * 16];
+        for y in 0..4 {
+            let row = y * 16;
+            for x in 4..8 {
+                samples[row + x] = 40;
+            }
+            for x in 8..12 {
+                samples[row + x] = 38;
+            }
+        }
+        deblock_filter_edge_with_length(&mut samples, 16, 16, 8, 0, true, 23, 0, 8, 8);
+        assert_eq!(samples[7], 39);
+        assert_eq!(samples[8], 39);
     }
 
     #[test]

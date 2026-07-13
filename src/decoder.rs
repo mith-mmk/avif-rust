@@ -328,6 +328,18 @@ fn apply_deblock_stage(
     frame_header: &FrameHeader,
     state: &PostFilterState,
 ) {
+    let block_filter_state_at = |x: usize, y: usize| {
+        state
+            .block_filter_states
+            .iter()
+            .find(|candidate| {
+                x >= candidate.x
+                    && y >= candidate.y
+                    && x < candidate.x + candidate.block_size.width()
+                    && y < candidate.y + candidate.block_size.height()
+            })
+            .copied()
+    };
     let mut applied_edges = std::collections::HashSet::new();
     let mut previous_vertical =
         std::collections::HashMap::<(usize, usize), Vec<(usize, usize, usize)>>::new();
@@ -345,44 +357,106 @@ fn apply_deblock_stage(
             .push((block.x, block.tx_size.width(), block.tx_size.height()));
     }
     for vertical in [true, false] {
-        for boundary in &state.transform_boundaries {
+        let mut boundaries = state.transform_boundaries.clone();
+        if vertical {
+            boundaries.sort_by_key(|boundary| (boundary.block.y, boundary.block.x));
+        } else {
+            boundaries.sort_by_key(|boundary| (boundary.block.x, boundary.block.y));
+        }
+        for boundary in &boundaries {
             let block = boundary.block;
             for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
                 let level = if plane_index == 0 {
                     frame_header.loop_filter.levels[usize::from(!vertical)]
+                } else if plane_index == 1 {
+                    frame_header.loop_filter.levels[2]
                 } else {
-                    frame_header.loop_filter.levels[2 + usize::from(!vertical)]
+                    frame_header.loop_filter.levels[3]
                 };
+                // This decoder currently accepts intra-only still frames. AV1
+                // enables the default intra reference delta when the loop
+                // filter delta flag is set, which raises each base level by
+                // one for this path.
+                let level = level.saturating_add(u8::from(frame_header.loop_filter.delta_enabled));
                 let edge = if vertical { block.x } else { block.y };
                 if edge == 0 || !applied_edges.insert((plane_index, block.x, block.y, vertical)) {
                     continue;
                 }
-                let dimension = if vertical {
-                    block.tx_size.width()
+                let current_block = if plane_index == 0 {
+                    None
                 } else {
-                    block.tx_size.height()
+                    block_filter_state_at(block.x, block.y)
                 };
-                let previous_dimension = if vertical {
+                let previous_block = if plane_index == 0 {
+                    None
+                } else if vertical {
+                    block_filter_state_at(edge - 1, block.y)
+                } else {
+                    block_filter_state_at(block.x, edge - 1)
+                };
+                if let Some(current_block) = current_block {
+                    let extent = if vertical {
+                        current_block.block_size.width().min(64)
+                    } else {
+                        current_block.block_size.height().min(64)
+                    };
+                    let origin = if vertical {
+                        current_block.x
+                    } else {
+                        current_block.y
+                    };
+                    if edge > origin && (edge - origin) % extent != 0 {
+                        continue;
+                    }
+                }
+                let dimension = if plane_index == 0 {
+                    if vertical {
+                        block.tx_size.width()
+                    } else {
+                        block.tx_size.height()
+                    }
+                } else {
+                    current_block
+                        .map(|current| {
+                            if vertical {
+                                current.block_size.width().min(64)
+                            } else {
+                                current.block_size.height().min(64)
+                            }
+                        })
+                        .unwrap_or_else(|| {
+                            if vertical {
+                                block.tx_size.width()
+                            } else {
+                                block.tx_size.height()
+                            }
+                        })
+                };
+                let previous_dimension = if plane_index != 0 {
+                    previous_block
+                        .map(|block| {
+                            if vertical {
+                                block.block_size.width().min(64)
+                            } else {
+                                block.block_size.height().min(64)
+                            }
+                        })
+                        .unwrap_or(dimension)
+                } else if vertical {
                     previous_vertical
                         .get(&(plane_index, block.x))
                         .into_iter()
                         .flat_map(|entries| entries.iter())
-                        .filter(|(y, height, _)| {
-                            *y < block.y + block.tx_size.height() && *y + *height > block.y
-                        })
+                        .find(|(y, height, _)| block.y >= *y && block.y < *y + *height)
                         .map(|(_, _, width)| *width)
-                        .min()
                         .unwrap_or(dimension)
                 } else {
                     previous_horizontal
                         .get(&(plane_index, block.y))
                         .into_iter()
                         .flat_map(|entries| entries.iter())
-                        .filter(|(x, width, _)| {
-                            *x < block.x + block.tx_size.width() && *x + *width > block.x
-                        })
+                        .find(|(x, width, _)| block.x >= *x && block.x < *x + *width)
                         .map(|(_, _, height)| *height)
-                        .min()
                         .unwrap_or(dimension)
                 };
                 let dimension = dimension.min(previous_dimension);

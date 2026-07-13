@@ -384,15 +384,15 @@ coded-lossless 4x4 WHT explicitly retains its original storage so the exact
 `filter-disabled-directional` oracle stays green.
 
 The current post-filter diagnostic compares each private stage with FFmpeg's
-final `gbrp` output. Raw RGB average absolute error is
-`0.14965555555555554`; the deblock and CDEF stages now report
-`0.1328135802469136` and `0.062083127572016464`. A dedicated AOM oracle with
-deblock enabled and restoration disabled is generated locally. The Rust
-deblock stage still differs from that oracle by plane as follows:
+final `gbrp` output. A dedicated AOM oracle with deblock enabled and
+restoration disabled is generated locally. Deblock traversal now consumes the
+intra reference delta, chroma-direction levels, block-sized chroma Tx extents,
+and AOM's point-local neighboring transform dimensions. The Rust deblock stage
+still differs from that oracle by plane as follows:
 
-- plane 0: `mismatches=13944`, `average_abs=0.02335432098765432`;
-- plane 1: `mismatches=12850`, `average_abs=0.026087654320987655`;
-- plane 2: `mismatches=9471`, `average_abs=0.01992962962962963`.
+- plane 0: `mismatches=151`, `average_abs=0.00023703703703703704`;
+- plane 1: `mismatches=24`, `average_abs=0.00004197530864197531`;
+- plane 2: `mismatches=46`, `average_abs=0.000060493827160493825`.
 
 Against the corresponding AOM deblock-plus-CDEF oracle, the Rust CDEF stage
 now reports `18302/0.025276543209876542`, `18678/0.02910246913580247` and
@@ -406,9 +406,10 @@ plane-oracle agreement is still required before this item is complete.
 
 These are diagnostic checkpoints only; normative deblock/CDEF derivation and
 the complete filter-order gate remain unfinished. The current private
-pipeline reports a final-filter RGB average absolute error of about `0.0247`
-against FFmpeg. The AOM restoration oracle now matches the Rust restoration
-stage exactly: all three planes report `mismatches=0` and `average_abs=0`.
+pipeline reports a final-filter RGB average absolute error of about
+`0.00043` against FFmpeg. The AOM restoration oracle now matches the Rust
+restoration stage exactly: all three planes report `mismatches=0` and
+`average_abs=0`.
 The remaining final-filter error is in deblock/CDEF and must be eliminated
 before enabling the public final oracle.
 The public `WML2Viewer.avif` gate remains incomplete (the historical public
