@@ -15,7 +15,7 @@ use crate::av1::transform::{
     reconstruct_transform_block,
 };
 
-pub(super) fn decode_plane_block(
+pub(super) fn decode_plane_block_unit(
     decoder: &mut TileDecoder<'_>,
     sequence: &SequenceHeader,
     frame: &FrameHeader,
@@ -30,6 +30,10 @@ pub(super) fn decode_plane_block(
     cfl_alpha_q3: Option<i8>,
     x: usize,
     y: usize,
+    unit_x: usize,
+    unit_y: usize,
+    unit_width: usize,
+    unit_height: usize,
     quant_state: QuantState,
 ) -> Result<Vec<DecodedTransform>, DecoderError> {
     let layout = plan.planes.get(plane_index).ok_or_else(|| {
@@ -75,7 +79,15 @@ pub(super) fn decode_plane_block(
         tx_size,
         layout.width,
         layout.height,
-    );
+    )
+    .into_iter()
+    .filter(|transform| {
+        transform.x >= unit_x
+            && transform.x < unit_x.saturating_add(unit_width)
+            && transform.y >= unit_y
+            && transform.y < unit_y.saturating_add(unit_height)
+    })
+    .collect::<Vec<_>>();
     if block_mode.skip {
         for transform in &transforms {
             decoder.set_txb_entropy_context(*transform, 0);

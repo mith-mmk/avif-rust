@@ -123,6 +123,9 @@ exact native-plane fixture before the next feature is enabled.
 - [x] Reject partial tile groups before accepting a still-image decode.
 - [x] Require entropy termination/trailing-bit validation before accepting a
       decoded frame.
+- [x] Interleave Y/U/V residual traversal inside each 64x64 coding unit for
+      blocks larger than 64x64, matching AV1 syntax order instead of decoding
+      one complete 128x128 plane at a time.
 - [x] Replace diagnostic-only sample assertions with exact plane assertions
       for the generated filter-disabled fixtures.
 - [x] Complete the filter-disabled fixture set with exact Y/U/V plane matches.
@@ -292,16 +295,16 @@ The authoritative raw-reconstruction checkpoint uses
 with `AOM_PREFILTER_ORACLE` set to planar 8-bit GBR emitted by an AOM build in
 which deblock, CDEF and restoration are disabled. After matching AOM's
 positive-bias inverse-transform rounding, staged 32-point DCT,
-large-rectangular dequant shift, directional angle-delta routing and zone edge
-lengths, the 900x900 fixture reports:
+large-rectangular dequant shift, directional angle-delta routing, zone edge
+lengths and 64x64-unit residual plane interleaving, the 900x900 fixture reports:
 
-- plane 0: first linear mismatch `101696` (`x=896,y=112`), `673272` mismatches;
-- plane 1: first linear mismatch `28882` (`x=82,y=32`), `655105` mismatches;
-- plane 2: first linear mismatch `28882` (`x=82,y=32`), `657529` mismatches.
+- plane 0: first linear mismatch `115232` (`x=32,y=128`), `677976` mismatches;
+- plane 1: first linear mismatch `28882` (`x=82,y=32`), `678683` mismatches;
+- plane 2: first linear mismatch `28882` (`x=82,y=32`), `675308` mismatches.
 
 The `reports_wml2viewer_raw_against_generated_final_planes` test compares raw
 Rust planes with final filtered FFmpeg planes and therefore does not define the
-raw acceptance gate. The diagnostic prefix still traverses 2110 luma blocks
+raw acceptance gate. The diagnostic prefix now traverses 1586 luma blocks
 with no `Unsupported` boundary, and the filter-disabled strict fixtures remain
 the stable conformance set.
 
@@ -310,8 +313,12 @@ upstream dense 4x4 `ADST_ADST` transform. Its AOM prediction, dequant input and
 output now match through an explicit square-ADST storage transpose. The former
 32x32 DC-only mismatch also matches after routing it through the staged
 32-point transform. The following palette-block 8x8 `DctDct` mismatch matches
-after a size-specific square storage transpose. The next raw unit is the first
-luma mismatch at the clipped right edge `(896,112)`. Lossy 4x4 `DctDct` also
-uses the square transpose, while coded-lossless 4x4 WHT explicitly retains its
-original storage so the exact `filter-disabled-directional` oracle stays green.
-Post-filter work must not be used to mask this raw-plane difference.
+after a size-specific square storage transpose. The clipped right-edge
+`(896,112)` difference was caused by decoding all luma transforms of the
+preceding `(768,0)` `Block128x128` before chroma; AV1 interleaves Y/U/V inside
+each 64x64 coding unit. Matching that order keeps the entropy reader aligned
+through the first superblock row and advances the next luma investigation to
+`(32,128)`. Lossy 4x4 `DctDct` also uses the square transpose, while
+coded-lossless 4x4 WHT explicitly retains its original storage so the exact
+`filter-disabled-directional` oracle stays green. Post-filter work must not be
+used to mask this raw-plane difference.

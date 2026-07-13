@@ -5,7 +5,16 @@ use crate::av1::frame::FrameHeader;
 use crate::av1::quant::QuantState;
 use crate::av1::sequence::SequenceHeader;
 use crate::av1::syntax::{BlockSize, Partition, PredictionMode, UvPredictionMode};
-use crate::av1::tile_decode::reconstruction::decode_plane_block;
+use crate::av1::tile_decode::reconstruction::decode_plane_block_unit;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ResidualUnit {
+    plane_index: usize,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+}
 
 pub(super) fn decode_luma_root_block(
     decoder: &mut TileDecoder<'_>,
@@ -67,25 +76,7 @@ pub(super) fn decode_luma_leaf_block(
     }
     let quant_state =
         QuantState::from_params(&frame.quantization, sequence.color_config.bit_depth)?;
-    let decoded = decode_plane_block(
-        decoder,
-        sequence,
-        frame,
-        plan,
-        buffers,
-        &block_mode,
-        0,
-        block_mode.y_mode,
-        block_mode.angle_delta_y,
-        block_mode.filter_intra_mode,
-        block_mode.y_smooth_neighbour,
-        None,
-        x,
-        y,
-        quant_state,
-    )?;
-
-    if !sequence.color_config.monochrome {
+    let chroma = if !sequence.color_config.monochrome {
         let uv_mode = block_mode.uv_mode.ok_or_else(|| {
             DecoderError::Bitstream("AV1 chroma block mode is missing".to_string())
         })?;
@@ -93,40 +84,69 @@ pub(super) fn decode_luma_leaf_block(
             UvPredictionMode::Intra(mode) => (mode, None),
             UvPredictionMode::Cfl => (PredictionMode::Dc, decoder.current_cfl),
         };
-        decode_plane_block(
+        Some((chroma_mode, cfl))
+    } else {
+        None
+    };
+
+    let plane_count = if chroma.is_some() { 3 } else { 1 };
+    let mut decoded = Vec::new();
+    for unit in residual_unit_order(block_mode.block_size, x, y, plane_count) {
+        let (prediction_mode, angle_delta, filter_intra_mode, smooth_neighbour, cfl_alpha_q3) =
+            match unit.plane_index {
+                0 => (
+                    block_mode.y_mode,
+                    block_mode.angle_delta_y,
+                    block_mode.filter_intra_mode,
+                    block_mode.y_smooth_neighbour,
+                    None,
+                ),
+                1 => {
+                    let (mode, cfl) = chroma.expect("chroma planes require chroma mode state");
+                    (
+                        mode,
+                        block_mode.angle_delta_uv,
+                        None,
+                        block_mode.uv_smooth_neighbour,
+                        cfl.map(|params| params.alpha_u_q3),
+                    )
+                }
+                2 => {
+                    let (mode, cfl) = chroma.expect("chroma planes require chroma mode state");
+                    (
+                        mode,
+                        block_mode.angle_delta_uv,
+                        None,
+                        block_mode.uv_smooth_neighbour,
+                        cfl.map(|params| params.alpha_v_q3),
+                    )
+                }
+                _ => unreachable!("AV1 has at most three image planes"),
+            };
+        let unit_decoded = decode_plane_block_unit(
             decoder,
             sequence,
             frame,
             plan,
             buffers,
             &block_mode,
-            1,
-            chroma_mode,
-            block_mode.angle_delta_uv,
-            None,
-            block_mode.uv_smooth_neighbour,
-            cfl.map(|params| params.alpha_u_q3),
+            unit.plane_index,
+            prediction_mode,
+            angle_delta,
+            filter_intra_mode,
+            smooth_neighbour,
+            cfl_alpha_q3,
             x,
             y,
+            unit.x,
+            unit.y,
+            unit.width,
+            unit.height,
             quant_state,
         )?;
-        decode_plane_block(
-            decoder,
-            sequence,
-            frame,
-            plan,
-            buffers,
-            &block_mode,
-            2,
-            chroma_mode,
-            block_mode.angle_delta_uv,
-            None,
-            block_mode.uv_smooth_neighbour,
-            cfl.map(|params| params.alpha_v_q3),
-            x,
-            y,
-            quant_state,
-        )?;
+        if unit.plane_index == 0 {
+            decoded.extend(unit_decoded);
+        }
     }
 
     Ok(DecodedLumaBlock {
@@ -136,6 +156,91 @@ pub(super) fn decode_luma_leaf_block(
         palette: block_mode.palette,
         transforms: decoded,
     })
+}
+
+fn residual_unit_order(
+    block_size: BlockSize,
+    x: usize,
+    y: usize,
+    plane_count: usize,
+) -> Vec<ResidualUnit> {
+    const MAX_UNIT_SIZE: usize = 64;
+    let mut units = Vec::new();
+    for unit_y in (y..y + block_size.height()).step_by(MAX_UNIT_SIZE) {
+        for unit_x in (x..x + block_size.width()).step_by(MAX_UNIT_SIZE) {
+            let width = MAX_UNIT_SIZE.min(x + block_size.width() - unit_x);
+            let height = MAX_UNIT_SIZE.min(y + block_size.height() - unit_y);
+            for plane_index in 0..plane_count {
+                units.push(ResidualUnit {
+                    plane_index,
+                    x: unit_x,
+                    y: unit_y,
+                    width,
+                    height,
+                });
+            }
+        }
+    }
+    units
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ResidualUnit, residual_unit_order};
+    use crate::av1::syntax::BlockSize;
+
+    #[test]
+    fn residuals_interleave_planes_within_64x64_units() {
+        let units = residual_unit_order(BlockSize::Block128x128, 768, 0, 3);
+        assert_eq!(units.len(), 12);
+        assert_eq!(
+            &units[..6],
+            &[
+                ResidualUnit {
+                    plane_index: 0,
+                    x: 768,
+                    y: 0,
+                    width: 64,
+                    height: 64
+                },
+                ResidualUnit {
+                    plane_index: 1,
+                    x: 768,
+                    y: 0,
+                    width: 64,
+                    height: 64
+                },
+                ResidualUnit {
+                    plane_index: 2,
+                    x: 768,
+                    y: 0,
+                    width: 64,
+                    height: 64
+                },
+                ResidualUnit {
+                    plane_index: 0,
+                    x: 832,
+                    y: 0,
+                    width: 64,
+                    height: 64
+                },
+                ResidualUnit {
+                    plane_index: 1,
+                    x: 832,
+                    y: 0,
+                    width: 64,
+                    height: 64
+                },
+                ResidualUnit {
+                    plane_index: 2,
+                    x: 832,
+                    y: 0,
+                    width: 64,
+                    height: 64
+                },
+            ]
+        );
+    }
 }
 
 pub(super) fn decode_luma_block_tree(

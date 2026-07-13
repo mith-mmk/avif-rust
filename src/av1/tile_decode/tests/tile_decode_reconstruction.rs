@@ -211,8 +211,9 @@ fn decodes_sample_prefix_through_palette_blocks() {
     )
     .unwrap();
 
-    // Rectangular Tx4x16 traversal now reaches the complete luma tree.
-    assert_eq!(prefix.blocks.len(), 2110);
+    // Residuals larger than 64x64 are interleaved per coding unit, so the
+    // right-edge partition remains aligned and reaches the complete luma tree.
+    assert_eq!(prefix.blocks.len(), 1586);
     assert_eq!(prefix.next_unsupported, None);
     let palette_blocks = prefix
         .blocks
