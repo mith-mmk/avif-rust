@@ -783,15 +783,26 @@ fn inverse_dct32(i: [i32; 32], r: u8) -> [i32; 32] {
 
 fn inverse_dct64_1d(input: &[i32], range: u8) -> Vec<i32> {
     const BASIS_BITS: u8 = 12;
-    let basis = inverse_dct64_basis_table();
     (0..64)
         .map(|sample| {
             let sum = (0..64)
-                .map(|coeff| i64::from(basis[sample * 64 + coeff]) * i64::from(input[coeff]))
+                .map(|coeff| {
+                    i64::from(inverse_dct64_core_basis(sample, coeff)) * i64::from(input[coeff])
+                })
                 .sum::<i64>();
             round_shift_i64(sum, BASIS_BITS).clamp(-(1i64 << range), (1i64 << range) - 1) as i32
         })
         .collect()
+}
+
+fn inverse_dct64_core_basis(sample: usize, coeff: usize) -> i32 {
+    if coeff == 0 {
+        return cospi(32);
+    }
+    round_shift_i64(
+        i64::from(cospi_unit_128((2 * sample + 1) * coeff)) * NEW_SQRT2,
+        NEW_SQRT2_BITS,
+    ) as i32
 }
 
 fn inverse_transform_32x32_dct(dequant: &[i32], bit_depth: u8) -> Result<Vec<i32>, DecoderError> {
@@ -844,8 +855,22 @@ fn inverse_dct64_fixed_basis(dequant: &[i32], bit_depth: u8) -> Vec<i32> {
     const SIDE: usize = 64;
     debug_assert_eq!(dequant.len(), SIDE * SIDE);
 
+    if dequant[1..].iter().all(|coefficient| *coefficient == 0) {
+        return inverse_dct64_dc_only(dequant[0], bit_depth);
+    }
+
     let basis = inverse_dct64_basis_table();
     inverse_square_dct_fixed_basis::<SIDE>(&basis, dequant, bit_depth)
+}
+
+fn inverse_dct64_dc_only(dc: i32, bit_depth: u8) -> Vec<i32> {
+    const COS_BIT: u8 = 12;
+    let row = round_shift_i64(i64::from(dc) * i64::from(cospi(32)), COS_BIT) as i32;
+    let row = round2_signed(row, 2);
+    let column = round_shift_i64(i64::from(row) * i64::from(cospi(32)), COS_BIT) as i32;
+    let residual_limit = 1i32 << (bit_depth + 7);
+    let value = round2_signed(column, 4).clamp(-residual_limit, residual_limit - 1);
+    vec![value; TxSize::Tx64x64.sample_count()]
 }
 
 fn inverse_square_dct_fixed_basis<const SIDE: usize>(
@@ -2030,8 +2055,25 @@ mod tests {
         tx64[0] = -192;
         assert_eq!(
             inverse_transform(TxType::DctDct, TxSize::Tx64x64, &tx64, 8).unwrap(),
-            vec![-3; TxSize::Tx64x64.sample_count()]
+            vec![-1; TxSize::Tx64x64.sample_count()]
         );
+
+        tx64[0] = -105;
+        assert_eq!(
+            inverse_transform(TxType::DctDct, TxSize::Tx64x64, &tx64, 8).unwrap(),
+            vec![-1; TxSize::Tx64x64.sample_count()]
+        );
+    }
+
+    #[test]
+    fn tx16x64_dct_uses_unscaled_64_point_stage_basis() {
+        let mut coefficients = vec![0; TxSize::Tx16x64.sample_count()];
+        coefficients[1] = 88;
+        let residual =
+            inverse_transform(TxType::DctDct, TxSize::Tx16x64, &coefficients, 8).unwrap();
+
+        assert_eq!(&residual[..16], &[1; 16]);
+        assert!(residual.iter().any(|sample| *sample != 0));
     }
 
     #[test]
@@ -2148,7 +2190,7 @@ mod tests {
         coefficients[0] = -192;
         assert_eq!(
             inverse_dct64_fixed_basis(&coefficients, 8),
-            vec![-3; TxSize::Tx64x64.sample_count()]
+            vec![-1; TxSize::Tx64x64.sample_count()]
         );
     }
 

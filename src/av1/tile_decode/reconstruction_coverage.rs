@@ -8,7 +8,7 @@ impl<'a> TileDecoder<'a> {
         &self,
         plane: &PlaneBuffer,
         transform: TransformBlock,
-    ) -> Result<(bool, bool), DecoderError> {
+    ) -> Result<(usize, usize), DecoderError> {
         if usize::from(plane.layout.plane) != transform.plane {
             return Err(DecoderError::Bitstream(
                 "AV1 reconstruction coverage plane does not match transform plane".to_string(),
@@ -23,31 +23,30 @@ impl<'a> TileDecoder<'a> {
         let width = transform.tx_size.width();
         let height = transform.tx_size.height();
         let top_right_available = if transform.y == 0 {
-            true
+            0
         } else {
             let start = transform.x.saturating_add(width).min(plane.layout.width);
-            let end = start.saturating_add(width).min(plane.layout.width);
-            horizontal_span_is_reconstructed(
+            horizontal_reconstructed_length(
                 grid,
                 self.mi_cols,
                 self.mi_rows,
                 transform.y - 1,
                 start,
-                end,
+                width,
+                plane.layout.width,
             )
         };
         let bottom_left_available = if transform.x == 0 {
-            true
+            0
         } else {
             let start = transform.y.saturating_add(height).min(plane.layout.height);
-            let end = start.saturating_add(height).min(plane.layout.height);
-            vertical_span_is_reconstructed(
+            vertical_reconstructed_length(
                 grid,
                 self.mi_cols,
-                self.mi_rows,
                 transform.x - 1,
                 start,
-                end,
+                height,
+                plane.layout.height,
             )
         };
         Ok((top_right_available, bottom_left_available))
@@ -86,54 +85,51 @@ impl<'a> TileDecoder<'a> {
     }
 }
 
-fn horizontal_span_is_reconstructed(
+fn horizontal_reconstructed_length(
     grid: &[bool],
     mi_cols: usize,
     mi_rows: usize,
     y: usize,
     start_x: usize,
-    end_x: usize,
-) -> bool {
-    if start_x >= end_x {
-        return true;
-    }
+    maximum: usize,
+    plane_width: usize,
+) -> usize {
     let mi_row = y >> 2;
     if mi_row >= mi_rows {
-        return true;
+        return 0;
     }
-    let start_col = start_x >> 2;
-    let end_col = (end_x - 1) >> 2;
-    (start_col..=end_col).all(|mi_col| {
-        mi_col < mi_cols
-            && grid
-                .get(mi_row * mi_cols + mi_col)
-                .copied()
-                .unwrap_or(false)
-    })
+    (0..maximum)
+        .take_while(|offset| {
+            let x = start_x + offset;
+            x < plane_width
+                && grid
+                    .get(mi_row * mi_cols + (x >> 2))
+                    .copied()
+                    .unwrap_or(false)
+        })
+        .count()
 }
 
-fn vertical_span_is_reconstructed(
+fn vertical_reconstructed_length(
     grid: &[bool],
     mi_cols: usize,
-    mi_rows: usize,
     x: usize,
     start_y: usize,
-    end_y: usize,
-) -> bool {
-    if start_y >= end_y {
-        return true;
-    }
+    maximum: usize,
+    plane_height: usize,
+) -> usize {
     let mi_col = x >> 2;
     if mi_col >= mi_cols {
-        return true;
+        return 0;
     }
-    let start_row = start_y >> 2;
-    let end_row = (end_y - 1) >> 2;
-    (start_row..=end_row).all(|mi_row| {
-        mi_row < mi_rows
-            && grid
-                .get(mi_row * mi_cols + mi_col)
-                .copied()
-                .unwrap_or(false)
-    })
+    (0..maximum)
+        .take_while(|offset| {
+            let y = start_y + offset;
+            y < plane_height
+                && grid
+                    .get((y >> 2) * mi_cols + mi_col)
+                    .copied()
+                    .unwrap_or(false)
+        })
+        .count()
 }

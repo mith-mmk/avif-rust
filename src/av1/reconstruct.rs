@@ -65,7 +65,9 @@ pub fn read_intra_edges(
     height: usize,
     bit_depth: u8,
 ) -> OwnedIntraEdges {
-    read_intra_edges_with_extension_availability(plane, x, y, width, height, bit_depth, true, true)
+    read_intra_edges_with_extension_availability(
+        plane, x, y, width, height, bit_depth, width, height,
+    )
 }
 
 pub fn read_intra_edges_with_extension_availability(
@@ -75,8 +77,8 @@ pub fn read_intra_edges_with_extension_availability(
     width: usize,
     height: usize,
     bit_depth: u8,
-    top_right_available: bool,
-    bottom_left_available: bool,
+    top_right_available: usize,
+    bottom_left_available: usize,
 ) -> OwnedIntraEdges {
     let mid = 1u16 << (bit_depth - 1);
     let above_available = y > 0 && plane.layout.width > 0;
@@ -89,8 +91,9 @@ pub fn read_intra_edges_with_extension_availability(
         if !above_available {
             above.push(mid - 1);
         } else {
-            let edge_dx = if !top_right_available && dx >= width {
-                width.saturating_sub(1)
+            let extension_end = width.saturating_add(top_right_available);
+            let edge_dx = if dx >= extension_end {
+                extension_end.saturating_sub(1)
             } else {
                 dx
             };
@@ -103,8 +106,9 @@ pub fn read_intra_edges_with_extension_availability(
         if !left_available {
             left.push(mid + 1);
         } else {
-            let edge_dy = if !bottom_left_available && dy >= height {
-                height.saturating_sub(1)
+            let extension_end = height.saturating_add(bottom_left_available);
+            let edge_dy = if dy >= extension_end {
+                extension_end.saturating_sub(1)
             } else {
                 dy
             };
@@ -430,8 +434,7 @@ mod tests {
             samples: (0..36).collect(),
         };
 
-        let edges =
-            read_intra_edges_with_extension_availability(&plane, 1, 2, 2, 2, 8, false, false);
+        let edges = read_intra_edges_with_extension_availability(&plane, 1, 2, 2, 2, 8, 0, 0);
 
         assert_eq!(edges.above, vec![7, 8, 8, 8]);
         assert_eq!(edges.left, vec![12, 18, 18, 18]);
@@ -439,11 +442,15 @@ mod tests {
         assert!(edges.above_available);
         assert!(edges.left_available);
 
-        let unmasked =
-            read_intra_edges_with_extension_availability(&plane, 1, 2, 2, 2, 8, true, true);
+        let unmasked = read_intra_edges_with_extension_availability(&plane, 1, 2, 2, 2, 8, 2, 2);
 
         assert_eq!(unmasked.above, vec![7, 8, 9, 10]);
         assert_eq!(unmasked.left, vec![12, 18, 24, 30]);
+
+        let partial = read_intra_edges_with_extension_availability(&plane, 1, 2, 2, 2, 8, 1, 1);
+
+        assert_eq!(partial.above, vec![7, 8, 9, 9]);
+        assert_eq!(partial.left, vec![12, 18, 24, 24]);
     }
 
     #[test]

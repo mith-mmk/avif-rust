@@ -63,7 +63,7 @@ above this vertical slice until its native planes match the reference oracle.
       gate.
 - [x] Capture and assert `wml2` draw callback bytes and dimensions in the
       AVIF integration test.
-- [ ] Assert callback order as `init -> draw -> terminate` on the
+- [x] Assert callback order as `init -> draw -> terminate` on the
       `filter-disabled-gbr` public fixture.
 
 ## 2. Raw block reconstruction: current priority
@@ -105,6 +105,9 @@ exact native-plane fixture before the next feature is enabled.
 - [x] Route non-zero angle deltas on vertical/horizontal modes through the
       directional predictor and use AOM's zone-specific top-right/bottom-left
       edge lengths.
+- [x] Track top-right and bottom-left reconstruction availability as exact
+      sample lengths, including partial transform-edge coverage, and pad each
+      directional edge from its last available sample.
 - [x] Verify coefficient context selection with known vectors for the enabled
       transform sizes and plane types.
 - [x] Verify palette and filter-intra syntax gating for the supported profile.
@@ -118,6 +121,11 @@ exact native-plane fixture before the next feature is enabled.
 - [x] Replace the approximate 32x32 fixed-basis/DC shortcut with the staged
       32-point row/column transform and pin the `WML2Viewer` luma DC block;
       use `bit_depth + 8` for the row-stage range through 12-bit paths.
+- [x] Match the two-stage rounding for DC-only `Tx64x64` and remove the
+      square-transform `1/8` output scaling from the 64-point stage reused by
+      rectangular transforms.
+- [ ] Port the normative staged 64-point inverse DCT, including intermediate
+      range clamps and rounding, and pin the `WML2Viewer` `Tx16x64` path.
 - [ ] Validate the remaining chroma transform derivation and 32x32/64x64
       transform paths against normative reference vectors.
 - [x] Reject partial tile groups before accepting a still-image decode.
@@ -300,11 +308,12 @@ which deblock, CDEF and restoration are disabled. After matching AOM's
 positive-bias inverse-transform rounding, staged 32-point DCT,
 large-rectangular dequant shift, directional angle-delta routing, zone edge
 lengths, 64x64-unit residual plane interleaving and restoration-unit edge
-rounding, the 900x900 fixture reports:
+rounding, exact partial directional-edge lengths, DC-only 64x64 rounding and
+64-point rectangular-stage scaling, the 900x900 fixture reports:
 
-- plane 0: first linear mismatch `128323` (`x=523,y=142`), `268854` mismatches;
-- plane 1: first linear mismatch `28882` (`x=82,y=32`), `476258` mismatches;
-- plane 2: first linear mismatch `28882` (`x=82,y=32`), `395125` mismatches.
+- plane 0: first linear mismatch `249476` (`x=176,y=277`), `211926` mismatches;
+- plane 1: first linear mismatch `28882` (`x=82,y=32`), `443615` mismatches;
+- plane 2: first linear mismatch `28882` (`x=82,y=32`), `364565` mismatches.
 
 The `reports_wml2viewer_raw_against_generated_final_planes` test compares raw
 Rust planes with final filtered FFmpeg planes and therefore does not define the
@@ -324,8 +333,15 @@ preceding `(768,0)` `Block128x128` before chroma; AV1 interleaves Y/U/V inside
 each 64x64 coding unit. A subsequent `(32,128)` difference came from treating
 the four-pixel right-edge remainder as a new restoration unit at `x=896`; AV1
 rounds the unit count to nearest and merges that remainder. Correcting both
-advances the next luma investigation to `(523,142)`. Lossy 4x4 `DctDct` also
-uses the square transpose, while
+advanced the investigation to `(523,142)`. Exact partial bottom-left padding
+then fixed the `Tx16x4 DctAdst` block at `(448,152)`, while two-stage DC-only
+rounding fixed the `Tx64x64` block at `(192,192)`. Decode-order transform
+hashes now agree through index 2492; the first differing transform is index
+2493, the `Tx16x64 DctDct` block at `(176,256)`. Its prediction agrees with
+AOM, but a direct cosine-basis 64-point core cannot reproduce AOM's staged
+intermediate rounding. Port the normative staged DCT64 before advancing to
+post-filter pixels; the first raster-order luma mismatch produced by that
+block is `(176,277)`. Lossy 4x4 `DctDct` also uses the square transpose, while
 coded-lossless 4x4 WHT explicitly retains its original storage so the exact
 `filter-disabled-directional` oracle stays green. Post-filter work must not be
 used to mask this raw-plane difference.

@@ -241,8 +241,8 @@ pub(super) fn predict_block(
     bit_depth: u8,
     enable_intra_edge_filter: bool,
     smooth_neighbour: bool,
-    top_right_available: bool,
-    bottom_left_available: bool,
+    top_right_available: usize,
+    bottom_left_available: usize,
 ) -> Result<Vec<u16>, DecoderError> {
     let mut edges = read_intra_edges_with_extension_availability(
         plane,
@@ -312,8 +312,8 @@ fn predict_plane_block(
     bit_depth: u8,
     enable_intra_edge_filter: bool,
     smooth_neighbour: bool,
-    top_right_available: bool,
-    bottom_left_available: bool,
+    top_right_available: usize,
+    bottom_left_available: usize,
     luma_plane: Option<&PlaneBuffer>,
     cfl_alpha_q3: Option<i8>,
 ) -> Result<Vec<u16>, DecoderError> {
@@ -496,8 +496,8 @@ mod tests {
             8,
             false,
             false,
-            true,
-            true,
+            0,
+            0,
         )
         .unwrap();
 
@@ -539,8 +539,8 @@ mod tests {
             8,
             false,
             false,
-            true,
-            true,
+            2,
+            2,
         )
         .unwrap();
         let masked = predict_block(
@@ -555,8 +555,8 @@ mod tests {
             8,
             false,
             false,
-            false,
-            true,
+            0,
+            2,
         )
         .unwrap();
 

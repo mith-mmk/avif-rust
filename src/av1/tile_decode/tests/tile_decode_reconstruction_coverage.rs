@@ -19,7 +19,7 @@ fn reconstructed_coverage_tracks_top_right_bottom_left_and_frame_edges() {
         decoder
             .reconstructed_extension_availability(&plane, current)
             .unwrap(),
-        (false, false)
+        (0, 0)
     );
 
     decoder
@@ -29,7 +29,7 @@ fn reconstructed_coverage_tracks_top_right_bottom_left_and_frame_edges() {
         decoder
             .reconstructed_extension_availability(&plane, current)
             .unwrap(),
-        (true, false)
+        (4, 0)
     );
 
     decoder
@@ -39,7 +39,7 @@ fn reconstructed_coverage_tracks_top_right_bottom_left_and_frame_edges() {
         decoder
             .reconstructed_extension_availability(&plane, current)
             .unwrap(),
-        (true, true)
+        (4, 4)
     );
 
     let right_edge = transform(0, 12, 4);
@@ -47,7 +47,7 @@ fn reconstructed_coverage_tracks_top_right_bottom_left_and_frame_edges() {
         decoder
             .reconstructed_extension_availability(&plane, right_edge)
             .unwrap(),
-        (true, false)
+        (0, 0)
     );
     decoder
         .mark_reconstructed_transform(transform(0, 8, 8))
@@ -56,7 +56,7 @@ fn reconstructed_coverage_tracks_top_right_bottom_left_and_frame_edges() {
         decoder
             .reconstructed_extension_availability(&plane, right_edge)
             .unwrap(),
-        (true, true)
+        (0, 4)
     );
 }
 
@@ -79,13 +79,13 @@ fn reconstruction_coverage_is_plane_and_tile_local() {
         first_tile
             .reconstructed_extension_availability(&luma, luma_current)
             .unwrap(),
-        (true, true)
+        (4, 4)
     );
     assert_eq!(
         first_tile
             .reconstructed_extension_availability(&chroma, chroma_current)
             .unwrap(),
-        (false, false)
+        (0, 0)
     );
 
     let second_tile = TileDecoder::new(&[0, 0], &frame).unwrap();
@@ -93,7 +93,7 @@ fn reconstruction_coverage_is_plane_and_tile_local() {
         second_tile
             .reconstructed_extension_availability(&luma, luma_current)
             .unwrap(),
-        (false, false)
+        (0, 0)
     );
 }
 
@@ -150,9 +150,45 @@ fn reconstructed_coverage_changes_d45_extension_prediction() {
     )
     .unwrap();
 
-    assert!(top_right_available);
-    assert!(!bottom_left_available);
+    assert_eq!(top_right_available, 4);
+    assert_eq!(bottom_left_available, 0);
     assert_ne!(masked, unmasked);
+}
+
+#[test]
+fn reconstructed_coverage_reports_partial_extension_lengths() {
+    let frame = sample_frame();
+    let mut decoder = TileDecoder::new(&[0, 0], &frame).unwrap();
+    let plane = PlaneBuffer {
+        layout: PlaneLayout {
+            plane: 0,
+            width: 64,
+            height: 64,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 64 * 64,
+        },
+        samples: vec![0; 64 * 64],
+    };
+    let current = TransformBlock {
+        plane: 0,
+        x: 16,
+        y: 8,
+        tx_size: TxSize::Tx16x4,
+    };
+    decoder
+        .mark_reconstructed_transform(transform(0, 12, 12))
+        .unwrap();
+    decoder
+        .mark_reconstructed_transform(transform(0, 32, 4))
+        .unwrap();
+
+    assert_eq!(
+        decoder
+            .reconstructed_extension_availability(&plane, current)
+            .unwrap(),
+        (4, 4)
+    );
 }
 
 fn transform(plane: usize, x: usize, y: usize) -> TransformBlock {
