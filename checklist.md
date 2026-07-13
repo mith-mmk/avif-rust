@@ -321,8 +321,8 @@ The current structural gate is green for the supported feature-on workspace,
 the AVIF-disabled `wml2` library, fuzz-bin compilation, AVIF-enabled `wml2`
 tests, and the Wasm check. The full feature-off integration run is not yet a
 success criterion because un-gated AVIF integration targets still fail to
-compile. Exact WML2Viewer pre-filter plane equality is complete; exact
-deblock/CDEF/restoration output is now the release blocker.
+compile. Exact WML2Viewer pre-filter plane equality is complete; exact integrated
+deblock/CDEF/restoration output remains the release blocker.
 
 Until post-filters are implemented, `decode`, `image_from_bytes`,
 `decode_frame_bytes` and the `wml2` callback must fail with `Unsupported` for a
@@ -392,20 +392,17 @@ restoration disabled is generated locally. Deblock traversal now consumes the
 intra reference delta, chroma-direction levels, block-sized chroma Tx extents,
 and AOM's point-local neighboring transform dimensions. The Rust deblock stage
 uses the visible frame dimensions for edge eligibility while retaining coded-
-plane padding for neighbor reads. It still differs from that oracle by plane
-as follows:
-
-- plane 0: `mismatches=151`, `average_abs=0.00023703703703703704`;
-- plane 1: `mismatches=24`, `average_abs=0.00004197530864197531`;
-- plane 2: `mismatches=46`, `average_abs=0.000060493827160493825`.
+plane padding for neighbor reads. It now filters only boundaries belonging to
+the current plane and derives point-local dimensions at each 4-pixel lane.
+The WML2Viewer coded-plane deblock oracle now reports `mismatches=0` and
+`average_abs=0` for planes 0, 1 and 2.
 
 Against the corresponding AOM deblock-plus-CDEF oracle, the Rust CDEF stage
-still inherits the deblock differences when fed the Rust deblock output. A
-separate coded-plane diagnostic that replaces only the deblock input with the
-complete AOM coded deblock planes reports exact CDEF equality (`0` mismatches,
-zero average error on planes 0/1/2). This establishes the CDEF kernel and
-coded-padding neighbor semantics; the remaining work is normative deblock
-state/traversal agreement and then a permanent coded-buffer stage oracle.
+now receives an exact deblock input. A separate coded-plane diagnostic that
+replaces only the deblock input with complete AOM coded deblock planes already
+reports exact CDEF equality (`0` mismatches, zero average error on planes
+0/1/2). The remaining work is a reproducible bootstrap and a permanent
+integrated coded-buffer stage oracle.
 
 These are diagnostic checkpoints only; normative deblock/CDEF derivation and
 the complete filter-order gate remain unfinished. The current private
@@ -413,8 +410,8 @@ pipeline reports a final-filter RGB average absolute error of about
 `0.00043` against FFmpeg. The AOM restoration oracle now matches the Rust
 restoration stage exactly: all three planes report `mismatches=0` and
 `average_abs=0`.
-The remaining final-filter error is in deblock/CDEF and must be eliminated
-before enabling the public final oracle.
+The remaining release work is the reproducible integrated filter-order oracle
+and public fail-closed gate; diagnostic generation must not enable it early.
 The public `WML2Viewer.avif` gate remains incomplete (the historical public
 RGB error was `50.161736...`), and no diagnostic generation may change the
 strict manifest.
