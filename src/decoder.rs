@@ -367,6 +367,9 @@ fn apply_deblock_stage(
         for boundary in &boundaries {
             let block = boundary.block;
             for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
+                if block.plane != plane_index {
+                    continue;
+                }
                 let level = if plane_index == 0 {
                     frame_header.loop_filter.levels[usize::from(!vertical)]
                 } else if plane_index == 1 {
@@ -383,97 +386,6 @@ fn apply_deblock_stage(
                 if edge == 0 || !applied_edges.insert((plane_index, block.x, block.y, vertical)) {
                     continue;
                 }
-                let current_block = if plane_index == 0 {
-                    None
-                } else {
-                    block_filter_state_at(block.x, block.y)
-                };
-                let previous_block = if plane_index == 0 {
-                    None
-                } else if vertical {
-                    block_filter_state_at(edge - 1, block.y)
-                } else {
-                    block_filter_state_at(block.x, edge - 1)
-                };
-                if let Some(current_block) = current_block {
-                    let extent = if vertical {
-                        current_block.block_size.width().min(64)
-                    } else {
-                        current_block.block_size.height().min(64)
-                    };
-                    let origin = if vertical {
-                        current_block.x
-                    } else {
-                        current_block.y
-                    };
-                    if edge > origin && (edge - origin) % extent != 0 {
-                        continue;
-                    }
-                }
-                let dimension = if plane_index == 0 {
-                    if vertical {
-                        block.tx_size.width()
-                    } else {
-                        block.tx_size.height()
-                    }
-                } else {
-                    current_block
-                        .map(|current| {
-                            if vertical {
-                                current.block_size.width().min(64)
-                            } else {
-                                current.block_size.height().min(64)
-                            }
-                        })
-                        .unwrap_or_else(|| {
-                            if vertical {
-                                block.tx_size.width()
-                            } else {
-                                block.tx_size.height()
-                            }
-                        })
-                };
-                let previous_dimension = if plane_index != 0 {
-                    previous_block
-                        .map(|block| {
-                            if vertical {
-                                block.block_size.width().min(64)
-                            } else {
-                                block.block_size.height().min(64)
-                            }
-                        })
-                        .unwrap_or(dimension)
-                } else if vertical {
-                    previous_vertical
-                        .get(&(plane_index, block.x))
-                        .into_iter()
-                        .flat_map(|entries| entries.iter())
-                        .find(|(y, height, _)| block.y >= *y && block.y < *y + *height)
-                        .map(|(_, _, width)| *width)
-                        .unwrap_or(dimension)
-                } else {
-                    previous_horizontal
-                        .get(&(plane_index, block.y))
-                        .into_iter()
-                        .flat_map(|entries| entries.iter())
-                        .find(|(x, width, _)| block.x >= *x && block.x < *x + *width)
-                        .map(|(_, _, height)| *height)
-                        .unwrap_or(dimension)
-                };
-                let dimension = dimension.min(previous_dimension);
-                let filter_length = if plane_index == 0 {
-                    if dimension <= 4 {
-                        4
-                    } else if dimension <= 8 {
-                        8
-                    } else {
-                        14
-                    }
-                } else if dimension <= 4 {
-                    4
-                } else {
-                    6
-                };
                 let span = if vertical {
                     block.tx_size.height()
                 } else {
@@ -484,6 +396,86 @@ fn apply_deblock_stage(
                         (block.x, block.y + offset)
                     } else {
                         (block.x + offset, block.y)
+                    };
+                    let current_block = if plane_index == 0 {
+                        None
+                    } else {
+                        block_filter_state_at(edge_x, edge_y)
+                    };
+                    let dimension = if plane_index == 0 {
+                        if vertical {
+                            block.tx_size.width()
+                        } else {
+                            block.tx_size.height()
+                        }
+                    } else {
+                        current_block
+                            .map(|current| {
+                                if vertical {
+                                    current.block_size.width().min(64)
+                                } else {
+                                    current.block_size.height().min(64)
+                                }
+                            })
+                            .unwrap_or_else(|| {
+                                if vertical {
+                                    block.tx_size.width()
+                                } else {
+                                    block.tx_size.height()
+                                }
+                            })
+                    };
+                    let previous_block = if plane_index == 0 {
+                        None
+                    } else if vertical {
+                        edge_x
+                            .checked_sub(1)
+                            .and_then(|x| block_filter_state_at(x, edge_y))
+                    } else {
+                        edge_y
+                            .checked_sub(1)
+                            .and_then(|y| block_filter_state_at(edge_x, y))
+                    };
+                    let previous_dimension = if plane_index != 0 {
+                        previous_block
+                            .map(|previous| {
+                                if vertical {
+                                    previous.block_size.width().min(64)
+                                } else {
+                                    previous.block_size.height().min(64)
+                                }
+                            })
+                            .unwrap_or(dimension)
+                    } else if vertical {
+                        previous_vertical
+                            .get(&(plane_index, edge_x))
+                            .into_iter()
+                            .flat_map(|entries| entries.iter())
+                            .find(|(y, height, _)| edge_y >= *y && edge_y < *y + *height)
+                            .map(|(_, _, width)| *width)
+                            .unwrap_or(dimension)
+                    } else {
+                        previous_horizontal
+                            .get(&(plane_index, edge_y))
+                            .into_iter()
+                            .flat_map(|entries| entries.iter())
+                            .find(|(x, width, _)| edge_x >= *x && edge_x < *x + *width)
+                            .map(|(_, _, height)| *height)
+                            .unwrap_or(dimension)
+                    };
+                    let dimension = dimension.min(previous_dimension);
+                    let filter_length = if plane_index == 0 {
+                        if dimension <= 4 {
+                            4
+                        } else if dimension <= 8 {
+                            8
+                        } else {
+                            14
+                        }
+                    } else if dimension <= 4 {
+                        4
+                    } else {
+                        6
                     };
                     deblock_filter_edge_with_visible_bounds(
                         &mut plane.samples,
