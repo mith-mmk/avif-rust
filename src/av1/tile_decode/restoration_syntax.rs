@@ -18,57 +18,81 @@ impl<'a> TileDecoder<'a> {
             64
         };
         let unit_size = superblock_size << self.restoration.unit_shift;
-        if x % unit_size != 0 || y % unit_size != 0 {
-            return Ok(());
-        }
-
         let planes = if sequence.color_config.monochrome {
             1
         } else {
             3
         };
         for plane in 0..planes {
-            let mut sgrproj_index = None;
-            let restoration_type = match self.restoration.lr_type[plane] {
-                0 => continue,
-                1 => usize::from(self.reader.read_symbol(self.cdf.wiener_restore_cdf_mut())? != 0),
-                2 => {
-                    let enabled = self
-                        .reader
-                        .read_symbol(self.cdf.sgrproj_restore_cdf_mut())?
-                        != 0;
-                    if enabled { 2 } else { 0 }
-                }
-                3 => self
-                    .reader
-                    .read_symbol(self.cdf.switchable_restore_cdf_mut())?,
-                value => {
-                    return Err(DecoderError::Bitstream(format!(
-                        "AV1 restoration type {value} is invalid"
-                    )));
-                }
+            if self.restoration.lr_type[plane] == 0 {
+                continue;
+            }
+            let subsampling_x = usize::from(plane > 0 && sequence.color_config.subsampling_x);
+            let subsampling_y = usize::from(plane > 0 && sequence.color_config.subsampling_y);
+            let plane_width = (self.mi_cols * 4).div_ceil(1 << subsampling_x);
+            let plane_height = (self.mi_rows * 4).div_ceil(1 << subsampling_y);
+            let plane_x = x >> subsampling_x;
+            let plane_y = y >> subsampling_y;
+            let plane_sb_width = superblock_size >> subsampling_x;
+            let plane_sb_height = superblock_size >> subsampling_y;
+            let plane_unit_size = unit_size;
+            let Some((cols, rows)) = restoration_unit_ranges(
+                plane_x,
+                plane_y,
+                plane_sb_width,
+                plane_sb_height,
+                plane_unit_size,
+                plane_width,
+                plane_height,
+            ) else {
+                continue;
             };
-            match restoration_type {
-                0 => {}
-                1 => self.read_wiener_filter(plane)?,
-                2 => {
-                    sgrproj_index = Some(self.read_sgrproj_filter(plane)?);
-                }
-                value => {
-                    return Err(DecoderError::Bitstream(format!(
-                        "AV1 switchable restoration symbol {value} is invalid"
-                    )));
+            for row in rows {
+                for col in cols.clone() {
+                    let mut sgrproj_index = None;
+                    let restoration_type = match self.restoration.lr_type[plane] {
+                        1 => usize::from(
+                            self.reader.read_symbol(self.cdf.wiener_restore_cdf_mut())? != 0,
+                        ),
+                        2 => {
+                            let enabled = self
+                                .reader
+                                .read_symbol(self.cdf.sgrproj_restore_cdf_mut())?
+                                != 0;
+                            if enabled { 2 } else { 0 }
+                        }
+                        3 => self
+                            .reader
+                            .read_symbol(self.cdf.switchable_restore_cdf_mut())?,
+                        value => {
+                            return Err(DecoderError::Bitstream(format!(
+                                "AV1 restoration type {value} is invalid"
+                            )));
+                        }
+                    };
+                    match restoration_type {
+                        0 => {}
+                        1 => self.read_wiener_filter(plane)?,
+                        2 => {
+                            sgrproj_index = Some(self.read_sgrproj_filter(plane)?);
+                        }
+                        value => {
+                            return Err(DecoderError::Bitstream(format!(
+                                "AV1 switchable restoration symbol {value} is invalid"
+                            )));
+                        }
+                    }
+                    self.restoration_units.push(RestorationUnit {
+                        x: col * plane_unit_size,
+                        y: row * plane_unit_size,
+                        plane,
+                        restoration_type: restoration_type as u8,
+                        wiener: (restoration_type == 1).then_some(self.wiener_refs[plane]),
+                        sgrproj: (restoration_type == 2).then_some(self.sgrproj_refs[plane]),
+                        sgrproj_index,
+                    });
                 }
             }
-            self.restoration_units.push(RestorationUnit {
-                x,
-                y,
-                plane,
-                restoration_type: restoration_type as u8,
-                wiener: (restoration_type == 1).then_some(self.wiener_refs[plane]),
-                sgrproj: (restoration_type == 2).then_some(self.sgrproj_refs[plane]),
-                sgrproj_index,
-            });
         }
         Ok(())
     }
@@ -164,5 +188,44 @@ impl<'a> TileDecoder<'a> {
         } else {
             Ok((value << 1) - threshold + self.reader.read_literal(1)? as usize)
         }
+    }
+}
+
+fn restoration_unit_ranges(
+    x: usize,
+    y: usize,
+    superblock_width: usize,
+    superblock_height: usize,
+    unit_size: usize,
+    plane_width: usize,
+    plane_height: usize,
+) -> Option<(std::ops::Range<usize>, std::ops::Range<usize>)> {
+    let horizontal_units = ((plane_width + unit_size / 2) / unit_size).max(1);
+    let vertical_units = ((plane_height + unit_size / 2) / unit_size).max(1);
+    let col_start = x.div_ceil(unit_size);
+    let row_start = y.div_ceil(unit_size);
+    let col_end = (x + superblock_width)
+        .div_ceil(unit_size)
+        .min(horizontal_units);
+    let row_end = (y + superblock_height)
+        .div_ceil(unit_size)
+        .min(vertical_units);
+    (col_start < col_end && row_start < row_end).then_some((col_start..col_end, row_start..row_end))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::restoration_unit_ranges;
+
+    #[test]
+    fn restoration_units_merge_a_small_right_edge_remainder() {
+        assert_eq!(
+            restoration_unit_ranges(768, 0, 128, 128, 128, 900, 900),
+            Some((6..7, 0..1))
+        );
+        assert_eq!(
+            restoration_unit_ranges(896, 0, 128, 128, 128, 900, 900),
+            None
+        );
     }
 }
