@@ -429,7 +429,9 @@ pub(crate) fn sgrproj_filter_unit(
                 }
                 let p = (sum_sq * n - sum * sum).max(0) as i64;
                 let z = round_shift(p * i64::from(scale), 20).clamp(0, 255);
-                let af = ((256 * z + z + 1) / (z + 1)).clamp(1, 256);
+                // AOM's av1_x_by_xplus1 table maps zero to one and rounds
+                // 256*z/(z+1) to nearest for every other variance value.
+                let af = sgr_x_by_xplus1(z);
                 let bf = round_shift(
                     i64::from(256 - af) * i64::from(sum) * i64::from((4096 + n / 2) / n),
                     12,
@@ -521,6 +523,14 @@ pub(crate) fn sgrproj_filter_unit(
         }
     }
     output
+}
+
+fn sgr_x_by_xplus1(z: i32) -> i32 {
+    if z == 0 {
+        1
+    } else {
+        ((256 * z + (z + 1) / 2) / (z + 1)).clamp(1, 256)
+    }
 }
 
 #[allow(dead_code)]
@@ -1069,7 +1079,7 @@ mod tests {
     use super::{
         CDEF_DIRECTIONS, CdefUnit, PostFilterState, cdef_adjust_primary_strength, cdef_constrain,
         cdef_filter_block, cdef_find_direction, cdef_unit_origin, deblock_filter_edge,
-        store_cdef_unit,
+        sgr_x_by_xplus1, store_cdef_unit,
     };
     use crate::av1::syntax::{BlockSize, PredictionMode, UvPredictionMode};
 
@@ -1131,6 +1141,14 @@ mod tests {
         let source = vec![200u16; 16 * 16];
         let filtered = super::sgrproj_filter_unit(&source, 16, 16, 0, 0, 16, 16, 0, [0, 128]);
         assert_eq!(filtered, source);
+    }
+
+    #[test]
+    fn sgrproj_x_by_xplus1_matches_aom_rounding_table() {
+        assert_eq!(sgr_x_by_xplus1(0), 1);
+        assert_eq!(sgr_x_by_xplus1(1), 128);
+        assert_eq!(sgr_x_by_xplus1(2), 171);
+        assert_eq!(sgr_x_by_xplus1(3), 192);
     }
 
     #[test]
