@@ -195,6 +195,10 @@ public decoded-frame shape.
 - [x] Implement the scalar CDEF constrain, direction search and 8x8 block
       kernel.
 - [ ] Implement CDEF and apply the decoded per-block CDEF index.
+- [ ] Match normative CDEF frame preparation and block semantics: luma
+      direction/variance is shared with chroma, luma primary strength uses the
+      directional-variance adjustment, secondary strength `3` maps to `4`,
+      and frame-edge sentinel/clipping behavior remains to be made exact.
 - [ ] Implement loop restoration and restoration-unit boundary handling.
 - [x] Implement the scalar Wiener restoration kernel with transmitted
       vertical/horizontal axis order, AOM's 3/11-bit intermediate rounding and
@@ -364,10 +368,14 @@ coded-lossless 4x4 WHT explicitly retains its original storage so the exact
 
 The first post-filter checkpoint compares each private stage with FFmpeg's
 final `gbrp` output. Raw RGB average absolute error is `0.14965555555555554`;
-the current deblock and CDEF scaffolds reduce it to `0.14508477366255143` and
-`0.11774732510288066`. Porting Wiener add-src precision, transmitted axis
-order and halo processing reduced the Wiener-stage error from
-`0.29293786008230455`/max `254` to `0.16769300411522634`/max `25`. The combined
-restoration scaffold currently reports `0.1605934156378601`; normative stripe
-boundaries, deblock level derivation, CDEF block selection and SGRPROJ math
-remain before the final oracle can be enabled.
+the deblock and CDEF stages currently report `0.14508477366255143` and
+`0.10787448559670781`. CDEF is also compared against a locally rebuilt AOM
+CDEF-only oracle: after luma direction sharing, the remaining average errors
+are `0.05998641975308642`, `0.07945802469135803` and
+`0.07724691358024692` for planes 0/1/2, so exact frame preparation and edge
+semantics are still a release blocker. Porting Wiener add-src precision,
+transmitted axis order and halo processing reduced the Wiener-stage error from
+`0.29293786008230455`/max `254` to `0.15780205761316873`/max `25` in the
+current diagnostic order. The combined restoration scaffold currently reports
+`0.1509292181069959`; normative stripe boundaries, deblock level derivation,
+CDEF exactness and SGRPROJ math remain before the final oracle can be enabled.

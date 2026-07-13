@@ -591,10 +591,16 @@ fn parse_cdef_params(
     let mut strengths = CdefParams::default().strengths;
     for strength in strengths.iter_mut().take(1usize << cdef_bits) {
         strength.y_pri = reader.read_bits(4, "cdef_y_pri_strength")? as u8;
-        strength.y_sec = reader.read_bits(2, "cdef_y_sec_strength")? as u8;
+        strength.y_sec = match reader.read_bits(2, "cdef_y_sec_strength")? as u8 {
+            3 => 4,
+            value => value,
+        };
         if !sequence.color_config.monochrome {
             strength.uv_pri = reader.read_bits(4, "cdef_uv_pri_strength")? as u8;
-            strength.uv_sec = reader.read_bits(2, "cdef_uv_sec_strength")? as u8;
+            strength.uv_sec = match reader.read_bits(2, "cdef_uv_sec_strength")? as u8 {
+                3 => 4,
+                value => value,
+            };
         }
     }
     Ok(CdefParams {

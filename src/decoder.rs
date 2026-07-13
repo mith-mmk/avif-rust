@@ -5,7 +5,8 @@ use crate::av1::alloc_frame_buffers;
 use crate::av1::{
     Av1CodecConfiguration, BlockModeProbe, ColorConfig, FrameBuffers, FrameDecodePlan, FrameHeader,
     PartitionProbe, QuantState, ResidualProbe, SequenceHeader, TileEntropyState, TileGroup,
-    alloc_coded_frame_buffers, build_still_decode_plan, cdef_filter_block, cdef_find_direction,
+    alloc_coded_frame_buffers, build_still_decode_plan, cdef_adjust_primary_strength,
+    cdef_filter_block_with_edge_mode, cdef_find_direction_with_variance,
     crop_frame_buffers_to_plan, deblock_filter_edge,
     decode_luma_root_block_prefix_with_post_filter_state_and_entropy, frame_buffers_to_rgba_8,
     frame_buffers_to_rgba_16, parse_av1_config, parse_frame_header, parse_sequence_header,
@@ -383,55 +384,90 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
         return;
     }
     let unit_mask = (1usize << frame_header.cdef.bits) - 1;
+    let luma_source = frame.buffers.planes[0].samples.clone();
+    let luma_width = frame.buffers.planes[0].layout.width;
+    let luma_height = frame.buffers.planes[0].layout.height;
+    let mut cdef_blocks = Vec::new();
+    for y in (0..luma_height).step_by(8) {
+        for x in (0..luma_width).step_by(8) {
+            let filtered_block = state.block_filter_states.iter().any(|block| {
+                !block.skip
+                    && x >= block.x
+                    && y >= block.y
+                    && x < block.x + block.block_size.width()
+                    && y < block.y + block.block_size.height()
+            });
+            if !filtered_block {
+                continue;
+            }
+            let unit_x = x & !63;
+            let unit_y = y & !63;
+            let index = state
+                .cdef_blocks
+                .iter()
+                .find(|block| block.x == unit_x && block.y == unit_y)
+                .map(|block| block.index as usize & unit_mask)
+                .or_else(|| {
+                    state
+                        .cdef_units
+                        .iter()
+                        .find(|unit| unit.x == unit_x && unit.y == unit_y)
+                        .map(|unit| unit.index as usize & unit_mask)
+                })
+                .unwrap_or(0);
+            let (detected_direction, variance) = cdef_find_direction_with_variance(
+                &luma_source,
+                luma_width,
+                luma_height,
+                x,
+                y,
+                0,
+                false,
+            );
+            cdef_blocks.push((x, y, index, detected_direction, variance));
+        }
+    }
     for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
         let width = plane.layout.width;
         let height = plane.layout.height;
         let source = plane.samples.clone();
-        for y in (0..height).step_by(8) {
-            for x in (0..width).step_by(8) {
-                let unit_x = x & !63;
-                let unit_y = y & !63;
-                let index = state
-                    .cdef_blocks
-                    .iter()
-                    .find(|block| block.x == unit_x && block.y == unit_y)
-                    .map(|block| block.index as usize & unit_mask)
-                    .or_else(|| {
-                        state
-                            .cdef_units
-                            .iter()
-                            .find(|unit| unit.x == unit_x && unit.y == unit_y)
-                            .map(|unit| unit.index as usize & unit_mask)
-                    })
-                    .unwrap_or(0);
-                let strength = &frame_header.cdef.strengths[index];
-                let direction = cdef_find_direction(&source, width, height, x, y, 0);
-                let filtered = cdef_filter_block(
-                    &source,
-                    width,
-                    height,
-                    x,
-                    y,
-                    (width - x).min(8),
-                    (height - y).min(8),
-                    direction,
-                    if plane_index == 0 {
-                        strength.y_pri
-                    } else {
-                        strength.uv_pri
-                    },
-                    if plane_index == 0 {
-                        strength.y_sec
-                    } else {
-                        strength.uv_sec
-                    },
-                    frame_header.cdef.damping,
-                );
-                for row in y..(y + (height - y).min(8)) {
-                    let start = row * width + x;
-                    let end = start + (width - x).min(8);
-                    plane.samples[start..end].copy_from_slice(&filtered[start..end]);
-                }
+        for &(x, y, index, detected_direction, variance) in &cdef_blocks {
+            if x >= width || y >= height {
+                continue;
+            }
+            let strength = &frame_header.cdef.strengths[index];
+            let primary_strength = if plane_index == 0 {
+                cdef_adjust_primary_strength(strength.y_pri, variance)
+            } else {
+                strength.uv_pri
+            };
+            let direction = if primary_strength == 0 {
+                0
+            } else {
+                detected_direction
+            };
+            let filtered = cdef_filter_block_with_edge_mode(
+                &source,
+                width,
+                height,
+                x,
+                y,
+                (width - x).min(8),
+                (height - y).min(8),
+                direction,
+                primary_strength,
+                if plane_index == 0 {
+                    strength.y_sec
+                } else {
+                    strength.uv_sec
+                },
+                frame_header.cdef.damping,
+                true,
+            );
+            for row in y..(y + (height - y).min(8)) {
+                let start = row * width + x;
+                let end = start + (width - x).min(8);
+                plane.samples[start..end].copy_from_slice(&filtered[start..end]);
             }
         }
     }
@@ -1586,6 +1622,9 @@ mod prefilter_diagnostic_tests {
             .output()
             .ok()
             .filter(|output| output.status.success());
+        let cdef_oracle = std::env::var_os("AOM_CDEF_ORACLE")
+            .map(PathBuf::from)
+            .and_then(|path| std::fs::read(path).ok());
         let report = |label: &str, frame: &DecodedFrame| {
             let Some(reference) = reference.as_ref() else {
                 return;
@@ -1641,6 +1680,30 @@ mod prefilter_diagnostic_tests {
                 );
             }
         };
+        let report_cdef_oracle = |label: &str, frame: &DecodedFrame| {
+            let Some(expected) = cdef_oracle.as_ref() else {
+                return;
+            };
+            let sample_count = frame.width * frame.height;
+            if expected.len() != sample_count * 3 {
+                return;
+            }
+            for (plane_index, plane) in frame.buffers.planes.iter().enumerate() {
+                let oracle =
+                    &expected[plane_index * sample_count..(plane_index + 1) * sample_count];
+                let mut mismatches = 0usize;
+                let mut sum = 0u64;
+                for (&actual, &expected) in plane.samples.iter().zip(oracle) {
+                    let difference = actual.abs_diff(u16::from(expected));
+                    mismatches += usize::from(difference != 0);
+                    sum += u64::from(difference);
+                }
+                eprintln!(
+                    "AOM CDEF oracle {label} plane {plane_index}: mismatches={mismatches}, average_abs={}",
+                    sum as f64 / sample_count as f64
+                );
+            }
+        };
         eprintln!(
             "private post-filter state: loop={:?}, cdef_units={}, cdef_blocks={}, boundaries={}, restoration={:?}, restoration_units={}",
             headers.frame.loop_filter.levels,
@@ -1651,15 +1714,26 @@ mod prefilter_diagnostic_tests {
             post_filter_state.restoration_units.len()
         );
         eprintln!(
+            "private block filter state: blocks={}, skip={}",
+            post_filter_state.block_filter_states.len(),
+            post_filter_state
+                .block_filter_states
+                .iter()
+                .filter(|block| block.skip)
+                .count()
+        );
+        eprintln!(
             "private restoration unit sample={:?}",
             &post_filter_state.restoration_units
                 [..post_filter_state.restoration_units.len().min(12)]
         );
         report("raw", &frame);
+        report_cdef_oracle("raw", &frame);
         apply_deblock_stage(&mut frame, &headers.frame, &post_filter_state);
         report("deblock", &frame);
         apply_cdef_stage(&mut frame, &headers.frame, &post_filter_state);
         report("cdef", &frame);
+        report_cdef_oracle("cdef", &frame);
         let mut wiener_frame = frame.clone();
         apply_loop_restoration_stage(
             &mut wiener_frame,

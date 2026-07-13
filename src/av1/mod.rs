@@ -50,7 +50,8 @@ pub use tile_decode::{
     probe_tile_partitions,
 };
 pub(crate) use tile_decode::{
-    cdef_filter_block, cdef_find_direction, deblock_filter_edge, sgrproj_filter_unit,
+    cdef_adjust_primary_strength, cdef_filter_block_with_edge_mode,
+    cdef_find_direction_with_variance, deblock_filter_edge, sgrproj_filter_unit,
     wiener_filter_unit,
 };
 pub use tile_group::{TileGroup, TilePayload, parse_tile_group};

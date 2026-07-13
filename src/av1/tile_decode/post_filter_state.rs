@@ -51,8 +51,42 @@ pub(crate) fn cdef_filter_block(
     secondary_strength: u8,
     damping: u8,
 ) -> Vec<u16> {
+    cdef_filter_block_with_edge_mode(
+        source,
+        width,
+        height,
+        origin_x,
+        origin_y,
+        block_width,
+        block_height,
+        direction,
+        primary_strength,
+        secondary_strength,
+        damping,
+        false,
+    )
+}
+
+pub(crate) fn cdef_filter_block_with_edge_mode(
+    source: &[u16],
+    width: usize,
+    height: usize,
+    origin_x: usize,
+    origin_y: usize,
+    block_width: usize,
+    block_height: usize,
+    direction: usize,
+    primary_strength: u8,
+    secondary_strength: u8,
+    damping: u8,
+    use_edge_sentinel: bool,
+) -> Vec<u16> {
+    const CDEF_VERY_LARGE: i32 = 0x4000;
     let mut output = source.to_vec();
     let direction = direction & 7;
+    let enable_primary = primary_strength != 0;
+    let enable_secondary = secondary_strength != 0;
+    let clipping_required = enable_primary && enable_secondary;
     let primary_taps = if primary_strength & 1 == 0 {
         [4, 2]
     } else {
@@ -60,6 +94,9 @@ pub(crate) fn cdef_filter_block(
     };
     let secondary_taps = [2, 1];
     let sample = |x: isize, y: isize| -> i32 {
+        if use_edge_sentinel && (x < 0 || y < 0 || x >= width as isize || y >= height as isize) {
+            return CDEF_VERY_LARGE;
+        }
         let x = x.clamp(0, width.saturating_sub(1) as isize) as usize;
         let y = y.clamp(0, height.saturating_sub(1) as isize) as usize;
         source[y * width + x] as i32
@@ -76,29 +113,48 @@ pub(crate) fn cdef_filter_block(
             let mut min_value = center;
             let mut max_value = center;
             for (tap_index, &(dy, dx)) in CDEF_DIRECTIONS[direction].iter().enumerate() {
-                for sign in [-1isize, 1] {
-                    let value = sample(x as isize + sign * dx, y as isize + sign * dy);
-                    sum += primary_taps[tap_index]
-                        * cdef_constrain(value - center, primary_strength, damping);
-                    min_value = min_value.min(value);
-                    max_value = max_value.max(value);
+                if enable_primary {
+                    for sign in [-1isize, 1] {
+                        let value = sample(x as isize + sign * dx, y as isize + sign * dy);
+                        sum += primary_taps[tap_index]
+                            * cdef_constrain(value - center, primary_strength, damping);
+                        if clipping_required && value != CDEF_VERY_LARGE {
+                            min_value = min_value.min(value);
+                            max_value = max_value.max(value);
+                        }
+                    }
                 }
             }
             for secondary_direction in [(direction + 2) & 7, (direction + 6) & 7] {
                 for (tap_index, &(dy, dx)) in
                     CDEF_DIRECTIONS[secondary_direction].iter().enumerate()
                 {
-                    for sign in [-1isize, 1] {
-                        let value = sample(x as isize + sign * dx, y as isize + sign * dy);
-                        sum += secondary_taps[tap_index]
-                            * cdef_constrain(value - center, secondary_strength, damping);
-                        min_value = min_value.min(value);
-                        max_value = max_value.max(value);
+                    if enable_secondary {
+                        for sign in [-1isize, 1] {
+                            let value = sample(x as isize + sign * dx, y as isize + sign * dy);
+                            sum += secondary_taps[tap_index]
+                                * cdef_constrain(value - center, secondary_strength, damping);
+                            if clipping_required && value != CDEF_VERY_LARGE {
+                                min_value = min_value.min(value);
+                                max_value = max_value.max(value);
+                            }
+                        }
                     }
                 }
             }
             let filtered = (center + ((8 + sum - i32::from(sum < 0)) >> 4))
-                .clamp(min_value, max_value)
+                .clamp(
+                    if clipping_required {
+                        min_value
+                    } else {
+                        i32::MIN
+                    },
+                    if clipping_required {
+                        max_value
+                    } else {
+                        i32::MAX
+                    },
+                )
                 .clamp(0, u16::MAX as i32) as u16;
             output[y * width + x] = filtered;
         }
@@ -115,8 +171,33 @@ pub(crate) fn cdef_find_direction(
     origin_y: usize,
     coeff_shift: u8,
 ) -> usize {
+    cdef_find_direction_with_variance(
+        source,
+        width,
+        height,
+        origin_x,
+        origin_y,
+        coeff_shift,
+        false,
+    )
+    .0
+}
+
+pub(crate) fn cdef_find_direction_with_variance(
+    source: &[u16],
+    width: usize,
+    height: usize,
+    origin_x: usize,
+    origin_y: usize,
+    coeff_shift: u8,
+    use_edge_sentinel: bool,
+) -> (usize, i32) {
+    const CDEF_VERY_LARGE: i32 = 0x4000;
     const DIV: [i32; 9] = [0, 840, 420, 280, 210, 168, 140, 120, 105];
     let sample = |x: usize, y: usize| -> i32 {
+        if use_edge_sentinel && (origin_x + x >= width || origin_y + y >= height) {
+            return (CDEF_VERY_LARGE >> coeff_shift) - 128;
+        }
         let x = (origin_x + x).min(width.saturating_sub(1));
         let y = (origin_y + y).min(height.saturating_sub(1));
         (source[y * width + x] >> coeff_shift) as i32 - 128
@@ -167,7 +248,21 @@ pub(crate) fn cdef_find_direction(
             best = direction;
         }
     }
-    best
+    let variance = ((cost[best] - cost[(best + 4) & 7]) >> 10).max(0);
+    (best, variance)
+}
+
+pub(crate) fn cdef_adjust_primary_strength(strength: u8, variance: i32) -> u8 {
+    if variance == 0 {
+        return 0;
+    }
+    let scaled = variance >> 6;
+    let i = if scaled == 0 {
+        0
+    } else {
+        (i32::BITS - 1 - scaled.leading_zeros()).min(12) as i32
+    };
+    ((i32::from(strength) * (4 + i) + 8) >> 4) as u8
 }
 
 #[allow(dead_code)]
@@ -715,8 +810,8 @@ fn store_cdef_block_index(blocks: &mut Vec<CdefBlockIndex>, x: usize, y: usize, 
 #[cfg(test)]
 mod tests {
     use super::{
-        CdefUnit, PostFilterState, cdef_constrain, cdef_filter_block, cdef_find_direction,
-        cdef_unit_origin, deblock_filter_edge, store_cdef_unit,
+        CdefUnit, PostFilterState, cdef_adjust_primary_strength, cdef_constrain, cdef_filter_block,
+        cdef_find_direction, cdef_unit_origin, deblock_filter_edge, store_cdef_unit,
     };
     use crate::av1::syntax::{BlockSize, PredictionMode, UvPredictionMode};
 
@@ -731,6 +826,13 @@ mod tests {
     fn cdef_direction_is_stable_for_a_constant_block() {
         let source = vec![128u16; 8 * 8];
         assert_eq!(cdef_find_direction(&source, 8, 8, 0, 0, 0), 0);
+    }
+
+    #[test]
+    fn cdef_primary_strength_uses_directional_variance() {
+        assert_eq!(cdef_adjust_primary_strength(8, 0), 0);
+        assert_eq!(cdef_adjust_primary_strength(8, 64), 2);
+        assert_eq!(cdef_adjust_primary_strength(8, 4096), 5);
     }
 
     #[test]
