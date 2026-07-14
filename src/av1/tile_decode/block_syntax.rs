@@ -204,12 +204,22 @@ impl<'a> TileDecoder<'a> {
                     )));
                 }
                 let tx_size = block_size.tx_size_from_depth(symbol);
-                self.set_txfm_context(x, y, block_size, tx_size);
+                if skip {
+                    let (width, height) = block_size.largest_supported_tx_dimensions();
+                    self.set_txfm_context_dimensions(x, y, block_size, width, height);
+                } else {
+                    self.set_txfm_context(x, y, block_size, tx_size);
+                }
                 return Ok((Some(context), Some(symbol), tx_size));
             }
             TxMode::Select => TxSize::Tx4x4,
         };
-        self.set_txfm_context(x, y, block_size, tx_size);
+        if skip {
+            let (width, height) = block_size.largest_supported_tx_dimensions();
+            self.set_txfm_context_dimensions(x, y, block_size, width, height);
+        } else {
+            self.set_txfm_context(x, y, block_size, tx_size);
+        }
         Ok((None, None, tx_size))
     }
 

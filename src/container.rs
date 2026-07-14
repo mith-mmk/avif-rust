@@ -156,8 +156,13 @@ struct ItemReference {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ItemPropertyAssociation {
     item_id: u32,
-    property_indices: Vec<u16>,
-    essential_property_indices: Vec<u16>,
+    associations: Vec<PropertyAssociation>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PropertyAssociation {
+    index: u16,
+    essential: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,7 +178,47 @@ enum ItemProperty {
     CleanAperture(CleanAperture),
     Rotation(ImageRotation),
     Mirror(ImageMirror),
+    SpatialExtents(ImageSpatialExtents),
+    PixelInformation(PixelInformation),
+    Av1Config(Vec<u8>),
+    ColorInformation(ColorInformation),
+    Premultiplied,
     Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PropertyKind {
+    AuxiliaryType,
+    CleanAperture,
+    Rotation,
+    Mirror,
+    SpatialExtents,
+    PixelInformation,
+    Av1Config,
+    ColorInformation,
+    Premultiplied,
+    Other,
+}
+
+impl PropertyKind {
+    fn is_singleton(self) -> bool {
+        !matches!(self, Self::Other)
+    }
+}
+
+fn property_kind(property: &ItemProperty) -> PropertyKind {
+    match property {
+        ItemProperty::AuxiliaryType(_) => PropertyKind::AuxiliaryType,
+        ItemProperty::CleanAperture(_) => PropertyKind::CleanAperture,
+        ItemProperty::Rotation(_) => PropertyKind::Rotation,
+        ItemProperty::Mirror(_) => PropertyKind::Mirror,
+        ItemProperty::SpatialExtents(_) => PropertyKind::SpatialExtents,
+        ItemProperty::PixelInformation(_) => PropertyKind::PixelInformation,
+        ItemProperty::Av1Config(_) => PropertyKind::Av1Config,
+        ItemProperty::ColorInformation(_) => PropertyKind::ColorInformation,
+        ItemProperty::Premultiplied => PropertyKind::Premultiplied,
+        ItemProperty::Other => PropertyKind::Other,
+    }
 }
 
 #[derive(Debug, Default)]
@@ -184,12 +229,6 @@ struct MetaState {
     item_references: Vec<ItemReference>,
     item_property_associations: Vec<ItemPropertyAssociation>,
     item_properties: Vec<ItemProperty>,
-    width: Option<u32>,
-    height: Option<u32>,
-    pixel_information: Option<PixelInformation>,
-    color_information: Option<ColorInformation>,
-    alpha_premultiplied: bool,
-    av1_config: Option<Vec<u8>>,
 }
 
 pub fn is_avif_file(data: &[u8]) -> bool {
@@ -224,22 +263,22 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
     validate_primary_item_metadata(&meta)?;
     let alpha_auxiliary_items = alpha_auxiliary_items(data, &meta)?;
     let primary_grid = primary_grid(&primary_item_payload, &meta)?;
-    let primary_transforms = primary_item_transforms(&meta);
+    let primary_metadata = primary_item_metadata(&meta)?;
     Ok(AvifInfo {
         major_brand,
         compatible_brands,
         primary_item_id: meta.primary_item_id,
-        width: meta.width,
-        height: meta.height,
-        pixel_information: meta.pixel_information,
-        color_information: meta.color_information,
-        alpha_premultiplied: meta.alpha_premultiplied,
+        width: primary_metadata.width,
+        height: primary_metadata.height,
+        pixel_information: primary_metadata.pixel_information,
+        color_information: primary_metadata.color_information,
+        alpha_premultiplied: primary_metadata.alpha_premultiplied,
         alpha_auxiliary_items,
         primary_grid,
-        clean_aperture: primary_transforms.clean_aperture,
-        rotation: primary_transforms.rotation,
-        mirror: primary_transforms.mirror,
-        av1_config: meta.av1_config,
+        clean_aperture: primary_metadata.clean_aperture,
+        rotation: primary_metadata.rotation,
+        mirror: primary_metadata.mirror,
+        av1_config: primary_metadata.av1_config,
         primary_item_payload,
     })
 }
@@ -326,7 +365,10 @@ fn parse_iprp(source: &[u8], payload: &[u8], state: &mut MetaState) -> Result<()
         let child_payload = box_payload(payload, header)?;
         match &header.box_type {
             b"ipco" => parse_ipco(source, child_payload, state)?,
-            b"ipma" => state.item_property_associations = parse_ipma(child_payload)?,
+            b"ipma" => merge_ipma(
+                &mut state.item_property_associations,
+                parse_ipma(child_payload)?,
+            )?,
             _ => {}
         }
         offset = checked_add(header.offset, header.size, "iprp child box end")?;
@@ -339,25 +381,19 @@ fn parse_ipco(_source: &[u8], payload: &[u8], state: &mut MetaState) -> Result<(
     while offset < payload.len() {
         let header = read_box_header(payload, offset, payload.len())?;
         let child_payload = box_payload(payload, header)?;
-        match &header.box_type {
-            b"ispe" => {
-                let extents = parse_ispe(child_payload)?;
-                state.width = Some(extents.width);
-                state.height = Some(extents.height);
-            }
-            b"pixi" => state.pixel_information = Some(parse_pixi(child_payload)?),
-            b"av1C" => state.av1_config = Some(child_payload.to_vec()),
-            b"colr" => state.color_information = Some(parse_colr(child_payload)?),
-            b"prem" => state.alpha_premultiplied = true,
-            _ => {}
-        }
-        state.item_properties.push(match &header.box_type {
+        let property = match &header.box_type {
             b"auxC" => ItemProperty::AuxiliaryType(parse_auxc(child_payload)?),
             b"clap" => ItemProperty::CleanAperture(parse_clap(child_payload)?),
             b"irot" => ItemProperty::Rotation(parse_irot(child_payload)?),
             b"imir" => ItemProperty::Mirror(parse_imir(child_payload)?),
+            b"ispe" => ItemProperty::SpatialExtents(parse_ispe(child_payload)?),
+            b"pixi" => ItemProperty::PixelInformation(parse_pixi(child_payload)?),
+            b"av1C" => ItemProperty::Av1Config(child_payload.to_vec()),
+            b"colr" => ItemProperty::ColorInformation(parse_colr(child_payload)?),
+            b"prem" => ItemProperty::Premultiplied,
             _ => ItemProperty::Other,
-        });
+        };
+        state.item_properties.push(property);
         offset = checked_add(header.offset, header.size, "ipco child box end")?;
     }
     Ok(())
@@ -586,40 +622,59 @@ fn parse_ipma(payload: &[u8]) -> Result<Vec<ItemPropertyAssociation>, DecoderErr
     let large_property_index = flags & 1 != 0;
     let entry_count = read_u32(payload, 4)? as usize;
     let mut cursor = 8usize;
-    let mut associations = Vec::with_capacity(entry_count);
+    let mut item_associations = Vec::with_capacity(entry_count);
     for _ in 0..entry_count {
         let item_id = read_item_id(payload, &mut cursor, version == 1)?;
         let association_count = read_u8(payload, cursor)? as usize;
         cursor += 1;
-        let mut property_indices = Vec::with_capacity(association_count);
-        let mut essential_property_indices = Vec::new();
+        let mut property_associations = Vec::with_capacity(association_count);
         for _ in 0..association_count {
-            let association = if large_property_index {
+            let (index, essential) = if large_property_index {
                 let value = read_u16(payload, cursor)?;
                 cursor += 2;
-                if value & 0x8000 != 0 {
-                    essential_property_indices.push(value & 0x7fff);
-                }
-                value & 0x7fff
+                (value & 0x7fff, value & 0x8000 != 0)
             } else {
                 let value = read_u8(payload, cursor)?;
                 cursor += 1;
-                if value & 0x80 != 0 {
-                    essential_property_indices.push(u16::from(value & 0x7f));
-                }
-                u16::from(value & 0x7f)
+                (u16::from(value & 0x7f), value & 0x80 != 0)
             };
-            if association != 0 {
-                property_indices.push(association);
-            }
+            property_associations.push(PropertyAssociation { index, essential });
         }
-        associations.push(ItemPropertyAssociation {
+        item_associations.push(ItemPropertyAssociation {
             item_id,
-            property_indices,
-            essential_property_indices,
+            associations: property_associations,
         });
     }
-    Ok(associations)
+    Ok(item_associations)
+}
+
+fn merge_ipma(
+    target: &mut Vec<ItemPropertyAssociation>,
+    incoming: Vec<ItemPropertyAssociation>,
+) -> Result<(), DecoderError> {
+    for incoming_item in incoming {
+        let Some(existing) = target
+            .iter_mut()
+            .find(|association| association.item_id == incoming_item.item_id)
+        else {
+            target.push(incoming_item);
+            continue;
+        };
+        for incoming_property in incoming_item.associations {
+            if existing
+                .associations
+                .iter()
+                .any(|property| property.index == incoming_property.index)
+            {
+                return Err(DecoderError::Bitstream(format!(
+                    "item {} has duplicate property association index {}",
+                    existing.item_id, incoming_property.index
+                )));
+            }
+            existing.associations.push(incoming_property);
+        }
+    }
+    Ok(())
 }
 
 fn validate_primary_item_metadata(state: &MetaState) -> Result<(), DecoderError> {
@@ -647,20 +702,116 @@ fn validate_primary_item_metadata(state: &MetaState) -> Result<(), DecoderError>
         )));
     }
     for association in &state.item_property_associations {
-        for index in association
-            .property_indices
+        if !state
+            .item_infos
             .iter()
-            .chain(association.essential_property_indices.iter())
+            .any(|item| item.item_id == association.item_id)
         {
-            if *index == 0 || usize::from(*index) > state.item_properties.len() {
+            return Err(DecoderError::Bitstream(format!(
+                "property association refers to unknown item {}",
+                association.item_id
+            )));
+        }
+        let mut seen_kinds = Vec::new();
+        for property in &association.associations {
+            let index = property.index;
+            if index == 0 || usize::from(index) > state.item_properties.len() {
                 return Err(DecoderError::Bitstream(format!(
                     "item {} property association index {} is out of range",
                     association.item_id, index
                 )));
             }
+            let kind = property_kind(&state.item_properties[usize::from(index) - 1]);
+            if kind.is_singleton() && seen_kinds.contains(&kind) {
+                return Err(DecoderError::Bitstream(format!(
+                    "item {} has duplicate {kind:?} property association",
+                    association.item_id
+                )));
+            }
+            seen_kinds.push(kind);
+        }
+    }
+    let Some(primary_association) = state
+        .item_property_associations
+        .iter()
+        .find(|association| association.item_id == primary_item_id)
+    else {
+        return Err(DecoderError::Bitstream(format!(
+            "primary item {primary_item_id} has no property associations"
+        )));
+    };
+    let kinds = primary_association
+        .associations
+        .iter()
+        .map(|association| {
+            property_kind(&state.item_properties[usize::from(association.index) - 1])
+        })
+        .collect::<Vec<_>>();
+    for required in [
+        PropertyKind::SpatialExtents,
+        PropertyKind::PixelInformation,
+        PropertyKind::Av1Config,
+    ] {
+        if !kinds.contains(&required) {
+            return Err(DecoderError::Bitstream(format!(
+                "primary item {primary_item_id} is missing required {required:?} property"
+            )));
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Default)]
+struct PrimaryItemMetadata {
+    width: Option<u32>,
+    height: Option<u32>,
+    pixel_information: Option<PixelInformation>,
+    color_information: Option<ColorInformation>,
+    alpha_premultiplied: bool,
+    av1_config: Option<Vec<u8>>,
+    clean_aperture: Option<CleanAperture>,
+    rotation: Option<ImageRotation>,
+    mirror: Option<ImageMirror>,
+}
+
+fn primary_item_metadata(state: &MetaState) -> Result<PrimaryItemMetadata, DecoderError> {
+    let Some(primary_item_id) = state.primary_item_id else {
+        return Err(DecoderError::Bitstream(
+            "primary item is missing".to_string(),
+        ));
+    };
+    let association = state
+        .item_property_associations
+        .iter()
+        .find(|association| association.item_id == primary_item_id)
+        .ok_or_else(|| {
+            DecoderError::Bitstream(format!(
+                "primary item {primary_item_id} has no property associations"
+            ))
+        })?;
+    let mut metadata = PrimaryItemMetadata::default();
+    for association in &association.associations {
+        let property = &state.item_properties[usize::from(association.index) - 1];
+        match property {
+            ItemProperty::SpatialExtents(extents) => {
+                metadata.width = Some(extents.width);
+                metadata.height = Some(extents.height);
+            }
+            ItemProperty::PixelInformation(pixi) => {
+                metadata.pixel_information = Some(pixi.clone());
+            }
+            ItemProperty::Av1Config(config) => metadata.av1_config = Some(config.clone()),
+            ItemProperty::ColorInformation(color) => {
+                metadata.color_information = Some(color.clone());
+            }
+            ItemProperty::Premultiplied => metadata.alpha_premultiplied = true,
+            ItemProperty::CleanAperture(clap) => metadata.clean_aperture = Some(*clap),
+            ItemProperty::Rotation(rotation) => metadata.rotation = Some(*rotation),
+            ItemProperty::Mirror(mirror) => metadata.mirror = Some(*mirror),
+            ItemProperty::AuxiliaryType(_) | ItemProperty::Other => {}
+        }
+    }
+    Ok(metadata)
 }
 
 fn parse_auxc(payload: &[u8]) -> Result<String, DecoderError> {
@@ -778,12 +929,12 @@ fn alpha_auxiliary_items(
         .iter()
         .filter_map(|association| {
             association
-                .property_indices
+                .associations
                 .iter()
                 .filter_map(|index| {
                     state
                         .item_properties
-                        .get(usize::from(*index).saturating_sub(1))
+                        .get(usize::from(index.index).saturating_sub(1))
                 })
                 .find_map(|property| match property {
                     ItemProperty::AuxiliaryType(aux_type) if aux_type == ALPHA_AUX_TYPE => {
@@ -849,6 +1000,7 @@ fn primary_grid(payload: &[u8], state: &MetaState) -> Result<Option<GridImage>, 
     }))
 }
 
+#[cfg(test)]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct PrimaryItemTransforms {
     clean_aperture: Option<CleanAperture>,
@@ -856,6 +1008,7 @@ struct PrimaryItemTransforms {
     mirror: Option<ImageMirror>,
 }
 
+#[cfg(test)]
 fn primary_item_transforms(state: &MetaState) -> PrimaryItemTransforms {
     let Some(primary_item_id) = state.primary_item_id else {
         return PrimaryItemTransforms::default();
@@ -868,10 +1021,10 @@ fn primary_item_transforms(state: &MetaState) -> PrimaryItemTransforms {
         return PrimaryItemTransforms::default();
     };
     let mut transforms = PrimaryItemTransforms::default();
-    for index in &association.property_indices {
+    for property_association in &association.associations {
         let Some(property) = state
             .item_properties
-            .get(usize::from(*index).saturating_sub(1))
+            .get(usize::from(property_association.index).saturating_sub(1))
         else {
             continue;
         };
@@ -1277,8 +1430,10 @@ mod tests {
             ],
             item_property_associations: vec![ItemPropertyAssociation {
                 item_id: 2,
-                property_indices: vec![1],
-                essential_property_indices: Vec::new(),
+                associations: vec![PropertyAssociation {
+                    index: 1,
+                    essential: false,
+                }],
             }],
             item_properties: vec![ItemProperty::AuxiliaryType(ALPHA_AUX_TYPE.to_string())],
             ..MetaState::default()
@@ -1345,8 +1500,10 @@ mod tests {
             associations,
             vec![ItemPropertyAssociation {
                 item_id: 2,
-                property_indices: vec![1],
-                essential_property_indices: vec![1],
+                associations: vec![PropertyAssociation {
+                    index: 1,
+                    essential: true,
+                }],
             }]
         );
     }
@@ -1370,8 +1527,10 @@ mod tests {
             }],
             item_property_associations: vec![ItemPropertyAssociation {
                 item_id: 1,
-                property_indices: vec![2],
-                essential_property_indices: Vec::new(),
+                associations: vec![PropertyAssociation {
+                    index: 2,
+                    essential: false,
+                }],
             }],
             item_properties: vec![ItemProperty::Other],
             ..MetaState::default()
@@ -1521,8 +1680,20 @@ mod tests {
             primary_item_id: Some(7),
             item_property_associations: vec![ItemPropertyAssociation {
                 item_id: 7,
-                property_indices: vec![1, 2, 3],
-                essential_property_indices: Vec::new(),
+                associations: vec![
+                    PropertyAssociation {
+                        index: 1,
+                        essential: false,
+                    },
+                    PropertyAssociation {
+                        index: 2,
+                        essential: false,
+                    },
+                    PropertyAssociation {
+                        index: 3,
+                        essential: false,
+                    },
+                ],
             }],
             item_properties: vec![
                 ItemProperty::CleanAperture(clap),
@@ -1539,6 +1710,278 @@ mod tests {
                 rotation: Some(ImageRotation { angle: 2 }),
                 mirror: Some(ImageMirror { axis: 1 }),
             }
+        );
+    }
+
+    #[test]
+    fn primary_metadata_resolves_only_properties_associated_with_primary_item() {
+        let primary_color = ColorInformation {
+            color_type: *b"nclx",
+            payload: vec![0, 1, 0, 13, 0, 0, 0x80],
+        };
+        let auxiliary_color = ColorInformation {
+            color_type: *b"prof",
+            payload: vec![9, 8, 7],
+        };
+        let state = MetaState {
+            primary_item_id: Some(1),
+            item_infos: vec![
+                ItemInfo {
+                    item_id: 1,
+                    item_type: *b"av01",
+                    item_name: "primary".to_string(),
+                },
+                ItemInfo {
+                    item_id: 2,
+                    item_type: *b"av01",
+                    item_name: "auxiliary".to_string(),
+                },
+            ],
+            item_locations: vec![
+                ItemLocation {
+                    item_id: 1,
+                    base_offset: 0,
+                    extents: vec![ItemExtent {
+                        offset: 0,
+                        length: 1,
+                    }],
+                },
+                ItemLocation {
+                    item_id: 2,
+                    base_offset: 0,
+                    extents: vec![ItemExtent {
+                        offset: 0,
+                        length: 1,
+                    }],
+                },
+            ],
+            item_properties: vec![
+                ItemProperty::SpatialExtents(ImageSpatialExtents {
+                    width: 1204,
+                    height: 800,
+                }),
+                ItemProperty::PixelInformation(PixelInformation {
+                    bits_per_channel: vec![8, 8, 8],
+                }),
+                ItemProperty::Av1Config(vec![1, 2, 3]),
+                ItemProperty::ColorInformation(primary_color.clone()),
+                ItemProperty::SpatialExtents(ImageSpatialExtents {
+                    width: 10,
+                    height: 10,
+                }),
+                ItemProperty::PixelInformation(PixelInformation {
+                    bits_per_channel: vec![10],
+                }),
+                ItemProperty::Av1Config(vec![9]),
+                ItemProperty::ColorInformation(auxiliary_color),
+            ],
+            item_property_associations: vec![
+                ItemPropertyAssociation {
+                    item_id: 1,
+                    associations: vec![
+                        PropertyAssociation {
+                            index: 1,
+                            essential: true,
+                        },
+                        PropertyAssociation {
+                            index: 2,
+                            essential: false,
+                        },
+                        PropertyAssociation {
+                            index: 3,
+                            essential: true,
+                        },
+                        PropertyAssociation {
+                            index: 4,
+                            essential: false,
+                        },
+                    ],
+                },
+                ItemPropertyAssociation {
+                    item_id: 2,
+                    associations: vec![
+                        PropertyAssociation {
+                            index: 5,
+                            essential: true,
+                        },
+                        PropertyAssociation {
+                            index: 6,
+                            essential: false,
+                        },
+                        PropertyAssociation {
+                            index: 7,
+                            essential: true,
+                        },
+                        PropertyAssociation {
+                            index: 8,
+                            essential: false,
+                        },
+                    ],
+                },
+            ],
+            ..MetaState::default()
+        };
+
+        validate_primary_item_metadata(&state).unwrap();
+        let metadata = primary_item_metadata(&state).unwrap();
+        assert_eq!(metadata.width, Some(1204));
+        assert_eq!(metadata.height, Some(800));
+        assert_eq!(
+            metadata.pixel_information.unwrap().bits_per_channel,
+            vec![8, 8, 8]
+        );
+        assert_eq!(metadata.av1_config, Some(vec![1, 2, 3]));
+        assert_eq!(metadata.color_information, Some(primary_color));
+    }
+
+    #[test]
+    fn merges_ipma_boxes_preserving_order_and_essential_flags() {
+        let mut target = vec![ItemPropertyAssociation {
+            item_id: 1,
+            associations: vec![PropertyAssociation {
+                index: 2,
+                essential: true,
+            }],
+        }];
+        merge_ipma(
+            &mut target,
+            vec![ItemPropertyAssociation {
+                item_id: 1,
+                associations: vec![PropertyAssociation {
+                    index: 1,
+                    essential: false,
+                }],
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            target[0].associations,
+            vec![
+                PropertyAssociation {
+                    index: 2,
+                    essential: true,
+                },
+                PropertyAssociation {
+                    index: 1,
+                    essential: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_ipma_and_singleton_property_associations() {
+        let mut target = vec![ItemPropertyAssociation {
+            item_id: 1,
+            associations: vec![PropertyAssociation {
+                index: 1,
+                essential: false,
+            }],
+        }];
+        let duplicate = merge_ipma(
+            &mut target,
+            vec![ItemPropertyAssociation {
+                item_id: 1,
+                associations: vec![PropertyAssociation {
+                    index: 1,
+                    essential: true,
+                }],
+            }],
+        )
+        .unwrap_err();
+        assert!(
+            matches!(duplicate, DecoderError::Bitstream(message) if message.contains("duplicate property association"))
+        );
+
+        let state = MetaState {
+            primary_item_id: Some(1),
+            item_infos: vec![ItemInfo {
+                item_id: 1,
+                item_type: *b"av01",
+                item_name: "primary".to_string(),
+            }],
+            item_locations: vec![ItemLocation {
+                item_id: 1,
+                base_offset: 0,
+                extents: vec![ItemExtent {
+                    offset: 0,
+                    length: 1,
+                }],
+            }],
+            item_properties: vec![
+                ItemProperty::SpatialExtents(ImageSpatialExtents {
+                    width: 1,
+                    height: 1,
+                }),
+                ItemProperty::SpatialExtents(ImageSpatialExtents {
+                    width: 2,
+                    height: 2,
+                }),
+                ItemProperty::PixelInformation(PixelInformation {
+                    bits_per_channel: vec![8, 8, 8],
+                }),
+                ItemProperty::Av1Config(vec![1]),
+            ],
+            item_property_associations: vec![ItemPropertyAssociation {
+                item_id: 1,
+                associations: vec![
+                    PropertyAssociation {
+                        index: 1,
+                        essential: false,
+                    },
+                    PropertyAssociation {
+                        index: 2,
+                        essential: false,
+                    },
+                    PropertyAssociation {
+                        index: 3,
+                        essential: false,
+                    },
+                    PropertyAssociation {
+                        index: 4,
+                        essential: false,
+                    },
+                ],
+            }],
+            ..MetaState::default()
+        };
+        let duplicate_singleton = validate_primary_item_metadata(&state).unwrap_err();
+        assert!(
+            matches!(duplicate_singleton, DecoderError::Bitstream(message) if message.contains("duplicate SpatialExtents"))
+        );
+    }
+
+    #[test]
+    fn rejects_zero_ipma_property_index() {
+        let associations = parse_ipma(&[
+            0, 0, 0, 0, // version and flags
+            0, 0, 0, 1, // entry count
+            0, 1, // item id
+            1, // association count
+            0, // reserved/out-of-range property index
+        ])
+        .unwrap();
+        let state = MetaState {
+            primary_item_id: Some(1),
+            item_infos: vec![ItemInfo {
+                item_id: 1,
+                item_type: *b"av01",
+                item_name: "primary".to_string(),
+            }],
+            item_locations: vec![ItemLocation {
+                item_id: 1,
+                base_offset: 0,
+                extents: vec![ItemExtent {
+                    offset: 0,
+                    length: 1,
+                }],
+            }],
+            item_property_associations: associations,
+            ..MetaState::default()
+        };
+        let error = validate_primary_item_metadata(&state).unwrap_err();
+        assert!(
+            matches!(error, DecoderError::Bitstream(message) if message.contains("out of range"))
         );
     }
 }

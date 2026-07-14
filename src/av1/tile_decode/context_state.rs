@@ -5,6 +5,14 @@ use crate::av1::decode::TileDecodePlan;
 use crate::av1::syntax::{BlockSize, Partition, TxSize};
 
 impl<'a> TileDecoder<'a> {
+    pub(super) fn reset_left_superblock_contexts(&mut self) {
+        self.left_partition_context.fill(0);
+        self.left_txfm_context.fill(64);
+        for contexts in &mut self.plane_entropy_contexts {
+            contexts.left.fill(0);
+        }
+    }
+
     pub(super) fn skip_context(&self, x: usize, y: usize) -> usize {
         usize::from(self.above_skip_context(x, y)) + usize::from(self.left_skip_context(x, y))
     }
@@ -73,15 +81,26 @@ impl<'a> TileDecoder<'a> {
         block_size: BlockSize,
         tx_size: TxSize,
     ) {
+        self.set_txfm_context_dimensions(x, y, block_size, tx_size.width(), tx_size.height());
+    }
+
+    pub(super) fn set_txfm_context_dimensions(
+        &mut self,
+        x: usize,
+        y: usize,
+        block_size: BlockSize,
+        width: usize,
+        height: usize,
+    ) {
         let start_col = x >> 2;
         let start_row = y >> 2;
         let end_col = ((x + block_size.width()).min(self.mi_cols << 2) + 3) >> 2;
         let end_row = ((y + block_size.height()).min(self.mi_rows << 2) + 3) >> 2;
         for mi_col in start_col..end_col.min(self.mi_cols) {
-            self.above_txfm_context[mi_col] = tx_size.width();
+            self.above_txfm_context[mi_col] = width;
         }
         for mi_row in start_row..end_row.min(self.mi_rows) {
-            self.left_txfm_context[mi_row] = tx_size.height();
+            self.left_txfm_context[mi_row] = height;
         }
     }
 

@@ -37,7 +37,9 @@ pub fn decode<B: BinaryReader>(
 ) -> Result<(), Error> {
     let data = read_to_end(reader)?;
     let info = parse_avif(&data)?;
-    let headers = parse_av1_headers(&info)?;
+    validate_public_container_preflight(&info, true)?;
+    let mut headers = parse_av1_headers(&info)?;
+    populate_diagnostic_probes(&mut headers);
     emit_metadata(&info, Some(&headers), option)?;
     let image = decode_still_image(&headers, Some(&info))?;
 
@@ -58,6 +60,7 @@ pub fn decode<B: BinaryReader>(
 
 pub fn decode_bytes(data: &[u8]) -> Result<ImageBuffer, DecoderError> {
     let info = parse_avif(data)?;
+    validate_public_container_preflight(&info, true)?;
     let headers = parse_av1_headers(&info)?;
     decode_still_image(&headers, Some(&info))
 }
@@ -108,6 +111,7 @@ impl DecodedFrame {
 /// Decodes a still AVIF image from memory into high-precision source planes.
 pub fn decode_frame_bytes(data: &[u8]) -> Result<DecodedFrame, DecoderError> {
     let info = parse_avif(data)?;
+    validate_public_container_preflight(&info, false)?;
     let headers = parse_av1_headers(&info)?;
     decode_still_frame(&headers, Some(&info))
 }
@@ -167,7 +171,7 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
             "AVIF multiple tile-group OBUs for one frame are not supported yet".to_string(),
         ));
     }
-    let (frame, tile_group_payload, tile_data) = if let Some(frame_payload) = frame_payload {
+    let (frame, tile_group_payload) = if let Some(frame_payload) = frame_payload {
         let frame = parse_frame_header(frame_payload, &sequence)?;
         if frame.payload_after_header_offset > frame_payload.len() {
             return Err(DecoderError::Bitstream(
@@ -200,7 +204,6 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
                 block_mode_probes: Vec::new(),
                 residual_probes: Vec::new(),
             },
-            frame_payload,
         )
     } else {
         let frame_header_payload = frame_header_payload.ok_or_else(|| {
@@ -223,7 +226,6 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
                 block_mode_probes: Vec::new(),
                 residual_probes: Vec::new(),
             },
-            tile_group_payload,
         )
     };
     if let Some(width) = info.width {
@@ -245,29 +247,7 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
     let decode_plan = build_still_decode_plan(&sequence, &frame, &tile_group_payload.group)?;
     let quant_state =
         QuantState::from_params(&frame.quantization, sequence.color_config.bit_depth)?;
-    let mut tile_group_payload = tile_group_payload;
-    tile_group_payload.partition_probes = probe_tile_partitions(
-        tile_data,
-        &tile_group_payload.group,
-        &sequence,
-        &frame,
-        &decode_plan,
-    )?;
-    tile_group_payload.block_mode_probes = probe_tile_block_modes(
-        tile_data,
-        &tile_group_payload.group,
-        &sequence,
-        &frame,
-        &decode_plan,
-    )?;
-    tile_group_payload.residual_probes = probe_first_block_residuals(
-        tile_data,
-        &tile_group_payload.group,
-        &sequence,
-        &frame,
-        &decode_plan,
-    )?;
-
+    let tile_group_payload = tile_group_payload;
     Ok(Av1Headers {
         config,
         sequence,
@@ -276,6 +256,38 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
         decode_plan,
         quant_state,
     })
+}
+
+fn populate_diagnostic_probes(headers: &mut Av1Headers) {
+    let tile_data = &headers.tile_group.tile_data;
+    let tile_group = &headers.tile_group.group;
+    if let Ok(probes) = probe_tile_partitions(
+        tile_data,
+        tile_group,
+        &headers.sequence,
+        &headers.frame,
+        &headers.decode_plan,
+    ) {
+        headers.tile_group.partition_probes = probes;
+    }
+    if let Ok(probes) = probe_tile_block_modes(
+        tile_data,
+        tile_group,
+        &headers.sequence,
+        &headers.frame,
+        &headers.decode_plan,
+    ) {
+        headers.tile_group.block_mode_probes = probes;
+    }
+    if let Ok(probes) = probe_first_block_residuals(
+        tile_data,
+        tile_group,
+        &headers.sequence,
+        &headers.frame,
+        &headers.decode_plan,
+    ) {
+        headers.tile_group.residual_probes = probes;
+    }
 }
 
 fn decode_still_image(
@@ -717,23 +729,6 @@ fn decode_still_frame_with_filter_policy_and_state(
     info: Option<&AvifInfo>,
     validate_filters: bool,
 ) -> Result<DecodedStillFrame, DecoderError> {
-    if info.is_some_and(|info| {
-        info.clean_aperture.is_some() || info.rotation.is_some() || info.mirror.is_some()
-    }) {
-        return Err(DecoderError::Unsupported(
-            "AVIF clap/irot/imir composition is not supported yet".to_string(),
-        ));
-    }
-    if info.is_some_and(|info| info.primary_grid.is_some()) {
-        return Err(DecoderError::Unsupported(
-            "AVIF image grid composition is not supported yet".to_string(),
-        ));
-    }
-    if info.is_some_and(|info| !info.alpha_auxiliary_items.is_empty()) {
-        return Err(DecoderError::Unsupported(
-            "AVIF alpha auxiliary item composition is not supported yet".to_string(),
-        ));
-    }
     if validate_filters {
         validate_public_decode_tools(headers)?;
     }
@@ -769,6 +764,38 @@ fn decode_still_frame_with_filter_policy_and_state(
         },
         post_filter_state,
     })
+}
+
+fn validate_public_container_preflight(
+    info: &AvifInfo,
+    rgba_output: bool,
+) -> Result<(), DecoderError> {
+    if !info.alpha_auxiliary_items.is_empty() {
+        return Err(DecoderError::Unsupported(
+            "AVIF alpha auxiliary item composition is not supported yet".to_string(),
+        ));
+    }
+    if info.primary_grid.is_some() {
+        return Err(DecoderError::Unsupported(
+            "AVIF image grid composition is not supported yet".to_string(),
+        ));
+    }
+    if info.clean_aperture.is_some() || info.rotation.is_some() || info.mirror.is_some() {
+        return Err(DecoderError::Unsupported(
+            "AVIF clap/irot/imir composition is not supported yet".to_string(),
+        ));
+    }
+    if rgba_output
+        && info
+            .color_information
+            .as_ref()
+            .is_some_and(|color| color.icc_profile().is_some())
+    {
+        return Err(DecoderError::Unsupported(
+            "AVIF ICC colour management for RGBA conversion is not supported yet".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_public_decode_tools(headers: &Av1Headers) -> Result<(), DecoderError> {

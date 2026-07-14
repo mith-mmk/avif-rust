@@ -15,6 +15,15 @@ pub struct EntropyDecoder<'a> {
     disable_cdf_update: bool,
 }
 
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct EntropyStateSnapshot {
+    pub range: u32,
+    pub dif: u32,
+    pub count: i32,
+    pub tell: usize,
+}
+
 impl<'a> EntropyDecoder<'a> {
     pub fn new(data: &'a [u8], disable_cdf_update: bool) -> Result<Self, DecoderError> {
         if data.len() < 2 {
@@ -139,24 +148,34 @@ impl<'a> EntropyDecoder<'a> {
                 "AV1 entropy decoder exited after too many padding bits".to_string(),
             ));
         }
-        let logical_offset = self.bit_offset.saturating_sub(14);
-        let (trailing_bit_position, padding_end_position) = if self.symbol_max_bits > 0 {
-            let trailing_distance = usize::try_from(15.min(self.symbol_max_bits + 15)).unwrap();
-            let trailing = logical_offset
-                .checked_sub(trailing_distance)
+        let effective_position = if self.symbol_max_bits < 0 {
+            self.bit_offset
+                .checked_sub(self.symbol_max_bits.unsigned_abs() as usize)
                 .ok_or_else(|| {
-                    DecoderError::Bitstream("AV1 entropy trailing one bit is missing".to_string())
-                })?;
-            (trailing, logical_offset + self.symbol_max_bits as usize)
+                    DecoderError::Bitstream("AV1 entropy position underflows".to_string())
+                })?
         } else {
-            let end = self.data.len() * 8;
-            let trailing = (0..end)
-                .rev()
-                .find(|position| bit_at(self.data, *position).unwrap_or(0) == 1)
+            self.bit_offset
+        };
+        let trailing_distance =
+            usize::try_from((self.symbol_max_bits + 15).min(15)).map_err(|_| {
+                DecoderError::Bitstream("AV1 entropy trailing-bit distance is invalid".to_string())
+            })?;
+        let trailing_bit_position = effective_position
+            .checked_sub(trailing_distance)
+            .ok_or_else(|| {
+                DecoderError::Bitstream("AV1 entropy trailing one bit is missing".to_string())
+            })?;
+        let padding_end_position = if self.symbol_max_bits > 0 {
+            effective_position
+                .checked_add(self.symbol_max_bits as usize)
                 .ok_or_else(|| {
-                    DecoderError::Bitstream("AV1 entropy trailing one bit is missing".to_string())
-                })?;
-            (trailing, end)
+                    DecoderError::Bitstream(
+                        "AV1 entropy padding end position overflows".to_string(),
+                    )
+                })?
+        } else {
+            effective_position
         };
         if bit_at(self.data, trailing_bit_position)? != 1 {
             return Err(DecoderError::Bitstream(
@@ -183,6 +202,16 @@ impl<'a> EntropyDecoder<'a> {
             self.symbol_dif >> 16,
             self.bit_offset.saturating_sub(14),
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn state_snapshot(&self) -> EntropyStateSnapshot {
+        EntropyStateSnapshot {
+            range: self.symbol_range,
+            dif: self.symbol_dif,
+            count: self.refill_count,
+            tell: self.bit_offset,
+        }
     }
 
     fn renormalize(&mut self) -> Result<(), DecoderError> {
@@ -270,6 +299,38 @@ mod tests {
 
         assert!(
             matches!(err, DecoderError::Bitstream(message) if message.contains("trailing one bit"))
+        );
+    }
+
+    #[test]
+    fn exit_accepts_a_normal_trailing_one_and_zero_padding() {
+        let mut decoder = EntropyDecoder::new(&[0x80, 0x00], false).unwrap();
+
+        assert_eq!(decoder.exit().unwrap(), 2);
+    }
+
+    #[test]
+    fn exit_rejects_non_zero_padding() {
+        let mut decoder = EntropyDecoder::new(&[0x80, 0x01], false).unwrap();
+        let err = decoder.exit().unwrap_err();
+
+        assert!(
+            matches!(err, DecoderError::Bitstream(message) if message.contains("trailing zero bit"))
+        );
+    }
+
+    #[test]
+    fn state_snapshot_exposes_final_range_dif_count_and_tell() {
+        let decoder = EntropyDecoder::new(&[0x80, 0x00], false).unwrap();
+
+        assert_eq!(
+            decoder.state_snapshot(),
+            EntropyStateSnapshot {
+                range: 0x8000,
+                dif: 0x3fff_ffff,
+                count: 0x4000,
+                tell: 15,
+            }
         );
     }
 

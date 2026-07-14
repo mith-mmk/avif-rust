@@ -320,6 +320,7 @@ pub fn decode_luma_root_block_prefix(
         })?;
         let mut decoder = TileDecoder::new(payload, frame)?;
         for sb_row in tile_plan.sb_row_start..tile_plan.sb_row_end {
+            decoder.reset_left_superblock_contexts();
             for sb_col in tile_plan.sb_col_start..tile_plan.sb_col_end {
                 if block_budget == 0 {
                     return Ok(DecodedBlockPrefix {
@@ -387,6 +388,7 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy(
         })?;
         let mut decoder = TileDecoder::new(payload, frame)?;
         for sb_row in tile_plan.sb_row_start..tile_plan.sb_row_end {
+            decoder.reset_left_superblock_contexts();
             for sb_col in tile_plan.sb_col_start..tile_plan.sb_col_end {
                 if block_budget == 0 {
                     post_filter_state.merge(decoder.take_post_filter_state());

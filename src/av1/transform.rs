@@ -76,6 +76,13 @@ pub fn zig_zag_scan(tx_size: TxSize) -> Vec<usize> {
     let full_width = tx_size.width();
     let scan_width = full_width.min(32);
     let scan_height = tx_size.height().min(32);
+    if matches!(tx_size, TxSize::Tx64x32 | TxSize::Tx32x64) {
+        // AV1 uses the 32x32 default scan for these transforms because the
+        // coded coefficient region is limited to the lower-dimensional
+        // 32x32 area.  The inverse-storage remap expands that scan into the
+        // rectangular column-major layout used by the transform kernel.
+        return zig_zag_scan(TxSize::Tx32x32);
+    }
     if tx_size.is_rectangular() {
         // AOM stores rectangular transform coefficients column-major.  Its
         // default scan follows diagonals, reversing each diagonal when the
@@ -325,7 +332,6 @@ pub fn reconstruct_transform_block(
         tx_size.height(),
         &reconstructed,
     )?;
-
     Ok(ReconstructedTransform {
         block: quantized.block,
         tx_type: quantized.tx_type,
@@ -1664,7 +1670,11 @@ mod tests {
                 &mut coefficients,
             );
             assert_eq!(coefficients[tx_size.height()], -1, "{tx_size:?}");
-            assert_eq!(coefficients[source_position], 0, "{tx_size:?}");
+            if tx_size == TxSize::Tx32x64 {
+                assert_eq!(coefficients[source_position], 0, "{tx_size:?}");
+            } else {
+                assert_eq!(coefficients[source_position], -1, "{tx_size:?}");
+            }
         }
     }
 
@@ -1681,6 +1691,13 @@ mod tests {
                 assert_eq!(sorted, (0..tx_size.sample_count()).collect::<Vec<_>>());
             }
         }
+    }
+
+    #[test]
+    fn tx64_rectangular_scans_use_the_coded_32x32_default_scan() {
+        let expected = zig_zag_scan(TxSize::Tx32x32);
+        assert_eq!(zig_zag_scan(TxSize::Tx64x32), expected);
+        assert_eq!(zig_zag_scan(TxSize::Tx32x64), expected);
     }
 
     #[test]

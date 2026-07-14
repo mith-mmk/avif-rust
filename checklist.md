@@ -21,6 +21,36 @@ until its final filtered planes match the reference oracle.
 - https://github.com/link-u/avif-sample-images
 - https://colinbendell.github.io/webperf/animated-gif-decode/avif.html
 
+### External 8-bit YUV444 compatibility gate (2026-07-14)
+
+- [x] Resolve primary-item `ipma` associations from the ordered `ipco`
+      property table; reject missing, duplicate, zero and out-of-range
+      singleton properties as `Bitstream`.
+- [x] Run the public composition preflight before AV1 header parsing and keep
+      alpha, grid, `clap`, `irot`, `imir` and RGBA ICC rejection fail-closed.
+- [x] Keep tile/block/residual probes diagnostic-only; probe failure no longer
+      changes image decode success.
+- [x] Validate AV1 entropy termination from the decoder state and trailing
+      pattern without disabling validation.
+- [x] Use the AV1 `Tx32x32` default scan for the coded coefficient area of
+      `Tx64x32` and `Tx32x64` rectangular transforms.
+- [x] Convert all four external 8-bit YUV444 samples and verify PNG
+      signature/IHDR dimensions: `1204x800`, `1204x799`, `1203x800` and
+      `1203x799`.
+- [x] Keep the remaining ten samples as expected non-zero `Unsupported` or
+      invalid `Bitstream` failures with no partial PNG output.
+
+The reproducible parent-root gate is:
+
+```powershell
+pwsh -File test/avif_external_compat.ps1 -DownloadMissing
+```
+
+The gate result is 4 successes, 10 expected failures, 0 unexpected results
+and 0 partial PNGs. The converted PNGs remain ignored under
+`test/images/external/converted/avif/` for visual review; the AVIF sample files
+remain ignored as well.
+
 ## Guardrails
 
 - AVIF and AV1 decoding remain pure Rust. FFmpeg/libaom are test or fixture

@@ -173,7 +173,7 @@ impl<'a> TileDecoder<'a> {
             left_partition_context: vec![0; mi_rows],
             cdef_transmitted: [false; 4],
             above_txfm_context: vec![0; mi_cols],
-            left_txfm_context: vec![0; mi_rows],
+            left_txfm_context: vec![64; mi_rows],
             reconstructed_mi_grid: std::array::from_fn(|_| vec![false; mi_count]),
             current_cfl: None,
             plane_entropy_contexts: std::array::from_fn(|_| PlaneEntropyContexts {
