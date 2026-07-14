@@ -57,8 +57,12 @@ pub fn parse_av1_config(data: &[u8]) -> Result<Av1CodecConfiguration, DecoderErr
     let high_bitdepth = data[2] & 0x40 != 0;
     let twelve_bit = data[2] & 0x20 != 0;
     let monochrome = data[2] & 0x10 != 0;
-    let chroma_subsampling_x = data[2] & 0x08 != 0;
-    let chroma_subsampling_y = data[2] & 0x04 != 0;
+    // Profile 2 8-bit streams imply 4:2:2; av1C leaves these two bits zero.
+    let (chroma_subsampling_x, chroma_subsampling_y) = if seq_profile == 2 && !high_bitdepth {
+        (true, false)
+    } else {
+        (data[2] & 0x08 != 0, data[2] & 0x04 != 0)
+    };
     let chroma_sample_position = ChromaSamplePosition::from_bits(u32::from(data[2] & 0x03));
     if data[3] & 0xe0 != 0 {
         return Err(DecoderError::Bitstream(

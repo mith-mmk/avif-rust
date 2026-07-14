@@ -795,19 +795,45 @@ fn validate_public_container_preflight(
             "AVIF ICC colour management for RGBA conversion is not supported yet".to_string(),
         ));
     }
+    if let Some(bits) = info.pixel_information.as_ref().and_then(|pixel| {
+        pixel
+            .bits_per_channel
+            .iter()
+            .copied()
+            .find(|bits| *bits != 8)
+    }) {
+        return Err(DecoderError::Unsupported(format!(
+            "{bits}-bit quantization is not supported"
+        )));
+    }
+    if let Some(av1_config) = &info.av1_config {
+        let config = parse_av1_config(av1_config)?;
+        if config.bit_depth() != 8 {
+            return Err(DecoderError::Unsupported(format!(
+                "{}-bit quantization is not supported",
+                config.bit_depth()
+            )));
+        }
+        if config.monochrome || config.chroma_subsampling_x || config.chroma_subsampling_y {
+            return Err(DecoderError::Unsupported(
+                "AVIF 4:4:4 color only public decode is supported".to_string(),
+            ));
+        }
+    }
     Ok(())
 }
 
 fn validate_public_decode_tools(headers: &Av1Headers) -> Result<(), DecoderError> {
     let color_config = &headers.sequence.color_config;
     if color_config.bit_depth != 8 {
-        return Err(DecoderError::Unsupported(
-            "public AVIF decode currently supports 8-bit frames only".to_string(),
-        ));
+        return Err(DecoderError::Unsupported(format!(
+            "{}-bit quantization is not supported",
+            color_config.bit_depth
+        )));
     }
     if color_config.monochrome || color_config.subsampling_x || color_config.subsampling_y {
         return Err(DecoderError::Unsupported(
-            "public AVIF decode currently supports 4:4:4 color only".to_string(),
+            "AVIF 4:4:4 color only public decode is supported".to_string(),
         ));
     }
     if headers.sequence.film_grain_params_present {
