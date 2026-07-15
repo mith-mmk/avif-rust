@@ -15,6 +15,10 @@ use crate::av1::transform::{
     reconstruct_transform_block,
 };
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "AV1 plane reconstruction keeps syntax, geometry, and mutable buffers explicit"
+)]
 pub(super) fn decode_plane_block_unit(
     decoder: &mut TileDecoder<'_>,
     sequence: &SequenceHeader,
@@ -108,7 +112,6 @@ pub(super) fn decode_plane_block_unit(
             plane_height,
         )
     }
-    .into_iter()
     .into_iter()
     .filter(|transform| {
         let unit_x = plane_block_origin(unit_x, block_mode.block_size.width(), subsampling_x);
@@ -287,6 +290,10 @@ pub(super) fn decode_plane_block_unit(
     Ok(decoded)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "prediction arguments mirror the AV1 intra prediction inputs"
+)]
 pub(super) fn predict_block(
     plane: &PlaneBuffer,
     prediction_mode: PredictionMode,
@@ -370,7 +377,7 @@ fn scale_tx_size(tx_size: TxSize, subsampling_x: usize, subsampling_y: usize) ->
     let width = ceil_shift(tx_size.width(), subsampling_x).max(4);
     let height = ceil_shift(tx_size.height(), subsampling_y).max(4);
     TxSize::from_dimensions(width, height)
-        .or_else(|| {
+        .or({
             if width == 4 && height > 16 {
                 Some(TxSize::Tx4x16)
             } else if height == 4 && width > 16 {
@@ -417,6 +424,10 @@ fn plane_block_size(
     .unwrap_or(BlockSize::Block4x4)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "plane prediction keeps palette, CFL, edge, and geometry inputs explicit"
+)]
 fn predict_plane_block(
     plane: &PlaneBuffer,
     block_mode: &BlockModeProbe,
@@ -457,20 +468,22 @@ fn predict_plane_block(
                 )
             })
         };
-        if let Some((palette, color_offset, palette_size)) = palette_prediction {
-            if !palette.color_map.is_empty() && palette.map_width > 0 && palette.map_height > 0 {
-                return Ok(predict_palette_block(
-                    palette,
-                    color_offset,
-                    palette_size,
-                    block_x,
-                    block_y,
-                    x,
-                    y,
-                    width,
-                    height,
-                ));
-            }
+        if let Some((palette, color_offset, palette_size)) = palette_prediction
+            && !palette.color_map.is_empty()
+            && palette.map_width > 0
+            && palette.map_height > 0
+        {
+            return Ok(predict_palette_block(
+                palette,
+                color_offset,
+                palette_size,
+                block_x,
+                block_y,
+                x,
+                y,
+                width,
+                height,
+            ));
         }
     }
     let mut prediction = predict_block(
@@ -508,6 +521,10 @@ fn predict_plane_block(
     Ok(prediction)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "CFL parameters mirror the normative subsampled prediction inputs"
+)]
 pub(super) fn apply_cfl_prediction(
     prediction: &mut [u16],
     luma_plane: &PlaneBuffer,
@@ -575,6 +592,10 @@ fn round_power_of_two_signed(value: i32, bits: u32) -> i32 {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "palette prediction keeps source-map and destination geometry explicit"
+)]
 fn predict_palette_block(
     palette: &PalettePlaneInfo,
     color_offset: usize,

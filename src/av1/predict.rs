@@ -106,13 +106,12 @@ pub fn predict_filter_intra(
             let p4 = buffer[row - 1][(column + 3).min(width)];
             let p5 = buffer[row][column - 1];
             let p6 = buffer[(row + 1).min(height)][column - 1];
-            for k in 0..8 {
+            for (k, taps) in FILTER_INTRA_TAPS[mode].iter().enumerate() {
                 let out_row = row + (k >> 2);
                 let out_column = column + (k & 0x03);
                 if out_row > height || out_column > width {
                     continue;
                 }
-                let taps = FILTER_INTRA_TAPS[mode][k];
                 let prediction = i32::from(taps[0]) * i32::from(p0)
                     + i32::from(taps[1]) * i32::from(p1)
                     + i32::from(taps[2]) * i32::from(p2)
@@ -259,7 +258,7 @@ fn copy_left(width: usize, height: usize, edges: IntraEdges<'_>) -> Result<Vec<u
     }
     let mut out = Vec::with_capacity(width * height);
     for value in left.iter().take(height) {
-        out.extend(std::iter::repeat(*value).take(width));
+        out.extend(std::iter::repeat_n(*value, width));
     }
     Ok(out)
 }
@@ -702,10 +701,9 @@ fn predict_smooth_vertical(
     let weights = smooth_weights(height)?;
     let bottom = left[height - 1];
     let mut out = Vec::with_capacity(width * height);
-    for y in 0..height {
-        let weight = weights[y];
+    for weight in weights.iter().take(height) {
         for top in above.iter().take(width) {
-            out.push(weighted_avg(*top, bottom, weight));
+            out.push(weighted_avg(*top, bottom, *weight));
         }
     }
     Ok(out)
@@ -735,9 +733,8 @@ fn predict_smooth_horizontal(
     let right = above[width - 1];
     let mut out = Vec::with_capacity(width * height);
     for left_value in left.iter().take(height) {
-        for x in 0..width {
-            let weight = weights[x];
-            out.push(weighted_avg(*left_value, right, weight));
+        for weight in weights.iter().take(width) {
+            out.push(weighted_avg(*left_value, right, *weight));
         }
     }
     Ok(out)

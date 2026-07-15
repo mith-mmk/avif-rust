@@ -2,11 +2,13 @@
 name = "avif-rust"
 version = "0.0.1"
 edition = "2024"
+rust-version = "1.88"
 description = "Experimental pure Rust AVIF container and AV1 still-image decoder"
 keywords = ["avif", "av1", "image", "decoder", "codec"]
 categories = ["multimedia::images", "encoding"]
 license = "MIT"
 repository = "https://github.com/mith-mmk/avif-rust.git"
+include = ["/src/**", "/README.md", "/README.ja.md", "/LICENSE"]
 
 [dependencies]
 bin-rs = { version = "0.0.10", features = ["stream", "util"] }

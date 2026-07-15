@@ -72,10 +72,10 @@ pub fn count_obus(data: &[u8], target: ObuType) -> Result<usize, DecoderError> {
     Ok(count)
 }
 
-pub fn find_obu_payloads<'a, const N: usize>(
-    data: &'a [u8],
+pub fn find_obu_payloads<const N: usize>(
+    data: &[u8],
     targets: [ObuType; N],
-) -> Result<[Option<&'a [u8]>; N], DecoderError> {
+) -> Result<[Option<&[u8]>; N], DecoderError> {
     let mut offset = 0usize;
     let mut payloads = [None; N];
     while let Some(obu) = read_next_obu(data, &mut offset)? {

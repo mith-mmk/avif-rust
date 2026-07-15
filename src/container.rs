@@ -434,6 +434,12 @@ fn parse_iinf(payload: &[u8]) -> Result<Vec<ItemInfo>, DecoderError> {
     } else {
         (read_u32(payload, 4)? as usize, 8usize)
     };
+    validate_collection_count(
+        entry_count,
+        payload.len().saturating_sub(offset),
+        8,
+        "iinf entry",
+    )?;
     let mut infos = Vec::with_capacity(entry_count);
     for _ in 0..entry_count {
         let header = read_box_header(payload, offset, payload.len())?;
@@ -517,6 +523,21 @@ fn parse_iloc(payload: &[u8]) -> Result<Vec<ItemLocation>, DecoderError> {
         (read_u32(payload, 6)? as usize, 10usize)
     };
 
+    let item_id_size = if version < 2 { 2usize } else { 4usize };
+    let construction_method_size = usize::from(version == 1 || version == 2) * 2;
+    let minimum_item_size = item_id_size
+        .checked_add(construction_method_size)
+        .and_then(|size| size.checked_add(2))
+        .and_then(|size| size.checked_add(usize::from(base_offset_size)))
+        .and_then(|size| size.checked_add(2))
+        .ok_or_else(|| DecoderError::Bitstream("iloc item size overflow".to_string()))?;
+    validate_collection_count(
+        item_count,
+        payload.len().saturating_sub(cursor),
+        minimum_item_size,
+        "iloc item",
+    )?;
+
     let mut locations = Vec::with_capacity(item_count);
     for _ in 0..item_count {
         let item_id = if version < 2 {
@@ -550,6 +571,18 @@ fn parse_iloc(payload: &[u8]) -> Result<Vec<ItemLocation>, DecoderError> {
         let base_offset = read_sized_int(payload, &mut cursor, base_offset_size)?;
         let extent_count = read_u16(payload, cursor)? as usize;
         cursor += 2;
+        let minimum_extent_size = usize::from(index_size)
+            .checked_add(usize::from(offset_size))
+            .and_then(|size| size.checked_add(usize::from(length_size)))
+            .ok_or_else(|| DecoderError::Bitstream("iloc extent size overflow".to_string()))?;
+        if minimum_extent_size > 0 {
+            validate_collection_count(
+                extent_count,
+                payload.len().saturating_sub(cursor),
+                minimum_extent_size,
+                "iloc extent",
+            )?;
+        }
         let mut extents = Vec::with_capacity(extent_count);
         for _ in 0..extent_count {
             if version == 1 || version == 2 {
@@ -621,11 +654,24 @@ fn parse_ipma(payload: &[u8]) -> Result<Vec<ItemPropertyAssociation>, DecoderErr
     let large_property_index = flags & 1 != 0;
     let entry_count = read_u32(payload, 4)? as usize;
     let mut cursor = 8usize;
+    let item_id_size = if version == 1 { 4usize } else { 2usize };
+    validate_collection_count(
+        entry_count,
+        payload.len().saturating_sub(cursor),
+        item_id_size + 1,
+        "ipma entry",
+    )?;
     let mut item_associations = Vec::with_capacity(entry_count);
     for _ in 0..entry_count {
         let item_id = read_item_id(payload, &mut cursor, version == 1)?;
         let association_count = read_u8(payload, cursor)? as usize;
         cursor += 1;
+        validate_collection_count(
+            association_count,
+            payload.len().saturating_sub(cursor),
+            if large_property_index { 2 } else { 1 },
+            "ipma association",
+        )?;
         let mut property_associations = Vec::with_capacity(association_count);
         for _ in 0..association_count {
             let (index, essential) = if large_property_index {
@@ -944,18 +990,17 @@ fn alpha_auxiliary_items(
         })
         .collect();
 
-    if item_ids.is_empty() {
-        if let Some(primary_item_id) = state.primary_item_id {
-            for reference in &state.item_references {
-                if &reference.reference_type == b"auxl" && reference.from_item_id == primary_item_id
-                {
-                    item_ids.extend(
-                        reference
-                            .to_item_ids
-                            .iter()
-                            .map(|item_id| (*item_id, ALPHA_AUX_TYPE.to_string())),
-                    );
-                }
+    if item_ids.is_empty()
+        && let Some(primary_item_id) = state.primary_item_id
+    {
+        for reference in &state.item_references {
+            if &reference.reference_type == b"auxl" && reference.from_item_id == primary_item_id {
+                item_ids.extend(
+                    reference
+                        .to_item_ids
+                        .iter()
+                        .map(|item_id| (*item_id, ALPHA_AUX_TYPE.to_string())),
+                );
             }
         }
     }
@@ -1100,6 +1145,29 @@ fn item_payload(data: &[u8], state: &MetaState, item_id: u32) -> Result<Vec<u8>,
             DecoderError::Bitstream("item extent payload length overflow".to_string())
         })
     })?;
+    for extent in &location.extents {
+        let start = location
+            .base_offset
+            .checked_add(extent.offset)
+            .ok_or_else(|| DecoderError::Bitstream("item extent offset overflow".to_string()))?;
+        let end = start
+            .checked_add(extent.length)
+            .ok_or_else(|| DecoderError::Bitstream("item extent length overflow".to_string()))?;
+        let start = usize::try_from(start)
+            .map_err(|_| DecoderError::Bitstream("item extent start is too large".to_string()))?;
+        let end = usize::try_from(end)
+            .map_err(|_| DecoderError::Bitstream("item extent end is too large".to_string()))?;
+        if end > data.len() || start > end {
+            return Err(DecoderError::NotEnoughData(
+                "item extent points outside the file".to_string(),
+            ));
+        }
+    }
+    if payload_len > data.len() {
+        return Err(DecoderError::Bitstream(
+            "item extent payload length exceeds file size".to_string(),
+        ));
+    }
     let mut payload = Vec::with_capacity(payload_len);
     for extent in &location.extents {
         let start = location
@@ -1265,6 +1333,23 @@ fn checked_add(left: usize, right: usize, label: &str) -> Result<usize, DecoderE
         .ok_or_else(|| DecoderError::Bitstream(format!("{label} overflow")))
 }
 
+fn validate_collection_count(
+    count: usize,
+    remaining_payload: usize,
+    minimum_entry_size: usize,
+    label: &str,
+) -> Result<(), DecoderError> {
+    let minimum_size = count
+        .checked_mul(minimum_entry_size)
+        .ok_or_else(|| DecoderError::Bitstream(format!("{label} count overflow")))?;
+    if minimum_size > remaining_payload {
+        return Err(DecoderError::NotEnoughData(format!(
+            "{label} count exceeds the remaining payload"
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1365,6 +1450,91 @@ mod tests {
 
         assert!(
             matches!(err, DecoderError::NotEnoughData(message) if message.contains("outside the file"))
+        );
+    }
+
+    #[test]
+    fn rejects_iinf_entry_count_that_cannot_fit_in_payload() {
+        let err = parse_iinf(&[
+            1, 0, 0, 0, // version and flags
+            0xff, 0xff, 0xff, 0xff, // entry count
+        ])
+        .unwrap_err();
+
+        assert!(
+            matches!(err, DecoderError::NotEnoughData(message) if message.contains("iinf entry count"))
+        );
+    }
+
+    #[test]
+    fn rejects_iloc_item_count_that_cannot_fit_in_payload() {
+        let err = parse_iloc(&[
+            2, 0, 0, 0, // version and flags
+            0, 0, // field sizes
+            0xff, 0xff, 0xff, 0xff, // item count
+        ])
+        .unwrap_err();
+
+        assert!(
+            matches!(err, DecoderError::NotEnoughData(message) if message.contains("iloc item count"))
+        );
+    }
+
+    #[test]
+    fn rejects_iloc_extent_count_that_cannot_fit_in_payload() {
+        let err = parse_iloc(&[
+            0, 0, 0, 0, // version and flags
+            0x44, 0, // four-byte offsets and lengths, no base offset
+            0, 1, // item count
+            0, 1, // item id
+            0, 0, // data reference index
+            0xff, 0xff, // extent count
+        ])
+        .unwrap_err();
+
+        assert!(
+            matches!(err, DecoderError::NotEnoughData(message) if message.contains("iloc extent count"))
+        );
+    }
+
+    #[test]
+    fn rejects_ipma_entry_count_that_cannot_fit_in_payload() {
+        let err = parse_ipma(&[
+            0, 0, 0, 0, // version and flags
+            0xff, 0xff, 0xff, 0xff, // entry count
+        ])
+        .unwrap_err();
+
+        assert!(
+            matches!(err, DecoderError::NotEnoughData(message) if message.contains("ipma entry count"))
+        );
+    }
+
+    #[test]
+    fn rejects_item_extent_payload_larger_than_source_file() {
+        let state = MetaState {
+            primary_item_id: Some(1),
+            item_locations: vec![ItemLocation {
+                item_id: 1,
+                base_offset: 0,
+                extents: vec![
+                    ItemExtent {
+                        offset: 0,
+                        length: 2,
+                    },
+                    ItemExtent {
+                        offset: 0,
+                        length: 2,
+                    },
+                ],
+            }],
+            ..MetaState::default()
+        };
+
+        let err = primary_item_payload(&[0, 1], &state).unwrap_err();
+
+        assert!(
+            matches!(err, DecoderError::Bitstream(message) if message.contains("exceeds file size"))
         );
     }
 

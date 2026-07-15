@@ -231,26 +231,25 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
             },
         )
     };
-    if let Some(width) = info.width {
-        if width != frame.frame_width {
-            return Err(DecoderError::Bitstream(format!(
-                "AVIF ispe width {width} does not match AV1 frame width {}",
-                frame.frame_width
-            )));
-        }
+    if let Some(width) = info.width
+        && width != frame.frame_width
+    {
+        return Err(DecoderError::Bitstream(format!(
+            "AVIF ispe width {width} does not match AV1 frame width {}",
+            frame.frame_width
+        )));
     }
-    if let Some(height) = info.height {
-        if height != frame.frame_height {
-            return Err(DecoderError::Bitstream(format!(
-                "AVIF ispe height {height} does not match AV1 frame height {}",
-                frame.frame_height
-            )));
-        }
+    if let Some(height) = info.height
+        && height != frame.frame_height
+    {
+        return Err(DecoderError::Bitstream(format!(
+            "AVIF ispe height {height} does not match AV1 frame height {}",
+            frame.frame_height
+        )));
     }
     let decode_plan = build_still_decode_plan(&sequence, &frame, &tile_group_payload.group)?;
     let quant_state =
         QuantState::from_params(&frame.quantization, sequence.color_config.bit_depth)?;
-    let tile_group_payload = tile_group_payload;
     Ok(Av1Headers {
         config,
         sequence,

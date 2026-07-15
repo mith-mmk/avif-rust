@@ -274,14 +274,14 @@ impl BlockSize {
     }
 
     pub fn horizontal_4_subsize(self) -> Option<Self> {
-        if self.height() <= 4 || self.height() % 4 != 0 {
+        if self.height() <= 4 || !self.height().is_multiple_of(4) {
             return None;
         }
         Self::from_dimensions(self.width(), self.height() / 4)
     }
 
     pub fn vertical_4_subsize(self) -> Option<Self> {
-        if self.width() <= 4 || self.width() % 4 != 0 {
+        if self.width() <= 4 || !self.width().is_multiple_of(4) {
             return None;
         }
         Self::from_dimensions(self.width() / 4, self.height())

@@ -228,9 +228,9 @@ fn assert_non_zero_residual_probe(
         assert_eq!(probe.residual_preview_sample_count, None);
         assert_eq!(probe.first_residual_preview_sample, None);
     }
-    if probe.dc_sign_symbol.is_some() {
+    if let Some(dc_sign_symbol) = probe.dc_sign_symbol {
         assert!(probe.dc_sign_context.unwrap() < 3);
-        assert!(probe.dc_sign_symbol.unwrap() <= 1);
+        assert!(dc_sign_symbol <= 1);
     }
     assert!(probe.golomb_decoded_count.unwrap() <= probe.sign_decoded_count.unwrap());
     if probe.sign_decoded_count.unwrap() > usize::from(probe.dc_sign_symbol.is_some()) {

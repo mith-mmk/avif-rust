@@ -6,6 +6,30 @@ use crate::DecoderError;
 const MAX_TILE_WIDTH: u32 = 4096;
 const MAX_TILE_AREA: u32 = 4096 * 2304;
 
+#[derive(Debug, Clone, Copy)]
+struct TileGeometry {
+    sb_cols: u32,
+    sb_rows: u32,
+    mi_cols: u32,
+    mi_rows: u32,
+    sb_size_log2: u8,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct UniformTileLimits {
+    min_log2_tile_cols: u8,
+    max_log2_tile_cols: u8,
+    min_log2_tile_rows: u8,
+    max_log2_tile_rows: u8,
+    min_log2_tiles: u8,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct NonUniformTileLimits {
+    max_tile_width_sb: u32,
+    max_tile_area_sb: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TileInfo {
     pub uniform_tile_spacing: bool,
@@ -45,31 +69,34 @@ pub(crate) fn parse_tile_info(
         min_log2_tile_cols.max(tile_log2(max_tile_area_sb.max(1), sb_rows * sb_cols));
 
     let uniform_tile_spacing = reader.read_bool("uniform_tile_spacing_flag")?;
+    let geometry = TileGeometry {
+        sb_cols,
+        sb_rows,
+        mi_cols,
+        mi_rows,
+        sb_size_log2,
+    };
     let (tile_cols, tile_rows, tile_cols_log2, tile_rows_log2, mi_col_starts, mi_row_starts) =
         if uniform_tile_spacing {
             parse_uniform_tiles(
                 reader,
-                sb_cols,
-                sb_rows,
-                mi_cols,
-                mi_rows,
-                sb_size_log2,
-                min_log2_tile_cols,
-                max_log2_tile_cols,
-                min_log2_tile_rows,
-                max_log2_tile_rows,
-                min_log2_tiles,
+                geometry,
+                UniformTileLimits {
+                    min_log2_tile_cols,
+                    max_log2_tile_cols,
+                    min_log2_tile_rows,
+                    max_log2_tile_rows,
+                    min_log2_tiles,
+                },
             )?
         } else {
             parse_non_uniform_tiles(
                 reader,
-                sb_cols,
-                sb_rows,
-                mi_cols,
-                mi_rows,
-                sb_size_log2,
-                max_tile_width_sb,
-                max_tile_area_sb,
+                geometry,
+                NonUniformTileLimits {
+                    max_tile_width_sb,
+                    max_tile_area_sb,
+                },
             )?
         };
 
@@ -104,32 +131,40 @@ pub(crate) fn parse_tile_info(
 #[allow(clippy::type_complexity)]
 fn parse_uniform_tiles(
     reader: &mut BitReader<'_>,
-    sb_cols: u32,
-    sb_rows: u32,
-    mi_cols: u32,
-    mi_rows: u32,
-    sb_size_log2: u8,
-    min_log2_tile_cols: u8,
-    max_log2_tile_cols: u8,
-    min_log2_tile_rows: u8,
-    max_log2_tile_rows: u8,
-    min_log2_tiles: u8,
+    geometry: TileGeometry,
+    limits: UniformTileLimits,
 ) -> Result<(u32, u32, u8, u8, Vec<u32>, Vec<u32>), DecoderError> {
-    let mut tile_cols_log2 = min_log2_tile_cols;
-    while tile_cols_log2 < max_log2_tile_cols && reader.read_bool("increment_tile_cols_log2")? {
+    let mut tile_cols_log2 = limits.min_log2_tile_cols;
+    while tile_cols_log2 < limits.max_log2_tile_cols
+        && reader.read_bool("increment_tile_cols_log2")?
+    {
         tile_cols_log2 += 1;
     }
-    let tile_width_sb = round_shift(sb_cols, tile_cols_log2);
-    let mi_col_starts = uniform_starts(sb_cols, mi_cols, sb_size_log2, tile_width_sb);
+    let tile_width_sb = round_shift(geometry.sb_cols, tile_cols_log2);
+    let mi_col_starts = uniform_starts(
+        geometry.sb_cols,
+        geometry.mi_cols,
+        geometry.sb_size_log2,
+        tile_width_sb,
+    );
     let tile_cols = (mi_col_starts.len() - 1) as u32;
 
-    let min_log2_tile_rows = min_log2_tile_rows.max(min_log2_tiles.saturating_sub(tile_cols_log2));
+    let min_log2_tile_rows = limits
+        .min_log2_tile_rows
+        .max(limits.min_log2_tiles.saturating_sub(tile_cols_log2));
     let mut tile_rows_log2 = min_log2_tile_rows;
-    while tile_rows_log2 < max_log2_tile_rows && reader.read_bool("increment_tile_rows_log2")? {
+    while tile_rows_log2 < limits.max_log2_tile_rows
+        && reader.read_bool("increment_tile_rows_log2")?
+    {
         tile_rows_log2 += 1;
     }
-    let tile_height_sb = round_shift(sb_rows, tile_rows_log2);
-    let mi_row_starts = uniform_starts(sb_rows, mi_rows, sb_size_log2, tile_height_sb);
+    let tile_height_sb = round_shift(geometry.sb_rows, tile_rows_log2);
+    let mi_row_starts = uniform_starts(
+        geometry.sb_rows,
+        geometry.mi_rows,
+        geometry.sb_size_log2,
+        tile_height_sb,
+    );
     let tile_rows = (mi_row_starts.len() - 1) as u32;
     Ok((
         tile_cols,
@@ -144,38 +179,33 @@ fn parse_uniform_tiles(
 #[allow(clippy::type_complexity)]
 fn parse_non_uniform_tiles(
     reader: &mut BitReader<'_>,
-    sb_cols: u32,
-    sb_rows: u32,
-    mi_cols: u32,
-    mi_rows: u32,
-    sb_size_log2: u8,
-    max_tile_width_sb: u32,
-    max_tile_area_sb: u32,
+    geometry: TileGeometry,
+    limits: NonUniformTileLimits,
 ) -> Result<(u32, u32, u8, u8, Vec<u32>, Vec<u32>), DecoderError> {
     let mut widest_tile_sb = 0;
     let mut mi_col_starts = Vec::new();
     let mut start_sb = 0;
-    while start_sb < sb_cols {
-        mi_col_starts.push(start_sb << sb_size_log2);
-        let max_width = max_tile_width_sb.min(sb_cols - start_sb);
+    while start_sb < geometry.sb_cols {
+        mi_col_starts.push(start_sb << geometry.sb_size_log2);
+        let max_width = limits.max_tile_width_sb.min(geometry.sb_cols - start_sb);
         let size_sb = reader.read_ns(max_width, "width_in_sbs_minus_1")? + 1;
         widest_tile_sb = widest_tile_sb.max(size_sb);
         start_sb += size_sb;
     }
-    mi_col_starts.push(mi_cols);
+    mi_col_starts.push(geometry.mi_cols);
     let tile_cols = (mi_col_starts.len() - 1) as u32;
     let tile_cols_log2 = tile_log2(1, tile_cols);
 
-    let max_tile_height_sb = (max_tile_area_sb / widest_tile_sb.max(1)).max(1);
+    let max_tile_height_sb = (limits.max_tile_area_sb / widest_tile_sb.max(1)).max(1);
     let mut mi_row_starts = Vec::new();
     let mut start_sb = 0;
-    while start_sb < sb_rows {
-        mi_row_starts.push(start_sb << sb_size_log2);
-        let max_height = max_tile_height_sb.min(sb_rows - start_sb);
+    while start_sb < geometry.sb_rows {
+        mi_row_starts.push(start_sb << geometry.sb_size_log2);
+        let max_height = max_tile_height_sb.min(geometry.sb_rows - start_sb);
         let size_sb = reader.read_ns(max_height, "height_in_sbs_minus_1")? + 1;
         start_sb += size_sb;
     }
-    mi_row_starts.push(mi_rows);
+    mi_row_starts.push(geometry.mi_rows);
     let tile_rows = (mi_row_starts.len() - 1) as u32;
     let tile_rows_log2 = tile_log2(1, tile_rows);
 

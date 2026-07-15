@@ -36,10 +36,10 @@ pub(super) fn palette_color_index_context(
     ];
     let mut scores = [0usize; PALETTE_MAX_SIZE];
     for (index, weight) in [2usize, 1, 2].into_iter().enumerate() {
-        if let Some(color) = neighbours[index] {
-            if color < palette_size {
-                scores[color] += weight;
-            }
+        if let Some(color) = neighbours[index]
+            && color < palette_size
+        {
+            scores[color] += weight;
         }
     }
 
@@ -50,9 +50,9 @@ pub(super) fn palette_color_index_context(
     for index in 0..3.min(palette_size) {
         let mut max_score = scores[index];
         let mut max_index = index;
-        for candidate in index + 1..palette_size {
-            if scores[candidate] > max_score {
-                max_score = scores[candidate];
+        for (candidate, &score) in scores.iter().enumerate().take(palette_size).skip(index + 1) {
+            if score > max_score {
+                max_score = score;
                 max_index = candidate;
             }
         }
@@ -179,6 +179,10 @@ pub(super) fn merge_cached_palette_colors(
 }
 
 impl<'a> TileDecoder<'a> {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "arguments map directly to the AV1 palette-mode syntax context"
+    )]
     pub(super) fn read_palette_mode_info(
         &mut self,
         sequence: &SequenceHeader,
@@ -382,7 +386,7 @@ impl<'a> TileDecoder<'a> {
         } else {
             &self.u_palette_colors_grid
         };
-        let above = if y >= 4 && y % 64 != 0 {
+        let above = if y >= 4 && !y.is_multiple_of(64) {
             palette_colors_at_mi(grid, self.mi_cols, self.mi_rows, x >> 2, (y >> 2) - 1)
         } else {
             None
@@ -434,6 +438,10 @@ impl<'a> TileDecoder<'a> {
         Ok(())
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "arguments map directly to the AV1 palette color-map syntax context"
+    )]
     fn read_palette_color_map_tokens(
         &mut self,
         plane: usize,

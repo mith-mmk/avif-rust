@@ -93,6 +93,10 @@ impl<'a> TileDecoder<'a> {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "coverage scan keeps coded-grid and plane-coordinate domains explicit"
+)]
 fn horizontal_reconstructed_length(
     grid: &[bool],
     mi_cols: usize,

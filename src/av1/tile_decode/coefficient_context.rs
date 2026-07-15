@@ -177,8 +177,7 @@ pub(super) fn first_signed_coeff(
             "AV1 signed coefficient eob exceeds scan".to_string(),
         ));
     }
-    for scan_index in 0..eob {
-        let position = scan[scan_index];
+    for (scan_index, &position) in scan.iter().enumerate().take(eob) {
         let value = coefficients[position];
         if value != 0 {
             return Ok(Some(SignedCoeffProbe {

@@ -70,6 +70,10 @@ pub fn read_intra_edges(
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "public compatibility API keeps the established edge-read signature"
+)]
 pub fn read_intra_edges_with_extension_availability(
     plane: &PlaneBuffer,
     x: usize,

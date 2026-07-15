@@ -16,6 +16,18 @@ the current priority is the normative post-filter pipeline. No format expansion
 or additional architecture refactor is promoted above this vertical slice
 until its final filtered planes match the reference oracle.
 
+## Publication readiness
+
+- [x] Declare Rust 1.88 as the crate MSRV and document it in both READMEs.
+- [x] Include the complete MIT license text in the published crate archive.
+- [x] Restrict the published archive to the library sources, English and
+      Japanese READMEs, and the license, in addition to Cargo-generated
+      metadata and lockfile files.
+
+The integration tests, this checklist, fuzz targets, oracle scripts, and local
+fixtures remain available in the repository but are intentionally excluded
+from the consumer-facing crate archive.
+
 ### other avif sample images
 
 - https://github.com/link-u/avif-sample-images
@@ -74,7 +86,7 @@ remain ignored as well.
 - [x] Add `AVIF_REQUIRE_ORACLES=1` strict mode so conformance runs fail when
       the manifest is absent, while normal parser/safety tests remain runnable
       without local test data.
-- [ ] Make strict mode reject a header-only/zero-entry manifest and require
+- [x] Make strict mode reject a header-only/zero-entry manifest and require
       the approved fixture IDs; manifest absence is already a strict failure.
 - [ ] Add the future `-RegisterInStrictManifest` path to
       `generate_oracles.ps1`; the default `WML2Viewer` output remains
@@ -96,9 +108,9 @@ remain ignored as well.
       gate.
 - [x] Capture and assert `wml2` draw callback bytes and dimensions in the
       AVIF integration test.
-- [ ] Assert callback order as `init -> draw -> terminate` on the
-      `filter-disabled-gbr` public fixture; callback bytes and dimensions are
-      already covered.
+- [x] Assert callback order as `init -> draw -> terminate` on the
+      `filter-disabled-gbr` public fixture together with callback bytes and
+      dimensions.
 
 ## 2. Raw block reconstruction: exact pre-filter checkpoint
 
@@ -307,16 +319,16 @@ and RGBA gates.
 - [x] Validate `ispe` dimensions against the AV1 frame dimensions.
 - [x] Validate SDR `nclx` colour description and range against the AV1
       sequence header, while accepting CICP value `2` as unspecified.
-- [ ] Gate every AVIF integration target with `required-features =
-      ["avif"]`; the full feature-off integration run currently fails to
-      compile.
+- [x] Gate the AVIF-enabled `avif_decode` integration target with
+      `required-features = ["avif"]`.
 - [x] Add an explicit feature-off test target and verify the AVIF-disabled
       library with `cargo test -p wml2 --lib --no-default-features`.
-- [ ] Gate every AVIF integration target so the full
-      `cargo test -p wml2 --no-default-features` run compiles successfully.
+- [ ] Gate the remaining parent `wml2` integration targets by their own
+      features so `cargo test -p wml2 --no-default-features` compiles. The
+      current failures are JPEG/PNG/TIFF/WebP/EXIF tests, not AVIF targets.
 - [x] Keep container, OBU, frame-header and entropy fuzz targets.
 - [ ] Optimise allocations only after exact-plane conformance passes.
-- [ ] Correct the nested crate repository URL to the independently maintained
+- [x] Correct the nested crate repository URL to the independently maintained
       `avif-rust` repository and verify it from a fresh clone.
 - [ ] Add SIMD/parallel paths only with scalar equivalence and Wasm fallback
       tests.
@@ -342,7 +354,7 @@ Strict fixture validation additionally requires:
 ```powershell
 $env:AVIF_REQUIRE_ORACLES = '1'
 cargo test -p avif-rust --test oracle_fixtures
-powershell -File avif/scripts/verify_oracle_sources.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File avif/scripts/verify_oracle_sources.ps1
 ```
 
 Release additionally requires `cargo test --workspace`, exact supported-stream
@@ -353,8 +365,9 @@ colour-management paths.
 The current structural gate is green for the supported feature-on workspace,
 the AVIF-disabled `wml2` library, fuzz-bin compilation, AVIF-enabled `wml2`
 tests, and the Wasm check. The full feature-off integration run is not yet a
-success criterion because un-gated AVIF integration targets still fail to
-compile. The public 8-bit 4:4:4 WML2Viewer sample now decodes through
+success criterion because unrelated JPEG/PNG/TIFF/WebP/EXIF integration
+targets are not gated by their own features. The public 8-bit 4:4:4 WML2Viewer
+sample now decodes through
 deblock -> CDEF -> loop restoration and passes the FFmpeg/RGBA threshold gate.
 The permanent integrated plane oracle and broader format coverage remain
 release work.

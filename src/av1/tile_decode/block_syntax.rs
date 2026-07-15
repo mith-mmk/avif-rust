@@ -23,6 +23,10 @@ impl<'a> TileDecoder<'a> {
         )
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "arguments map directly to the AV1 block-mode syntax context"
+    )]
     pub fn read_intra_frame_block_mode_with_chroma_reference(
         &mut self,
         sequence: &SequenceHeader,
@@ -225,7 +229,7 @@ impl<'a> TileDecoder<'a> {
         };
         let mi_col = x >> 2;
         let mi_row = y >> 2;
-        if mi_col % superblock_mi == 0 && mi_row % superblock_mi == 0 {
+        if mi_col.is_multiple_of(superblock_mi) && mi_row.is_multiple_of(superblock_mi) {
             self.cdef_transmitted = [false; 4];
         }
         let index = if sequence.use_128x128_superblock {

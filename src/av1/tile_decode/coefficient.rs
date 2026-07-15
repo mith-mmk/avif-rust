@@ -393,8 +393,7 @@ fn read_coeff_signs_and_golomb<S: CoefficientTokenSource>(
         first_golomb_scan_index: None,
         first_golomb_value: None,
     };
-    for scan_index in 0..eob {
-        let position = scan[scan_index];
+    for (scan_index, &position) in scan.iter().enumerate().take(eob) {
         let mut level = levels[position].unsigned_abs() as usize;
         if level == 0 {
             continue;

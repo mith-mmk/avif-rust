@@ -494,23 +494,12 @@ fn parse_delta_lf_params(
     })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LoopFilterParams {
     pub levels: [u8; 4],
     pub sharpness: u8,
     pub delta_enabled: bool,
     pub delta_update: bool,
-}
-
-impl Default for LoopFilterParams {
-    fn default() -> Self {
-        Self {
-            levels: [0; 4],
-            sharpness: 0,
-            delta_enabled: false,
-            delta_update: false,
-        }
-    }
 }
 
 fn parse_loop_filter_params(
@@ -634,16 +623,15 @@ fn parse_lr_params(
     };
     let mut uses_lr = false;
     let mut lr_type = [0u8; 3];
-    for plane in 0..planes {
-        let plane_lr_type = match reader.read_bits(2, "lr_type")? {
+    for plane_lr_type in lr_type.iter_mut().take(planes) {
+        *plane_lr_type = match reader.read_bits(2, "lr_type")? {
             0 => 0,
             1 => 3,
             2 => 1,
             3 => 2,
             _ => unreachable!("two-bit restoration type"),
         };
-        lr_type[plane] = plane_lr_type;
-        uses_lr |= plane_lr_type != 0;
+        uses_lr |= *plane_lr_type != 0;
     }
     let mut unit_shift = 0;
     if uses_lr {

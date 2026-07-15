@@ -362,6 +362,10 @@ pub fn decode_luma_root_block_prefix(
     })
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "internal prefix decode exposes each independently testable pipeline input"
+)]
 pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy(
     data: &[u8],
     tile_group: &TileGroup,

@@ -1166,7 +1166,7 @@ pub const DEFAULT_COEFF_BASE_EOB_CDF: [[[[[u16; 4]; 4]; 2]; 5]; 4] = [
     ],
 ];
 
-pub const DEFAULT_COEFF_BASE_CDF: [[[[[u16; 5]; 42]; 2]; 5]; 4] = [
+pub static DEFAULT_COEFF_BASE_CDF: [[[[[u16; 5]; 42]; 2]; 5]; 4] = [
     [
         [
             [

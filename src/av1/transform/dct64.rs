@@ -13,7 +13,7 @@ pub(super) fn inverse_dct64(input: [i32; 64], range: u8) -> [i32; 64] {
     {
         rotate_pair(&a, &mut b, 32 + offset, 63 - offset, angle);
     }
-    a = b;
+    std::mem::swap(&mut a, &mut b);
 
     // Stage 3.
     b = a;
@@ -23,7 +23,7 @@ pub(super) fn inverse_dct64(input: [i32; 64], range: u8) -> [i32; 64] {
     for start in (32..64).step_by(4) {
         combine_adjacent_pairs(&a, &mut b, start, range);
     }
-    a = b;
+    std::mem::swap(&mut a, &mut b);
 
     // Stage 4.
     b = a;
@@ -55,7 +55,7 @@ pub(super) fn inverse_dct64(input: [i32; 64], range: u8) -> [i32; 64] {
             (62, 33, 62, 60, 4),
         ],
     );
-    a = b;
+    std::mem::swap(&mut a, &mut b);
 
     // Stage 5.
     b = a;
@@ -82,7 +82,7 @@ pub(super) fn inverse_dct64(input: [i32; 64], range: u8) -> [i32; 64] {
     for start in (32..64).step_by(4) {
         combine_reverse(&a, &mut b, start, 4, (start / 4) % 2 == 1, range);
     }
-    a = b;
+    std::mem::swap(&mut a, &mut b);
 
     // Stage 6.
     b = a;
@@ -126,7 +126,7 @@ pub(super) fn inverse_dct64(input: [i32; 64], range: u8) -> [i32; 64] {
             (61, 34, 61, 56, 8),
         ],
     );
-    a = b;
+    std::mem::swap(&mut a, &mut b);
 
     // Stage 7.
     b = a;
@@ -153,7 +153,7 @@ pub(super) fn inverse_dct64(input: [i32; 64], range: u8) -> [i32; 64] {
     for start in (32..64).step_by(8) {
         combine_reverse(&a, &mut b, start, 8, (start / 8) % 2 == 1, range);
     }
-    a = b;
+    std::mem::swap(&mut a, &mut b);
 
     // Stage 8.
     b = a;
@@ -187,7 +187,7 @@ pub(super) fn inverse_dct64(input: [i32; 64], range: u8) -> [i32; 64] {
             (59, 36, 59, 48, 16),
         ],
     );
-    a = b;
+    std::mem::swap(&mut a, &mut b);
 
     // Stage 9.
     b = a;
@@ -199,7 +199,7 @@ pub(super) fn inverse_dct64(input: [i32; 64], range: u8) -> [i32; 64] {
     for start in (32..64).step_by(16) {
         combine_reverse(&a, &mut b, start, 16, (start / 16) % 2 == 1, range);
     }
-    a = b;
+    std::mem::swap(&mut a, &mut b);
 
     // Stage 10.
     b = a;
@@ -208,7 +208,7 @@ pub(super) fn inverse_dct64(input: [i32; 64], range: u8) -> [i32; 64] {
         mix(&a, &mut b, 40 + offset, 40 + offset, 55 - offset, -32, 32);
         mix(&a, &mut b, 55 - offset, 40 + offset, 55 - offset, 32, 32);
     }
-    a = b;
+    std::mem::swap(&mut a, &mut b);
 
     // Stage 11.
     combine_reverse(&a, &mut b, 0, 64, false, range);

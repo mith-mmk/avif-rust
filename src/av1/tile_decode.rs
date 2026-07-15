@@ -164,8 +164,12 @@ pub(super) fn is_chroma_reference(
     let mi_row = y / 4;
     let block_mi_width = block_size.width() / 4;
     let block_mi_height = block_size.height() / 4;
-    (mi_row % 2 != 0 || block_mi_height % 2 == 0 || !sequence.color_config.subsampling_y)
-        && (mi_col % 2 != 0 || block_mi_width % 2 == 0 || !sequence.color_config.subsampling_x)
+    (!mi_row.is_multiple_of(2)
+        || block_mi_height.is_multiple_of(2)
+        || !sequence.color_config.subsampling_y)
+        && (!mi_col.is_multiple_of(2)
+            || block_mi_width.is_multiple_of(2)
+            || !sequence.color_config.subsampling_x)
 }
 
 impl<'a> TileDecoder<'a> {

@@ -38,6 +38,10 @@ const CDEF_DIRECTIONS: [[(isize, isize); 2]; 8] = [
 /// Edge samples are replicated at the supplied plane bounds; frame-level
 /// orchestration is responsible for selecting the direction and CDEF index.
 #[allow(dead_code)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scalar CDEF kernel parameters mirror the normative filter inputs"
+)]
 pub(crate) fn cdef_filter_block(
     source: &[u16],
     width: usize,
@@ -67,6 +71,10 @@ pub(crate) fn cdef_filter_block(
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scalar CDEF kernel parameters mirror the normative filter inputs"
+)]
 pub(crate) fn cdef_filter_block_with_edge_mode(
     source: &[u16],
     width: usize,
@@ -217,9 +225,9 @@ pub(crate) fn cdef_find_direction_with_variance(
         }
     }
     let mut cost = [0i32; 8];
-    for i in 0..8 {
-        cost[2] += partial[2][i] * partial[2][i];
-        cost[6] += partial[6][i] * partial[6][i];
+    for (&partial_2, &partial_6) in partial[2].iter().zip(&partial[6]) {
+        cost[2] += partial_2 * partial_2;
+        cost[6] += partial_6 * partial_6;
     }
     cost[2] *= DIV[8];
     cost[6] *= DIV[8];
@@ -280,10 +288,8 @@ fn restoration_sample(
 ) -> i32 {
     let mut sample_y = y;
     let stripe_start = origin_y as isize;
-    if origin_y > 0 {
-        if sample_y == stripe_start - 3 || sample_y == stripe_start - 2 {
-            sample_y = stripe_start - 2;
-        }
+    if origin_y > 0 && (sample_y == stripe_start - 3 || sample_y == stripe_start - 2) {
+        sample_y = stripe_start - 2;
     }
     let stripe_end = (origin_y + stripe_height).min(height) as isize;
     if stripe_end < height as isize && sample_y == stripe_end + 2 {
@@ -295,6 +301,10 @@ fn restoration_sample(
 }
 
 #[allow(dead_code)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scalar Wiener kernel parameters mirror the normative restoration inputs"
+)]
 pub(crate) fn wiener_filter_unit(
     source: &[u16],
     width: usize,
@@ -379,6 +389,10 @@ pub(crate) fn wiener_filter_unit(
 }
 
 #[allow(dead_code)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scalar SGRPROJ kernel parameters mirror the normative restoration inputs"
+)]
 pub(crate) fn sgrproj_filter_unit(
     source: &[u16],
     width: usize,
@@ -566,6 +580,10 @@ fn sgr_x_by_xplus1(z: i32) -> i32 {
 }
 
 #[allow(dead_code)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scalar deblock kernel parameters mirror the normative edge inputs"
+)]
 pub(crate) fn deblock_filter_edge(
     samples: &mut [u16],
     width: usize,
@@ -582,6 +600,10 @@ pub(crate) fn deblock_filter_edge(
     );
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scalar deblock kernel parameters mirror the normative edge inputs"
+)]
 pub(crate) fn deblock_filter_edge_with_length(
     samples: &mut [u16],
     width: usize,
@@ -610,6 +632,10 @@ pub(crate) fn deblock_filter_edge_with_length(
     );
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scalar deblock kernel parameters mirror the normative edge inputs"
+)]
 pub(crate) fn deblock_filter_edge_with_visible_bounds(
     samples: &mut [u16],
     width: usize,

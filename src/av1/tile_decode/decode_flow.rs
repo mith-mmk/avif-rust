@@ -16,6 +16,10 @@ struct ResidualUnit {
     height: usize,
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "explicit decoder and frame state avoids aliasing mutable reconstruction buffers"
+)]
 pub(super) fn decode_luma_root_block(
     decoder: &mut TileDecoder<'_>,
     sequence: &SequenceHeader,
@@ -41,6 +45,10 @@ pub(super) fn decode_luma_root_block(
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "explicit decoder and frame state avoids aliasing mutable reconstruction buffers"
+)]
 pub(super) fn decode_luma_leaf_block(
     decoder: &mut TileDecoder<'_>,
     sequence: &SequenceHeader,
@@ -182,6 +190,10 @@ fn residual_unit_order(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::items_after_test_module,
+    reason = "the focused residual-order test stays next to its helper"
+)]
 mod tests {
     use super::{ResidualUnit, residual_unit_order};
     use crate::av1::syntax::BlockSize;
@@ -240,6 +252,10 @@ mod tests {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "recursive AV1 partition traversal keeps shared mutable state explicit"
+)]
 pub(super) fn decode_luma_block_tree(
     decoder: &mut TileDecoder<'_>,
     sequence: &SequenceHeader,
@@ -495,6 +511,10 @@ pub(super) fn decode_luma_block_tree(
     Ok(decoded)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "recursive AV1 partition traversal keeps shared mutable state explicit"
+)]
 fn decode_luma_partition_children(
     decoder: &mut TileDecoder<'_>,
     sequence: &SequenceHeader,
@@ -528,6 +548,10 @@ fn decode_luma_partition_children(
     Ok(blocks)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "recursive AV1 partition traversal keeps shared mutable state explicit"
+)]
 fn decode_luma_partition_runs(
     decoder: &mut TileDecoder<'_>,
     sequence: &SequenceHeader,
