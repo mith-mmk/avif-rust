@@ -67,7 +67,7 @@ impl<'a> TileDecoder<'a> {
                 .cdf
                 .partition_cdf_mut(block_size.width_mi_log2(), context)
                 .to_vec();
-            let mut cdf = restricted_partition_cdf(&source, has_rows);
+            let mut cdf = restricted_partition_cdf(&source, has_rows, block_size);
             let symbol = self.reader.read_symbol(&mut cdf)?;
             let partition = if symbol == 0 {
                 if has_rows {
@@ -80,12 +80,6 @@ impl<'a> TileDecoder<'a> {
             };
             (partition_symbol(partition), partition)
         };
-        if std::env::var_os("AVIF_TRACE_WML2_MODES").is_some() && (64..96).contains(&x) && y < 32 {
-            eprintln!(
-                "Rust partition x={x} size={block_size:?} context={context} part={partition:?} state={:?}",
-                self.reader.trace_state()
-            );
-        }
         Ok(PartitionProbe {
             tile_id: tile.tile_id,
             block_size,
@@ -128,7 +122,7 @@ pub(super) fn first_partition_child_size(
     })
 }
 
-fn restricted_partition_cdf(source: &[u16], has_rows: bool) -> [u16; 3] {
+fn restricted_partition_cdf(source: &[u16], has_rows: bool, block_size: BlockSize) -> [u16; 3] {
     let symbols = source.len().saturating_sub(1);
     let alike = if has_rows {
         [1usize, 3, 4, 5, 6, 8]
@@ -137,7 +131,9 @@ fn restricted_partition_cdf(source: &[u16], has_rows: bool) -> [u16; 3] {
     };
     let alike_probability = alike
         .into_iter()
-        .filter(|symbol| *symbol < symbols)
+        .filter(|symbol| {
+            *symbol < symbols && !matches!((block_size, *symbol), (BlockSize::Block128x128, 8 | 9))
+        })
         .map(|symbol| cdf_symbol_probability(source, symbol))
         .sum::<u16>();
     [32768u16.saturating_sub(alike_probability), 32768, 0]

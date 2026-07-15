@@ -10,10 +10,12 @@ use crate::obu::{ObuType, find_obu_payload};
 
 #[test]
 fn cfl_availability_matches_lossless_and_block_size_rules() {
-    assert!(cfl_is_allowed(true, BlockSize::Block4x4));
-    assert!(!cfl_is_allowed(true, BlockSize::Block8x8));
-    assert!(cfl_is_allowed(false, BlockSize::Block32x16));
-    assert!(!cfl_is_allowed(false, BlockSize::Block64x32));
+    assert!(cfl_is_allowed(true, BlockSize::Block4x4, true, true));
+    assert!(cfl_is_allowed(true, BlockSize::Block4x8, true, true));
+    assert!(!cfl_is_allowed(true, BlockSize::Block16x4, true, true));
+    assert!(!cfl_is_allowed(true, BlockSize::Block8x8, false, false));
+    assert!(cfl_is_allowed(false, BlockSize::Block32x16, true, true));
+    assert!(!cfl_is_allowed(false, BlockSize::Block64x32, true, true));
 }
 
 #[test]

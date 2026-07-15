@@ -455,22 +455,7 @@ impl<'a> TileDecoder<'a> {
         );
 
         let mut color_map = vec![0u8; plane_block_width * plane_block_height];
-        let trace =
-            std::env::var_os("AVIF_TRACE_WML2_MODES").is_some() && plane == 0 && x == 88 && y == 16;
-        if trace {
-            eprintln!(
-                "Rust palette before uniform state={:?}",
-                self.reader.trace_state()
-            );
-        }
         color_map[0] = self.reader.read_uniform(palette_size)? as u8;
-        if trace {
-            eprintln!(
-                "Rust palette first={} state={:?}",
-                color_map[0],
-                self.reader.trace_state()
-            );
-        }
         for diagonal in 1..rows + cols - 1 {
             let start = diagonal.min(cols - 1);
             let end = diagonal.saturating_sub(rows - 1);
@@ -490,13 +475,6 @@ impl<'a> TileDecoder<'a> {
                         palette_size,
                         context,
                     ))?;
-                if trace && diagonal < 4 {
-                    eprintln!(
-                        "Rust palette diagonal={diagonal} col={col} ctx={context} idx={color_idx} order={:?} state={:?}",
-                        &color_order[..palette_size],
-                        self.reader.trace_state()
-                    );
-                }
                 color_map[row * plane_block_width + col] = color_order[color_idx] as u8;
             }
         }

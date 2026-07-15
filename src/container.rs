@@ -249,11 +249,10 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
     for_each_top_level_box(data, |header| {
         match &header.box_type {
             b"meta" => parse_meta(data, header, &mut meta)?,
-            b"moov" => {
-                return Err(DecoderError::Unsupported(
-                    "AVIF sequences are not supported".to_string(),
-                ));
-            }
+            // The primary still image item remains independently decodable in
+            // an AVIS file. The movie box describes later frames; the public
+            // still-image API intentionally selects the primary item.
+            b"moov" => {}
             _ => {}
         }
         Ok(())

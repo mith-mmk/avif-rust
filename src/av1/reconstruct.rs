@@ -200,14 +200,21 @@ pub fn frame_buffers_to_rgba_16(
     } else {
         let matrix = MatrixCoefficients::from_av1(matrix_coefficients)?;
         let range = SampleRange::new(color_config.bit_depth, color_config.color_range)?;
-        let plane_y = &buffers.planes[0].samples;
-        let plane_u = &buffers.planes[1].samples;
-        let plane_v = &buffers.planes[2].samples;
+        let plane_y = &buffers.planes[0];
+        let plane_u = buffers.planes.get(1);
+        let plane_v = buffers.planes.get(2);
+        let chroma_mid = 1u16 << color_config.bit_depth.saturating_sub(1);
         for index in 0..buffers.width * buffers.height {
+            let x = index % buffers.width;
+            let y = index / buffers.width;
             let rgb = yuv_to_rgb_u16(
-                plane_y[index],
-                plane_u[index],
-                plane_v[index],
+                sample_plane(plane_y, x, y),
+                plane_u
+                    .map(|plane| sample_plane(plane, x, y))
+                    .unwrap_or(chroma_mid),
+                plane_v
+                    .map(|plane| sample_plane(plane, x, y))
+                    .unwrap_or(chroma_mid),
                 range,
                 matrix,
             );
@@ -226,22 +233,14 @@ pub fn frame_buffers_to_rgba_16(
     })
 }
 
+fn sample_plane(plane: &super::decode::PlaneBuffer, x: usize, y: usize) -> u16 {
+    let source_x = (x >> usize::from(plane.layout.subsampling_x)).min(plane.layout.width - 1);
+    let source_y = (y >> usize::from(plane.layout.subsampling_y)).min(plane.layout.height - 1);
+    plane.samples[source_y * plane.layout.width + source_x]
+}
+
 fn validate_rgba_conversion(buffers: &FrameBuffers) -> Result<(), DecoderError> {
-    if buffers.planes.len() < 3 {
-        return Err(DecoderError::Unsupported(
-            "AV1 monochrome RGBA conversion is not supported yet".to_string(),
-        ));
-    }
-    if buffers
-        .planes
-        .iter()
-        .take(3)
-        .any(|plane| plane.layout.width != buffers.width || plane.layout.height != buffers.height)
-    {
-        return Err(DecoderError::Unsupported(
-            "AV1 subsampled RGBA conversion is not supported yet".to_string(),
-        ));
-    }
+    let _ = buffers;
     Ok(())
 }
 
@@ -271,6 +270,10 @@ impl MatrixCoefficients {
     fn from_av1(matrix_coefficients: u8) -> Result<Self, DecoderError> {
         match matrix_coefficients {
             1 => Ok(Self {
+                kr: 0.2126,
+                kb: 0.0722,
+            }),
+            2 => Ok(Self {
                 kr: 0.2126,
                 kb: 0.0722,
             }),

@@ -22,7 +22,7 @@ fn cfl_prediction_applies_signed_q3_luma_ac() {
         samples: (0..16).collect(),
     };
     let mut positive = vec![128; 16];
-    apply_cfl_prediction(&mut positive, &luma, 0, 0, 4, 4, 8, 8).unwrap();
+    apply_cfl_prediction(&mut positive, &luma, 0, 0, 4, 4, 8, 8, 0, 0).unwrap();
     assert_eq!(
         positive,
         vec![
@@ -31,7 +31,7 @@ fn cfl_prediction_applies_signed_q3_luma_ac() {
     );
 
     let mut negative = vec![128; 16];
-    apply_cfl_prediction(&mut negative, &luma, 0, 0, 4, 4, -8, 8).unwrap();
+    apply_cfl_prediction(&mut negative, &luma, 0, 0, 4, 4, -8, 8, 0, 0).unwrap();
     assert_eq!(
         negative,
         vec![
@@ -40,7 +40,7 @@ fn cfl_prediction_applies_signed_q3_luma_ac() {
     );
 
     let mut zero = vec![128; 16];
-    apply_cfl_prediction(&mut zero, &luma, 0, 0, 4, 4, 0, 8).unwrap();
+    apply_cfl_prediction(&mut zero, &luma, 0, 0, 4, 4, 0, 8, 0, 0).unwrap();
     assert_eq!(zero, vec![128; 16]);
 }
 

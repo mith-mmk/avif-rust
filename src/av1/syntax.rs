@@ -493,6 +493,31 @@ pub enum TxSize {
 }
 
 impl TxSize {
+    pub fn from_dimensions(width: usize, height: usize) -> Option<Self> {
+        match (width, height) {
+            (4, 4) => Some(Self::Tx4x4),
+            (8, 8) => Some(Self::Tx8x8),
+            (16, 16) => Some(Self::Tx16x16),
+            (32, 32) => Some(Self::Tx32x32),
+            (64, 64) => Some(Self::Tx64x64),
+            (4, 8) => Some(Self::Tx4x8),
+            (8, 4) => Some(Self::Tx8x4),
+            (8, 16) => Some(Self::Tx8x16),
+            (16, 8) => Some(Self::Tx16x8),
+            (16, 32) => Some(Self::Tx16x32),
+            (32, 16) => Some(Self::Tx32x16),
+            (32, 64) => Some(Self::Tx32x64),
+            (64, 32) => Some(Self::Tx64x32),
+            (4, 16) => Some(Self::Tx4x16),
+            (16, 4) => Some(Self::Tx16x4),
+            (8, 32) => Some(Self::Tx8x32),
+            (32, 8) => Some(Self::Tx32x8),
+            (16, 64) => Some(Self::Tx16x64),
+            (64, 16) => Some(Self::Tx64x16),
+            _ => None,
+        }
+    }
+
     pub fn width(self) -> usize {
         1usize << self.width_log2()
     }

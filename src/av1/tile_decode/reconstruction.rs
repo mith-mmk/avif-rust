@@ -39,11 +39,19 @@ pub(super) fn decode_plane_block_unit(
     let layout = plan.planes.get(plane_index).ok_or_else(|| {
         DecoderError::Bitstream(format!("AV1 plane {plane_index} decode plan is missing"))
     })?;
-    if layout.subsampling_x != 0 || layout.subsampling_y != 0 {
-        return Err(DecoderError::Unsupported(
-            "AV1 subsampled chroma block reconstruction is not supported yet".to_string(),
-        ));
-    }
+    let subsampling_x = usize::from(layout.subsampling_x);
+    let subsampling_y = usize::from(layout.subsampling_y);
+    let coded_width = decoder.mi_cols << 2;
+    let coded_height = decoder.mi_rows << 2;
+    let plane_width = ceil_shift(coded_width, subsampling_x);
+    let plane_height = ceil_shift(coded_height, subsampling_y);
+    let block_x = plane_block_origin(x, block_mode.block_size.width(), subsampling_x);
+    let block_y = plane_block_origin(y, block_mode.block_size.height(), subsampling_y);
+    let plane_block_size = if plane_index == 0 {
+        block_mode.block_size
+    } else {
+        plane_block_size(block_mode.block_size, subsampling_x, subsampling_y)
+    };
     let (luma_plane, plane) = if plane_index == 0 {
         let plane = buffers.planes.get_mut(0).ok_or_else(|| {
             DecoderError::Bitstream("AV1 luma plane buffer is missing".to_string())
@@ -60,7 +68,11 @@ pub(super) fn decode_plane_block_unit(
         (Some(luma), plane)
     };
     let tx_size = if plane_index > 0 && !frame.quantization.coded_lossless() {
-        match block_mode.block_size.largest_supported_rect_tx_size() {
+        // Chroma uses the largest rectangular transform for its scaled plane
+        // block. Scaling the luma transform independently would turn, for
+        // example, a 16x8 luma block into a 4x4 chroma transform, while AV1
+        // requires the 8x4 plane transform for 4:2:0.
+        match plane_block_size.largest_supported_rect_tx_size() {
             // AOM limits chroma transforms with a 64-pixel dimension to the
             // corresponding 32-pixel form, while preserving other rectangles.
             TxSize::Tx64x64 | TxSize::Tx64x32 | TxSize::Tx32x64 => TxSize::Tx32x32,
@@ -69,19 +81,43 @@ pub(super) fn decode_plane_block_unit(
             tx_size => tx_size,
         }
     } else {
-        block_mode.tx_size
+        if plane_index == 0 {
+            block_mode.tx_size
+        } else {
+            scale_tx_size(block_mode.tx_size, subsampling_x, subsampling_y)
+        }
     };
-    let transforms = plan_transform_blocks_with_tx_size(
-        plane_index,
-        x,
-        y,
-        block_mode.block_size,
-        tx_size,
-        decoder.mi_cols << 2,
-        decoder.mi_rows << 2,
-    )
+    let transforms = if subsampling_x == 0 && subsampling_y == 0 {
+        plan_transform_blocks_with_tx_size(
+            plane_index,
+            x,
+            y,
+            block_mode.block_size,
+            tx_size,
+            decoder.mi_cols << 2,
+            decoder.mi_rows << 2,
+        )
+    } else {
+        plan_transform_blocks_with_tx_size(
+            plane_index,
+            block_x,
+            block_y,
+            plane_block_size,
+            tx_size,
+            plane_width,
+            plane_height,
+        )
+    }
+    .into_iter()
     .into_iter()
     .filter(|transform| {
+        let unit_x = plane_block_origin(unit_x, block_mode.block_size.width(), subsampling_x);
+        let unit_y = plane_block_origin(unit_y, block_mode.block_size.height(), subsampling_y);
+        // A chroma reference made from a sub-8x8 luma block still carries a
+        // legal 4x4 chroma residual block. Keep the minimum plane unit at
+        // 4x4 instead of filtering that transform out as a 2-pixel unit.
+        let unit_width = ceil_shift(unit_width, subsampling_x).max(4);
+        let unit_height = ceil_shift(unit_height, subsampling_y).max(4);
         transform.x >= unit_x
             && transform.x < unit_x.saturating_add(unit_width)
             && transform.y >= unit_y
@@ -101,8 +137,8 @@ pub(super) fn decode_plane_block_unit(
                 block_mode,
                 plane_index,
                 prediction_mode,
-                x,
-                y,
+                block_x,
+                block_y,
                 transform.x,
                 transform.y,
                 transform.tx_size.width(),
@@ -116,6 +152,8 @@ pub(super) fn decode_plane_block_unit(
                 bottom_left_available,
                 luma_plane,
                 cfl_alpha_q3,
+                subsampling_x,
+                subsampling_y,
             )?;
             write_plane_block(
                 plane,
@@ -132,7 +170,7 @@ pub(super) fn decode_plane_block_unit(
 
     let mut decoded = Vec::new();
     for transform in transforms {
-        let txb_context = decoder.txb_context(block_mode.block_size, transform);
+        let txb_context = decoder.txb_context(plane_block_size, transform);
         let skip_cdf = decoder
             .cdf
             .txb_skip_cdf_mut(transform.tx_size.coeff_cdf_index(), txb_context.skip);
@@ -150,8 +188,8 @@ pub(super) fn decode_plane_block_unit(
                 block_mode,
                 plane_index,
                 prediction_mode,
-                x,
-                y,
+                block_x,
+                block_y,
                 transform.x,
                 transform.y,
                 transform.tx_size.width(),
@@ -165,6 +203,8 @@ pub(super) fn decode_plane_block_unit(
                 bottom_left_available,
                 luma_plane,
                 cfl_alpha_q3,
+                subsampling_x,
+                subsampling_y,
             )?;
             write_plane_block(
                 plane,
@@ -200,8 +240,8 @@ pub(super) fn decode_plane_block_unit(
             block_mode,
             plane_index,
             prediction_mode,
-            x,
-            y,
+            block_x,
+            block_y,
             transform.x,
             transform.y,
             transform.tx_size.width(),
@@ -215,6 +255,8 @@ pub(super) fn decode_plane_block_unit(
             bottom_left_available,
             luma_plane,
             cfl_alpha_q3,
+            subsampling_x,
+            subsampling_y,
         )?;
         let quantized = QuantizedTransform {
             block: decoded_transform.transform,
@@ -312,6 +354,69 @@ pub(super) fn predict_block(
     )
 }
 
+fn ceil_shift(value: usize, shift: usize) -> usize {
+    (value + ((1usize << shift) - 1)) >> shift
+}
+
+fn plane_block_origin(luma_origin: usize, luma_extent: usize, subsampling: usize) -> usize {
+    if subsampling > 0 && luma_extent == 4 {
+        luma_origin.saturating_sub(4) >> subsampling
+    } else {
+        luma_origin >> subsampling
+    }
+}
+
+fn scale_tx_size(tx_size: TxSize, subsampling_x: usize, subsampling_y: usize) -> TxSize {
+    let width = ceil_shift(tx_size.width(), subsampling_x).max(4);
+    let height = ceil_shift(tx_size.height(), subsampling_y).max(4);
+    TxSize::from_dimensions(width, height)
+        .or_else(|| {
+            if width == 4 && height > 16 {
+                Some(TxSize::Tx4x16)
+            } else if height == 4 && width > 16 {
+                Some(TxSize::Tx16x4)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(TxSize::Tx4x4)
+}
+
+fn plane_block_size(
+    block_size: crate::av1::syntax::BlockSize,
+    subsampling_x: usize,
+    subsampling_y: usize,
+) -> crate::av1::syntax::BlockSize {
+    use crate::av1::syntax::BlockSize;
+
+    if subsampling_x == 0 && subsampling_y == 0 {
+        return block_size;
+    }
+
+    // AV1's scale_chroma_bsize enlarges the narrow 4-pixel luma shapes before
+    // converting them to plane coordinates. This keeps a sub-8x8 luma block
+    // represented by a legal 4x4 chroma block instead of a 2x4/4x2 shape.
+    let scaled = match block_size {
+        BlockSize::Block4x4 if subsampling_x == 1 && subsampling_y == 1 => BlockSize::Block8x8,
+        BlockSize::Block4x4 if subsampling_x == 1 => BlockSize::Block8x4,
+        BlockSize::Block4x4 if subsampling_y == 1 => BlockSize::Block4x8,
+        BlockSize::Block4x8 if subsampling_x == 1 => BlockSize::Block8x8,
+        BlockSize::Block4x8 if subsampling_y == 1 => BlockSize::Block4x8,
+        BlockSize::Block8x4 if subsampling_x == 1 => BlockSize::Block8x4,
+        BlockSize::Block8x4 if subsampling_y == 1 => BlockSize::Block8x8,
+        BlockSize::Block4x16 if subsampling_x == 1 => BlockSize::Block8x16,
+        BlockSize::Block4x16 if subsampling_y == 1 => BlockSize::Block4x16,
+        BlockSize::Block16x4 if subsampling_x == 1 => BlockSize::Block16x4,
+        BlockSize::Block16x4 if subsampling_y == 1 => BlockSize::Block16x8,
+        _ => block_size,
+    };
+    BlockSize::from_dimensions(
+        ceil_shift(scaled.width(), subsampling_x).max(4),
+        ceil_shift(scaled.height(), subsampling_y).max(4),
+    )
+    .unwrap_or(BlockSize::Block4x4)
+}
+
 fn predict_plane_block(
     plane: &PlaneBuffer,
     block_mode: &BlockModeProbe,
@@ -332,6 +437,8 @@ fn predict_plane_block(
     bottom_left_available: usize,
     luma_plane: Option<&PlaneBuffer>,
     cfl_alpha_q3: Option<i8>,
+    subsampling_x: usize,
+    subsampling_y: usize,
 ) -> Result<Vec<u16>, DecoderError> {
     if filter_intra_mode.is_none() && prediction_mode == PredictionMode::Dc {
         let palette_prediction = if plane_index == 0 {
@@ -394,6 +501,8 @@ fn predict_plane_block(
             height,
             alpha_q3,
             bit_depth,
+            subsampling_x,
+            subsampling_y,
         )?;
     }
     Ok(prediction)
@@ -408,6 +517,8 @@ pub(super) fn apply_cfl_prediction(
     height: usize,
     alpha_q3: i8,
     bit_depth: u8,
+    subsampling_x: usize,
+    subsampling_y: usize,
 ) -> Result<(), DecoderError> {
     let sample_count = width.checked_mul(height).ok_or_else(|| {
         DecoderError::InvalidParam("AV1 CFL transform dimensions are too large".to_string())
@@ -428,10 +539,20 @@ pub(super) fn apply_cfl_prediction(
     let mut luma_q3 = Vec::with_capacity(sample_count);
     let mut sum = 0i64;
     for row in 0..height {
-        let source_y = (y + row).min(luma_height - 1);
         for col in 0..width {
-            let source_x = (x + col).min(luma_width - 1);
-            let value_q3 = i32::from(luma_plane.samples[source_y * luma_width + source_x]) << 3;
+            let source_x = (x + col) << subsampling_x;
+            let source_y = (y + row) << subsampling_y;
+            let mut luma_sum = 0u32;
+            let sample_count = 1usize << (subsampling_x + subsampling_y);
+            for luma_row in 0..(1usize << subsampling_y) {
+                let source_y = (source_y + luma_row).min(luma_height - 1);
+                for luma_col in 0..(1usize << subsampling_x) {
+                    let source_x = (source_x + luma_col).min(luma_width - 1);
+                    luma_sum += u32::from(luma_plane.samples[source_y * luma_width + source_x]);
+                }
+            }
+            let value = (luma_sum + (sample_count as u32 / 2)) / sample_count as u32;
+            let value_q3 = (value as i32) << 3;
             luma_q3.push(value_q3);
             sum += i64::from(value_q3);
         }

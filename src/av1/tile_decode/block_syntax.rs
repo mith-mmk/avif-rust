@@ -18,6 +18,22 @@ impl<'a> TileDecoder<'a> {
         x: usize,
         y: usize,
     ) -> Result<BlockModeProbe, DecoderError> {
+        self.read_intra_frame_block_mode_with_chroma_reference(
+            sequence, frame, tile, block_size, x, y, true,
+        )
+    }
+
+    pub fn read_intra_frame_block_mode_with_chroma_reference(
+        &mut self,
+        sequence: &SequenceHeader,
+        frame: &FrameHeader,
+        tile: &TileDecodePlan,
+        block_size: BlockSize,
+        x: usize,
+        y: usize,
+        chroma_reference: bool,
+    ) -> Result<BlockModeProbe, DecoderError> {
+        self.configure_plane_entropy_contexts(sequence);
         self.current_cfl = None;
         if frame.delta_q.present {
             return Err(DecoderError::Unsupported(
@@ -41,14 +57,6 @@ impl<'a> TileDecoder<'a> {
             .read_symbol(self.cdf.skip_cdf_mut(skip_context))?;
         let skip = skip_symbol != 0;
         let cdef_idx = self.read_cdef_index(sequence, frame, skip, x, y)?;
-        let trace_stage =
-            std::env::var_os("AVIF_TRACE_WML2_STAGES").is_some() && x == 80 && y == 28;
-        if trace_stage {
-            eprintln!(
-                "Rust stage skip ctx={skip_context} symbol={skip_symbol} state={:?}",
-                self.reader.trace_state()
-            );
-        }
 
         let y_above_context = self.above_y_mode_context(x, y);
         let y_left_context = self.left_y_mode_context(x, y);
@@ -60,20 +68,19 @@ impl<'a> TileDecoder<'a> {
             DecoderError::Bitstream(format!("AV1 y_mode symbol {y_mode_symbol} is invalid"))
         })?;
         let use_angle_delta = use_angle_delta(block_size);
-        if trace_stage {
-            eprintln!(
-                "Rust stage y_mode symbol={y_mode_symbol} mode={y_mode:?} state={:?}",
-                self.reader.trace_state()
-            );
-        }
         let angle_delta_y = if use_angle_delta && y_mode.is_directional() {
             Some(self.read_angle_delta(y_mode.directional_index().unwrap())?)
         } else {
             None
         };
-        let has_chroma = !sequence.color_config.monochrome;
+        let has_chroma = !sequence.color_config.monochrome && chroma_reference;
         let (uv_mode_symbol, uv_mode, angle_delta_uv) = if has_chroma {
-            let cfl_allowed = cfl_is_allowed(frame.quantization.coded_lossless(), block_size);
+            let cfl_allowed = cfl_is_allowed(
+                frame.quantization.coded_lossless(),
+                block_size,
+                sequence.color_config.subsampling_x,
+                sequence.color_config.subsampling_y,
+            );
             let uv_symbol = if cfl_allowed {
                 self.reader
                     .read_symbol(self.cdf.uv_mode_cfl_allowed_cdf_mut(y_mode_symbol))?
@@ -84,12 +91,6 @@ impl<'a> TileDecoder<'a> {
             let uv_mode = UvPredictionMode::from_symbol(uv_symbol).ok_or_else(|| {
                 DecoderError::Bitstream(format!("AV1 uv_mode symbol {uv_symbol} is invalid"))
             })?;
-            if trace_stage {
-                eprintln!(
-                    "Rust stage uv symbol={uv_symbol} mode={uv_mode:?} state={:?}",
-                    self.reader.trace_state()
-                );
-            }
             if uv_mode == UvPredictionMode::Cfl {
                 self.current_cfl = Some(self.read_cfl_params()?);
             }
@@ -102,19 +103,8 @@ impl<'a> TileDecoder<'a> {
         } else {
             (None, None, None)
         };
-        if std::env::var_os("AVIF_TRACE_WML2_MODES").is_some() && x == 88 && y == 16 {
-            eprintln!("Rust x88 after uv state={:?}", self.reader.trace_state());
-        }
         let palette =
             self.read_palette_mode_info(sequence, frame, block_size, x, y, y_mode, uv_mode)?;
-        if std::env::var_os("AVIF_TRACE_WML2_MODES").is_some() && x == 88 && y == 16 {
-            eprintln!(
-                "Rust x88 palette y={:?} uv={:?} state={:?}",
-                palette.y.as_ref().map(|value| value.colors.len()),
-                palette.uv.as_ref().map(|value| value.colors.len() / 2),
-                self.reader.trace_state()
-            );
-        }
         let mut filter_intra_mode = None;
         if sequence.enable_filter_intra
             && block_size.width() <= 32
@@ -146,12 +136,6 @@ impl<'a> TileDecoder<'a> {
         self.set_skip_context(x, y, block_size, skip);
         let mut palette = palette;
         self.read_palette_tokens(sequence, block_size, x, y, &mut palette)?;
-        if std::env::var_os("AVIF_TRACE_WML2_MODES").is_some() && x == 88 && y == 16 {
-            eprintln!(
-                "Rust x88 palette tokens state={:?}",
-                self.reader.trace_state()
-            );
-        }
         let (tx_size_context, tx_size_symbol, tx_size) =
             self.read_intra_tx_size(frame, block_size, skip, x, y)?;
 
@@ -377,12 +361,23 @@ impl<'a> TileDecoder<'a> {
     }
 }
 
-pub(super) fn cfl_is_allowed(coded_lossless: bool, block_size: BlockSize) -> bool {
+pub(super) fn cfl_is_allowed(
+    coded_lossless: bool,
+    block_size: BlockSize,
+    subsampling_x: bool,
+    subsampling_y: bool,
+) -> bool {
     if coded_lossless {
-        block_size == BlockSize::Block4x4
+        let plane_width = ceil_shift(block_size.width(), usize::from(subsampling_x)).max(4);
+        let plane_height = ceil_shift(block_size.height(), usize::from(subsampling_y)).max(4);
+        plane_width == 4 && plane_height == 4
     } else {
         block_size.width() <= 32 && block_size.height() <= 32
     }
+}
+
+fn ceil_shift(value: usize, shift: usize) -> usize {
+    (value + ((1usize << shift) - 1)) >> shift
 }
 
 pub(super) fn use_angle_delta(block_size: BlockSize) -> bool {

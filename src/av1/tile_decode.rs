@@ -1,6 +1,7 @@
 use super::cdf::CdfContext;
 use super::entropy::EntropyDecoder;
 use super::frame::{FrameHeader, RestorationParams};
+use super::sequence::SequenceHeader;
 use super::syntax::{BlockSize, TxSize, TxType, mi_dimension};
 use super::transform::{TransformBlock, coefficient_scan};
 use crate::DecoderError;
@@ -137,6 +138,9 @@ pub struct TileDecoder<'a> {
     reconstructed_mi_grid: [Vec<bool>; 3],
     current_cfl: Option<CflParams>,
     plane_entropy_contexts: [PlaneEntropyContexts; 3],
+    plane_entropy_contexts_configured: bool,
+    plane_subsampling_x: [usize; 3],
+    plane_subsampling_y: [usize; 3],
     restoration: RestorationParams,
     wiener_refs: [[[i16; 3]; 2]; 3],
     sgrproj_refs: [[i16; 2]; 3],
@@ -145,6 +149,23 @@ pub struct TileDecoder<'a> {
     transform_boundaries: Vec<post_filter_state::TransformBoundary>,
     restoration_units: Vec<post_filter_state::RestorationUnit>,
     block_filter_states: Vec<post_filter_state::BlockFilterState>,
+}
+
+pub(super) fn is_chroma_reference(
+    sequence: &SequenceHeader,
+    block_size: BlockSize,
+    x: usize,
+    y: usize,
+) -> bool {
+    if sequence.color_config.monochrome {
+        return false;
+    }
+    let mi_col = x / 4;
+    let mi_row = y / 4;
+    let block_mi_width = block_size.width() / 4;
+    let block_mi_height = block_size.height() / 4;
+    (mi_row % 2 != 0 || block_mi_height % 2 == 0 || !sequence.color_config.subsampling_y)
+        && (mi_col % 2 != 0 || block_mi_width % 2 == 0 || !sequence.color_config.subsampling_x)
 }
 
 impl<'a> TileDecoder<'a> {
@@ -180,6 +201,9 @@ impl<'a> TileDecoder<'a> {
                 above: vec![0; mi_cols],
                 left: vec![0; mi_rows],
             }),
+            plane_entropy_contexts_configured: false,
+            plane_subsampling_x: [0; 3],
+            plane_subsampling_y: [0; 3],
             restoration: frame.restoration,
             // Chroma Wiener restoration uses the reduced 5-tap window, so
             // its outer coefficient is implicit zero and is not signaled.
@@ -200,6 +224,23 @@ impl<'a> TileDecoder<'a> {
     ) -> TxbContext {
         let contexts = &self.plane_entropy_contexts[transform.plane];
         txb_context(block_size, transform, &contexts.above, &contexts.left)
+    }
+
+    pub(super) fn configure_plane_entropy_contexts(&mut self, sequence: &SequenceHeader) {
+        if self.plane_entropy_contexts_configured {
+            return;
+        }
+        for plane in 0..3 {
+            let subsampling_x = usize::from(plane > 0 && sequence.color_config.subsampling_x);
+            let subsampling_y = usize::from(plane > 0 && sequence.color_config.subsampling_y);
+            self.plane_subsampling_x[plane] = subsampling_x;
+            self.plane_subsampling_y[plane] = subsampling_y;
+            self.plane_entropy_contexts[plane].above =
+                vec![0; self.mi_cols.div_ceil(1usize << subsampling_x)];
+            self.plane_entropy_contexts[plane].left =
+                vec![0; self.mi_rows.div_ceil(1usize << subsampling_y)];
+        }
+        self.plane_entropy_contexts_configured = true;
     }
 
     pub(super) fn set_txb_entropy_context(&mut self, transform: TransformBlock, value: u8) {

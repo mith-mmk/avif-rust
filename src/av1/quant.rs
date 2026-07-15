@@ -48,7 +48,7 @@ pub struct QuantState {
 
 impl QuantState {
     pub fn from_params(params: &QuantizationParams, bit_depth: u8) -> Result<Self, DecoderError> {
-        if bit_depth != 8 {
+        if !matches!(bit_depth, 8 | 10 | 12) {
             return Err(DecoderError::Unsupported(format!(
                 "AV1 {bit_depth}-bit quantization is not supported yet"
             )));
@@ -56,16 +56,16 @@ impl QuantState {
         let base = i32::from(params.base_q_idx);
         Ok(Self {
             y: PlaneQuant {
-                dc: dc_q(base + i32::from(params.delta_q_y_dc)),
-                ac: ac_q(base),
+                dc: dc_q(base + i32::from(params.delta_q_y_dc), bit_depth),
+                ac: ac_q(base, bit_depth),
             },
             u: PlaneQuant {
-                dc: dc_q(base + i32::from(params.delta_q_u_dc)),
-                ac: ac_q(base + i32::from(params.delta_q_u_ac)),
+                dc: dc_q(base + i32::from(params.delta_q_u_dc), bit_depth),
+                ac: ac_q(base + i32::from(params.delta_q_u_ac), bit_depth),
             },
             v: PlaneQuant {
-                dc: dc_q(base + i32::from(params.delta_q_v_dc)),
-                ac: ac_q(base + i32::from(params.delta_q_v_ac)),
+                dc: dc_q(base + i32::from(params.delta_q_v_dc), bit_depth),
+                ac: ac_q(base + i32::from(params.delta_q_v_ac), bit_depth),
             },
         })
     }
@@ -103,12 +103,16 @@ pub fn dequantize_coefficients(
         .collect()
 }
 
-fn dc_q(qindex: i32) -> i32 {
-    DC_QLOOKUP_8[clip_qindex(qindex)]
+fn dc_q(qindex: i32, bit_depth: u8) -> i32 {
+    scale_quant(DC_QLOOKUP_8[clip_qindex(qindex)], bit_depth)
 }
 
-fn ac_q(qindex: i32) -> i32 {
-    AC_QLOOKUP_8[clip_qindex(qindex)]
+fn ac_q(qindex: i32, bit_depth: u8) -> i32 {
+    scale_quant(AC_QLOOKUP_8[clip_qindex(qindex)], bit_depth)
+}
+
+fn scale_quant(value: i32, bit_depth: u8) -> i32 {
+    value << bit_depth.saturating_sub(8)
 }
 
 fn clip_qindex(qindex: i32) -> usize {
@@ -121,12 +125,18 @@ mod tests {
 
     #[test]
     fn qlookup_8_matches_spec_endpoints() {
-        assert_eq!(dc_q(-1), 4);
-        assert_eq!(dc_q(0), 4);
-        assert_eq!(dc_q(255), 1336);
-        assert_eq!(dc_q(256), 1336);
-        assert_eq!(ac_q(0), 4);
-        assert_eq!(ac_q(255), 1828);
+        assert_eq!(dc_q(-1, 8), 4);
+        assert_eq!(dc_q(0, 8), 4);
+        assert_eq!(dc_q(255, 8), 1336);
+        assert_eq!(dc_q(256, 8), 1336);
+        assert_eq!(ac_q(0, 8), 4);
+        assert_eq!(ac_q(255, 8), 1828);
+    }
+
+    #[test]
+    fn qlookup_scales_with_bit_depth() {
+        assert_eq!(dc_q(255, 10), 1336 * 4);
+        assert_eq!(ac_q(255, 12), 1828 * 16);
     }
 
     #[test]
@@ -143,12 +153,12 @@ mod tests {
 
         let state = QuantState::from_params(&params, 8).unwrap();
 
-        assert_eq!(state.y.dc, dc_q(101));
-        assert_eq!(state.y.ac, ac_q(100));
-        assert_eq!(state.u.dc, dc_q(102));
-        assert_eq!(state.u.ac, ac_q(103));
-        assert_eq!(state.v.dc, dc_q(98));
-        assert_eq!(state.v.ac, ac_q(97));
+        assert_eq!(state.y.dc, dc_q(101, 8));
+        assert_eq!(state.y.ac, ac_q(100, 8));
+        assert_eq!(state.u.dc, dc_q(102, 8));
+        assert_eq!(state.u.ac, ac_q(103, 8));
+        assert_eq!(state.v.dc, dc_q(98, 8));
+        assert_eq!(state.v.ac, ac_q(97, 8));
     }
 
     #[test]

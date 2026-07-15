@@ -15,7 +15,9 @@ use crate::av1::{
     sgrproj_filter_unit, wiener_filter_unit,
 };
 use crate::compat::{DataMap, DecodeOptions, InitOptions};
-use crate::container::{AvifInfo, ColorInformation, parse_avif};
+use crate::container::{
+    AvifInfo, CleanAperture, ColorInformation, ImageMirror, ImageRotation, parse_avif,
+};
 use crate::obu::{ObuType, count_obus, find_obu_payloads};
 use crate::{DecoderError, ImageBuffer, Rgba16ImageBuffer};
 use bin_rs::reader::BinaryReader;
@@ -98,7 +100,8 @@ impl DecodedFrame {
         if self
             .color_information
             .as_ref()
-            .is_some_and(|color| color.icc_profile().is_some())
+            .and_then(ColorInformation::icc_profile)
+            .is_some()
         {
             return Err(DecoderError::Unsupported(
                 "AVIF ICC colour management for RGBA conversion is not supported yet".to_string(),
@@ -295,7 +298,180 @@ fn decode_still_image(
     info: Option<&AvifInfo>,
 ) -> Result<ImageBuffer, DecoderError> {
     let frame = decode_still_frame(headers, info)?;
-    frame.to_rgba8()
+    let mut image = frame.to_rgba8()?;
+    if let Some(info) = info {
+        if !info.alpha_auxiliary_items.is_empty() {
+            apply_alpha_auxiliary(&mut image, info)?;
+        }
+        apply_clean_aperture(&mut image, info.clean_aperture)?;
+        apply_mirror(&mut image, info.mirror)?;
+        apply_rotation(&mut image, info.rotation)?;
+    }
+    Ok(image)
+}
+
+fn apply_alpha_auxiliary(image: &mut ImageBuffer, info: &AvifInfo) -> Result<(), DecoderError> {
+    let auxiliary = info.alpha_auxiliary_items.first().ok_or_else(|| {
+        DecoderError::Bitstream("AVIF alpha auxiliary item is missing".to_string())
+    })?;
+    let alpha_info = AvifInfo {
+        major_brand: info.major_brand,
+        compatible_brands: info.compatible_brands.clone(),
+        primary_item_id: None,
+        width: None,
+        height: None,
+        pixel_information: None,
+        color_information: None,
+        alpha_premultiplied: false,
+        alpha_auxiliary_items: Vec::new(),
+        primary_grid: None,
+        clean_aperture: None,
+        rotation: None,
+        mirror: None,
+        av1_config: None,
+        primary_item_payload: auxiliary.payload.clone(),
+    };
+    let headers = parse_av1_headers(&alpha_info)?;
+    let frame = decode_still_frame(&headers, None)?;
+    let alpha_plane = frame.buffers.planes.first().ok_or_else(|| {
+        DecoderError::Bitstream("AVIF alpha auxiliary plane is missing".to_string())
+    })?;
+    if frame.width != image.width || frame.height != image.height {
+        return Err(DecoderError::Bitstream(
+            "AVIF alpha auxiliary dimensions do not match the primary image".to_string(),
+        ));
+    }
+    for y in 0..image.height {
+        for x in 0..image.width {
+            let alpha_x = (x >> usize::from(alpha_plane.layout.subsampling_x))
+                .min(alpha_plane.layout.width.saturating_sub(1));
+            let alpha_y = (y >> usize::from(alpha_plane.layout.subsampling_y))
+                .min(alpha_plane.layout.height.saturating_sub(1));
+            let alpha = scale_sample_to_u8(
+                alpha_plane.samples[alpha_y * alpha_plane.layout.width + alpha_x],
+                frame.bit_depth,
+            );
+            image.rgba[(y * image.width + x) * 4 + 3] = alpha;
+        }
+    }
+    Ok(())
+}
+
+fn scale_sample_to_u8(sample: u16, bit_depth: u8) -> u8 {
+    let maximum = (1u32 << bit_depth) - 1;
+    ((u32::from(sample) * 255 + maximum / 2) / maximum) as u8
+}
+
+fn apply_clean_aperture(
+    image: &mut ImageBuffer,
+    aperture: Option<CleanAperture>,
+) -> Result<(), DecoderError> {
+    let Some(aperture) = aperture else {
+        return Ok(());
+    };
+    if aperture.width_d == 0
+        || aperture.height_d == 0
+        || aperture.horizontal_offset_d == 0
+        || aperture.vertical_offset_d == 0
+    {
+        return Err(DecoderError::Bitstream(
+            "AVIF clean aperture has a zero denominator".to_string(),
+        ));
+    }
+    let width = (u64::from(aperture.width_n) / u64::from(aperture.width_d)) as usize;
+    let height = (u64::from(aperture.height_n) / u64::from(aperture.height_d)) as usize;
+    let center_x = image.width as i64 / 2;
+    let center_y = image.height as i64 / 2;
+    let offset_x_n = i32::from_be_bytes(aperture.horizontal_offset_n.to_be_bytes());
+    let offset_y_n = i32::from_be_bytes(aperture.vertical_offset_n.to_be_bytes());
+    let offset_x = i64::from(offset_x_n) / i64::from(aperture.horizontal_offset_d);
+    let offset_y = i64::from(offset_y_n) / i64::from(aperture.vertical_offset_d);
+    let start_x = center_x + offset_x - width as i64 / 2;
+    let start_y = center_y + offset_y - height as i64 / 2;
+    if width == 0
+        || height == 0
+        || start_x < 0
+        || start_y < 0
+        || start_x as usize + width > image.width
+        || start_y as usize + height > image.height
+    {
+        return Err(DecoderError::Bitstream(
+            "AVIF clean aperture is outside the decoded image".to_string(),
+        ));
+    }
+    let mut cropped = vec![0; width * height * 4];
+    for row in 0..height {
+        let src = ((start_y as usize + row) * image.width + start_x as usize) * 4;
+        let dst = row * width * 4;
+        cropped[dst..dst + width * 4].copy_from_slice(&image.rgba[src..src + width * 4]);
+    }
+    image.width = width;
+    image.height = height;
+    image.rgba = cropped;
+    Ok(())
+}
+
+fn apply_mirror(image: &mut ImageBuffer, mirror: Option<ImageMirror>) -> Result<(), DecoderError> {
+    let Some(mirror) = mirror else {
+        return Ok(());
+    };
+    if mirror.axis > 1 {
+        return Err(DecoderError::Bitstream(format!(
+            "AVIF mirror axis {} is invalid",
+            mirror.axis
+        )));
+    }
+    let horizontal = mirror.axis == 0;
+    let mut transformed = vec![0; image.rgba.len()];
+    for y in 0..image.height {
+        for x in 0..image.width {
+            let (source_x, source_y) = if horizontal {
+                (image.width - 1 - x, y)
+            } else {
+                (x, image.height - 1 - y)
+            };
+            let source = (source_y * image.width + source_x) * 4;
+            let destination = (y * image.width + x) * 4;
+            transformed[destination..destination + 4]
+                .copy_from_slice(&image.rgba[source..source + 4]);
+        }
+    }
+    image.rgba = transformed;
+    Ok(())
+}
+
+fn apply_rotation(
+    image: &mut ImageBuffer,
+    rotation: Option<ImageRotation>,
+) -> Result<(), DecoderError> {
+    let Some(rotation) = rotation else {
+        return Ok(());
+    };
+    if rotation.angle > 3 {
+        return Err(DecoderError::Bitstream(format!(
+            "AVIF rotation angle {} is invalid",
+            rotation.angle
+        )));
+    }
+    for _ in 0..rotation.angle {
+        let mut transformed = vec![0; image.rgba.len()];
+        let new_width = image.height;
+        let new_height = image.width;
+        for y in 0..image.height {
+            for x in 0..image.width {
+                let destination_x = image.height - 1 - y;
+                let destination_y = x;
+                let source = (y * image.width + x) * 4;
+                let destination = (destination_y * new_width + destination_x) * 4;
+                transformed[destination..destination + 4]
+                    .copy_from_slice(&image.rgba[source..source + 4]);
+            }
+        }
+        image.width = new_width;
+        image.height = new_height;
+        image.rgba = transformed;
+    }
+    Ok(())
 }
 
 fn decode_still_frame(
@@ -382,6 +558,10 @@ fn apply_deblock_stage(
                 if block.plane != plane_index {
                     continue;
                 }
+                let subsampling_x =
+                    usize::from(plane_index > 0 && frame.color_config.subsampling_x);
+                let subsampling_y =
+                    usize::from(plane_index > 0 && frame.color_config.subsampling_y);
                 let level = if plane_index == 0 {
                     frame_header.loop_filter.levels[usize::from(!vertical)]
                 } else if plane_index == 1 {
@@ -412,7 +592,7 @@ fn apply_deblock_stage(
                     let current_block = if plane_index == 0 {
                         None
                     } else {
-                        block_filter_state_at(edge_x, edge_y)
+                        block_filter_state_at(edge_x << subsampling_x, edge_y << subsampling_y)
                     };
                     let dimension = if plane_index == 0 {
                         if vertical {
@@ -424,9 +604,9 @@ fn apply_deblock_stage(
                         current_block
                             .map(|current| {
                                 if vertical {
-                                    current.block_size.width().min(64)
+                                    ceil_shift(current.block_size.width(), subsampling_x).min(64)
                                 } else {
-                                    current.block_size.height().min(64)
+                                    ceil_shift(current.block_size.height(), subsampling_y).min(64)
                                 }
                             })
                             .unwrap_or_else(|| {
@@ -440,21 +620,21 @@ fn apply_deblock_stage(
                     let previous_block = if plane_index == 0 {
                         None
                     } else if vertical {
-                        edge_x
-                            .checked_sub(1)
-                            .and_then(|x| block_filter_state_at(x, edge_y))
+                        edge_x.checked_sub(1).and_then(|x| {
+                            block_filter_state_at(x << subsampling_x, edge_y << subsampling_y)
+                        })
                     } else {
-                        edge_y
-                            .checked_sub(1)
-                            .and_then(|y| block_filter_state_at(edge_x, y))
+                        edge_y.checked_sub(1).and_then(|y| {
+                            block_filter_state_at(edge_x << subsampling_x, y << subsampling_y)
+                        })
                     };
                     let previous_dimension = if plane_index != 0 {
                         previous_block
                             .map(|previous| {
                                 if vertical {
-                                    previous.block_size.width().min(64)
+                                    ceil_shift(previous.block_size.width(), subsampling_x).min(64)
                                 } else {
-                                    previous.block_size.height().min(64)
+                                    ceil_shift(previous.block_size.height(), subsampling_y).min(64)
                                 }
                             })
                             .unwrap_or(dimension)
@@ -493,8 +673,8 @@ fn apply_deblock_stage(
                         &mut plane.samples,
                         plane.layout.width,
                         plane.layout.height,
-                        frame.width,
-                        frame.height,
+                        ceil_shift(frame.width, subsampling_x),
+                        ceil_shift(frame.height, subsampling_y),
                         edge_x,
                         edge_y,
                         vertical,
@@ -507,6 +687,10 @@ fn apply_deblock_stage(
             }
         }
     }
+}
+
+fn ceil_shift(value: usize, shift: usize) -> usize {
+    value.div_ceil(1usize << shift)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -770,6 +954,11 @@ fn validate_public_container_preflight(
     info: &AvifInfo,
     rgba_output: bool,
 ) -> Result<(), DecoderError> {
+    if info.major_brand == *b"avis" || info.compatible_brands.iter().any(|brand| brand == b"avis") {
+        return Err(DecoderError::Unsupported(
+            "AVIF sequences are not supported by public decode yet".to_string(),
+        ));
+    }
     if !info.alpha_auxiliary_items.is_empty() {
         return Err(DecoderError::Unsupported(
             "AVIF alpha auxiliary item composition is not supported yet".to_string(),
@@ -777,7 +966,7 @@ fn validate_public_container_preflight(
     }
     if info.primary_grid.is_some() {
         return Err(DecoderError::Unsupported(
-            "AVIF image grid composition is not supported yet".to_string(),
+            "AVIF grid composition is not supported yet".to_string(),
         ));
     }
     if info.clean_aperture.is_some() || info.rotation.is_some() || info.mirror.is_some() {
@@ -789,34 +978,27 @@ fn validate_public_container_preflight(
         && info
             .color_information
             .as_ref()
-            .is_some_and(|color| color.icc_profile().is_some())
+            .and_then(ColorInformation::icc_profile)
+            .is_some()
     {
         return Err(DecoderError::Unsupported(
             "AVIF ICC colour management for RGBA conversion is not supported yet".to_string(),
         ));
     }
-    if let Some(bits) = info.pixel_information.as_ref().and_then(|pixel| {
-        pixel
-            .bits_per_channel
-            .iter()
-            .copied()
-            .find(|bits| *bits != 8)
-    }) {
-        return Err(DecoderError::Unsupported(format!(
-            "{bits}-bit quantization is not supported"
-        )));
-    }
-    if let Some(av1_config) = &info.av1_config {
-        let config = parse_av1_config(av1_config)?;
+    let config = info
+        .av1_config
+        .as_deref()
+        .map(parse_av1_config)
+        .transpose()?;
+    if let Some(config) = config {
         if config.bit_depth() != 8 {
-            return Err(DecoderError::Unsupported(format!(
-                "{}-bit quantization is not supported",
-                config.bit_depth()
-            )));
+            return Err(DecoderError::Unsupported(
+                "10-bit quantization is not supported by public decode yet".to_string(),
+            ));
         }
         if config.monochrome || config.chroma_subsampling_x || config.chroma_subsampling_y {
             return Err(DecoderError::Unsupported(
-                "AVIF 4:4:4 color only public decode is supported".to_string(),
+                "public decode supports 4:4:4 color only".to_string(),
             ));
         }
     }
@@ -824,18 +1006,6 @@ fn validate_public_container_preflight(
 }
 
 fn validate_public_decode_tools(headers: &Av1Headers) -> Result<(), DecoderError> {
-    let color_config = &headers.sequence.color_config;
-    if color_config.bit_depth != 8 {
-        return Err(DecoderError::Unsupported(format!(
-            "{}-bit quantization is not supported",
-            color_config.bit_depth
-        )));
-    }
-    if color_config.monochrome || color_config.subsampling_x || color_config.subsampling_y {
-        return Err(DecoderError::Unsupported(
-            "AVIF 4:4:4 color only public decode is supported".to_string(),
-        ));
-    }
     if headers.sequence.film_grain_params_present {
         return Err(DecoderError::Unsupported(
             "AV1 film grain is not supported by public decode yet".to_string(),
