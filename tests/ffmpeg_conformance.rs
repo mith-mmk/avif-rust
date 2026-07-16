@@ -807,7 +807,7 @@ fn pure_rust_decode_matches_ffmpeg_oracle_and_original_png() {
 }
 
 #[test]
-fn public_transform_samples_cover_crop_and_mirror() {
+fn public_transform_samples_cover_crop_mirror_and_rotate() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root should exist");
@@ -819,6 +819,8 @@ fn public_transform_samples_cover_crop_and_mirror() {
     for (name, expected_width, expected_height) in [
         ("kimono.crop.avif", 385, 330),
         ("kimono.mirror-horizontal.avif", 722, 1024),
+        ("kimono.rotate270.avif", 722, 1024),
+        ("kimono.mirror-vertical.rotate270.avif", 722, 1024),
     ] {
         let path = sample(name);
         if !path.is_file() {
@@ -831,10 +833,45 @@ fn public_transform_samples_cover_crop_and_mirror() {
         let image = avif_rust::image_from_bytes(
             &std::fs::read(&path).expect("transform sample should be readable"),
         )
-        .expect("crop/mirror transform should decode");
+        .expect("crop/mirror/rotate transform should decode");
         assert_eq!(
             (image.width, image.height),
             (expected_width, expected_height)
+        );
+    }
+}
+
+#[test]
+fn public_rotate_transform_samples_match_ffmpeg_when_present() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist");
+    for (name, width, height) in [
+        ("kimono.rotate270.avif", 722, 1024),
+        ("kimono.mirror-vertical.rotate270.avif", 722, 1024),
+    ] {
+        let path = root
+            .join("test/images/external/avif/unsupported")
+            .join(name);
+        if !path.is_file() {
+            eprintln!(
+                "external rotate sample missing; skipping {}",
+                path.display()
+            );
+            return;
+        }
+        let data = std::fs::read(&path).expect("rotate sample should be readable");
+        let actual = avif_rust::image_from_bytes(&data).expect("rotate sample should decode");
+        assert_eq!((actual.width, actual.height), (width, height), "{name}");
+        let Some(expected) = ffmpeg_decode_rgba_dynamic(&path, width, height) else {
+            return;
+        };
+        let metrics = diff_rgb_dynamic(&actual.rgba, &expected);
+        assert!(
+            metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 48,
+            "{name} FFmpeg RGB error average={} max={}",
+            metrics.average_rgb_abs,
+            metrics.max_rgb_abs
         );
     }
 }
