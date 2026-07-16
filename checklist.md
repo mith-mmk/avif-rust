@@ -314,12 +314,13 @@ and RGBA gates.
 
 ### Decode benchmark checkpoint (2026-07-16)
 
-The release benchmark uses `AVIF_BENCH_ITERS=5 cargo bench --bench decode`
-against `samples/WML2Viewer.avif`. Replacing per-8x8 CDEF state scans with
-indexed luma/unit maps and moving the restoration source buffer reduced the
-local optimized median from `508.96/520.11 ms` (native/RGBA) to
-`485.36/488.71 ms` (about 4.6%/6.0%). Keep the image and plane oracle gates
-green when changing these lookup paths.
+The release benchmark uses `AVIF_BENCH_ITERS=11 cargo bench --bench decode`
+against `samples/WML2Viewer.avif`. The current optimized run measured
+`467.58/480.59 ms` (native/RGBA). The reconstruction hot path now passes
+decoded coefficient slices directly instead of cloning a coefficient `Vec`
+for every transform; compare medians on the same host because this benchmark
+is sensitive to local scheduling. Keep the image and plane oracle gates green
+when changing this path.
 
 - [x] Add malformed/truncated coverage for the currently supported container,
       OBU, entropy and metadata paths.
@@ -347,7 +348,8 @@ green when changing these lookup paths.
       features so `cargo test -p wml2 --no-default-features` compiles. The
       current failures are JPEG/PNG/TIFF/WebP/EXIF tests, not AVIF targets.
 - [x] Keep container, OBU, frame-header and entropy fuzz targets.
-- [ ] Optimise allocations only after exact-plane conformance passes.
+- [x] Optimise a per-transform coefficient allocation after exact-plane
+      conformance passes; retain the public allocating wrapper for compatibility.
 - [x] Correct the nested crate repository URL to the independently maintained
       `avif-rust` repository and verify it from a fresh clone.
 - [ ] Add SIMD/parallel paths only with scalar equivalence and Wasm fallback

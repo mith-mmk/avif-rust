@@ -299,8 +299,28 @@ pub fn reconstruct_transform_block(
     prediction: &[u16],
     bit_depth: u8,
 ) -> Result<ReconstructedTransform, DecoderError> {
-    let tx_size = quantized.block.tx_size;
-    if quantized.coefficients.len() != tx_size.sample_count() {
+    reconstruct_transform_block_parts(
+        plane,
+        quantized.block,
+        quantized.tx_type,
+        &quantized.coefficients,
+        plane_quant,
+        prediction,
+        bit_depth,
+    )
+}
+
+pub(crate) fn reconstruct_transform_block_parts(
+    plane: &mut PlaneBuffer,
+    block: TransformBlock,
+    tx_type: TxType,
+    coefficients: &[i32],
+    plane_quant: PlaneQuant,
+    prediction: &[u16],
+    bit_depth: u8,
+) -> Result<ReconstructedTransform, DecoderError> {
+    let tx_size = block.tx_size;
+    if coefficients.len() != tx_size.sample_count() {
         return Err(DecoderError::InvalidParam(
             "AV1 quantized coefficient count does not match transform size".to_string(),
         ));
@@ -311,30 +331,24 @@ pub fn reconstruct_transform_block(
         ));
     }
 
-    let non_zero_coefficients = quantized
-        .coefficients
+    let non_zero_coefficients = coefficients
         .iter()
         .filter(|coefficient| **coefficient != 0)
         .count();
-    let dequant = dequantize_coefficients(
-        &quantized.coefficients,
-        plane_quant,
-        bit_depth,
-        tx_size.dq_denom(),
-    );
-    let residual = inverse_transform(quantized.tx_type, tx_size, &dequant, bit_depth)?;
+    let dequant = dequantize_coefficients(coefficients, plane_quant, bit_depth, tx_size.dq_denom());
+    let residual = inverse_transform(tx_type, tx_size, &dequant, bit_depth)?;
     let reconstructed = add_residual_to_prediction(prediction, &residual, bit_depth)?;
     write_plane_block(
         plane,
-        quantized.block.x,
-        quantized.block.y,
+        block.x,
+        block.y,
         tx_size.width(),
         tx_size.height(),
         &reconstructed,
     )?;
     Ok(ReconstructedTransform {
-        block: quantized.block,
-        tx_type: quantized.tx_type,
+        block,
+        tx_type,
         non_zero_coefficients,
     })
 }
