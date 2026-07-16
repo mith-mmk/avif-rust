@@ -311,6 +311,15 @@ and RGBA gates.
 
 ## 5. Safety, performance and release gate
 
+### Decode benchmark checkpoint (2026-07-16)
+
+The release benchmark uses `AVIF_BENCH_ITERS=5 cargo bench --bench decode`
+against `samples/WML2Viewer.avif`. Replacing per-8x8 CDEF state scans with
+indexed luma/unit maps and moving the restoration source buffer reduced the
+local optimized median from `508.96/520.11 ms` (native/RGBA) to
+`485.36/488.71 ms` (about 4.6%/6.0%). Keep the image and plane oracle gates
+green when changing these lookup paths.
+
 - [x] Add malformed/truncated coverage for the currently supported container,
       OBU, entropy and metadata paths.
 - [ ] Add malformed/truncated cases for each future syntax path as it becomes

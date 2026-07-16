@@ -921,34 +921,51 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
     let luma_source = frame.buffers.planes[0].samples.clone();
     let luma_width = frame.buffers.planes[0].layout.width;
     let luma_height = frame.buffers.planes[0].layout.height;
+    let cdef_units_width = luma_width.div_ceil(64);
+    let cdef_units_height = luma_height.div_ceil(64);
+    let mut cdef_indices = vec![None; cdef_units_width * cdef_units_height];
+    for unit in &state.cdef_units {
+        let index = (unit.y / 64) * cdef_units_width + unit.x / 64;
+        if let Some(slot) = cdef_indices.get_mut(index) {
+            *slot = Some(unit.index as usize & unit_mask);
+        }
+    }
+    for block in &state.cdef_blocks {
+        let index = (block.y / 64) * cdef_units_width + block.x / 64;
+        if let Some(slot) = cdef_indices.get_mut(index) {
+            *slot = Some(block.index as usize & unit_mask);
+        }
+    }
+    let filtered_blocks_width = luma_width.div_ceil(8);
+    let filtered_blocks_height = luma_height.div_ceil(8);
+    let mut filtered_blocks = vec![false; filtered_blocks_width * filtered_blocks_height];
+    for block in state.block_filter_states.iter().filter(|block| !block.skip) {
+        let start_x = (block.x / 8).min(filtered_blocks_width);
+        let start_y = (block.y / 8).min(filtered_blocks_height);
+        let end_x = block
+            .x
+            .saturating_add(block.block_size.width())
+            .div_ceil(8)
+            .min(filtered_blocks_width);
+        let end_y = block
+            .y
+            .saturating_add(block.block_size.height())
+            .div_ceil(8)
+            .min(filtered_blocks_height);
+        for y in start_y..end_y {
+            let row = y * filtered_blocks_width;
+            filtered_blocks[row + start_x..row + end_x].fill(true);
+        }
+    }
     let mut cdef_blocks = Vec::new();
     for y in (0..luma_height).step_by(8) {
         for x in (0..luma_width).step_by(8) {
-            let filtered_block = state.block_filter_states.iter().any(|block| {
-                !block.skip
-                    && x >= block.x
-                    && y >= block.y
-                    && x < block.x + block.block_size.width()
-                    && y < block.y + block.block_size.height()
-            });
-            if !filtered_block {
+            if !filtered_blocks[(y / 8) * filtered_blocks_width + x / 8] {
                 continue;
             }
             let unit_x = x & !63;
             let unit_y = y & !63;
-            let index = state
-                .cdef_blocks
-                .iter()
-                .find(|block| block.x == unit_x && block.y == unit_y)
-                .map(|block| block.index as usize & unit_mask)
-                .or_else(|| {
-                    state
-                        .cdef_units
-                        .iter()
-                        .find(|unit| unit.x == unit_x && unit.y == unit_y)
-                        .map(|unit| unit.index as usize & unit_mask)
-                })
-                .unwrap_or(0);
+            let index = cdef_indices[(unit_y / 64) * cdef_units_width + unit_x / 64].unwrap_or(0);
             let (detected_direction, variance) = cdef_find_direction_with_variance(
                 &luma_source,
                 luma_width,
@@ -1032,7 +1049,7 @@ fn apply_loop_restoration_stage(
 ) {
     const RESTORATION_UNIT_OFFSET: usize = 8;
     for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
-        let source = plane.samples.clone();
+        let source = std::mem::take(&mut plane.samples);
         let mut output = source.clone();
         for unit in state.restoration_units.iter().filter(|unit| {
             unit.plane == plane_index && enabled_types.contains(&unit.restoration_type)
