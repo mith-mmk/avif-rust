@@ -333,10 +333,13 @@ fn parse_color_config(
         1 => (false, false),
         2 => {
             if bit_depth == 12 {
-                (
-                    reader.read_bool("subsampling_x")?,
-                    reader.read_bool("subsampling_y")?,
-                )
+                let subsampling_x = reader.read_bool("subsampling_x")?;
+                let subsampling_y = if subsampling_x {
+                    reader.read_bool("subsampling_y")?
+                } else {
+                    false
+                };
+                (subsampling_x, subsampling_y)
             } else {
                 (true, false)
             }

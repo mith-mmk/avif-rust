@@ -579,7 +579,7 @@ fn public_grid_sample_matches_ffmpeg_when_present() {
 }
 
 #[test]
-fn public_12bit_sample_rejects_active_film_grain_when_present() {
+fn public_12bit_sample_remains_fail_closed_until_12bit_entropy_support_lands() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root should exist")
@@ -589,12 +589,12 @@ fn public_12bit_sample_rejects_active_film_grain_when_present() {
         return;
     }
     let data = std::fs::read(&path).expect("external 12-bit AVIF should be readable");
-    let error =
-        avif_rust::image_from_bytes(&data).expect_err("active film grain must remain fail-closed");
+    let error = avif_rust::image_from_bytes(&data)
+        .expect_err("the unsupported 12-bit sample must remain fail-closed");
     assert!(
         error
             .to_string()
-            .contains("AV1 film grain is not supported by public decode yet"),
+            .contains("AV1 entropy trailing zero bit is not zero"),
         "unexpected 12-bit error: {error}"
     );
 }

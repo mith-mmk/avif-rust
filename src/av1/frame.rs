@@ -56,6 +56,7 @@ pub struct FrameHeader {
     pub restoration: RestorationParams,
     pub tx_mode: TxMode,
     pub reduced_tx_set: bool,
+    pub film_grain: Option<FilmGrainParams>,
     pub uncompressed_header_bits: usize,
     pub payload_after_header_offset: usize,
 }
@@ -87,7 +88,13 @@ pub fn parse_frame_header(
             allow_intrabc,
             frame_type_is_intra(FrameType::Key),
         )?;
-        reject_active_film_grain(&mut reader, sequence)?;
+        let film_grain =
+            parse_film_grain_params(&mut reader, sequence, FrameType::Key, true, false)?;
+        if film_grain.is_some() {
+            return Err(DecoderError::Unsupported(
+                "AV1 film grain is not supported by public decode yet".to_string(),
+            ));
+        }
         return Ok(FrameHeader {
             frame_type: FrameType::Key,
             show_existing_frame: false,
@@ -118,6 +125,7 @@ pub fn parse_frame_header(
             restoration: trailing.restoration,
             tx_mode: trailing.tx_mode,
             reduced_tx_set: trailing.reduced_tx_set,
+            film_grain,
             uncompressed_header_bits: reader.bit_position(),
             payload_after_header_offset: reader.byte_position_ceil(),
         });
@@ -190,7 +198,18 @@ pub fn parse_frame_header(
         allow_intrabc,
         frame_type_is_intra(frame_type),
     )?;
-    reject_active_film_grain(&mut reader, sequence)?;
+    let film_grain = parse_film_grain_params(
+        &mut reader,
+        sequence,
+        frame_type,
+        show_frame,
+        showable_frame,
+    )?;
+    if film_grain.is_some() {
+        return Err(DecoderError::Unsupported(
+            "AV1 film grain is not supported by public decode yet".to_string(),
+        ));
+    }
 
     Ok(FrameHeader {
         frame_type,
@@ -222,21 +241,191 @@ pub fn parse_frame_header(
         restoration: trailing.restoration,
         tx_mode: trailing.tx_mode,
         reduced_tx_set: trailing.reduced_tx_set,
+        film_grain,
         uncompressed_header_bits: reader.bit_position(),
         payload_after_header_offset: reader.byte_position_ceil(),
     })
 }
 
-fn reject_active_film_grain(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FilmGrainParams {
+    pub random_seed: u16,
+    pub num_y_points: u8,
+    pub scaling_points_y: [[u8; 2]; 14],
+    pub chroma_scaling_from_luma: bool,
+    pub num_cb_points: u8,
+    pub scaling_points_cb: [[u8; 2]; 10],
+    pub num_cr_points: u8,
+    pub scaling_points_cr: [[u8; 2]; 10],
+    pub scaling_shift: u8,
+    pub ar_coeff_lag: u8,
+    pub ar_coeffs_y: [i16; 24],
+    pub ar_coeffs_cb: [i16; 25],
+    pub ar_coeffs_cr: [i16; 25],
+    pub ar_coeff_shift: u8,
+    pub grain_scale_shift: u8,
+    pub cb_mult: u8,
+    pub cb_luma_mult: u8,
+    pub cb_offset: u16,
+    pub cr_mult: u8,
+    pub cr_luma_mult: u8,
+    pub cr_offset: u16,
+    pub overlap_flag: bool,
+    pub clip_to_restricted_range: bool,
+}
+
+fn parse_film_grain_params(
     reader: &mut BitReader<'_>,
     sequence: &SequenceHeader,
-) -> Result<(), DecoderError> {
-    if sequence.film_grain_params_present && reader.read_bool("apply_grain")? {
+    frame_type: FrameType,
+    show_frame: bool,
+    showable_frame: bool,
+) -> Result<Option<FilmGrainParams>, DecoderError> {
+    if !sequence.film_grain_params_present || (!show_frame && !showable_frame) {
+        return Ok(None);
+    }
+    if !reader.read_bool("apply_grain")? {
+        return Ok(None);
+    }
+    let random_seed = reader.read_bits(16, "grain_seed")? as u16;
+    let update_parameters = if frame_type == FrameType::Inter {
+        reader.read_bool("update_parameters")?
+    } else {
+        true
+    };
+    if !update_parameters {
+        let _reference_index = reader.read_bits(3, "film_grain_params_ref_idx")?;
         return Err(DecoderError::Unsupported(
-            "AV1 film grain is not supported by public decode yet".to_string(),
+            "inherited AV1 film grain parameters are not supported yet".to_string(),
         ));
     }
-    Ok(())
+    let num_y_points = reader.read_bits(4, "num_y_points")? as u8;
+    if num_y_points > 14 {
+        return Err(DecoderError::Bitstream(
+            "film grain num_y_points exceeds 14".to_string(),
+        ));
+    }
+    let scaling_points_y = read_scaling_points(reader, num_y_points, "y")?;
+    let chroma_scaling_from_luma = if sequence.color_config.monochrome {
+        false
+    } else {
+        reader.read_bool("chroma_scaling_from_luma")?
+    };
+    let mut num_cb_points = 0;
+    let mut scaling_points_cb = [[0; 2]; 10];
+    let mut num_cr_points = 0;
+    let mut scaling_points_cr = [[0; 2]; 10];
+    let skip_chroma_points = sequence.color_config.monochrome
+        || chroma_scaling_from_luma
+        || (sequence.color_config.subsampling_x
+            && sequence.color_config.subsampling_y
+            && num_y_points == 0);
+    if !skip_chroma_points {
+        num_cb_points = reader.read_bits(4, "num_cb_points")? as u8;
+        if num_cb_points > 10 {
+            return Err(DecoderError::Bitstream(
+                "film grain num_cb_points exceeds 10".to_string(),
+            ));
+        }
+        scaling_points_cb = read_scaling_points(reader, num_cb_points, "cb")?;
+        num_cr_points = reader.read_bits(4, "num_cr_points")? as u8;
+        if num_cr_points > 10 {
+            return Err(DecoderError::Bitstream(
+                "film grain num_cr_points exceeds 10".to_string(),
+            ));
+        }
+        scaling_points_cr = read_scaling_points(reader, num_cr_points, "cr")?;
+    }
+    let scaling_shift = reader.read_bits(2, "grain_scaling_shift")? as u8 + 8;
+    let ar_coeff_lag = reader.read_bits(2, "ar_coeff_lag")? as u8;
+    let num_pos_luma = usize::from(2 * ar_coeff_lag * (ar_coeff_lag + 1));
+    let num_pos_chroma = num_pos_luma + usize::from(num_y_points > 0);
+    let mut ar_coeffs_y = [0; 24];
+    let mut ar_coeffs_cb = [0; 25];
+    let mut ar_coeffs_cr = [0; 25];
+    if num_y_points > 0 {
+        for coefficient in ar_coeffs_y.iter_mut().take(num_pos_luma) {
+            *coefficient = reader.read_bits(8, "ar_coeffs_y")? as i16 - 128;
+        }
+    }
+    if num_cb_points > 0 || chroma_scaling_from_luma {
+        for coefficient in ar_coeffs_cb.iter_mut().take(num_pos_chroma) {
+            *coefficient = reader.read_bits(8, "ar_coeffs_cb")? as i16 - 128;
+        }
+    }
+    if num_cr_points > 0 || chroma_scaling_from_luma {
+        for coefficient in ar_coeffs_cr.iter_mut().take(num_pos_chroma) {
+            *coefficient = reader.read_bits(8, "ar_coeffs_cr")? as i16 - 128;
+        }
+    }
+    let ar_coeff_shift = reader.read_bits(2, "ar_coeff_shift")? as u8 + 6;
+    let grain_scale_shift = reader.read_bits(2, "grain_scale_shift")? as u8;
+    let (cb_mult, cb_luma_mult, cb_offset) = if num_cb_points > 0 {
+        (
+            reader.read_bits(8, "cb_mult")? as u8,
+            reader.read_bits(8, "cb_luma_mult")? as u8,
+            reader.read_bits(9, "cb_offset")? as u16,
+        )
+    } else {
+        (0, 0, 0)
+    };
+    let (cr_mult, cr_luma_mult, cr_offset) = if num_cr_points > 0 {
+        (
+            reader.read_bits(8, "cr_mult")? as u8,
+            reader.read_bits(8, "cr_luma_mult")? as u8,
+            reader.read_bits(9, "cr_offset")? as u16,
+        )
+    } else {
+        (0, 0, 0)
+    };
+    let overlap_flag = reader.read_bool("overlap_flag")?;
+    let clip_to_restricted_range = reader.read_bool("clip_to_restricted_range")?;
+    let params = FilmGrainParams {
+        random_seed,
+        num_y_points,
+        scaling_points_y,
+        chroma_scaling_from_luma,
+        num_cb_points,
+        scaling_points_cb,
+        num_cr_points,
+        scaling_points_cr,
+        scaling_shift,
+        ar_coeff_lag,
+        ar_coeffs_y,
+        ar_coeffs_cb,
+        ar_coeffs_cr,
+        ar_coeff_shift,
+        grain_scale_shift,
+        cb_mult,
+        cb_luma_mult,
+        cb_offset,
+        cr_mult,
+        cr_luma_mult,
+        cr_offset,
+        overlap_flag,
+        clip_to_restricted_range,
+    };
+    Ok(Some(params))
+}
+
+fn read_scaling_points<const N: usize>(
+    reader: &mut BitReader<'_>,
+    count: u8,
+    plane: &str,
+) -> Result<[[u8; 2]; N], DecoderError> {
+    let mut points = [[0; 2]; N];
+    for point in points.iter_mut().take(usize::from(count)) {
+        point[0] = reader.read_bits(8, "scaling_point_x")? as u8;
+        point[1] = reader.read_bits(8, "scaling_point_y")? as u8;
+    }
+    for pair in points.windows(2).take(usize::from(count).saturating_sub(1)) {
+        if pair[0][0] >= pair[1][0] {
+            return Err(DecoderError::Bitstream(format!(
+                "film grain {plane} scaling point x values are not increasing"
+            )));
+        }
+    }
+    Ok(points)
 }
 
 #[derive(Debug, Clone, Copy)]
