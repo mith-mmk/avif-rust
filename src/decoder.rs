@@ -6,9 +6,9 @@ use crate::av1::{
     Av1CodecConfiguration, BlockModeProbe, ColorConfig, FilmGrainParams, FrameBuffers,
     FrameDecodePlan, FrameHeader, PartitionProbe, QuantState, ResidualProbe, SequenceHeader,
     TileEntropyState, TileGroup, alloc_coded_frame_buffers, apply_film_grain,
-    build_still_decode_plan, cdef_adjust_primary_strength, cdef_filter_block_region_with_edge_mode,
-    cdef_find_direction_with_variance, crop_frame_buffers_to_plan,
-    deblock_filter_edge_with_visible_bounds,
+    apply_superres_horizontal, build_still_decode_plan, cdef_adjust_primary_strength,
+    cdef_filter_block_region_with_edge_mode, cdef_find_direction_with_variance,
+    crop_frame_buffers_to_plan, deblock_filter_edge_with_visible_bounds,
     decode_luma_root_block_prefix_with_post_filter_state_and_entropy, frame_buffers_to_rgba_16,
     parse_av1_config, parse_frame_header, parse_sequence_header, parse_tile_group,
     plan_transform_blocks_with_tx_size, prepare_tile_entropy, probe_first_block_residuals,
@@ -746,6 +746,12 @@ fn decode_still_frame_with_filter_policy(
             &[1, 2],
         );
         crop_frame_buffers_to_plan(&mut frame.buffers, &headers.decode_plan)?;
+        apply_superres_horizontal(
+            &mut frame.buffers,
+            headers.decode_plan.upscaled_width,
+            headers.decode_plan.bit_depth,
+        )?;
+        frame.width = headers.decode_plan.upscaled_width;
         if let Some(film_grain) = film_grain {
             apply_film_grain(&mut frame.buffers, &frame.color_config, &film_grain);
         }

@@ -304,7 +304,9 @@ and RGBA gates.
       the `kimono.rotate90.avif` sample still exposes a separate entropy
       trailing-bit mismatch and remains fail-closed.
 - [ ] Multiple tile-group composition.
-- [ ] Super-resolution.
+- [x] AV1 horizontal super-resolution output resize with the normative 8-tap
+      phase filter; coded planes are reconstructed at reduced width and
+      expanded before colour conversion.
 - [x] Film grain for still images when `overlap_flag == 0`, including the
       normative Gaussian sequence, AR synthesis and chroma scaling paths.
 - [x] Film grain overlap blending (`overlap_flag == 1`) for luma and
@@ -325,7 +327,9 @@ edge. The reconstruction hot path also passes
 decoded coefficient slices directly instead of cloning a coefficient `Vec`
 for every transform; compare medians on the same host because this benchmark
 is sensitive to local scheduling. Keep the image and plane oracle gates green
-when changing this path.
+when changing this path. Super-resolution uses the scalar 64-phase resize
+kernel and allocates the expanded row once per plane; the no-superres path
+remains allocation-free.
 
 - [x] Add malformed/truncated coverage for the currently supported container,
       OBU, entropy and metadata paths.

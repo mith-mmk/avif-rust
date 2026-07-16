@@ -47,6 +47,7 @@ pub struct TileDecodePlan {
 pub struct FrameDecodePlan {
     pub width: usize,
     pub height: usize,
+    pub upscaled_width: usize,
     pub render_width: usize,
     pub render_height: usize,
     pub bit_depth: u8,
@@ -79,11 +80,6 @@ pub fn build_still_decode_plan(
     frame: &FrameHeader,
     tile_group: &TileGroup,
 ) -> Result<FrameDecodePlan, DecoderError> {
-    if frame.upscaled_width != frame.frame_width {
-        return Err(DecoderError::Unsupported(
-            "AV1 superres upscaling is not supported yet".to_string(),
-        ));
-    }
     validate_complete_tile_group(
         frame.tile_info.tile_cols,
         frame.tile_info.tile_rows,
@@ -99,6 +95,8 @@ pub fn build_still_decode_plan(
         .map_err(|_| DecoderError::InvalidParam("AV1 frame width is too large".to_string()))?;
     let height = usize::try_from(frame.frame_height)
         .map_err(|_| DecoderError::InvalidParam("AV1 frame height is too large".to_string()))?;
+    let upscaled_width = usize::try_from(frame.upscaled_width)
+        .map_err(|_| DecoderError::InvalidParam("AV1 upscaled width is too large".to_string()))?;
     let superblock_size: usize = if sequence.use_128x128_superblock {
         128
     } else {
@@ -117,6 +115,7 @@ pub fn build_still_decode_plan(
     Ok(FrameDecodePlan {
         width,
         height,
+        upscaled_width,
         render_width: usize::try_from(frame.render_width)
             .map_err(|_| DecoderError::InvalidParam("AV1 render width is too large".to_string()))?,
         render_height: usize::try_from(frame.render_height).map_err(|_| {
@@ -133,6 +132,90 @@ pub fn build_still_decode_plan(
         planes,
         tiles,
     })
+}
+
+#[rustfmt::skip]
+const SUPERRES_FILTER: [[i8; 8]; 64] = [
+    [0, 0, 0, -128, 0, 0, 0, 0], [0, 0, 1, -128, -2, 1, 0, 0],
+    [0, -1, 3, -127, -4, 2, -1, 0], [0, -1, 4, -127, -6, 3, -1, 0],
+    [0, -2, 6, -126, -8, 3, -1, 0], [0, -2, 7, -125, -11, 4, -1, 0],
+    [1, -2, 8, -125, -13, 5, -2, 0], [1, -3, 9, -124, -15, 6, -2, 0],
+    [1, -3, 10, -123, -18, 6, -2, 1], [1, -3, 11, -122, -20, 7, -3, 1],
+    [1, -4, 12, -121, -22, 8, -3, 1], [1, -4, 13, -120, -25, 9, -3, 1],
+    [1, -4, 14, -118, -28, 9, -3, 1], [1, -4, 15, -117, -30, 10, -4, 1],
+    [1, -5, 16, -116, -32, 11, -4, 1], [1, -5, 16, -114, -35, 12, -4, 1],
+    [1, -5, 17, -112, -38, 12, -4, 1], [1, -5, 18, -111, -40, 13, -5, 1],
+    [1, -5, 18, -109, -43, 14, -5, 1], [1, -6, 19, -107, -45, 14, -5, 1],
+    [1, -6, 19, -105, -48, 15, -5, 1], [1, -6, 19, -103, -51, 16, -5, 1],
+    [1, -6, 20, -101, -53, 16, -6, 1], [1, -6, 20, -99, -56, 17, -6, 1],
+    [1, -6, 20, -97, -58, 17, -6, 1], [1, -6, 20, -95, -61, 18, -6, 1],
+    [2, -7, 20, -93, -64, 18, -6, 2], [2, -7, 20, -91, -66, 19, -6, 1],
+    [2, -7, 20, -88, -69, 19, -6, 1], [2, -7, 20, -86, -71, 19, -6, 1],
+    [2, -7, 20, -84, -74, 20, -7, 2], [2, -7, 20, -81, -76, 20, -7, 1],
+    [2, -7, 20, -79, -79, 20, -7, 2], [1, -7, 20, -76, -81, 20, -7, 2],
+    [2, -7, 20, -74, -84, 20, -7, 2], [1, -6, 19, -71, -86, 20, -7, 2],
+    [1, -6, 19, -69, -88, 20, -7, 2], [1, -6, 19, -66, -91, 20, -7, 2],
+    [2, -6, 18, -64, -93, 20, -7, 2], [1, -6, 18, -61, -95, 20, -6, 1],
+    [1, -6, 17, -58, -97, 20, -6, 1], [1, -6, 17, -56, -99, 20, -6, 1],
+    [1, -6, 16, -53, -101, 20, -6, 1], [1, -5, 16, -51, -103, 19, -6, 1],
+    [1, -5, 15, -48, -105, 19, -6, 1], [1, -5, 14, -45, -107, 19, -6, 1],
+    [1, -5, 14, -43, -109, 18, -5, 1], [1, -5, 13, -40, -111, 18, -5, 1],
+    [1, -4, 12, -38, -112, 17, -5, 1], [1, -4, 12, -35, -114, 16, -5, 1],
+    [1, -4, 11, -32, -116, 16, -5, 1], [1, -4, 10, -30, -117, 15, -4, 1],
+    [1, -3, 9, -28, -118, 14, -4, 1], [1, -3, 9, -25, -120, 13, -4, 1],
+    [1, -3, 8, -22, -121, 12, -4, 1], [1, -3, 7, -20, -122, 11, -3, 1],
+    [1, -2, 6, -18, -123, 10, -3, 1], [0, -2, 6, -15, -124, 9, -3, 1],
+    [0, -2, 5, -13, -125, 8, -2, 1], [0, -1, 4, -11, -125, 7, -2, 0],
+    [0, -1, 3, -8, -126, 6, -2, 0], [0, -1, 3, -6, -127, 4, -1, 0],
+    [0, -1, 2, -4, -127, 3, -1, 0], [0, 0, 1, -2, -128, 1, 0, 0],
+];
+
+pub(crate) fn apply_superres_horizontal(
+    buffers: &mut FrameBuffers,
+    upscaled_width: usize,
+    bit_depth: u8,
+) -> Result<(), DecoderError> {
+    if buffers.width >= upscaled_width {
+        return Ok(());
+    }
+    for plane in &mut buffers.planes {
+        let target_width = round_shift_usize(upscaled_width, plane.layout.subsampling_x);
+        if target_width <= plane.layout.width {
+            continue;
+        }
+        let source_width = plane.layout.width;
+        let step =
+            (((source_width as u64) << 14) + (target_width as u64 / 2)) / target_width as u64;
+        let err = (target_width as i64 * step as i64) - ((source_width as i64) << 14);
+        let start = (((-((target_width as i64 - source_width as i64) << 13)
+            + (target_width as i64 >> 1))
+            / target_width as i64)
+            + 128
+            - err / 2)
+            & 0x3fff;
+        let mut resized = vec![0; target_width * plane.layout.height];
+        let max_x = source_width.saturating_sub(1) as i64;
+        for y in 0..plane.layout.height {
+            let row = &plane.samples[y * source_width..(y + 1) * source_width];
+            for x in 0..target_width {
+                let phase = (start + x as i64 * step as i64) as usize;
+                let filter = &SUPERRES_FILTER[(phase >> 8) & 63];
+                let src_x = -4 + ((phase as i64) >> 14);
+                let mut sum = 0i32;
+                for (tap, coeff) in filter.iter().enumerate() {
+                    let index = (src_x + tap as i64).clamp(0, max_x) as usize;
+                    sum += i32::from(*coeff) * i32::from(row[index]);
+                }
+                let max_sample = (1i32 << bit_depth) - 1;
+                resized[y * target_width + x] = ((-sum + 64) >> 7).clamp(0, max_sample) as u16;
+            }
+        }
+        plane.layout.width = target_width;
+        plane.layout.sample_count = resized.len();
+        plane.samples = resized;
+    }
+    buffers.width = upscaled_width;
+    Ok(())
 }
 
 fn validate_complete_tile_group(
@@ -358,6 +441,7 @@ mod tests {
         let plan = FrameDecodePlan {
             width: 1,
             height: 1,
+            upscaled_width: 1,
             render_width: 1,
             render_height: 1,
             bit_depth: 8,
@@ -411,6 +495,7 @@ mod tests {
         let plan = FrameDecodePlan {
             width: 900,
             height: 900,
+            upscaled_width: 900,
             render_width: 900,
             render_height: 900,
             bit_depth: 8,
@@ -442,5 +527,50 @@ mod tests {
         assert_eq!(buffers.planes[0].layout, plan.planes[0]);
         assert_eq!(buffers.planes[0].samples.len(), 900 * 900);
         assert_eq!(buffers.planes[0].samples[899], 7);
+    }
+
+    #[test]
+    fn superres_horizontal_resizes_plane_and_preserves_range() {
+        let mut buffers = FrameBuffers {
+            width: 4,
+            height: 1,
+            planes: vec![PlaneBuffer {
+                layout: PlaneLayout {
+                    plane: 0,
+                    width: 4,
+                    height: 1,
+                    subsampling_x: 0,
+                    subsampling_y: 0,
+                    sample_count: 4,
+                },
+                samples: vec![0, 256, 512, 768],
+            }],
+        };
+        apply_superres_horizontal(&mut buffers, 8, 10).unwrap();
+        assert_eq!(buffers.width, 8);
+        assert_eq!(buffers.planes[0].layout.width, 8);
+        assert_eq!(buffers.planes[0].samples.len(), 8);
+        assert!(
+            buffers.planes[0]
+                .samples
+                .iter()
+                .all(|sample| *sample <= 1023)
+        );
+        assert!(
+            buffers.planes[0]
+                .samples
+                .first()
+                .copied()
+                .unwrap_or_default()
+                < 256
+        );
+        assert!(
+            buffers.planes[0]
+                .samples
+                .last()
+                .copied()
+                .unwrap_or_default()
+                > 512
+        );
     }
 }
