@@ -8,11 +8,10 @@ use crate::av1::{
     alloc_coded_frame_buffers, build_still_decode_plan, cdef_adjust_primary_strength,
     cdef_filter_block_region_with_edge_mode, cdef_find_direction_with_variance,
     crop_frame_buffers_to_plan, deblock_filter_edge_with_visible_bounds,
-    decode_luma_root_block_prefix_with_post_filter_state_and_entropy, frame_buffers_to_rgba_8,
-    frame_buffers_to_rgba_16, parse_av1_config, parse_frame_header, parse_sequence_header,
-    parse_tile_group, plan_transform_blocks_with_tx_size, prepare_tile_entropy,
-    probe_first_block_residuals, probe_tile_block_modes, probe_tile_partitions,
-    sgrproj_filter_unit, wiener_filter_unit,
+    decode_luma_root_block_prefix_with_post_filter_state_and_entropy, frame_buffers_to_rgba_16,
+    parse_av1_config, parse_frame_header, parse_sequence_header, parse_tile_group,
+    plan_transform_blocks_with_tx_size, prepare_tile_entropy, probe_first_block_residuals,
+    probe_tile_block_modes, probe_tile_partitions, sgrproj_filter_unit, wiener_filter_unit,
 };
 use crate::compat::{DataMap, DecodeOptions, InitOptions};
 use crate::container::{
@@ -107,27 +106,29 @@ pub struct DecodedFrame {
 
 impl DecodedFrame {
     pub fn to_rgba8(&self) -> Result<ImageBuffer, DecoderError> {
-        self.validate_color_management_for_rgba()?;
-        frame_buffers_to_rgba_8(&self.buffers, &self.color_config)
+        let rgba16 = self.to_rgba16()?;
+        let rgba = rgba16
+            .rgba
+            .iter()
+            .map(|sample| ((u32::from(*sample) * 255 + 32767) / 65535) as u8)
+            .collect();
+        Ok(ImageBuffer {
+            width: rgba16.width,
+            height: rgba16.height,
+            rgba,
+        })
     }
 
     pub fn to_rgba16(&self) -> Result<Rgba16ImageBuffer, DecoderError> {
-        self.validate_color_management_for_rgba()?;
-        frame_buffers_to_rgba_16(&self.buffers, &self.color_config)
-    }
-
-    fn validate_color_management_for_rgba(&self) -> Result<(), DecoderError> {
-        if self
+        let mut image = frame_buffers_to_rgba_16(&self.buffers, &self.color_config)?;
+        if let Some(profile) = self
             .color_information
             .as_ref()
             .and_then(ColorInformation::icc_profile)
-            .is_some()
         {
-            return Err(DecoderError::Unsupported(
-                "AVIF ICC colour management for RGBA conversion is not supported yet".to_string(),
-            ));
+            crate::icc::apply_to_rgba16(&mut image.rgba, profile)?;
         }
-        Ok(())
+        Ok(image)
     }
 }
 
@@ -1207,17 +1208,7 @@ fn validate_public_container_preflight(
             "AVIF sequences are not supported by public decode yet".to_string(),
         ));
     }
-    if rgba_output
-        && info
-            .color_information
-            .as_ref()
-            .and_then(ColorInformation::icc_profile)
-            .is_some()
-    {
-        return Err(DecoderError::Unsupported(
-            "AVIF ICC colour management for RGBA conversion is not supported yet".to_string(),
-        ));
-    }
+    let _ = rgba_output;
     let config = info
         .av1_config
         .as_deref()

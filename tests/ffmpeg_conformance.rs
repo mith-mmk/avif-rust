@@ -638,7 +638,7 @@ fn public_alpha_sample_matches_ffmpeg_rgba_when_present() {
 }
 
 #[test]
-fn decoded_frame_rejects_icc_rgba_conversion_until_colour_management_exists() {
+fn decoded_frame_rejects_unsupported_icc_profile() {
     let layout = avif_rust::av1::PlaneLayout {
         plane: 0,
         width: 1,
@@ -698,6 +698,36 @@ fn decoded_frame_rejects_icc_rgba_conversion_until_colour_management_exists() {
 
     assert!(
         matches!(err, avif_rust::DecoderError::Unsupported(message) if message.contains("ICC"))
+    );
+}
+
+#[test]
+fn public_icc_matrix_shaper_sample_applies_profile_when_present() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join(
+            "test/images/external/avif/unsupported/red-at-12-oclock-with-color-profile-8bpc.avif",
+        );
+    if !path.is_file() {
+        eprintln!("external ICC sample is unavailable; skipping profile check");
+        return;
+    }
+    let data = std::fs::read(&path).expect("ICC AVIF sample should be readable");
+    let actual = avif_rust::image_from_bytes(&data).expect("ICC AVIF sample should decode");
+    assert_eq!((actual.width, actual.height), (800, 800));
+    let raw = avif_rust::decode_frame_bytes(&data).expect("ICC frame should decode");
+    let source = avif_rust::av1::frame_buffers_to_rgba_8(&raw.buffers, &raw.color_config)
+        .expect("source RGB conversion should succeed");
+    let changed_pixels = actual
+        .rgba
+        .chunks_exact(4)
+        .zip(source.rgba.chunks_exact(4))
+        .filter(|(actual, source)| actual[..3] != source[..3])
+        .count();
+    assert!(
+        changed_pixels > 0,
+        "ICC profile must affect at least one RGB pixel"
     );
 }
 

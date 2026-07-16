@@ -9,6 +9,7 @@ pub mod compat;
 pub mod container;
 pub mod decoder;
 mod error;
+mod icc;
 mod image;
 pub mod obu;
 
