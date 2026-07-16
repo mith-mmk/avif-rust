@@ -89,8 +89,49 @@ pub(crate) fn cdef_filter_block_with_edge_mode(
     damping: u8,
     use_edge_sentinel: bool,
 ) -> Vec<u16> {
-    const CDEF_VERY_LARGE: i32 = 0x4000;
     let mut output = source.to_vec();
+    let filtered = cdef_filter_block_region_with_edge_mode(
+        source,
+        width,
+        height,
+        origin_x,
+        origin_y,
+        block_width,
+        block_height,
+        direction,
+        primary_strength,
+        secondary_strength,
+        damping,
+        use_edge_sentinel,
+    );
+    for row in 0..block_height {
+        for col in 0..block_width {
+            let x = origin_x + col;
+            let y = origin_y + row;
+            if x < width && y < height {
+                output[y * width + x] = filtered[row * block_width + col];
+            }
+        }
+    }
+    output
+}
+
+pub(crate) fn cdef_filter_block_region_with_edge_mode(
+    source: &[u16],
+    width: usize,
+    height: usize,
+    origin_x: usize,
+    origin_y: usize,
+    block_width: usize,
+    block_height: usize,
+    direction: usize,
+    primary_strength: u8,
+    secondary_strength: u8,
+    damping: u8,
+    use_edge_sentinel: bool,
+) -> Vec<u16> {
+    const CDEF_VERY_LARGE: i32 = 0x4000;
+    let mut output = vec![0u16; block_width * block_height];
     let direction = direction & 7;
     let enable_primary = primary_strength != 0;
     let enable_secondary = secondary_strength != 0;
@@ -164,7 +205,7 @@ pub(crate) fn cdef_filter_block_with_edge_mode(
                     },
                 )
                 .clamp(0, u16::MAX as i32) as u16;
-            output[y * width + x] = filtered;
+            output[row * block_width + col] = filtered;
         }
     }
     output

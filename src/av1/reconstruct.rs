@@ -183,6 +183,33 @@ pub fn frame_buffers_to_rgba_16(
 ) -> Result<Rgba16ImageBuffer, DecoderError> {
     validate_rgba_conversion(buffers)?;
     validate_sdr_transfer(color_config)?;
+    if color_config.monochrome {
+        let luma = buffers.planes.first().ok_or_else(|| {
+            DecoderError::Bitstream("AV1 monochrome luma plane is missing".to_string())
+        })?;
+        let max_source = (1u32 << color_config.bit_depth) - 1;
+        let mut rgba = vec![0u16; buffers.width * buffers.height * 4];
+        for index in 0..buffers.width * buffers.height {
+            let x = index % buffers.width;
+            let y = index / buffers.width;
+            let source_x = (x >> usize::from(luma.layout.subsampling_x))
+                .min(luma.layout.width.saturating_sub(1));
+            let source_y = (y >> usize::from(luma.layout.subsampling_y))
+                .min(luma.layout.height.saturating_sub(1));
+            let value = scale_sample_to_u16(
+                luma.samples[source_y * luma.layout.width + source_x],
+                max_source,
+            );
+            let out = index * 4;
+            rgba[out..out + 3].fill(value);
+            rgba[out + 3] = u16::MAX;
+        }
+        return Ok(Rgba16ImageBuffer {
+            width: buffers.width,
+            height: buffers.height,
+            rgba,
+        });
+    }
     let matrix_coefficients = color_config
         .color_description
         .map(|description| description.matrix_coefficients)
@@ -214,10 +241,10 @@ pub fn frame_buffers_to_rgba_16(
             let rgb = yuv_to_rgb_u16(
                 sample_plane(plane_y, x, y),
                 plane_u
-                    .map(|plane| sample_plane(plane, x, y))
+                    .map(|plane| sample_chroma_plane(plane, x, y))
                     .unwrap_or(chroma_mid),
                 plane_v
-                    .map(|plane| sample_plane(plane, x, y))
+                    .map(|plane| sample_chroma_plane(plane, x, y))
                     .unwrap_or(chroma_mid),
                 range,
                 matrix,
@@ -241,6 +268,35 @@ fn sample_plane(plane: &super::decode::PlaneBuffer, x: usize, y: usize) -> u16 {
     let source_x = (x >> usize::from(plane.layout.subsampling_x)).min(plane.layout.width - 1);
     let source_y = (y >> usize::from(plane.layout.subsampling_y)).min(plane.layout.height - 1);
     plane.samples[source_y * plane.layout.width + source_x]
+}
+
+fn sample_chroma_plane(plane: &super::decode::PlaneBuffer, x: usize, y: usize) -> u16 {
+    let subsampling_x = usize::from(plane.layout.subsampling_x);
+    let subsampling_y = usize::from(plane.layout.subsampling_y);
+    if subsampling_x == 0 && subsampling_y == 0 {
+        return sample_plane(plane, x, y);
+    }
+    let source_x = (x >> subsampling_x).min(plane.layout.width - 1);
+    let source_y = (y >> subsampling_y).min(plane.layout.height - 1);
+    let next_x = (source_x + 1).min(plane.layout.width - 1);
+    let next_y = (source_y + 1).min(plane.layout.height - 1);
+    // The AV1 still-image samples in the supported path use colocated
+    // horizontal chroma.  Keep the horizontal sample nearest while applying
+    // vertical interpolation for 4:2:0, which matches the reference edge
+    // behavior for odd-height images.
+    let fraction_x = 0;
+    let fraction_y = if subsampling_y == 0 {
+        0
+    } else {
+        (y & 1) as u32
+    };
+    let top_left = u32::from(plane.samples[source_y * plane.layout.width + source_x]);
+    let top_right = u32::from(plane.samples[source_y * plane.layout.width + next_x]);
+    let bottom_left = u32::from(plane.samples[next_y * plane.layout.width + source_x]);
+    let bottom_right = u32::from(plane.samples[next_y * plane.layout.width + next_x]);
+    let top = top_left * (2 - fraction_x) + top_right * fraction_x;
+    let bottom = bottom_left * (2 - fraction_x) + bottom_right * fraction_x;
+    ((top * (2 - fraction_y) + bottom * fraction_y + 2) / 4) as u16
 }
 
 fn validate_rgba_conversion(buffers: &FrameBuffers) -> Result<(), DecoderError> {

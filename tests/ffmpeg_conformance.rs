@@ -46,6 +46,148 @@ fn ffmpeg_decode_rgba(path: &Path) -> Option<Vec<u8>> {
     Some(output.stdout)
 }
 
+fn ffmpeg_decode_rgba_dynamic(path: &Path, width: usize, height: usize) -> Option<Vec<u8>> {
+    let executable = std::env::var_os("AVIF_FFMPEG")
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_file())
+        .or_else(|| {
+            let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("workspace root should exist")
+                .join("test/images/external/plugins/ffmpeg/ffmpeg.exe");
+            bundled.is_file().then_some(bundled)
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from("ffmpeg"));
+    let output = match Command::new(executable)
+        .args(["-v", "error", "-nostdin"])
+        .arg("-i")
+        .arg(path)
+        .args(["-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "-"])
+        .output()
+    {
+        Ok(output) => output,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            eprintln!("ffmpeg is not available; skipping external subsampling oracle");
+            return None;
+        }
+        Err(err) => panic!("failed to execute ffmpeg: {err}"),
+    };
+    assert!(
+        output.status.success(),
+        "ffmpeg failed for {}: {}",
+        path.display(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout.len(), width * height * 4);
+    Some(output.stdout)
+}
+
+fn ffmpeg_decode_raw(path: &Path, pixel_format: &str) -> Option<Vec<u8>> {
+    let executable = std::env::var_os("AVIF_FFMPEG")
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_file())
+        .or_else(|| {
+            let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("workspace root should exist")
+                .join("test/images/external/plugins/ffmpeg/ffmpeg.exe");
+            bundled.is_file().then_some(bundled)
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from("ffmpeg"));
+    let output = match Command::new(executable)
+        .args(["-v", "error", "-nostdin"])
+        .arg("-i")
+        .arg(path)
+        .args([
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            pixel_format,
+            "-",
+        ])
+        .output()
+    {
+        Ok(output) => output,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return None,
+        Err(err) => panic!("failed to execute ffmpeg: {err}"),
+    };
+    assert!(
+        output.status.success(),
+        "ffmpeg failed for {}: {}",
+        path.display(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Some(output.stdout)
+}
+
+fn ffmpeg_decode_alpha_plane(path: &Path, width: usize, height: usize) -> Option<Vec<u8>> {
+    let executable = std::env::var_os("AVIF_FFMPEG")
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_file())
+        .or_else(|| {
+            let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("workspace root should exist")
+                .join("test/images/external/plugins/ffmpeg/ffmpeg.exe");
+            bundled.is_file().then_some(bundled)
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from("ffmpeg"));
+    let output = match Command::new(executable)
+        .args(["-v", "error", "-nostdin"])
+        .arg("-i")
+        .arg(path)
+        .args([
+            "-map",
+            "0:1",
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "gray",
+            "-",
+        ])
+        .output()
+    {
+        Ok(output) => output,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            eprintln!("ffmpeg is not available; skipping alpha oracle");
+            return None;
+        }
+        Err(err) => panic!("failed to execute ffmpeg: {err}"),
+    };
+    assert!(
+        output.status.success(),
+        "ffmpeg alpha decode failed for {}: {}",
+        path.display(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout.len(), width * height);
+    Some(output.stdout)
+}
+
+fn diff_rgb_dynamic(left: &[u8], right: &[u8]) -> DiffMetrics {
+    assert_eq!(left.len(), right.len());
+    assert_eq!(left.len() % 4, 0);
+    let mut sum = 0u64;
+    let mut max = 0u8;
+    let mut channels = 0usize;
+    for (index, (actual, expected)) in left.iter().zip(right.iter()).enumerate() {
+        if index % 4 == 3 {
+            continue;
+        }
+        sum += u64::from(actual.abs_diff(*expected));
+        max = max.max(actual.abs_diff(*expected));
+        channels += 1;
+    }
+    DiffMetrics {
+        average_rgb_abs: sum as f64 / channels as f64,
+        max_rgb_abs: max,
+    }
+}
+
 fn diff_rgb(left: &[u8], right: &[u8]) -> DiffMetrics {
     assert_eq!(left.len(), right.len());
     assert_eq!(left.len(), SAMPLE_RGBA_LEN);
@@ -205,6 +347,244 @@ fn pure_rust_decode_exposes_filtered_source_planes() {
             (SAMPLE_WIDTH, SAMPLE_HEIGHT)
         );
     }
+}
+
+#[test]
+fn public_subsampling_samples_match_ffmpeg_rgba_when_present() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist");
+    let cases = [
+        ("avif/unsupported/fox.profile0.8bpc.yuv420.avif", 1204, 800),
+        (
+            "avif/unsupported/fox.profile0.8bpc.yuv420.monochrome.avif",
+            1204,
+            800,
+        ),
+        (
+            "avif/supported/fox.profile0.8bpc.yuv420.odd-width.avif",
+            1203,
+            800,
+        ),
+        (
+            "avif/supported/fox.profile0.8bpc.yuv420.odd-height.avif",
+            1204,
+            799,
+        ),
+        (
+            "avif/supported/fox.profile0.8bpc.yuv420.monochrome.odd-width.odd-height.avif",
+            1203,
+            799,
+        ),
+        ("avif/unsupported/fox.profile2.8bpc.yuv422.avif", 1204, 800),
+        (
+            "avif/supported/fox.profile2.8bpc.yuv422.odd-width.avif",
+            1203,
+            800,
+        ),
+        (
+            "avif/supported/fox.profile2.8bpc.yuv422.odd-height.avif",
+            1204,
+            799,
+        ),
+        (
+            "avif/supported/fox.profile2.8bpc.yuv422.odd-width.odd-height.avif",
+            1203,
+            799,
+        ),
+    ];
+    if cases
+        .iter()
+        .map(|(relative, _, _)| root.join("test/images/external").join(relative))
+        .any(|path| !path.is_file())
+    {
+        eprintln!("external subsampling samples are unavailable; skipping oracle");
+        return;
+    }
+    for (relative, width, height) in cases {
+        let path = root.join("test/images/external").join(relative);
+        let data = std::fs::read(&path).expect("external AVIF sample should be readable");
+        let actual = avif_rust::image_from_bytes(&data).expect("subsampling sample should decode");
+        assert_eq!((actual.width, actual.height), (width, height), "{relative}");
+        let Some(expected) = ffmpeg_decode_rgba_dynamic(&path, width, height) else {
+            return;
+        };
+        let metrics = diff_rgb_dynamic(&actual.rgba, &expected);
+        eprintln!(
+            "{relative}: average RGB absolute error={}, max={}",
+            metrics.average_rgb_abs, metrics.max_rgb_abs
+        );
+        assert!(
+            metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 32,
+            "{relative}: FFmpeg RGBA error average={} max={}",
+            metrics.average_rgb_abs,
+            metrics.max_rgb_abs
+        );
+    }
+}
+
+#[test]
+fn public_subsampling_planes_match_ffmpeg_when_present() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist");
+    let cases = [
+        (
+            "avif/unsupported/fox.profile0.8bpc.yuv420.avif",
+            "yuv420p",
+            [1204 * 800, 602 * 400, 602 * 400],
+        ),
+        (
+            "avif/unsupported/fox.profile0.8bpc.yuv420.monochrome.avif",
+            "gray",
+            [1204 * 800, 0, 0],
+        ),
+        (
+            "avif/unsupported/fox.profile2.8bpc.yuv422.avif",
+            "yuv422p",
+            [1204 * 800, 602 * 800, 602 * 800],
+        ),
+    ];
+    for (relative, pixel_format, plane_lengths) in cases {
+        let path = root.join("test/images/external").join(relative);
+        if !path.is_file() {
+            eprintln!("external subsampling sample is unavailable; skipping {relative}");
+            return;
+        }
+        let data = std::fs::read(&path).expect("external AVIF sample should be readable");
+        let actual =
+            avif_rust::decode_frame_bytes(&data).expect("subsampling sample should decode");
+        let Some(expected) = ffmpeg_decode_raw(&path, pixel_format) else {
+            return;
+        };
+        let expected_len = plane_lengths.iter().sum::<usize>();
+        assert_eq!(expected.len(), expected_len, "{relative}");
+        let mut offset = 0;
+        for (plane_index, &plane_len) in plane_lengths.iter().enumerate() {
+            if plane_len == 0 {
+                continue;
+            }
+            let expected_plane = &expected[offset..offset + plane_len];
+            let actual_plane = &actual.buffers.planes[plane_index].samples;
+            assert_eq!(
+                actual_plane.len(),
+                plane_len,
+                "{relative} plane {plane_index}"
+            );
+            let errors = actual_plane
+                .iter()
+                .zip(expected_plane)
+                .map(|(actual, expected)| u8::try_from(*actual).unwrap().abs_diff(*expected));
+            let max_error = errors.clone().max().unwrap_or(0);
+            let average_error = errors.map(u64::from).sum::<u64>() as f64 / plane_len as f64;
+            assert!(
+                average_error <= 2.0 && max_error <= 32,
+                "{relative} plane {plane_index}: average={average_error} max={max_error}"
+            );
+            offset += plane_len;
+        }
+    }
+}
+
+#[test]
+fn public_10bit_sample_matches_ffmpeg_when_present() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("test/images/external/avif/unsupported/fox.profile1.10bpc.yuv444.avif");
+    if !path.is_file() {
+        eprintln!("external 10-bit sample is unavailable; skipping oracle");
+        return;
+    }
+    let data = std::fs::read(&path).expect("external 10-bit AVIF should be readable");
+    let public_image =
+        avif_rust::image_from_bytes(&data).expect("10-bit public decode should succeed");
+    assert_eq!((public_image.width, public_image.height), (1204, 800));
+    let frame = avif_rust::decode_frame_bytes(&data).expect("10-bit sample should decode");
+    assert_eq!((frame.width, frame.height), (1204, 800));
+    assert_eq!(frame.buffers.planes.len(), 3);
+    let Some(expected_bytes) = ffmpeg_decode_raw(&path, "yuv444p10le") else {
+        return;
+    };
+    assert_eq!(expected_bytes.len(), 1204 * 800 * 3 * 2);
+    let expected: Vec<u16> = expected_bytes
+        .chunks_exact(2)
+        .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]) & 0x03ff)
+        .collect();
+    let plane_samples = 1204 * 800;
+    for plane_index in 0..3 {
+        let actual = &frame.buffers.planes[plane_index].samples;
+        let expected = &expected[plane_index * plane_samples..(plane_index + 1) * plane_samples];
+        let max_error = actual
+            .iter()
+            .zip(expected)
+            .map(|(actual, expected)| actual.abs_diff(*expected))
+            .max()
+            .unwrap_or(0);
+        let average_error = actual
+            .iter()
+            .zip(expected)
+            .map(|(actual, expected)| f64::from(actual.abs_diff(*expected)))
+            .sum::<f64>()
+            / actual.len() as f64;
+        eprintln!("10-bit plane {plane_index}: average={average_error} max={max_error}");
+        assert!(
+            average_error <= 1.0 && max_error <= 16,
+            "10-bit plane {plane_index}: average={average_error} max={max_error}"
+        );
+    }
+    let actual = frame
+        .to_rgba8()
+        .expect("10-bit RGBA conversion should succeed");
+    let rgba16 = frame
+        .to_rgba16()
+        .expect("10-bit RGBA16 conversion should succeed");
+    assert_eq!(rgba16.rgba.len(), 1204 * 800 * 4);
+    let expected = ffmpeg_decode_rgba_dynamic(&path, 1204, 800).unwrap();
+    let metrics = diff_rgb_dynamic(&actual.rgba, &expected);
+    eprintln!(
+        "10-bit RGBA: average={} max={}",
+        metrics.average_rgb_abs, metrics.max_rgb_abs
+    );
+    assert!(metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 32);
+}
+
+#[test]
+fn public_alpha_sample_matches_ffmpeg_rgba_when_present() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("test/images/external/avif/unsupported/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif");
+    if !path.is_file() {
+        eprintln!("external alpha sample is unavailable; skipping oracle");
+        return;
+    }
+    let data = std::fs::read(&path).expect("external alpha AVIF should be readable");
+    let actual = avif_rust::image_from_bytes(&data).expect("alpha sample should decode");
+    assert_eq!((actual.width, actual.height), (128, 128));
+    let Some(expected_rgb) = ffmpeg_decode_rgba_dynamic(&path, 128, 128) else {
+        return;
+    };
+    let Some(expected_alpha) = ffmpeg_decode_alpha_plane(&path, 128, 128) else {
+        return;
+    };
+    let metrics = diff_rgb_dynamic(&actual.rgba, &expected_rgb);
+    let alpha_max = actual
+        .rgba
+        .chunks_exact(4)
+        .zip(expected_alpha)
+        .map(|(actual, expected)| actual[3].abs_diff(expected))
+        .max()
+        .unwrap_or(0);
+    eprintln!(
+        "{}: average RGB absolute error={}, max={}, alpha_max={}",
+        path.display(),
+        metrics.average_rgb_abs,
+        metrics.max_rgb_abs,
+        alpha_max
+    );
+    assert!(metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 32);
+    assert!(alpha_max <= 1, "alpha channel max error was {alpha_max}");
 }
 
 #[test]
@@ -374,4 +754,37 @@ fn pure_rust_decode_matches_ffmpeg_oracle_and_original_png() {
         "max RGB absolute error against original PNG was {}",
         png_metrics.max_rgb_abs
     );
+}
+
+#[test]
+fn public_transform_samples_cover_crop_and_mirror() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist");
+    let sample = |name: &str| {
+        root.join("test/images/external/avif/unsupported")
+            .join(name)
+    };
+
+    for (name, expected_width, expected_height) in [
+        ("kimono.crop.avif", 385, 330),
+        ("kimono.mirror-horizontal.avif", 722, 1024),
+    ] {
+        let path = sample(name);
+        if !path.is_file() {
+            eprintln!(
+                "external transform sample missing; skipping {}",
+                path.display()
+            );
+            return;
+        }
+        let image = avif_rust::image_from_bytes(
+            &std::fs::read(&path).expect("transform sample should be readable"),
+        )
+        .expect("crop/mirror transform should decode");
+        assert_eq!(
+            (image.width, image.height),
+            (expected_width, expected_height)
+        );
+    }
 }

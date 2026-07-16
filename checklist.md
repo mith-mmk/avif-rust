@@ -33,13 +33,13 @@ from the consumer-facing crate archive.
 - https://github.com/link-u/avif-sample-images
 - https://colinbendell.github.io/webperf/animated-gif-decode/avif.html
 
-### External 8-bit YUV444 compatibility gate (2026-07-14)
+### External 8-bit YUV444/420/422 compatibility gate (2026-07-16)
 
 - [x] Resolve primary-item `ipma` associations from the ordered `ipco`
       property table; reject missing, duplicate, zero and out-of-range
       singleton properties as `Bitstream`.
 - [x] Run the public composition preflight before AV1 header parsing and keep
-      alpha, grid, `clap`, `irot`, `imir` and RGBA ICC rejection fail-closed.
+      grid and RGBA ICC rejection fail-closed; `clap`/`imir` now compose.
 - [x] Keep tile/block/residual probes diagnostic-only; probe failure no longer
       changes image decode success.
 - [x] Validate AV1 entropy termination from the decoder state and trailing
@@ -49,7 +49,11 @@ from the consumer-facing crate archive.
 - [x] Convert all four external 8-bit YUV444 samples and verify PNG
       signature/IHDR dimensions: `1204x800`, `1204x799`, `1203x800` and
       `1203x799`.
-- [x] Keep the remaining ten samples as expected non-zero `Unsupported` or
+- [x] Convert the external 8-bit YUV420, monochrome and YUV422 samples and
+      verify their `1204x800` PNG dimensions.
+- [x] Add pixel-level RGBA oracle coverage for the new subsampling paths.
+- [x] Add native-plane oracle coverage for the new subsampling paths.
+- [x] Keep the remaining four samples as expected non-zero `Unsupported` or
       invalid `Bitstream` failures with no partial PNG output.
 
 The reproducible parent-root gate is:
@@ -58,7 +62,7 @@ The reproducible parent-root gate is:
 pwsh -File test/avif_external_compat.ps1 -DownloadMissing
 ```
 
-The gate result is 4 successes, 10 expected failures, 0 unexpected results
+The gate result is 17 successes, 3 expected failures, 0 unexpected results
 and 0 partial PNGs. The converted PNGs remain ignored under
 `test/images/external/converted/avif/` for visual review; the AVIF sample files
 remain ignored as well.
@@ -280,18 +284,21 @@ public decoded-frame shape.
 Do not start these items until the current vertical slice reaches exact plane
 and RGBA gates.
 
-- [ ] Monochrome decoded planes.
-- [ ] 4:2:0 with chroma sample position.
-- [ ] 4:2:2 with chroma sample position.
+- [x] Public 8-bit monochrome decode and luma-to-RGB conversion.
+- [x] Public 8-bit 4:2:0 decode with subsampled chroma conversion.
+- [x] Public 8-bit 4:2:2 decode with subsampled chroma conversion.
+- [x] Public alpha auxiliary composition for the 8-bit 4:4:4 sample.
 - [x] Keep the limited SDR BT.601/BT.709 colour-conversion core.
 - [ ] Verify the SDR BT.601/BT.709 conversion core with real AVIF plane/RGBA
       fixtures.
 - [ ] Verify 4:4:4 non-identity colour paths with real AVIF plane/RGBA
       fixtures.
-- [ ] 10-bit and 12-bit quantisation/reconstruction.
-- [ ] Alpha auxiliary decode and composition.
+- [x] 10-bit quantisation/reconstruction with dedicated AOM quantizer tables;
+      12-bit remains pending a real external fixture.
 - [ ] Grid image-cell composition.
-- [ ] `clap`, then `irot`, then `imir`.
+- [x] `clap` clean-aperture crop and `imir` horizontal mirror composition.
+- [ ] `irot` rotation composition (the rotate90 fixture still exposes an
+      entropy trailing-bit mismatch).
 - [ ] Multiple tile-group composition.
 - [ ] Super-resolution.
 - [ ] Film grain for still images.
@@ -374,7 +381,7 @@ release work.
 
 `decode`, `image_from_bytes`, `decode_frame_bytes` and the `wml2` callback now
 accept the implemented 8-bit 4:4:4 filter path. They remain fail-closed with
-`Unsupported` for unsupported bit depth/subsampling, film grain, qmatrix and
+`Unsupported` for unsupported bit depth, film grain, qmatrix and
 other unavailable AV1 tools. Prefilter diagnostics stay private or test-only
 and do not define the public decoded-frame contract.
 

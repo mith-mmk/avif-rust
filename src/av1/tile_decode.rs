@@ -19,7 +19,7 @@ mod post_filter_state;
 #[cfg(test)]
 pub(crate) use post_filter_state::RestorationUnit;
 pub(crate) use post_filter_state::{
-    PostFilterState, cdef_adjust_primary_strength, cdef_filter_block_with_edge_mode,
+    PostFilterState, cdef_adjust_primary_strength, cdef_filter_block_region_with_edge_mode,
     cdef_find_direction_with_variance, deblock_filter_edge_with_visible_bounds,
     sgrproj_filter_unit, wiener_filter_unit,
 };

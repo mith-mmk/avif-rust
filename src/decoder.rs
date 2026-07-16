@@ -6,7 +6,7 @@ use crate::av1::{
     Av1CodecConfiguration, BlockModeProbe, ColorConfig, FrameBuffers, FrameDecodePlan, FrameHeader,
     PartitionProbe, QuantState, ResidualProbe, SequenceHeader, TileEntropyState, TileGroup,
     alloc_coded_frame_buffers, build_still_decode_plan, cdef_adjust_primary_strength,
-    cdef_filter_block_with_edge_mode, cdef_find_direction_with_variance,
+    cdef_filter_block_region_with_edge_mode, cdef_find_direction_with_variance,
     crop_frame_buffers_to_plan, deblock_filter_edge_with_visible_bounds,
     decode_luma_root_block_prefix_with_post_filter_state_and_entropy, frame_buffers_to_rgba_8,
     frame_buffers_to_rgba_16, parse_av1_config, parse_frame_header, parse_sequence_header,
@@ -783,7 +783,7 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
                 .cdef
                 .damping
                 .saturating_sub(u8::from(plane_index != 0));
-            let filtered = cdef_filter_block_with_edge_mode(
+            let filtered = cdef_filter_block_region_with_edge_mode(
                 &source,
                 width,
                 height,
@@ -797,10 +797,13 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
                 damping,
                 true,
             );
-            for row in y..(y + (height - y).min(8)) {
-                let start = row * width + x;
-                let end = start + (width - x).min(8);
-                plane.samples[start..end].copy_from_slice(&filtered[start..end]);
+            let block_width = (width - x).min(8);
+            let block_height = (height - y).min(8);
+            for row in 0..block_height {
+                let start = (y + row) * width + x;
+                let block_start = row * block_width;
+                plane.samples[start..start + block_width]
+                    .copy_from_slice(&filtered[block_start..block_start + block_width]);
             }
         }
     }
@@ -958,19 +961,9 @@ fn validate_public_container_preflight(
             "AVIF sequences are not supported by public decode yet".to_string(),
         ));
     }
-    if !info.alpha_auxiliary_items.is_empty() {
-        return Err(DecoderError::Unsupported(
-            "AVIF alpha auxiliary item composition is not supported yet".to_string(),
-        ));
-    }
     if info.primary_grid.is_some() {
         return Err(DecoderError::Unsupported(
             "AVIF grid composition is not supported yet".to_string(),
-        ));
-    }
-    if info.clean_aperture.is_some() || info.rotation.is_some() || info.mirror.is_some() {
-        return Err(DecoderError::Unsupported(
-            "AVIF clap/irot/imir composition is not supported yet".to_string(),
         ));
     }
     if rgba_output
@@ -990,16 +983,14 @@ fn validate_public_container_preflight(
         .map(parse_av1_config)
         .transpose()?;
     if let Some(config) = config {
-        if config.bit_depth() != 8 {
-            return Err(DecoderError::Unsupported(
-                "10-bit quantization is not supported by public decode yet".to_string(),
-            ));
+        if !matches!(config.bit_depth(), 8 | 10 | 12) {
+            return Err(DecoderError::Unsupported(format!(
+                "AV1 {}-bit quantization is not supported by public decode yet",
+                config.bit_depth()
+            )));
         }
-        if config.monochrome || config.chroma_subsampling_x || config.chroma_subsampling_y {
-            return Err(DecoderError::Unsupported(
-                "public decode supports 4:4:4 color only".to_string(),
-            ));
-        }
+        // Monochrome and sub-sampled YUV layouts are decoded by the AV1
+        // plane/reconstruction path.
     }
     Ok(())
 }

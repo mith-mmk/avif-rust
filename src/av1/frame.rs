@@ -514,7 +514,7 @@ fn parse_loop_filter_params(
     let mut levels = [0u8; 4];
     levels[0] = reader.read_bits(6, "loop_filter_level[0]")? as u8;
     levels[1] = reader.read_bits(6, "loop_filter_level[1]")? as u8;
-    if !sequence.color_config.monochrome {
+    if !sequence.color_config.monochrome && (levels[0] != 0 || levels[1] != 0) {
         levels[2] = reader.read_bits(6, "loop_filter_level[2]")? as u8;
         levels[3] = reader.read_bits(6, "loop_filter_level[3]")? as u8;
     }

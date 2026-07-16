@@ -1,6 +1,6 @@
 [package]
 name = "avif-rust"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 rust-version = "1.88"
 description = "Experimental pure Rust AVIF container and AV1 still-image decoder"
@@ -12,3 +12,7 @@ include = ["/src/**", "/README.md", "/README.ja.md", "/LICENSE"]
 
 [dependencies]
 bin-rs = { version = "0.0.10", features = ["stream", "util"] }
+
+[[bench]]
+name = "decode"
+harness = false
