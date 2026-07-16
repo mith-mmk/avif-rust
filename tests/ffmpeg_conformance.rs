@@ -838,3 +838,39 @@ fn public_transform_samples_cover_crop_and_mirror() {
         );
     }
 }
+
+#[test]
+fn public_irot_alpha_sample_matches_ffmpeg_when_present() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("test/images/external/avif/unsupported/abc_color_irot_alpha_irot.avif");
+    if !path.is_file() {
+        eprintln!("official irot+alpha sample is unavailable; skipping oracle");
+        return;
+    }
+    let data = std::fs::read(&path).expect("irot+alpha AVIF should be readable");
+    let actual = avif_rust::image_from_bytes(&data).expect("irot+alpha sample should decode");
+    assert_eq!((actual.width, actual.height), (256, 512));
+    let Some(expected_rgb) = ffmpeg_decode_rgba_dynamic(&path, 256, 512) else {
+        return;
+    };
+    let metrics = diff_rgb_dynamic(&actual.rgba, &expected_rgb);
+    assert!(
+        metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 48,
+        "irot+alpha FFmpeg RGB error average={} max={}",
+        metrics.average_rgb_abs,
+        metrics.max_rgb_abs
+    );
+    let Some(expected_alpha) = ffmpeg_decode_alpha_plane(&path, 256, 512) else {
+        return;
+    };
+    let max_alpha = actual
+        .rgba
+        .chunks_exact(4)
+        .zip(expected_alpha)
+        .map(|(pixel, expected)| pixel[3].abs_diff(expected))
+        .max()
+        .unwrap_or(0);
+    assert!(max_alpha <= 8, "irot+alpha alpha error max={max_alpha}");
+}

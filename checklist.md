@@ -300,8 +300,9 @@ and RGBA gates.
 - [x] Grid image-cell composition for still images, including ordered `dimg`
       references and RGBA placement; verified with `sofa_grid1x5_420.avif`.
 - [x] `clap` clean-aperture crop and `imir` horizontal mirror composition.
-- [ ] `irot` rotation composition (the rotate90 fixture still exposes an
-      entropy trailing-bit mismatch).
+- [x] `irot` rotation composition, including an official 8-bit alpha fixture;
+      the `kimono.rotate90.avif` sample still exposes a separate entropy
+      trailing-bit mismatch and remains fail-closed.
 - [ ] Multiple tile-group composition.
 - [ ] Super-resolution.
 - [ ] Film grain for still images.

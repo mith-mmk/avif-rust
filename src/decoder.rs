@@ -496,6 +496,18 @@ mod grid_composition_tests {
         assert_eq!(image.rgba[2 * 3 * 4], 30);
         assert_eq!(image.rgba[(2 * 3 + 2) * 4], 40);
     }
+
+    #[test]
+    fn irot_angle_one_rotates_counter_clockwise() {
+        let mut image = ImageBuffer {
+            width: 2,
+            height: 1,
+            rgba: vec![10, 0, 0, 255, 20, 0, 0, 255],
+        };
+        apply_rotation(&mut image, Some(ImageRotation { angle: 1 })).unwrap();
+        assert_eq!((image.width, image.height), (1, 2));
+        assert_eq!(image.rgba, vec![20, 0, 0, 255, 10, 0, 0, 255]);
+    }
 }
 
 fn decode_grid_cell(info: &AvifInfo, cell: &GridCell) -> Result<ImageBuffer, DecoderError> {
@@ -673,8 +685,10 @@ fn apply_rotation(
         let new_height = image.width;
         for y in 0..image.height {
             for x in 0..image.width {
-                let destination_x = image.height - 1 - y;
-                let destination_y = x;
+                // The AVIF `irot` angle is a counter-clockwise quarter-turn.
+                // The output width/height are swapped for each turn.
+                let destination_x = y;
+                let destination_y = image.width - 1 - x;
                 let source = (y * image.width + x) * 4;
                 let destination = (destination_y * new_width + destination_x) * 4;
                 transformed[destination..destination + 4]
