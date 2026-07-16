@@ -390,26 +390,24 @@ fn generate_chroma_lut(
             for dy in 0..=lag {
                 for dx in 0..=(2 * lag) {
                     if dy == lag && dx == lag {
-                        if params.chroma_scaling_from_luma {
-                            let ly = ((y + AR_PAD) << usize::from(sub_y)) + AR_PAD;
-                            let lx = ((x + AR_PAD) << usize::from(sub_x)) + AR_PAD;
-                            let mut luma =
-                                luma_lut[ly.min(luma_lut.len() - 1)][lx.min(luma_lut[0].len() - 1)];
+                        let ly = (y << usize::from(sub_y)) + AR_PAD;
+                        let lx = (x << usize::from(sub_x)) + AR_PAD;
+                        let mut luma =
+                            luma_lut[ly.min(luma_lut.len() - 1)][lx.min(luma_lut[0].len() - 1)];
+                        if sub_x {
+                            luma += luma_lut[ly.min(luma_lut.len() - 1)]
+                                [(lx + 1).min(luma_lut[0].len() - 1)];
+                        }
+                        if sub_y {
+                            luma += luma_lut[(ly + 1).min(luma_lut.len() - 1)]
+                                [lx.min(luma_lut[0].len() - 1)];
                             if sub_x {
-                                luma += luma_lut[ly.min(luma_lut.len() - 1)]
+                                luma += luma_lut[(ly + 1).min(luma_lut.len() - 1)]
                                     [(lx + 1).min(luma_lut[0].len() - 1)];
                             }
-                            if sub_y {
-                                luma += luma_lut[(ly + 1).min(luma_lut.len() - 1)]
-                                    [lx.min(luma_lut[0].len() - 1)];
-                                if sub_x {
-                                    luma += luma_lut[(ly + 1).min(luma_lut.len() - 1)]
-                                        [(lx + 1).min(luma_lut[0].len() - 1)];
-                                }
-                            }
-                            let count = 1i32 << (usize::from(sub_x) + usize::from(sub_y));
-                            sum += i32::from(coeffs[coeff_index]) * (luma / count);
                         }
+                        let count = 1i32 << (usize::from(sub_x) + usize::from(sub_y));
+                        sum += i32::from(coeffs[coeff_index]) * (luma / count);
                         break;
                     }
                     let sample = lut[y + AR_PAD - lag + dy][x + AR_PAD - lag + dx];
@@ -449,11 +447,25 @@ fn sample_lut(
     lut[offset_y + y + block_height * by][offset_x + x + block_width * bx]
 }
 
-fn row_seed(row: usize, params: &FilmGrainParams) -> u32 {
-    let mut seed = u32::from(params.random_seed);
-    seed ^= ((((row * 37 + 178) & 0xff) as u32) << 8) as u32;
-    seed ^= ((row * 173 + 105) & 0xff) as u32;
-    seed
+fn row_seeds(row: usize, params: &FilmGrainParams) -> [u32; 2] {
+    let rows = 1 + usize::from(params.overlap_flag && row > 0);
+    let mut seeds = [0; 2];
+    for (index, seed) in seeds.iter_mut().take(rows).enumerate() {
+        let source_row = row - index;
+        *seed = u32::from(params.random_seed);
+        *seed ^= (((source_row * 37 + 178) & 0xff) as u32) << 8;
+        *seed ^= ((source_row * 173 + 105) & 0xff) as u32;
+    }
+    seeds
+}
+
+fn blend_grain(old: i32, current: i32, subsampled: bool, index: usize) -> i32 {
+    let [old_weight, current_weight] = if subsampled {
+        [[23, 22], [0, 0]][index]
+    } else {
+        [[27, 17], [17, 27]][index]
+    };
+    round_shift(old * old_weight + current * current_weight, 5)
 }
 
 fn apply_luma_plane(
@@ -547,19 +559,68 @@ fn apply_plane(
     let block_height = BLOCK_SIZE >> sy;
     let rows = height.div_ceil(block_height);
     for row_num in 0..rows {
-        let mut seed = row_seed(row_num, params);
+        let mut seeds = row_seeds(row_num, params);
         let mut offsets = [[0i32; 2]; 2];
         for bx in (0..width).step_by(block_width) {
             let current_width = block_width.min(width - bx);
             let current_height = block_height.min(height - row_num * block_height);
-            offsets[0][0] = random_number(8, &mut seed);
-            let x_start = 0;
-            let y_start = 0;
-            for y in y_start..current_height {
-                for x in x_start..current_width {
-                    let grain = sample_lut(lut, &offsets, sub_x, sub_y, false, false, x, y)
+            let row_count = 1 + usize::from(params.overlap_flag && row_num > 0);
+            if params.overlap_flag && bx != 0 {
+                for index in 0..row_count {
+                    offsets[1][index] = offsets[0][index];
+                }
+            }
+            for (index, seed) in seeds.iter_mut().enumerate().take(row_count) {
+                offsets[0][index] = random_number(8, seed);
+            }
+            let x_start = if params.overlap_flag && bx != 0 {
+                (2 >> sx).min(current_width)
+            } else {
+                0
+            };
+            let y_start = if params.overlap_flag && row_num != 0 {
+                (2 >> sy).min(current_height)
+            } else {
+                0
+            };
+            for y in 0..current_height {
+                for x in 0..current_width {
+                    let mut grain = sample_lut(lut, &offsets, sub_x, sub_y, false, false, x, y);
+                    if x < x_start && y < y_start {
+                        let top = blend_grain(
+                            sample_lut(lut, &offsets, sub_x, sub_y, true, true, x, y),
+                            sample_lut(lut, &offsets, sub_x, sub_y, false, true, x, y),
+                            sub_x,
+                            x,
+                        )
                         .clamp(grain_min, grain_max);
-                    let index = (row_num * (BLOCK_SIZE >> sy) + y) * width + bx + x;
+                        let left = blend_grain(
+                            sample_lut(lut, &offsets, sub_x, sub_y, true, false, x, y),
+                            grain,
+                            sub_x,
+                            x,
+                        )
+                        .clamp(grain_min, grain_max);
+                        grain = blend_grain(top, left, sub_y, y).clamp(grain_min, grain_max);
+                    } else if x < x_start {
+                        grain = blend_grain(
+                            sample_lut(lut, &offsets, sub_x, sub_y, true, false, x, y),
+                            grain,
+                            sub_x,
+                            x,
+                        )
+                        .clamp(grain_min, grain_max);
+                    } else if y < y_start {
+                        grain = blend_grain(
+                            sample_lut(lut, &offsets, sub_x, sub_y, false, true, x, y),
+                            grain,
+                            sub_y,
+                            y,
+                        )
+                        .clamp(grain_min, grain_max);
+                    }
+                    grain = grain.clamp(grain_min, grain_max);
+                    let index = (row_num * block_height + y) * width + bx + x;
                     let src = i32::from(source[index]);
                     let scale_index = if let Some((
                         luma,
@@ -617,4 +678,103 @@ fn apply_plane(
         }
     }
     *samples = output;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{blend_grain, row_seeds};
+    use crate::av1::decode::{PlaneBuffer, PlaneLayout};
+    use crate::av1::{ColorConfig, ColorRange, FilmGrainParams, FrameBuffers};
+
+    fn params(overlap_flag: bool) -> FilmGrainParams {
+        FilmGrainParams {
+            random_seed: 45231,
+            num_y_points: 0,
+            scaling_points_y: [[0; 2]; 14],
+            chroma_scaling_from_luma: false,
+            num_cb_points: 0,
+            scaling_points_cb: [[0; 2]; 10],
+            num_cr_points: 0,
+            scaling_points_cr: [[0; 2]; 10],
+            scaling_shift: 11,
+            ar_coeff_lag: 0,
+            ar_coeffs_y: [0; 24],
+            ar_coeffs_cb: [0; 25],
+            ar_coeffs_cr: [0; 25],
+            ar_coeff_shift: 8,
+            grain_scale_shift: 0,
+            cb_mult: 0,
+            cb_luma_mult: 0,
+            cb_offset: 0,
+            cr_mult: 0,
+            cr_luma_mult: 0,
+            cr_offset: 0,
+            overlap_flag,
+            clip_to_restricted_range: false,
+        }
+    }
+
+    #[test]
+    fn overlap_weights_match_av1_rounding() {
+        assert_eq!(blend_grain(100, 200, false, 0), 191);
+        assert_eq!(blend_grain(100, 200, false, 1), 222);
+        assert_eq!(blend_grain(100, 200, true, 0), 209);
+    }
+
+    #[test]
+    fn overlap_row_seed_keeps_current_and_previous_rows() {
+        let no_overlap = row_seeds(0, &params(false));
+        assert_eq!(no_overlap[1], 0);
+        let overlap = row_seeds(3, &params(true));
+        assert_ne!(overlap[0], overlap[1]);
+        assert_eq!(
+            overlap,
+            [
+                row_seeds(3, &params(true))[0],
+                row_seeds(2, &params(true))[0]
+            ]
+        );
+    }
+
+    #[test]
+    fn overlap_path_changes_block_boundaries_without_changing_dimensions() {
+        let layout = PlaneLayout {
+            plane: 0,
+            width: 64,
+            height: 64,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 64 * 64,
+        };
+        let mut params = params(false);
+        params.num_y_points = 2;
+        params.scaling_points_y[0] = [0, 64];
+        params.scaling_points_y[1] = [255, 64];
+        let color = ColorConfig {
+            high_bitdepth: false,
+            twelve_bit: false,
+            bit_depth: 8,
+            monochrome: true,
+            color_description: None,
+            color_range: ColorRange::Full,
+            subsampling_x: false,
+            subsampling_y: false,
+            chroma_sample_position: None,
+            separate_uv_delta_q: false,
+        };
+        let mut no_overlap = FrameBuffers {
+            width: 64,
+            height: 64,
+            planes: vec![PlaneBuffer {
+                layout,
+                samples: vec![128; 64 * 64],
+            }],
+        };
+        let mut overlap = no_overlap.clone();
+        super::apply(&mut no_overlap, &color, &params);
+        params.overlap_flag = true;
+        super::apply(&mut overlap, &color, &params);
+        assert_eq!(overlap.planes[0].samples.len(), 64 * 64);
+        assert!(overlap.planes[0].samples != no_overlap.planes[0].samples);
+    }
 }

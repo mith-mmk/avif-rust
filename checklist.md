@@ -307,7 +307,8 @@ and RGBA gates.
 - [ ] Super-resolution.
 - [x] Film grain for still images when `overlap_flag == 0`, including the
       normative Gaussian sequence, AR synthesis and chroma scaling paths.
-- [ ] Film grain overlap blending (`overlap_flag == 1`).
+- [x] Film grain overlap blending (`overlap_flag == 1`) for luma and
+      subsampled chroma planes.
 - [x] Keep HDR transfer characteristics and ICC profiles explicitly
       `Unsupported` until implemented.
 - [ ] Implement HDR tone mapping and ICC display conversion.
@@ -318,7 +319,9 @@ and RGBA gates.
 
 The release benchmark uses `AVIF_BENCH_ITERS=11 cargo bench --bench decode`
 against `samples/WML2Viewer.avif`. The current optimized run measured
-`467.58/480.59 ms` (native/RGBA). The reconstruction hot path now passes
+`348.14/346.93 ms` (native/RGBA). The deblock stage now indexes block filter
+state on an 8-pixel grid instead of linearly scanning every block for each
+edge. The reconstruction hot path also passes
 decoded coefficient slices directly instead of cloning a coefficient `Vec`
 for every transform; compare medians on the same host because this benchmark
 is sensitive to local scheduling. Keep the image and plane oracle gates green
@@ -332,10 +335,10 @@ when changing this path.
       for overflow and resource limits.
 - [ ] Audit post-filter scratch-buffer sizing once normative filters are
       enabled.
-- [x] Reject active but unimplemented filters, film-grain overlap, qmatrix and other
+- [x] Reject active but unimplemented filters, qmatrix and other
       unsupported AV1 tools before public decode returns an image.
 - [x] Keep public decode fail-closed (`Unsupported`) whenever an unimplemented
-      filter, film-grain overlap or qmatrix is active; retain pre-filter diagnostics as
+      filter or qmatrix is active; retain pre-filter diagnostics as
       private/test-only paths.
 - [x] Validate primary-item info/location, `ipma` property indices and
       essential-property flags.
@@ -397,9 +400,8 @@ The permanent integrated plane oracle and broader format coverage remain
 release work.
 
 `decode`, `image_from_bytes`, `decode_frame_bytes` and the `wml2` callback now
-accept the implemented 8-bit 4:4:4 filter and non-overlap film-grain paths. They
-remain fail-closed with `Unsupported` for unsupported bit depth, film-grain
-overlap, qmatrix and
+accept the implemented 8-bit 4:4:4 filter and film-grain paths. They
+remain fail-closed with `Unsupported` for unsupported bit depth, qmatrix and
 other unavailable AV1 tools. Prefilter diagnostics stay private or test-only
 and do not define the public decoded-frame contract.
 

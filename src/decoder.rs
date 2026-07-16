@@ -758,17 +758,38 @@ fn apply_deblock_stage(
     frame_header: &FrameHeader,
     state: &PostFilterState,
 ) {
+    const FILTER_GRID_STEP: usize = 8;
+    let filter_grid_width = frame.width.div_ceil(FILTER_GRID_STEP);
+    let filter_grid_height = frame.height.div_ceil(FILTER_GRID_STEP);
+    let mut filter_grid = vec![None; filter_grid_width * filter_grid_height];
+    for candidate in &state.block_filter_states {
+        let start_x = (candidate.x / FILTER_GRID_STEP).min(filter_grid_width);
+        let start_y = (candidate.y / FILTER_GRID_STEP).min(filter_grid_height);
+        let end_x = candidate
+            .x
+            .saturating_add(candidate.block_size.width())
+            .div_ceil(FILTER_GRID_STEP)
+            .min(filter_grid_width);
+        let end_y = candidate
+            .y
+            .saturating_add(candidate.block_size.height())
+            .div_ceil(FILTER_GRID_STEP)
+            .min(filter_grid_height);
+        for grid_y in start_y..end_y {
+            let row = grid_y * filter_grid_width;
+            for grid_x in start_x..end_x {
+                let slot = &mut filter_grid[row + grid_x];
+                if slot.is_none() {
+                    *slot = Some(*candidate);
+                }
+            }
+        }
+    }
     let block_filter_state_at = |x: usize, y: usize| {
-        state
-            .block_filter_states
-            .iter()
-            .find(|candidate| {
-                x >= candidate.x
-                    && y >= candidate.y
-                    && x < candidate.x + candidate.block_size.width()
-                    && y < candidate.y + candidate.block_size.height()
-            })
+        filter_grid
+            .get((y / FILTER_GRID_STEP) * filter_grid_width + x / FILTER_GRID_STEP)
             .copied()
+            .flatten()
     };
     let mut applied_edges = std::collections::HashSet::new();
     let mut previous_vertical =
@@ -1240,16 +1261,6 @@ fn validate_public_decode_tools(headers: &Av1Headers) -> Result<(), DecoderError
     if headers.frame.quantization.using_qmatrix {
         return Err(DecoderError::Unsupported(
             "AV1 quantization matrices are not supported by public decode yet".to_string(),
-        ));
-    }
-    if headers
-        .frame
-        .film_grain
-        .as_ref()
-        .is_some_and(|params| params.overlap_flag)
-    {
-        return Err(DecoderError::Unsupported(
-            "AV1 film grain overlap is not supported by public decode yet".to_string(),
         ));
     }
     Ok(())
