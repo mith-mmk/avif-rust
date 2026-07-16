@@ -293,7 +293,7 @@ impl<'a> TileDecoder<'a> {
     }
 
     fn above_y_mode_context(&self, x: usize, y: usize) -> usize {
-        if y < 4 {
+        if (y >> 2) <= self.tile_mi_row_start {
             return 0;
         }
         self.y_mode_at_mi(x >> 2, (y >> 2).saturating_sub(1))
@@ -301,7 +301,7 @@ impl<'a> TileDecoder<'a> {
     }
 
     fn left_y_mode_context(&self, x: usize, y: usize) -> usize {
-        if x < 4 {
+        if (x >> 2) <= self.tile_mi_col_start {
             return 0;
         }
         self.y_mode_at_mi((x >> 2).saturating_sub(1), y >> 2)

@@ -18,7 +18,7 @@ impl<'a> TileDecoder<'a> {
     }
 
     fn above_skip_context(&self, x: usize, y: usize) -> bool {
-        if y < 4 {
+        if (y >> 2) <= self.tile_mi_row_start {
             return false;
         }
         self.skip_at_mi(x >> 2, (y >> 2).saturating_sub(1))
@@ -26,7 +26,7 @@ impl<'a> TileDecoder<'a> {
     }
 
     fn left_skip_context(&self, x: usize, y: usize) -> bool {
-        if x < 4 {
+        if (x >> 2) <= self.tile_mi_col_start {
             return false;
         }
         self.skip_at_mi((x >> 2).saturating_sub(1), y >> 2)
@@ -60,8 +60,8 @@ impl<'a> TileDecoder<'a> {
 
     pub(super) fn tx_size_context(&self, x: usize, y: usize, block_size: BlockSize) -> usize {
         let (max_tx_width, max_tx_height) = block_size.largest_supported_tx_dimensions();
-        let has_above = y >= 4;
-        let has_left = x >= 4;
+        let has_above = (y >> 2) > self.tile_mi_row_start;
+        let has_left = (x >> 2) > self.tile_mi_col_start;
         let above =
             has_above && self.above_txfm_context.get(x >> 2).copied().unwrap_or(0) >= max_tx_width;
         let left =

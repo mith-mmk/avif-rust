@@ -231,6 +231,63 @@ fn ffmpeg_avif_decode_is_close_to_original_png() {
 }
 
 #[test]
+fn generated_two_tile_sample_matches_ffmpeg_when_encoder_present() {
+    let root = std::env::temp_dir().join(format!(".test-avif-multitile-{}", std::process::id()));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary AVIF sample directory: {err}");
+    }
+    let output_path = root.join("two-tile.avif");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .arg("-i")
+        .arg(sample_path("WML2Viewer.png"))
+        .args([
+            "-frames:v",
+            "1",
+            "-c:v",
+            "libaom-av1",
+            "-still-picture",
+            "1",
+            "-crf",
+            "30",
+            "-cpu-used",
+            "8",
+            "-aom-params",
+            "tile-columns=1:tile-rows=0:enable-cdef=0:enable-restoration=0",
+            "-f",
+            "avif",
+        ])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated two-tile sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom encoder is unavailable; skipping generated two-tile sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let data = std::fs::read(&output_path).expect("generated two-tile AVIF should be readable");
+    let decoded = avif_rust::image_from_bytes(&data).expect("two-tile AVIF should decode");
+    assert_eq!(
+        (decoded.width, decoded.height),
+        (SAMPLE_WIDTH, SAMPLE_HEIGHT)
+    );
+    if let Some(expected) = ffmpeg_decode_rgba_dynamic(&output_path, SAMPLE_WIDTH, SAMPLE_HEIGHT) {
+        let metrics = diff_rgb_dynamic(&decoded.rgba, &expected);
+        assert!(
+            metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 128,
+            "two-tile FFmpeg RGB error average={} max={}",
+            metrics.average_rgb_abs,
+            metrics.max_rgb_abs
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn layered_conformance_helpers_compare_planes_and_rgba_max_error() {
     let layout = avif_rust::av1::PlaneLayout {
         plane: 0,

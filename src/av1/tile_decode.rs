@@ -122,6 +122,8 @@ pub struct TileDecoder<'a> {
     cdf: CdfContext,
     mi_cols: usize,
     mi_rows: usize,
+    tile_mi_col_start: usize,
+    tile_mi_row_start: usize,
     y_mode_grid: Vec<Option<usize>>,
     y_palette_size_grid: Vec<Option<usize>>,
     uv_palette_size_grid: Vec<Option<usize>>,
@@ -186,6 +188,8 @@ impl<'a> TileDecoder<'a> {
             cdf: CdfContext::new(frame.base_q_idx),
             mi_cols,
             mi_rows,
+            tile_mi_col_start: 0,
+            tile_mi_row_start: 0,
             y_mode_grid: vec![None; mi_count],
             y_palette_size_grid: vec![None; mi_count],
             uv_palette_size_grid: vec![None; mi_count],
@@ -219,6 +223,11 @@ impl<'a> TileDecoder<'a> {
             restoration_units: Vec::new(),
             block_filter_states: Vec::new(),
         })
+    }
+
+    pub(super) fn set_tile_bounds(&mut self, tile: &crate::av1::TileDecodePlan) {
+        self.tile_mi_col_start = tile.mi_col_start as usize;
+        self.tile_mi_row_start = tile.mi_row_start as usize;
     }
 
     pub(super) fn txb_context(

@@ -18,7 +18,7 @@ use crate::compat::{DataMap, DecodeOptions, InitOptions};
 use crate::container::{
     AvifInfo, CleanAperture, ColorInformation, GridCell, ImageMirror, ImageRotation, parse_avif,
 };
-use crate::obu::{ObuType, count_obus, find_obu_payloads};
+use crate::obu::{ObuType, count_obus, find_obu_payloads, parse_obu_stream};
 use crate::{DecoderError, ImageBuffer, Rgba16ImageBuffer};
 use bin_rs::reader::BinaryReader;
 use std::io::SeekFrom;
@@ -170,7 +170,6 @@ struct ParsedTileGroup {
 }
 
 fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
-    let tile_group_obu_count = count_obus(&info.primary_item_payload, ObuType::TileGroup)?;
     let frame_obu_count = count_obus(&info.primary_item_payload, ObuType::Frame)?;
     let frame_header_obu_count = count_obus(&info.primary_item_payload, ObuType::FrameHeader)?;
     if frame_obu_count > 1 || frame_header_obu_count > 1 {
@@ -182,7 +181,7 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
         sequence_payload,
         frame_payload,
         frame_header_payload,
-        tile_group_payload,
+        _tile_group_payload,
     ] = find_obu_payloads(
         &info.primary_item_payload,
         [
@@ -204,11 +203,6 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
     if let Some(config) = config {
         validate_av1_config(&config, &sequence)?;
     }
-    if frame_payload.is_none() && tile_group_obu_count > 1 {
-        return Err(DecoderError::Unsupported(
-            "AVIF multiple tile-group OBUs for one frame are not supported yet".to_string(),
-        ));
-    }
     let (frame, tile_group_payload) = if let Some(frame_payload) = frame_payload {
         let frame = parse_frame_header(frame_payload, &sequence)?;
         if frame.payload_after_header_offset > frame_payload.len() {
@@ -218,7 +212,7 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
         }
         let tile_group = parse_tile_group(
             frame_payload,
-            frame.uncompressed_header_bits,
+            frame.payload_after_header_offset * 8,
             &frame.tile_info,
         )?;
         let entropy_states = prepare_tile_entropy(frame_payload, &tile_group, &frame)?;
@@ -248,16 +242,25 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
             DecoderError::Bitstream("AV1 frame header OBU is missing".to_string())
         })?;
         let frame = parse_frame_header(frame_header_payload, &sequence)?;
-        let tile_group_payload = tile_group_payload
-            .ok_or_else(|| DecoderError::Bitstream("AV1 tile group OBU is missing".to_string()))?;
-        let tile_group = parse_tile_group(tile_group_payload, 0, &frame.tile_info)?;
-        let entropy_states = prepare_tile_entropy(tile_group_payload, &tile_group, &frame)?;
+        let tile_group_payloads = parse_obu_stream(&info.primary_item_payload)?
+            .into_iter()
+            .filter(|obu| obu.obu_type == ObuType::TileGroup)
+            .map(|obu| obu.payload)
+            .collect::<Vec<_>>();
+        if tile_group_payloads.is_empty() {
+            return Err(DecoderError::Bitstream(
+                "AV1 tile group OBU is missing".to_string(),
+            ));
+        }
+        let (tile_group_data, tile_group) =
+            merge_tile_group_payloads(&tile_group_payloads, &frame.tile_info)?;
+        let entropy_states = prepare_tile_entropy(&tile_group_data, &tile_group, &frame)?;
         (
             frame,
             ParsedTileGroup {
                 from_frame_obu: false,
-                payload_len: tile_group_payload.len(),
-                tile_data: tile_group_payload.to_vec(),
+                payload_len: tile_group_data.len(),
+                tile_data: tile_group_data,
                 group: tile_group,
                 entropy_states,
                 partition_probes: Vec::new(),
@@ -267,11 +270,11 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
         )
     };
     if let Some(width) = info.width
-        && width != frame.frame_width
+        && width != frame.upscaled_width
     {
         return Err(DecoderError::Bitstream(format!(
-            "AVIF ispe width {width} does not match AV1 frame width {}",
-            frame.frame_width
+            "AVIF ispe width {width} does not match AV1 upscaled width {}",
+            frame.upscaled_width
         )));
     }
     if let Some(height) = info.height
@@ -293,6 +296,74 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
         decode_plan,
         quant_state,
     })
+}
+
+fn merge_tile_group_payloads(
+    payloads: &[&[u8]],
+    tile_info: &crate::av1::TileInfo,
+) -> Result<(Vec<u8>, TileGroup), DecoderError> {
+    let tile_count = tile_info
+        .tile_cols
+        .checked_mul(tile_info.tile_rows)
+        .ok_or_else(|| DecoderError::InvalidParam("AV1 tile count overflows".to_string()))?;
+    if tile_count == 0 {
+        return Err(DecoderError::Bitstream(
+            "AV1 tile count is zero".to_string(),
+        ));
+    }
+    let mut tile_bytes = vec![
+        None;
+        usize::try_from(tile_count).map_err(|_| {
+            DecoderError::InvalidParam("AV1 tile count is too large".to_string())
+        })?
+    ];
+    for payload in payloads {
+        let group = parse_tile_group(payload, 0, tile_info)?;
+        for tile in group.tiles {
+            let index = usize::try_from(tile.tile_id)
+                .map_err(|_| DecoderError::InvalidParam("AV1 tile ID is too large".to_string()))?;
+            let bytes = payload
+                .get(tile.offset..tile.offset + tile.len)
+                .ok_or_else(|| {
+                    DecoderError::Bitstream("AV1 tile payload range is invalid".to_string())
+                })?;
+            let slot = tile_bytes.get_mut(index).ok_or_else(|| {
+                DecoderError::Bitstream("AV1 tile ID is outside the frame".to_string())
+            })?;
+            if slot.is_some() {
+                return Err(DecoderError::Bitstream(format!(
+                    "AV1 tile {index} is present in multiple tile groups"
+                )));
+            }
+            *slot = Some(bytes.to_vec());
+        }
+    }
+    if tile_bytes.iter().any(Option::is_none) {
+        return Err(DecoderError::Unsupported(
+            "AV1 partial tile groups are not supported for still-image decode".to_string(),
+        ));
+    }
+    let mut data = Vec::new();
+    let mut tiles = Vec::with_capacity(tile_bytes.len());
+    for (tile_id, bytes) in tile_bytes.into_iter().enumerate() {
+        let bytes = bytes.expect("tile presence checked above");
+        let offset = data.len();
+        data.extend_from_slice(&bytes);
+        tiles.push(crate::av1::TilePayload {
+            tile_id: tile_id as u32,
+            offset,
+            len: bytes.len(),
+        });
+    }
+    Ok((
+        data,
+        TileGroup {
+            start_tile: 0,
+            end_tile: tile_count - 1,
+            data_start_offset: 0,
+            tiles,
+        },
+    ))
 }
 
 fn populate_diagnostic_probes(headers: &mut Av1Headers) {
@@ -2533,6 +2604,60 @@ mod prefilter_diagnostic_tests {
             &rgba.rgba[..4]
         );
         assert_eq!(rgba.rgba.len(), frame.width * frame.height * 4);
+    }
+}
+
+#[cfg(test)]
+mod tile_group_merge_tests {
+    use super::*;
+
+    fn tile_info() -> crate::av1::TileInfo {
+        crate::av1::TileInfo {
+            uniform_tile_spacing: true,
+            tile_cols: 2,
+            tile_rows: 1,
+            tile_cols_log2: 1,
+            tile_rows_log2: 0,
+            tile_size_bytes: 1,
+            context_update_tile_id: 0,
+            mi_col_starts: vec![0, 16, 32],
+            mi_row_starts: vec![0, 16],
+        }
+    }
+
+    #[test]
+    fn merge_tile_groups_reorders_payloads_by_tile_id() {
+        let info = tile_info();
+        let first = [0x80, 0xaa];
+        let second = [0xe0, 0xbb];
+        let (data, group) = merge_tile_group_payloads(&[&second, &first], &info).unwrap();
+        assert_eq!(data, vec![0xaa, 0xbb]);
+        assert_eq!(group.start_tile, 0);
+        assert_eq!(group.end_tile, 1);
+        assert_eq!(group.tiles[0].tile_id, 0);
+        assert_eq!(group.tiles[0].offset, 0);
+        assert_eq!(group.tiles[1].tile_id, 1);
+        assert_eq!(group.tiles[1].offset, 1);
+    }
+
+    #[test]
+    fn merge_tile_groups_rejects_duplicate_tiles() {
+        let info = tile_info();
+        let first = [0x80, 0xaa];
+        let duplicate = [0x80, 0xbb];
+        let err = merge_tile_group_payloads(&[&first, &duplicate], &info).unwrap_err();
+        assert!(
+            matches!(err, DecoderError::Bitstream(message) if message.contains("multiple tile groups"))
+        );
+    }
+    #[test]
+    fn merge_tile_groups_rejects_holes() {
+        let info = tile_info();
+        let first = [0x80, 0xaa];
+        let err = merge_tile_group_payloads(&[&first], &info).unwrap_err();
+        assert!(
+            matches!(err, DecoderError::Unsupported(message) if message.contains("partial tile"))
+        );
     }
 }
 

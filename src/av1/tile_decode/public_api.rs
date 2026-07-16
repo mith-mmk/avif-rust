@@ -58,6 +58,7 @@ pub fn probe_tile_partitions(
             DecoderError::Bitstream("AV1 tile decode plan is missing a tile".to_string())
         })?;
         let mut decoder = TileDecoder::new(payload, frame)?;
+        decoder.set_tile_bounds(tile_plan);
         probes.push(decoder.read_root_partition(tile_plan, sequence)?);
     }
     Ok(probes)
@@ -77,6 +78,7 @@ pub fn probe_tile_block_modes(
             DecoderError::Bitstream("AV1 tile decode plan is missing a tile".to_string())
         })?;
         let mut decoder = TileDecoder::new(payload, frame)?;
+        decoder.set_tile_bounds(tile_plan);
         let partition = decoder.read_first_leaf_partition(tile_plan, sequence)?;
         if partition.partition == Partition::None {
             probes.push(decoder.read_intra_frame_block_mode(
@@ -108,6 +110,7 @@ pub fn probe_first_block_residuals(
             DecoderError::Bitstream("AV1 tile decode plan is missing a tile".to_string())
         })?;
         let mut decoder = TileDecoder::new(payload, frame)?;
+        decoder.set_tile_bounds(tile_plan);
         let partition = decoder.read_first_leaf_partition(tile_plan, sequence)?;
         if partition.partition == Partition::None {
             let block_mode = decoder.read_intra_frame_block_mode(
@@ -159,6 +162,7 @@ pub fn decode_first_luma_transform(
         .first()
         .ok_or_else(|| DecoderError::Bitstream("AV1 tile decode plan is missing".to_string()))?;
     let mut decoder = TileDecoder::new(payload, frame)?;
+    decoder.set_tile_bounds(tile_plan);
     let partition = decoder.read_first_leaf_partition(tile_plan, sequence)?;
 
     let block_mode = decoder.read_intra_frame_block_mode(
@@ -264,6 +268,7 @@ pub fn decode_first_luma_block(
         .first()
         .ok_or_else(|| DecoderError::Bitstream("AV1 tile decode plan is missing".to_string()))?;
     let mut decoder = TileDecoder::new(payload, frame)?;
+    decoder.set_tile_bounds(tile_plan);
     let block = decode_luma_root_block(
         &mut decoder,
         sequence,
@@ -319,6 +324,7 @@ pub fn decode_luma_root_block_prefix(
             DecoderError::Bitstream("AV1 tile decode plan is missing a tile".to_string())
         })?;
         let mut decoder = TileDecoder::new(payload, frame)?;
+        decoder.set_tile_bounds(tile_plan);
         for sb_row in tile_plan.sb_row_start..tile_plan.sb_row_end {
             decoder.reset_left_superblock_contexts();
             for sb_col in tile_plan.sb_col_start..tile_plan.sb_col_end {
@@ -391,6 +397,7 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy(
             DecoderError::Bitstream("AV1 tile decode plan is missing a tile".to_string())
         })?;
         let mut decoder = TileDecoder::new(payload, frame)?;
+        decoder.set_tile_bounds(tile_plan);
         for sb_row in tile_plan.sb_row_start..tile_plan.sb_row_end {
             decoder.reset_left_superblock_contexts();
             for sb_col in tile_plan.sb_col_start..tile_plan.sb_col_end {
@@ -437,7 +444,12 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy(
             }
         }
         if validate_entropy {
-            decoder.finish_entropy()?;
+            decoder.finish_entropy().map_err(|err| {
+                DecoderError::Bitstream(format!(
+                    "AV1 tile {} entropy validation failed: {err}",
+                    tile_payload.tile_id
+                ))
+            })?;
         }
         post_filter_state.merge(decoder.take_post_filter_state());
     }
