@@ -170,6 +170,13 @@ struct ParsedTileGroup {
 
 fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
     let tile_group_obu_count = count_obus(&info.primary_item_payload, ObuType::TileGroup)?;
+    let frame_obu_count = count_obus(&info.primary_item_payload, ObuType::Frame)?;
+    let frame_header_obu_count = count_obus(&info.primary_item_payload, ObuType::FrameHeader)?;
+    if frame_obu_count > 1 || frame_header_obu_count > 1 {
+        return Err(DecoderError::Unsupported(
+            "AVIF multiple frames in one primary item are not supported yet".to_string(),
+        ));
+    }
     let [
         sequence_payload,
         frame_payload,
@@ -1203,11 +1210,6 @@ fn validate_public_container_preflight(
     info: &AvifInfo,
     rgba_output: bool,
 ) -> Result<(), DecoderError> {
-    if info.major_brand == *b"avis" || info.compatible_brands.iter().any(|brand| brand == b"avis") {
-        return Err(DecoderError::Unsupported(
-            "AVIF sequences are not supported by public decode yet".to_string(),
-        ));
-    }
     let _ = rgba_output;
     let config = info
         .av1_config

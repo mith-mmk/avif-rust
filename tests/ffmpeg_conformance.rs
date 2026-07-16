@@ -579,6 +579,31 @@ fn public_grid_sample_matches_ffmpeg_when_present() {
 }
 
 #[test]
+fn public_sequence_primary_item_decodes_first_frame_when_present() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("test/images/external/avif/unsupported/star-8bpc.avifs");
+    if !path.is_file() {
+        eprintln!("external sequence sample is unavailable; skipping oracle");
+        return;
+    }
+    let data = std::fs::read(&path).expect("external sequence AVIF should be readable");
+    let actual = avif_rust::image_from_bytes(&data)
+        .expect("the primary item of the sequence should decode as its first frame");
+    assert_eq!((actual.width, actual.height), (159, 159));
+    let Some(expected) = ffmpeg_decode_rgba_dynamic(&path, 159, 159) else {
+        return;
+    };
+    let metrics = diff_rgb_dynamic(&actual.rgba, &expected);
+    eprintln!(
+        "sequence primary item: average RGB absolute error={}, max={}",
+        metrics.average_rgb_abs, metrics.max_rgb_abs
+    );
+    assert!(metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 48);
+}
+
+#[test]
 fn public_12bit_sample_remains_fail_closed_until_12bit_entropy_support_lands() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
