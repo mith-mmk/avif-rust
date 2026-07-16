@@ -90,11 +90,6 @@ pub fn parse_frame_header(
         )?;
         let film_grain =
             parse_film_grain_params(&mut reader, sequence, FrameType::Key, true, false)?;
-        if film_grain.is_some() {
-            return Err(DecoderError::Unsupported(
-                "AV1 film grain is not supported by public decode yet".to_string(),
-            ));
-        }
         return Ok(FrameHeader {
             frame_type: FrameType::Key,
             show_existing_frame: false,
@@ -205,12 +200,6 @@ pub fn parse_frame_header(
         show_frame,
         showable_frame,
     )?;
-    if film_grain.is_some() {
-        return Err(DecoderError::Unsupported(
-            "AV1 film grain is not supported by public decode yet".to_string(),
-        ));
-    }
-
     Ok(FrameHeader {
         frame_type,
         show_existing_frame,

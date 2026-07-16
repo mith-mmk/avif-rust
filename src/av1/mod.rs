@@ -4,6 +4,7 @@ mod coeff_cdfs;
 mod config;
 mod decode;
 mod entropy;
+mod film_grain;
 mod frame;
 mod predict;
 mod quant;
@@ -23,7 +24,10 @@ pub use decode::{
 };
 pub(crate) use decode::{alloc_coded_frame_buffers, crop_frame_buffers_to_plan};
 pub use entropy::EntropyDecoder;
-pub use frame::{CdefStrength, FrameHeader, FrameType, TxMode, parse_frame_header};
+pub(crate) use film_grain::apply as apply_film_grain;
+pub use frame::{
+    CdefStrength, FilmGrainParams, FrameHeader, FrameType, TxMode, parse_frame_header,
+};
 pub use predict::{IntraEdges, predict_intra};
 pub use quant::{PlaneQuant, QuantState, dequantize_coefficients};
 pub use reconstruct::{

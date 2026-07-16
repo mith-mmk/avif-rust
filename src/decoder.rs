@@ -3,11 +3,12 @@ use crate::av1::PostFilterState;
 #[cfg(test)]
 use crate::av1::alloc_frame_buffers;
 use crate::av1::{
-    Av1CodecConfiguration, BlockModeProbe, ColorConfig, FrameBuffers, FrameDecodePlan, FrameHeader,
-    PartitionProbe, QuantState, ResidualProbe, SequenceHeader, TileEntropyState, TileGroup,
-    alloc_coded_frame_buffers, build_still_decode_plan, cdef_adjust_primary_strength,
-    cdef_filter_block_region_with_edge_mode, cdef_find_direction_with_variance,
-    crop_frame_buffers_to_plan, deblock_filter_edge_with_visible_bounds,
+    Av1CodecConfiguration, BlockModeProbe, ColorConfig, FilmGrainParams, FrameBuffers,
+    FrameDecodePlan, FrameHeader, PartitionProbe, QuantState, ResidualProbe, SequenceHeader,
+    TileEntropyState, TileGroup, alloc_coded_frame_buffers, apply_film_grain,
+    build_still_decode_plan, cdef_adjust_primary_strength, cdef_filter_block_region_with_edge_mode,
+    cdef_find_direction_with_variance, crop_frame_buffers_to_plan,
+    deblock_filter_edge_with_visible_bounds,
     decode_luma_root_block_prefix_with_post_filter_state_and_entropy, frame_buffers_to_rgba_16,
     parse_av1_config, parse_frame_header, parse_sequence_header, parse_tile_group,
     plan_transform_blocks_with_tx_size, prepare_tile_entropy, probe_first_block_residuals,
@@ -733,6 +734,7 @@ fn decode_still_frame_with_filter_policy(
     let DecodedStillFrame {
         mut frame,
         post_filter_state,
+        film_grain,
     } = decode_still_frame_with_filter_policy_and_state(headers, info, validate_filters)?;
     if validate_filters {
         apply_deblock_stage(&mut frame, &headers.frame, &post_filter_state);
@@ -744,6 +746,9 @@ fn decode_still_frame_with_filter_policy(
             &[1, 2],
         );
         crop_frame_buffers_to_plan(&mut frame.buffers, &headers.decode_plan)?;
+        if let Some(film_grain) = film_grain {
+            apply_film_grain(&mut frame.buffers, &frame.color_config, &film_grain);
+        }
     }
     Ok(frame)
 }
@@ -933,6 +938,7 @@ fn ceil_shift(value: usize, shift: usize) -> usize {
 struct DecodedStillFrame {
     frame: DecodedFrame,
     post_filter_state: PostFilterState,
+    film_grain: Option<FilmGrainParams>,
 }
 
 fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state: &PostFilterState) {
@@ -1203,6 +1209,7 @@ fn decode_still_frame_with_filter_policy_and_state(
             buffers,
         },
         post_filter_state,
+        film_grain: headers.frame.film_grain,
     })
 }
 
@@ -1233,6 +1240,16 @@ fn validate_public_decode_tools(headers: &Av1Headers) -> Result<(), DecoderError
     if headers.frame.quantization.using_qmatrix {
         return Err(DecoderError::Unsupported(
             "AV1 quantization matrices are not supported by public decode yet".to_string(),
+        ));
+    }
+    if headers
+        .frame
+        .film_grain
+        .as_ref()
+        .is_some_and(|params| params.overlap_flag)
+    {
+        return Err(DecoderError::Unsupported(
+            "AV1 film grain overlap is not supported by public decode yet".to_string(),
         ));
     }
     Ok(())
@@ -2222,6 +2239,7 @@ mod prefilter_diagnostic_tests {
         let DecodedStillFrame {
             mut frame,
             post_filter_state,
+            ..
         } = decode_still_frame_with_filter_policy_and_state(&headers, Some(&info), false).unwrap();
         let reference = Command::new("ffmpeg")
             .args(["-v", "error", "-nostdin", "-i"])
