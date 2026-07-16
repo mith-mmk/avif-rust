@@ -17,7 +17,7 @@ pub use compat::{
     ResponseCommand, TerminateOptions, VerboseOptions,
 };
 pub use container::{
-    AuxiliaryImage, AvifInfo, CleanAperture, ColorInformation, GridImage, ImageMirror,
+    AuxiliaryImage, AvifInfo, CleanAperture, ColorInformation, GridCell, GridImage, ImageMirror,
     ImageRotation, ImageSpatialExtents, NclxColorInformation, PixelInformation,
 };
 pub use decoder::{DecodedFrame, decode, decode_frame_bytes, parse_info};

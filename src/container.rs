@@ -106,6 +106,19 @@ pub struct GridImage {
     pub output_width: u32,
     pub output_height: u32,
     pub payload: Vec<u8>,
+    pub cells: Vec<GridCell>,
+}
+
+/// One AV1 image item referenced by a `grid` derived image item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GridCell {
+    pub item_id: u32,
+    pub width: u32,
+    pub height: u32,
+    pub pixel_information: Option<PixelInformation>,
+    pub color_information: Option<ColorInformation>,
+    pub av1_config: Option<Vec<u8>>,
+    pub payload: Vec<u8>,
 }
 
 /// `clap` clean aperture item property.
@@ -261,7 +274,7 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
     let primary_item_payload = primary_item_payload(data, &meta)?;
     validate_primary_item_metadata(&meta)?;
     let alpha_auxiliary_items = alpha_auxiliary_items(data, &meta)?;
-    let primary_grid = primary_grid(&primary_item_payload, &meta)?;
+    let primary_grid = primary_grid(data, &primary_item_payload, &meta)?;
     let primary_metadata = primary_item_metadata(&meta)?;
     Ok(AvifInfo {
         major_brand,
@@ -792,12 +805,22 @@ fn validate_primary_item_metadata(state: &MetaState) -> Result<(), DecoderError>
             property_kind(&state.item_properties[usize::from(association.index) - 1])
         })
         .collect::<Vec<_>>();
-    for required in [
-        PropertyKind::SpatialExtents,
-        PropertyKind::PixelInformation,
-        PropertyKind::Av1Config,
-    ] {
-        if !kinds.contains(&required) {
+    let is_grid = state
+        .item_infos
+        .iter()
+        .find(|info| info.item_id == primary_item_id)
+        .is_some_and(|info| &info.item_type == b"grid");
+    let required: &[PropertyKind] = if is_grid {
+        &[PropertyKind::SpatialExtents, PropertyKind::PixelInformation]
+    } else {
+        &[
+            PropertyKind::SpatialExtents,
+            PropertyKind::PixelInformation,
+            PropertyKind::Av1Config,
+        ]
+    };
+    for required in required {
+        if !kinds.contains(required) {
             return Err(DecoderError::Bitstream(format!(
                 "primary item {primary_item_id} is missing required {required:?} property"
             )));
@@ -825,14 +848,16 @@ fn primary_item_metadata(state: &MetaState) -> Result<PrimaryItemMetadata, Decod
             "primary item is missing".to_string(),
         ));
     };
+    item_metadata(state, primary_item_id)
+}
+
+fn item_metadata(state: &MetaState, item_id: u32) -> Result<PrimaryItemMetadata, DecoderError> {
     let association = state
         .item_property_associations
         .iter()
-        .find(|association| association.item_id == primary_item_id)
+        .find(|association| association.item_id == item_id)
         .ok_or_else(|| {
-            DecoderError::Bitstream(format!(
-                "primary item {primary_item_id} has no property associations"
-            ))
+            DecoderError::Bitstream(format!("item {item_id} has no property associations"))
         })?;
     let mut metadata = PrimaryItemMetadata::default();
     for association in &association.associations {
@@ -1019,7 +1044,11 @@ fn alpha_auxiliary_items(
         .collect()
 }
 
-fn primary_grid(payload: &[u8], state: &MetaState) -> Result<Option<GridImage>, DecoderError> {
+fn primary_grid(
+    data: &[u8],
+    payload: &[u8],
+    state: &MetaState,
+) -> Result<Option<GridImage>, DecoderError> {
     let Some(primary_item_id) = state.primary_item_id else {
         return Ok(None);
     };
@@ -1034,6 +1063,63 @@ fn primary_grid(payload: &[u8], state: &MetaState) -> Result<Option<GridImage>, 
         return Ok(None);
     }
     let parsed = parse_grid_payload(payload)?;
+    let references = state
+        .item_references
+        .iter()
+        .filter(|reference| {
+            reference.reference_type == *b"dimg" && reference.from_item_id == primary_item_id
+        })
+        .collect::<Vec<_>>();
+    if references.len() != 1 {
+        return Err(DecoderError::Bitstream(format!(
+            "grid item {primary_item_id} must have exactly one dimg reference"
+        )));
+    }
+    let cell_count = usize::from(parsed.rows)
+        .checked_mul(usize::from(parsed.columns))
+        .ok_or_else(|| DecoderError::Bitstream("grid cell count overflow".to_string()))?;
+    let cell_ids = &references[0].to_item_ids;
+    if cell_ids.len() != cell_count {
+        return Err(DecoderError::Bitstream(format!(
+            "grid item {primary_item_id} references {} cells, expected {cell_count}",
+            cell_ids.len()
+        )));
+    }
+    let mut cells = Vec::with_capacity(cell_count);
+    for &item_id in cell_ids {
+        let item_info = state
+            .item_infos
+            .iter()
+            .find(|info| info.item_id == item_id)
+            .ok_or_else(|| {
+                DecoderError::Bitstream(format!("grid cell item {item_id} info is missing"))
+            })?;
+        if &item_info.item_type != b"av01" {
+            return Err(DecoderError::Unsupported(format!(
+                "grid cell item {item_id} type {:?} is not av01",
+                item_info.item_type
+            )));
+        }
+        let metadata = item_metadata(state, item_id)?;
+        let width = metadata.width.ok_or_else(|| {
+            DecoderError::Bitstream(format!("grid cell item {item_id} width is missing"))
+        })?;
+        let height = metadata.height.ok_or_else(|| {
+            DecoderError::Bitstream(format!("grid cell item {item_id} height is missing"))
+        })?;
+        let av1_config = metadata.av1_config.ok_or_else(|| {
+            DecoderError::Bitstream(format!("grid cell item {item_id} av1C is missing"))
+        })?;
+        cells.push(GridCell {
+            item_id,
+            width,
+            height,
+            pixel_information: metadata.pixel_information,
+            color_information: metadata.color_information,
+            av1_config: Some(av1_config),
+            payload: item_payload(data, state, item_id)?,
+        });
+    }
     Ok(Some(GridImage {
         item_id: primary_item_id,
         rows: parsed.rows,
@@ -1041,6 +1127,7 @@ fn primary_grid(payload: &[u8], state: &MetaState) -> Result<Option<GridImage>, 
         output_width: parsed.output_width,
         output_height: parsed.output_height,
         payload: payload.to_vec(),
+        cells,
     }))
 }
 
@@ -1772,7 +1859,7 @@ mod tests {
     }
 
     #[test]
-    fn primary_grid_is_exposed_from_item_info_and_payload() {
+    fn primary_grid_requires_ordered_cell_references() {
         let state = MetaState {
             primary_item_id: Some(7),
             item_infos: vec![ItemInfo {
@@ -1789,19 +1876,8 @@ mod tests {
             0, 20, // output height
         ];
 
-        let grid = primary_grid(&payload, &state).unwrap().unwrap();
-
-        assert_eq!(
-            grid,
-            GridImage {
-                item_id: 7,
-                rows: 2,
-                columns: 2,
-                output_width: 10,
-                output_height: 20,
-                payload: payload.to_vec(),
-            }
-        );
+        let error = primary_grid(&[0; 4], &payload, &state).unwrap_err();
+        assert!(matches!(error, DecoderError::Bitstream(message) if message.contains("dimg")));
     }
 
     #[test]

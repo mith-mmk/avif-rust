@@ -39,11 +39,12 @@ impl<'a> TileDecoder<'a> {
         y: usize,
     ) -> Result<PartitionProbe, DecoderError> {
         let context = self.partition_context(tile, x, y, block_size);
-        let half_mi = block_size.width() / 8;
+        let half_mi_width = block_size.width() / 8;
+        let half_mi_height = block_size.height() / 8;
         let mi_col = x >> 2;
         let mi_row = y >> 2;
-        let has_rows = mi_row + half_mi < tile.mi_row_end as usize;
-        let has_cols = mi_col + half_mi < tile.mi_col_end as usize;
+        let has_rows = mi_row + half_mi_height < tile.mi_row_end as usize;
+        let has_cols = mi_col + half_mi_width < tile.mi_col_end as usize;
         let (symbol, partition) = if !has_rows && !has_cols {
             (3, Partition::Split)
         } else if has_rows && has_cols {

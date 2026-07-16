@@ -87,6 +87,7 @@ pub fn parse_frame_header(
             allow_intrabc,
             frame_type_is_intra(FrameType::Key),
         )?;
+        reject_active_film_grain(&mut reader, sequence)?;
         return Ok(FrameHeader {
             frame_type: FrameType::Key,
             show_existing_frame: false,
@@ -189,6 +190,7 @@ pub fn parse_frame_header(
         allow_intrabc,
         frame_type_is_intra(frame_type),
     )?;
+    reject_active_film_grain(&mut reader, sequence)?;
 
     Ok(FrameHeader {
         frame_type,
@@ -223,6 +225,18 @@ pub fn parse_frame_header(
         uncompressed_header_bits: reader.bit_position(),
         payload_after_header_offset: reader.byte_position_ceil(),
     })
+}
+
+fn reject_active_film_grain(
+    reader: &mut BitReader<'_>,
+    sequence: &SequenceHeader,
+) -> Result<(), DecoderError> {
+    if sequence.film_grain_params_present && reader.read_bool("apply_grain")? {
+        return Err(DecoderError::Unsupported(
+            "AV1 film grain is not supported by public decode yet".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy)]

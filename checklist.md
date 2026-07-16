@@ -39,7 +39,8 @@ from the consumer-facing crate archive.
       property table; reject missing, duplicate, zero and out-of-range
       singleton properties as `Bitstream`.
 - [x] Run the public composition preflight before AV1 header parsing and keep
-      grid and RGBA ICC rejection fail-closed; `clap`/`imir` now compose.
+      RGBA ICC and active film-grain rejection fail-closed; `clap`/`imir` and
+      grid composition now compose.
 - [x] Keep tile/block/residual probes diagnostic-only; probe failure no longer
       changes image decode success.
 - [x] Validate AV1 entropy termination from the decoder state and trailing
@@ -294,8 +295,10 @@ and RGBA gates.
 - [ ] Verify 4:4:4 non-identity colour paths with real AVIF plane/RGBA
       fixtures.
 - [x] 10-bit quantisation/reconstruction with dedicated AOM quantizer tables;
-      12-bit remains pending a real external fixture.
-- [ ] Grid image-cell composition.
+      12-bit parsing/output is covered, while active film grain remains
+      explicitly unsupported.
+- [x] Grid image-cell composition for still images, including ordered `dimg`
+      references and RGBA placement; verified with `sofa_grid1x5_420.avif`.
 - [x] `clap` clean-aperture crop and `imir` horizontal mirror composition.
 - [ ] `irot` rotation composition (the rotate90 fixture still exposes an
       entropy trailing-bit mismatch).

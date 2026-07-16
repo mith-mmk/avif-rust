@@ -550,6 +550,56 @@ fn public_10bit_sample_matches_ffmpeg_when_present() {
 }
 
 #[test]
+fn public_grid_sample_matches_ffmpeg_when_present() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("test/images/external/avif/unsupported/sofa_grid1x5_420.avif");
+    if !path.is_file() {
+        eprintln!("external grid sample is unavailable; skipping oracle");
+        return;
+    }
+    let data = std::fs::read(&path).expect("external grid AVIF should be readable");
+    let actual = avif_rust::image_from_bytes(&data).expect("grid public decode should succeed");
+    assert_eq!((actual.width, actual.height), (1024, 770));
+    let Some(expected) = ffmpeg_decode_rgba_dynamic(&path, 1024, 770) else {
+        return;
+    };
+    let metrics = diff_rgb_dynamic(&actual.rgba, &expected);
+    eprintln!(
+        "grid sofa_grid1x5_420: average RGB absolute error={}, max={}",
+        metrics.average_rgb_abs, metrics.max_rgb_abs
+    );
+    assert!(
+        metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 48,
+        "grid FFmpeg RGBA error average={} max={}",
+        metrics.average_rgb_abs,
+        metrics.max_rgb_abs
+    );
+}
+
+#[test]
+fn public_12bit_sample_rejects_active_film_grain_when_present() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("test/images/external/avif/unsupported/fox.profile2.12bpc.yuv444.avif");
+    if !path.is_file() {
+        eprintln!("external 12-bit sample is unavailable; skipping unsupported-feature check");
+        return;
+    }
+    let data = std::fs::read(&path).expect("external 12-bit AVIF should be readable");
+    let error =
+        avif_rust::image_from_bytes(&data).expect_err("active film grain must remain fail-closed");
+    assert!(
+        error
+            .to_string()
+            .contains("AV1 film grain is not supported by public decode yet"),
+        "unexpected 12-bit error: {error}"
+    );
+}
+
+#[test]
 fn public_alpha_sample_matches_ffmpeg_rgba_when_present() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
