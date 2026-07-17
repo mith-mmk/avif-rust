@@ -258,10 +258,9 @@ pub(crate) fn remap_coefficients_for_inverse_storage(
         return;
     }
     let side = tx_size.width();
-    let column_major = coefficients.to_vec();
     for row in 0..side {
-        for column in 0..side {
-            coefficients[row * side + column] = column_major[column * side + row];
+        for column in (row + 1)..side {
+            coefficients.swap(row * side + column, column * side + row);
         }
     }
 }
