@@ -6,9 +6,39 @@ use super::coefficient_context::{
 };
 use super::{
     CoeffBaseProbe, CoeffBaseRead, CoeffBrProbe, CoeffSignRead, DecoderError, EntropyDecoder,
-    TxSize, TxType, coefficient_scan,
+    TxSize, TxType,
 };
 use crate::av1::cdf::CdfContext;
+use crate::av1::transform::coefficient_scan;
+
+pub(super) struct CoefficientScanCache {
+    entries: Vec<(TxSize, TxType, Vec<usize>)>,
+}
+
+impl CoefficientScanCache {
+    pub(super) fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    pub(super) fn get(&mut self, tx_size: TxSize, tx_type: TxType) -> &[usize] {
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|(size, kind, _)| *size == tx_size && *kind == tx_type)
+        {
+            return &self.entries[index].2;
+        }
+        self.entries
+            .push((tx_size, tx_type, coefficient_scan(tx_size, tx_type)));
+        &self
+            .entries
+            .last()
+            .expect("scan cache entry was just inserted")
+            .2
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CoefficientSymbol {
@@ -168,6 +198,27 @@ pub(super) fn decode_coefficients_with_scratch<S: CoefficientTokenSource>(
     dc_sign_context: usize,
     scratch: &mut Vec<i32>,
 ) -> Result<CoefficientRead, DecoderError> {
+    let scan = coefficient_scan(tx_size, tx_type);
+    decode_coefficients_with_scan(
+        source,
+        tx_size,
+        tx_type,
+        plane_type,
+        dc_sign_context,
+        &scan,
+        scratch,
+    )
+}
+
+pub(super) fn decode_coefficients_with_scan<S: CoefficientTokenSource>(
+    source: &mut S,
+    tx_size: TxSize,
+    tx_type: TxType,
+    plane_type: usize,
+    dc_sign_context: usize,
+    scan: &[usize],
+    scratch: &mut Vec<i32>,
+) -> Result<CoefficientRead, DecoderError> {
     let eob_multisize = usize::from(tx_size.width_log2().min(5) + tx_size.height_log2().min(5) - 4);
     let eob_pt_symbol = source.read_symbol(CoefficientSymbol::EobPoint {
         multisize: eob_multisize,
@@ -178,7 +229,7 @@ pub(super) fn decode_coefficients_with_scratch<S: CoefficientTokenSource>(
     let eob_base = eob_base_from_pt(eob_pt);
     let (eob_extra_context, eob_extra_symbol, eob_extra_literal_bits, eob) =
         read_eob_extra(source, tx_size, plane_type, eob_pt, eob_base)?;
-    if eob == 0 || eob > coefficient_scan(tx_size, tx_type).len() {
+    if eob == 0 || eob > scan.len() {
         return Err(DecoderError::Bitstream(format!(
             "AV1 eob {eob} is invalid for {tx_size:?}"
         )));
@@ -198,6 +249,7 @@ pub(super) fn decode_coefficients_with_scratch<S: CoefficientTokenSource>(
         eob,
         coeff_base_eob_level,
         dc_sign_context,
+        scan,
         scratch,
     )?;
     Ok(CoefficientRead {
@@ -249,9 +301,9 @@ fn read_regular_coeff_bases<S: CoefficientTokenSource>(
     eob: usize,
     eob_level: usize,
     dc_sign_context: usize,
+    scan: &[usize],
     scratch: &mut Vec<i32>,
 ) -> Result<CoeffBaseRead, DecoderError> {
-    let scan = coefficient_scan(tx_size, tx_type);
     let remaining_count = eob - 1;
     scratch.resize(tx_size.sample_count(), 0);
     scratch.fill(0);

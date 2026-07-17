@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 
 use super::coefficient::{
-    CoefficientLiteral, CoefficientSymbol, CoefficientTokenSource, EntropyCoefficientSource,
-    decode_coefficients, read_golomb,
+    CoefficientLiteral, CoefficientScanCache, CoefficientSymbol, CoefficientTokenSource,
+    EntropyCoefficientSource, decode_coefficients, read_golomb,
 };
 use super::coefficient_context::{
     COEFFICIENT_LEVEL_MASK, TxbContext, clamp_coefficient_level, coeff_base_context_1d,
@@ -19,6 +19,19 @@ enum Token {
 
 struct ScriptedTokens {
     tokens: VecDeque<Token>,
+}
+
+#[test]
+fn coefficient_scan_cache_reuses_scan_storage() {
+    let mut cache = CoefficientScanCache::new();
+    let (first_ptr, first_len) = {
+        let first = cache.get(TxSize::Tx16x16, TxType::DctDct);
+        (first.as_ptr(), first.len())
+    };
+    let second = cache.get(TxSize::Tx16x16, TxType::DctDct);
+
+    assert_eq!(second.as_ptr(), first_ptr);
+    assert_eq!(second.len(), first_len);
 }
 
 impl ScriptedTokens {

@@ -3,7 +3,7 @@ use super::entropy::EntropyDecoder;
 use super::frame::{FrameHeader, RestorationParams};
 use super::sequence::SequenceHeader;
 use super::syntax::{BlockSize, TxSize, TxType, mi_dimension};
-use super::transform::{TransformBlock, coefficient_scan};
+use super::transform::TransformBlock;
 use crate::DecoderError;
 
 mod block_syntax;
@@ -36,6 +36,7 @@ mod restoration_syntax;
 mod syntax_helpers;
 mod tx_type_syntax;
 
+use coefficient::CoefficientScanCache;
 use coefficient_context::{
     TxbContext, coefficient_entropy_context, set_txb_entropy_context, txb_context,
 };
@@ -154,6 +155,7 @@ pub struct TileDecoder<'a> {
     restoration_units: Vec<post_filter_state::RestorationUnit>,
     block_filter_states: Vec<post_filter_state::BlockFilterState>,
     coefficient_scratch: Vec<i32>,
+    coefficient_scan_cache: CoefficientScanCache,
 }
 
 pub(super) fn is_chroma_reference(
@@ -226,6 +228,7 @@ impl<'a> TileDecoder<'a> {
             restoration_units: Vec::new(),
             block_filter_states: Vec::new(),
             coefficient_scratch: Vec::with_capacity(TxSize::Tx64x64.sample_count()),
+            coefficient_scan_cache: CoefficientScanCache::new(),
         })
     }
 
