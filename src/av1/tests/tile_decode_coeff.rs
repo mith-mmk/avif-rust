@@ -175,6 +175,19 @@ fn coeff_base_context_2d_matches_square_offset_rules() {
 }
 
 #[test]
+fn coeff_base_context_2d_uses_adjusted_tx32x64_raster_coordinates() {
+    let mut quant = vec![0; TxSize::Tx32x64.sample_count()];
+    // In the adjusted 32x32 levels buffer, position 1 is row 1/column 0.
+    // Its first right neighbour is therefore the column-major slot 33.
+    quant[33] = 3;
+
+    assert_eq!(
+        coeff_base_context_2d(TxSize::Tx32x64, 1, &quant).unwrap(),
+        (13, 3)
+    );
+}
+
+#[test]
 fn txb_context_uses_neighbor_levels_and_dc_signs() {
     let transform = TransformBlock {
         plane: 0,

@@ -16,23 +16,24 @@
 
 ## 対応状況
 
-公開デコーダが現在受け付けるのは、実装済みの8-bit、4:4:4、単一frameの
-AVIF profileです。対応streamではAV1のdeblock、CDEF、loop restorationを適用し、
-identity GBRおよび実装済みのSDR BT.601／BT.709色変換からRGBA8／RGBA16を
-生成できます。
+公開デコーダは、8-bit／10-bit／12-bitのsource plane、monochrome、4:2:0、
+4:2:2、alpha/grid composition、`clap`／`irot`／`imir`を含む検証済みの単一
+frame AVIF profileに対応します。1 frameの`avis` primary itemも静止画として
+公開します。外部12-bit fox sampleはdecodeできますが、FFmpegとの最終RGB差分は
+平均約41.77で、strict oracle未達の診断差分が残ります。
 
 | 機能 | 状態 |
 | --- | --- |
 | 1個のAV1静止frameを含むAVIF primary item | 対応 |
-| 8-bit 4:4:4 source plane | 対応 |
+| 8-bit／10-bit／12-bit source plane | 対応（12-bit RGB差分は診断扱い） |
 | native decoded plane、RGBA8、RGBA16 | 対応 |
 | 対応streamで使用するdeblock、CDEF、loop restoration | 対応 |
-| monochrome、4:2:0、4:2:2 | 未対応 |
-| 10-bit／12-bit decode | 未対応 |
-| alpha auxiliary image、grid composition | 未対応 |
-| `clap`、`irot`、`imir` composition | 未対応 |
-| animated AVIF（`avis`）、複数frame出力 | 未対応 |
-| HDR tone mapping、ICC表示変換、film grain、qmatrix | 未対応 |
+| monochrome、4:2:0、4:2:2 | 対応 |
+| alpha auxiliary image、grid composition | 対応 |
+| `clap`、`irot`、`imir` composition | 対応 |
+| 1 frameの`avis` primary item | 対応 |
+| animated AVIFの複数frame出力 | 未対応 |
+| HDR tone mapping、matrix-shaper以外のICC表示変換、film grain | 未対応 |
 
 未対応のcompositionやAV1 toolは`DecoderError::Unsupported`を返します。不完全な
 画像を正常な出力として返さない、fail-closedの方針です。
@@ -47,7 +48,7 @@ cargo add avif-rust
 
 ```toml
 [dependencies]
-avif-rust = "0.0.1"
+avif-rust = "0.0.2"
 ```
 
 最小サポートRustバージョン（MSRV）はRust 1.88です。

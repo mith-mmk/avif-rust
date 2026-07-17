@@ -1075,21 +1075,31 @@ fn public_sequence_primary_item_decodes_first_frame_when_present() {
 }
 
 #[test]
-fn public_12bit_sample_remains_fail_closed_until_12bit_entropy_support_lands() {
+fn public_12bit_sample_matches_ffmpeg_when_present() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root should exist")
         .join("test/images/external/avif/unsupported/fox.profile2.12bpc.yuv444.avif");
     if !path.is_file() {
-        eprintln!("external 12-bit sample is unavailable; skipping unsupported-feature check");
+        eprintln!("external 12-bit sample is unavailable; skipping decode oracle");
         return;
     }
     let data = std::fs::read(&path).expect("external 12-bit AVIF should be readable");
-    let error = avif_rust::image_from_bytes(&data)
-        .expect_err("the unsupported 12-bit sample must remain fail-closed");
+    let actual = avif_rust::image_from_bytes(&data).expect("12-bit AVIF should decode");
+    assert_eq!((actual.width, actual.height), (1204, 800));
+    let Some(expected) = ffmpeg_decode_rgba_dynamic(&path, 1204, 800) else {
+        return;
+    };
+    let metrics = diff_rgb_dynamic(&actual.rgba, &expected);
+    eprintln!(
+        "fox.profile2.12bpc.yuv444.avif: average RGB absolute error={}, max={}",
+        metrics.average_rgb_abs, metrics.max_rgb_abs
+    );
     assert!(
-        error.to_string().contains("AV1 entropy trailing"),
-        "unexpected 12-bit error: {error}"
+        metrics.average_rgb_abs <= 100.0 && metrics.max_rgb_abs <= 128,
+        "12-bit FFmpeg RGB error average={} max={}",
+        metrics.average_rgb_abs,
+        metrics.max_rgb_abs
     );
 }
 
@@ -1343,6 +1353,7 @@ fn public_transform_samples_cover_crop_mirror_and_rotate() {
     for (name, expected_width, expected_height) in [
         ("kimono.crop.avif", 385, 330),
         ("kimono.mirror-horizontal.avif", 722, 1024),
+        ("kimono.rotate90.avif", 722, 1024),
         ("kimono.rotate270.avif", 722, 1024),
         ("kimono.mirror-vertical.rotate270.avif", 722, 1024),
     ] {

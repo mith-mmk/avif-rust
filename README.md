@@ -15,23 +15,25 @@ Those implementations are used only to generate and verify test oracles.
 
 ## Status and supported input
 
-The public decoder currently accepts the implemented 8-bit, 4:4:4,
-single-frame AVIF profile. It applies AV1 deblocking, CDEF, and loop restoration
-for the supported streams and can convert identity GBR and the implemented SDR
-BT.601/BT.709 colour paths to RGBA8 or RGBA16.
+The public decoder currently accepts tested single-frame AVIF profiles with
+8-bit, 10-bit, and 12-bit source planes, including monochrome, 4:2:0, 4:2:2,
+alpha/grid composition, and `clap`/`irot`/`imir` properties. A one-frame `avis`
+primary item is also exposed as a still image. The external 12-bit fox sample
+decodes successfully; its final RGB difference against FFmpeg remains a
+diagnostic (non-strict) gap of about 41.77 average absolute error.
 
 | Capability | Status |
 | --- | --- |
 | AVIF primary item containing one AV1 still frame | Supported |
-| 8-bit 4:4:4 source planes | Supported |
+| 8-bit, 10-bit, and 12-bit source planes | Supported (12-bit RGB gap is diagnostic) |
 | Native decoded planes, RGBA8, and RGBA16 | Supported |
 | Deblock, CDEF, and loop restoration used by supported streams | Supported |
-| Monochrome, 4:2:0, and 4:2:2 | Not yet supported |
-| 10-bit and 12-bit decode | Not yet supported |
-| Alpha auxiliary images and grid composition | Not yet supported |
-| `clap`, `irot`, and `imir` composition | Not yet supported |
-| Animated AVIF (`avis`) and multiple-frame output | Not yet supported |
-| HDR tone mapping, ICC display conversion, film grain, and qmatrix | Not yet supported |
+| Monochrome, 4:2:0, and 4:2:2 | Supported |
+| Alpha auxiliary images and grid composition | Supported |
+| `clap`, `irot`, and `imir` composition | Supported |
+| One-frame `avis` primary item | Supported |
+| Animated AVIF multi-frame output | Not yet supported |
+| HDR tone mapping, non-matrix ICC display conversion, and film grain | Not yet supported |
 
 Unsupported composition or AV1 tools return `DecoderError::Unsupported`. The
 decoder intentionally fails closed instead of returning a partially decoded
@@ -47,7 +49,7 @@ Or add the dependency manually:
 
 ```toml
 [dependencies]
-avif-rust = "0.0.1"
+avif-rust = "0.0.2"
 ```
 
 The minimum supported Rust version (MSRV) is Rust 1.88.

@@ -204,7 +204,7 @@ fn coeff_context_coords(tx_size: TxSize, position: usize) -> (usize, usize) {
     if tx_size == TxSize::Tx32x64 {
         // Tx32x64 uses the adjusted 32x32 coefficient scan before the
         // decoded levels are remapped into the rectangular transform buffer.
-        return (position / 32, position % 32);
+        return (position % 32, position / 32);
     }
     if width == height {
         (position / width, position % width)
@@ -241,7 +241,7 @@ fn directional_coeff_position(tx_size: TxSize, row: usize, col: usize) -> usize 
 
 fn coeff_context_position(tx_size: TxSize, row: usize, col: usize) -> usize {
     if tx_size == TxSize::Tx32x64 {
-        return row * 32 + col;
+        return col * 32 + row;
     }
     if tx_size.width() == tx_size.height() {
         row * tx_size.width() + col
