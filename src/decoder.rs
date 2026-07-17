@@ -909,11 +909,16 @@ fn apply_deblock_stage(
                 } else {
                     frame_header.loop_filter.levels[3]
                 };
-                // This decoder currently accepts intra-only still frames. AV1
-                // enables the default intra reference delta when the loop
-                // filter delta flag is set, which raises each base level by
-                // one for this path.
-                let level = level.saturating_add(u8::from(frame_header.loop_filter.delta_enabled));
+                // Still-image decode only has intra blocks, so the applicable
+                // delta is the INTRA_FRAME reference delta. The mode deltas
+                // are still parsed for bitstream alignment and future inter
+                // frame support, but do not apply to intra blocks.
+                let level = apply_loop_filter_deltas(
+                    level,
+                    frame_header.loop_filter.delta_enabled,
+                    frame_header.loop_filter.ref_deltas[0],
+                    0,
+                );
                 let edge = if vertical { block.x } else { block.y };
                 if edge == 0 || !applied_edges.insert((plane_index, block.x, block.y, vertical)) {
                     continue;
@@ -1027,6 +1032,14 @@ fn apply_deblock_stage(
             }
         }
     }
+}
+
+fn apply_loop_filter_deltas(level: u8, enabled: bool, ref_delta: i8, mode_delta: i8) -> u8 {
+    if !enabled {
+        return level;
+    }
+    let adjusted = i16::from(level) + i16::from(ref_delta) + i16::from(mode_delta);
+    adjusted.clamp(0, 63) as u8
 }
 
 fn ceil_shift(value: usize, shift: usize) -> usize {

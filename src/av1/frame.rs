@@ -767,12 +767,27 @@ fn parse_delta_lf_params(
     })
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LoopFilterParams {
     pub levels: [u8; 4],
     pub sharpness: u8,
     pub delta_enabled: bool,
     pub delta_update: bool,
+    pub ref_deltas: [i8; 8],
+    pub mode_deltas: [i8; 2],
+}
+
+impl Default for LoopFilterParams {
+    fn default() -> Self {
+        Self {
+            levels: [0; 4],
+            sharpness: 0,
+            delta_enabled: false,
+            delta_update: false,
+            ref_deltas: [1, 0, 0, 0, -1, 0, -1, -1],
+            mode_deltas: [0; 2],
+        }
+    }
 }
 
 fn parse_loop_filter_params(
@@ -794,17 +809,37 @@ fn parse_loop_filter_params(
     let sharpness = reader.read_bits(3, "loop_filter_sharpness")? as u8;
     let delta_enabled = reader.read_bool("loop_filter_delta_enabled")?;
     let delta_update = delta_enabled && reader.read_bool("loop_filter_delta_update")?;
+    let mut ref_deltas = [1i8, 0, 0, 0, -1, 0, -1, -1];
+    let mut mode_deltas = [0i8; 2];
     if delta_update {
-        return Err(DecoderError::Unsupported(
-            "AV1 loop filter delta updates are not supported yet".to_string(),
-        ));
+        for (index, delta) in ref_deltas.iter_mut().enumerate() {
+            if reader.read_bool(&format!("update_ref_delta[{index}]"))? {
+                *delta = read_signed_delta(reader, &format!("loop_filter_ref_delta[{index}]"))?;
+            }
+        }
+        for (index, delta) in mode_deltas.iter_mut().enumerate() {
+            if reader.read_bool(&format!("update_mode_delta[{index}]"))? {
+                *delta = read_signed_delta(reader, &format!("loop_filter_mode_delta[{index}]"))?;
+            }
+        }
     }
     Ok(LoopFilterParams {
         levels,
         sharpness,
         delta_enabled,
         delta_update,
+        ref_deltas,
+        mode_deltas,
     })
+}
+
+fn read_signed_delta(reader: &mut BitReader<'_>, name: &str) -> Result<i8, DecoderError> {
+    let magnitude = reader.read_bits(6, name)? as i8;
+    if magnitude == 0 {
+        return Ok(0);
+    }
+    let negative = reader.read_bool(name)?;
+    Ok(if negative { -magnitude } else { magnitude })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -940,4 +975,27 @@ fn parse_tx_mode(reader: &mut BitReader<'_>, coded_lossless: bool) -> Result<TxM
 
 fn frame_type_is_intra(frame_type: FrameType) -> bool {
     matches!(frame_type, FrameType::Key | FrameType::IntraOnly)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LoopFilterParams, read_signed_delta};
+    use crate::av1::bitstream::BitReader;
+
+    #[test]
+    fn loop_filter_defaults_use_the_intra_reference_delta() {
+        let params = LoopFilterParams::default();
+        assert_eq!(params.ref_deltas[0], 1);
+        assert_eq!(params.ref_deltas, [1, 0, 0, 0, -1, 0, -1, -1]);
+        assert_eq!(params.mode_deltas, [0; 2]);
+    }
+
+    #[test]
+    fn signed_loop_filter_delta_reads_magnitude_and_sign() {
+        let mut positive = BitReader::new(&[0b0001_0100]);
+        assert_eq!(read_signed_delta(&mut positive, "delta").unwrap(), 5);
+
+        let mut negative = BitReader::new(&[0b0001_0110]);
+        assert_eq!(read_signed_delta(&mut negative, "delta").unwrap(), -5);
+    }
 }

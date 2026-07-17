@@ -147,6 +147,8 @@ fn sample_frame(base_q_idx: u8) -> FrameHeader {
             sharpness: 0,
             delta_enabled: false,
             delta_update: false,
+            ref_deltas: [1, 0, 0, 0, -1, 0, -1, -1],
+            mode_deltas: [0; 2],
         },
         cdef: CdefParams {
             enabled: false,
