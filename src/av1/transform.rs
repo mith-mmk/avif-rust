@@ -2090,6 +2090,20 @@ mod tests {
     }
 
     #[test]
+    fn tx32x64_dct_uses_adjusted_32x32_coefficients() {
+        let tx_size = TxSize::Tx32x64;
+        let mut coefficients = vec![0; tx_size.sample_count()];
+        coefficients[zig_zag_scan(tx_size)[1]] = -64;
+        remap_coefficients_for_inverse_storage(tx_size, TxType::DctDct, false, &mut coefficients);
+
+        let residual = inverse_transform(TxType::DctDct, tx_size, &coefficients, 12).unwrap();
+
+        assert_eq!(residual.len(), tx_size.sample_count());
+        assert!(residual.iter().any(|sample| *sample != 0));
+        assert!(residual.iter().all(|sample| sample.abs() < (1 << 19)));
+    }
+
+    #[test]
     fn all_zero_transforms_return_zero_without_transform_dispatch() {
         for tx_size in [
             TxSize::Tx4x4,
