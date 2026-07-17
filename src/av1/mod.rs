@@ -58,7 +58,7 @@ pub use tile_decode::{
 pub(crate) use tile_decode::{
     cdef_adjust_primary_strength, cdef_filter_block_region_with_edge_mode,
     cdef_find_direction_with_variance, deblock_filter_edge_with_visible_bounds,
-    sgrproj_filter_unit, wiener_filter_unit,
+    sgrproj_filter_unit_into, wiener_filter_unit, wiener_filter_unit_into,
 };
 pub use tile_group::{TileGroup, TilePayload, parse_tile_group};
 pub use transform::{

@@ -323,7 +323,10 @@ and RGBA gates.
 
 The release benchmark uses `AVIF_BENCH_ITERS=11 cargo bench --bench decode`
 against `samples/WML2Viewer.avif`. The current optimized run measured
-`348.14/346.93 ms` (native/RGBA). The deblock stage now indexes block filter
+`308.90/314.50 ms` (native/RGBA, 11 iterations on 2026-07-17); the restoration
+stage now writes directly into the destination plane instead of cloning the
+whole plane for every restoration chunk. The earlier 348.14/346.93 ms run
+remains the previous checkpoint for comparison. The deblock stage now indexes block filter
 state on an 8-pixel grid instead of linearly scanning every block for each
 edge. The reconstruction hot path also passes
 decoded coefficient slices directly instead of cloning a coefficient `Vec`

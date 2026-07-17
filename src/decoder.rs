@@ -12,7 +12,8 @@ use crate::av1::{
     decode_luma_root_block_prefix_with_post_filter_state_and_entropy, frame_buffers_to_rgba_16,
     parse_av1_config, parse_frame_header, parse_sequence_header, parse_tile_group,
     plan_transform_blocks_with_tx_size, prepare_tile_entropy, probe_first_block_residuals,
-    probe_tile_block_modes, probe_tile_partitions, sgrproj_filter_unit, wiener_filter_unit,
+    probe_tile_block_modes, probe_tile_partitions, sgrproj_filter_unit_into,
+    wiener_filter_unit_into,
 };
 use crate::compat::{DataMap, DecodeOptions, InitOptions};
 use crate::container::{
@@ -1212,7 +1213,7 @@ fn apply_loop_restoration_stage(
                 while chunk_x < unit_width {
                     let x = unit.x + chunk_x;
                     let chunk_width = procunit_width.min(unit_width - chunk_x);
-                    let filtered = match unit.restoration_type {
+                    match unit.restoration_type {
                         1 => {
                             let Some(mut filters) = unit.wiener else {
                                 break;
@@ -1221,8 +1222,9 @@ fn apply_loop_restoration_stage(
                                 filters[0][0] = 0;
                                 filters[1][0] = 0;
                             }
-                            wiener_filter_unit(
+                            wiener_filter_unit_into(
                                 &source,
+                                &mut output,
                                 plane.layout.width,
                                 plane.layout.height,
                                 x,
@@ -1237,8 +1239,9 @@ fn apply_loop_restoration_stage(
                             else {
                                 break;
                             };
-                            sgrproj_filter_unit(
+                            sgrproj_filter_unit_into(
                                 &source,
+                                &mut output,
                                 plane.layout.width,
                                 plane.layout.height,
                                 x,
@@ -1250,14 +1253,6 @@ fn apply_loop_restoration_stage(
                             )
                         }
                         _ => break,
-                    };
-                    for y in stripe_y..stripe_y + stripe_height {
-                        let start = y * plane.layout.width + x.min(plane.layout.width);
-                        let end =
-                            y * plane.layout.width + (x + chunk_width).min(plane.layout.width);
-                        if start < end {
-                            output[start..end].copy_from_slice(&filtered[start..end]);
-                        }
                     }
                     chunk_x += chunk_width;
                 }

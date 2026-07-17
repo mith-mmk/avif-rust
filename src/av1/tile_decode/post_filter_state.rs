@@ -356,13 +356,43 @@ pub(crate) fn wiener_filter_unit(
     unit_height: usize,
     filters: [[i16; 3]; 2],
 ) -> Vec<u16> {
+    let mut output = source.to_vec();
+    wiener_filter_unit_into(
+        source,
+        &mut output,
+        width,
+        height,
+        origin_x,
+        origin_y,
+        unit_width,
+        unit_height,
+        filters,
+    );
+    output
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scalar Wiener kernel parameters mirror the normative restoration inputs"
+)]
+pub(crate) fn wiener_filter_unit_into(
+    source: &[u16],
+    output: &mut [u16],
+    width: usize,
+    height: usize,
+    origin_x: usize,
+    origin_y: usize,
+    unit_width: usize,
+    unit_height: usize,
+    filters: [[i16; 3]; 2],
+) {
     const FILTER_BITS: u32 = 7;
     const ROUND_0_BITS: u32 = 3;
     const ROUND_1_BITS: u32 = 2 * FILTER_BITS - ROUND_0_BITS;
     let output_width = unit_width.min(width.saturating_sub(origin_x));
     let output_height = unit_height.min(height.saturating_sub(origin_y));
     if output_width == 0 || output_height == 0 {
-        return source.to_vec();
+        return;
     }
     let sample = |x: isize, y: isize| {
         restoration_sample(source, width, height, x, y, origin_y, output_height)
@@ -409,7 +439,6 @@ pub(crate) fn wiener_filter_unit(
         }
     }
 
-    let mut output = source.to_vec();
     let vertical_offset = 1 << (8 + ROUND_1_BITS - 1);
     for local_y in 0..output_height {
         for local_x in 0..output_width {
@@ -426,7 +455,6 @@ pub(crate) fn wiener_filter_unit(
                 ((value + (1 << (ROUND_1_BITS - 1))) >> ROUND_1_BITS).clamp(0, 255) as u16;
         }
     }
-    output
 }
 
 #[allow(dead_code)]
@@ -445,6 +473,38 @@ pub(crate) fn sgrproj_filter_unit(
     sgr_index: u8,
     xqd: [i16; 2],
 ) -> Vec<u16> {
+    let mut output = source.to_vec();
+    sgrproj_filter_unit_into(
+        source,
+        &mut output,
+        width,
+        height,
+        origin_x,
+        origin_y,
+        unit_width,
+        unit_height,
+        sgr_index,
+        xqd,
+    );
+    output
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scalar SGRPROJ kernel parameters mirror the normative restoration inputs"
+)]
+pub(crate) fn sgrproj_filter_unit_into(
+    source: &[u16],
+    output: &mut [u16],
+    width: usize,
+    height: usize,
+    origin_x: usize,
+    origin_y: usize,
+    unit_width: usize,
+    unit_height: usize,
+    sgr_index: u8,
+    xqd: [i16; 2],
+) {
     const RADII: [[usize; 2]; 16] = [
         [2, 1],
         [2, 1],
@@ -485,7 +545,7 @@ pub(crate) fn sgrproj_filter_unit(
     let output_width = unit_width.min(width.saturating_sub(origin_x));
     let output_height = unit_height.min(height.saturating_sub(origin_y));
     if output_width == 0 || output_height == 0 {
-        return source.to_vec();
+        return;
     }
     let sample = |x: isize, y: isize| {
         restoration_sample(source, width, height, x, y, origin_y, output_height)
@@ -538,7 +598,6 @@ pub(crate) fn sgrproj_filter_unit(
     } else {
         intermediate(RADII[index][1], S[index][1])
     };
-    let mut output = source.to_vec();
     let xq0 = if RADII[index][0] == 0 {
         0
     } else {
@@ -607,7 +666,6 @@ pub(crate) fn sgrproj_filter_unit(
             output[y * width + x] = ((value + (1 << 10)) >> 11).clamp(0, 255) as u16;
         }
     }
-    output
 }
 
 fn sgr_x_by_xplus1(z: i32) -> i32 {
@@ -1278,6 +1336,44 @@ mod tests {
         let source = vec![200u16; 16 * 16];
         let filtered = super::sgrproj_filter_unit(&source, 16, 16, 0, 0, 16, 16, 0, [0, 128]);
         assert_eq!(filtered, source);
+    }
+
+    #[test]
+    fn restoration_into_kernels_match_allocating_wrappers() {
+        let source = (0..32 * 32)
+            .map(|index| ((index * 29 + 17) & 255) as u16)
+            .collect::<Vec<_>>();
+        let expected_wiener =
+            super::wiener_filter_unit(&source, 32, 32, 4, 8, 16, 16, [[1, 2, 3], [3, -2, 1]]);
+        let mut actual_wiener = source.clone();
+        super::wiener_filter_unit_into(
+            &source,
+            &mut actual_wiener,
+            32,
+            32,
+            4,
+            8,
+            16,
+            16,
+            [[1, 2, 3], [3, -2, 1]],
+        );
+        assert_eq!(actual_wiener, expected_wiener);
+
+        let expected_sgr = super::sgrproj_filter_unit(&source, 32, 32, 4, 8, 16, 16, 0, [12, 64]);
+        let mut actual_sgr = source.clone();
+        super::sgrproj_filter_unit_into(
+            &source,
+            &mut actual_sgr,
+            32,
+            32,
+            4,
+            8,
+            16,
+            16,
+            0,
+            [12, 64],
+        );
+        assert_eq!(actual_sgr, expected_sgr);
     }
 
     #[test]
