@@ -1061,6 +1061,7 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
     let luma_source = frame.buffers.planes[0].samples.clone();
     let luma_width = frame.buffers.planes[0].layout.width;
     let luma_height = frame.buffers.planes[0].layout.height;
+    let cdef_coeff_shift = frame.bit_depth.saturating_sub(8);
     let cdef_units_width = luma_width.div_ceil(64);
     let cdef_units_height = luma_height.div_ceil(64);
     let mut cdef_indices = vec![None; cdef_units_width * cdef_units_height];
@@ -1112,7 +1113,7 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
                 luma_height,
                 x,
                 y,
-                0,
+                cdef_coeff_shift,
                 false,
             );
             cdef_blocks.push((x, y, index, detected_direction, variance));
@@ -1190,7 +1191,22 @@ fn apply_loop_restoration_stage(
     enabled_types: &[u8],
 ) {
     const RESTORATION_UNIT_OFFSET: usize = 8;
+    if state.restoration_units.is_empty()
+        || !state
+            .restoration_units
+            .iter()
+            .any(|unit| enabled_types.contains(&unit.restoration_type))
+    {
+        return;
+    }
     for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
+        if !state
+            .restoration_units
+            .iter()
+            .any(|unit| unit.plane == plane_index && enabled_types.contains(&unit.restoration_type))
+        {
+            continue;
+        }
         let source = std::mem::take(&mut plane.samples);
         let mut output = source.clone();
         for unit in state.restoration_units.iter().filter(|unit| {

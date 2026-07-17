@@ -280,17 +280,17 @@ pub(crate) fn cdef_find_direction_with_variance(
     coeff_shift: u8,
     use_edge_sentinel: bool,
 ) -> (usize, i32) {
-    const CDEF_VERY_LARGE: i32 = 0x4000;
-    const DIV: [i32; 9] = [0, 840, 420, 280, 210, 168, 140, 120, 105];
-    let sample = |x: usize, y: usize| -> i32 {
+    const CDEF_VERY_LARGE: i64 = 0x4000;
+    const DIV: [i64; 9] = [0, 840, 420, 280, 210, 168, 140, 120, 105];
+    let sample = |x: usize, y: usize| -> i64 {
         if use_edge_sentinel && (origin_x + x >= width || origin_y + y >= height) {
             return (CDEF_VERY_LARGE >> coeff_shift) - 128;
         }
         let x = (origin_x + x).min(width.saturating_sub(1));
         let y = (origin_y + y).min(height.saturating_sub(1));
-        (source[y * width + x] >> coeff_shift) as i32 - 128
+        i64::from(source[y * width + x] >> coeff_shift) - 128
     };
-    let mut partial = [[0i32; 15]; 8];
+    let mut partial = [[0i64; 15]; 8];
     for y in 0..8 {
         for x in 0..8 {
             let value = sample(x, y);
@@ -304,7 +304,7 @@ pub(crate) fn cdef_find_direction_with_variance(
             partial[7][y / 2 + x] += value;
         }
     }
-    let mut cost = [0i32; 8];
+    let mut cost = [0i64; 8];
     for (&partial_2, &partial_6) in partial[2].iter().zip(&partial[6]) {
         cost[2] += partial_2 * partial_2;
         cost[6] += partial_6 * partial_6;
@@ -336,7 +336,7 @@ pub(crate) fn cdef_find_direction_with_variance(
             best = direction;
         }
     }
-    let variance = ((cost[best] - cost[(best + 4) & 7]) >> 10).max(0);
+    let variance = ((cost[best] - cost[(best + 4) & 7]) >> 10).clamp(0, i64::from(i32::MAX)) as i32;
     (best, variance)
 }
 
@@ -1356,6 +1356,17 @@ mod tests {
     fn cdef_direction_is_stable_for_a_constant_block() {
         let source = vec![128u16; 8 * 8];
         assert_eq!(cdef_find_direction(&source, 8, 8, 0, 0, 0), 0);
+    }
+
+    #[test]
+    fn cdef_direction_handles_high_bit_depth_without_overflow() {
+        let source = (0..64)
+            .map(|index| 2048u16 + ((index * 37) % 1024) as u16)
+            .collect::<Vec<_>>();
+        let (direction, variance) =
+            super::cdef_find_direction_with_variance(&source, 8, 8, 0, 0, 0, false);
+        assert!(direction < 8);
+        assert!(variance >= 0);
     }
 
     #[test]

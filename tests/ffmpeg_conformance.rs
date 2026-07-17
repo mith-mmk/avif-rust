@@ -288,6 +288,65 @@ fn generated_two_tile_sample_matches_ffmpeg_when_encoder_present() {
 }
 
 #[test]
+fn generated_12bit_sample_decodes_without_post_filter_overflow() {
+    let root = std::env::temp_dir().join(format!(".test-avif-12bit-{}", std::process::id()));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary AVIF sample directory: {err}");
+    }
+    let output_path = root.join("generated-12bit.avif");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .arg("-i")
+        .arg(sample_path("WML2Viewer.png"))
+        .args([
+            "-frames:v",
+            "1",
+            "-c:v",
+            "libaom-av1",
+            "-still-picture",
+            "1",
+            "-crf",
+            "30",
+            "-cpu-used",
+            "8",
+            "-pix_fmt",
+            "yuv444p12le",
+            "-aom-params",
+            "enable-cdef=0:enable-restoration=0",
+            "-f",
+            "avif",
+        ])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated 12-bit sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom 12-bit encoder is unavailable; skipping generated sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let data = std::fs::read(&output_path).expect("generated 12-bit AVIF should be readable");
+    let frame = avif_rust::decode_frame_bytes(&data).expect("12-bit native decode should succeed");
+    assert_eq!(frame.bit_depth, 12);
+    assert_eq!((frame.width, frame.height), (SAMPLE_WIDTH, SAMPLE_HEIGHT));
+    let image = avif_rust::image_from_bytes(&data).expect("12-bit public decode should succeed");
+    assert_eq!((image.width, image.height), (SAMPLE_WIDTH, SAMPLE_HEIGHT));
+    if let Some(expected) = ffmpeg_decode_rgba(&output_path) {
+        let metrics = diff_rgb(&image.rgba, &expected);
+        assert!(
+            metrics.average_rgb_abs <= 100.0,
+            "12-bit FFmpeg RGB error average={} max={}",
+            metrics.average_rgb_abs,
+            metrics.max_rgb_abs
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn generated_level_zero_qmatrix_sample_matches_ffmpeg_when_encoder_present() {
     let root = std::env::temp_dir().join(format!(".test-avif-qmatrix-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {
