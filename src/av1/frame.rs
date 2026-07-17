@@ -561,9 +561,21 @@ pub struct QuantizationParams {
     pub delta_q_v_dc: i8,
     pub delta_q_v_ac: i8,
     pub using_qmatrix: bool,
+    /// Quantizer-matrix levels signalled by the frame header. Level 15 is the
+    /// identity matrix and therefore has no effect on dequantization.
+    pub qm_y: u8,
+    pub qm_u: u8,
+    pub qm_v: u8,
 }
 
 impl QuantizationParams {
+    pub(crate) fn has_non_identity_qmatrix(&self) -> bool {
+        self.using_qmatrix
+            && [self.qm_y, self.qm_u, self.qm_v]
+                .iter()
+                .any(|&level| level != 15)
+    }
+
     pub(crate) fn coded_lossless(&self) -> bool {
         self.base_q_idx == 0
             && self.delta_q_y_dc == 0
@@ -603,11 +615,16 @@ fn parse_quantization_params(
     }
 
     let using_qmatrix = reader.read_bool("using_qmatrix")?;
+    let mut qm_y = 15;
+    let mut qm_u = 15;
+    let mut qm_v = 15;
     if using_qmatrix {
-        let _qm_y = reader.read_bits(4, "qm_y")?;
-        let _qm_u = reader.read_bits(4, "qm_u")?;
-        if !sequence.color_config.separate_uv_delta_q {
-            let _qm_v = reader.read_bits(4, "qm_v")?;
+        qm_y = reader.read_bits(4, "qm_y")? as u8;
+        qm_u = reader.read_bits(4, "qm_u")? as u8;
+        if sequence.color_config.separate_uv_delta_q {
+            qm_v = reader.read_bits(4, "qm_v")? as u8;
+        } else {
+            qm_v = qm_u;
         }
     }
 
@@ -619,6 +636,9 @@ fn parse_quantization_params(
         delta_q_v_dc,
         delta_q_v_ac,
         using_qmatrix,
+        qm_y,
+        qm_u,
+        qm_v,
     })
 }
 

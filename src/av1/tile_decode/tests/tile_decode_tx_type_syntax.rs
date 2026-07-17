@@ -129,6 +129,9 @@ fn sample_frame(base_q_idx: u8) -> FrameHeader {
             delta_q_v_dc: 0,
             delta_q_v_ac: 0,
             using_qmatrix: false,
+            qm_y: 15,
+            qm_u: 15,
+            qm_v: 15,
         },
         delta_q: DeltaQParams {
             present: false,

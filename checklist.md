@@ -339,6 +339,11 @@ when changing this path. Super-resolution uses the scalar 64-phase resize
 kernel and allocates the expanded row once per plane; the no-superres path
 remains allocation-free.
 
+The qmatrix parser checkpoint was remeasured on the same host with
+`361.93/377.38 ms` (native/RGBA, 11 iterations); this is a validation run only,
+not a replacement release baseline because local scheduling variance is larger
+than the change in this checkpoint.
+
 - [x] Add malformed/truncated coverage for the currently supported container,
       OBU, entropy and metadata paths.
 - [ ] Add malformed/truncated cases for each future syntax path as it becomes
@@ -347,11 +352,11 @@ remains allocation-free.
       for overflow and resource limits.
 - [ ] Audit post-filter scratch-buffer sizing once normative filters are
       enabled.
-- [x] Reject active but unimplemented filters, qmatrix and other
-      unsupported AV1 tools before public decode returns an image.
+- [x] Reject active but unimplemented filters, non-identity qmatrix levels and
+      other unsupported AV1 tools before public decode returns an image.
 - [x] Keep public decode fail-closed (`Unsupported`) whenever an unimplemented
-      filter or qmatrix is active; retain pre-filter diagnostics as
-      private/test-only paths.
+      filter or non-identity qmatrix is active; identity level 15 is parsed as
+      the normative flat matrix and remains a no-op.
 - [x] Validate primary-item info/location, `ipma` property indices and
       essential-property flags.
 - [x] Validate `ispe` dimensions against the AV1 frame dimensions.
@@ -415,9 +420,9 @@ release work.
 
 `decode`, `image_from_bytes`, `decode_frame_bytes` and the `wml2` callback now
 accept the implemented 8-bit 4:4:4 filter and film-grain paths. They
-remain fail-closed with `Unsupported` for unsupported bit depth, qmatrix and
-other unavailable AV1 tools. Prefilter diagnostics stay private or test-only
-and do not define the public decoded-frame contract.
+remain fail-closed with `Unsupported` for unsupported bit depth, non-identity
+qmatrix and other unavailable AV1 tools. Prefilter diagnostics stay private or
+test-only and do not define the public decoded-frame contract.
 
 ## Diagnostic history
 

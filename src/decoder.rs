@@ -1332,9 +1332,11 @@ fn validate_public_container_preflight(
 }
 
 fn validate_public_decode_tools(headers: &Av1Headers) -> Result<(), DecoderError> {
-    if headers.frame.quantization.using_qmatrix {
+    let quantization = &headers.frame.quantization;
+    if quantization.has_non_identity_qmatrix() {
         return Err(DecoderError::Unsupported(
-            "AV1 quantization matrices are not supported by public decode yet".to_string(),
+            "AV1 non-identity quantization matrices are not supported by public decode yet"
+                .to_string(),
         ));
     }
     Ok(())

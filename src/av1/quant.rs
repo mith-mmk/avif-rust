@@ -234,6 +234,9 @@ mod tests {
             delta_q_v_dc: -2,
             delta_q_v_ac: -3,
             using_qmatrix: false,
+            qm_y: 15,
+            qm_u: 15,
+            qm_v: 15,
         };
 
         let state = QuantState::from_params(&params, 8).unwrap();
@@ -244,6 +247,43 @@ mod tests {
         assert_eq!(state.u.ac, ac_q(103, 8));
         assert_eq!(state.v.dc, dc_q(98, 8));
         assert_eq!(state.v.ac, ac_q(97, 8));
+    }
+
+    #[test]
+    fn identity_qmatrix_level_is_accepted_without_matrix_math() {
+        let params = QuantizationParams {
+            base_q_idx: 80,
+            delta_q_y_dc: 0,
+            delta_q_u_dc: 0,
+            delta_q_u_ac: 0,
+            delta_q_v_dc: 0,
+            delta_q_v_ac: 0,
+            using_qmatrix: true,
+            qm_y: 15,
+            qm_u: 15,
+            qm_v: 15,
+        };
+
+        assert!(!params.has_non_identity_qmatrix());
+        assert!(QuantState::from_params(&params, 8).is_ok());
+    }
+
+    #[test]
+    fn non_identity_qmatrix_level_remains_explicitly_detectable() {
+        let params = QuantizationParams {
+            base_q_idx: 80,
+            delta_q_y_dc: 0,
+            delta_q_u_dc: 0,
+            delta_q_u_ac: 0,
+            delta_q_v_dc: 0,
+            delta_q_v_ac: 0,
+            using_qmatrix: true,
+            qm_y: 0,
+            qm_u: 15,
+            qm_v: 15,
+        };
+
+        assert!(params.has_non_identity_qmatrix());
     }
 
     #[test]
