@@ -1,4 +1,4 @@
-use super::coefficient::{EntropyCoefficientSource, decode_coefficients};
+use super::coefficient::{EntropyCoefficientSource, decode_coefficients_with_scratch};
 use super::diagnostic::ResidualProbe;
 use super::residual_probe::{
     FirstNonZeroTransformScan, ResidualProbeContext, ResidualProbeFields, empty_residual_probe,
@@ -172,6 +172,13 @@ impl<'a> TileDecoder<'a> {
         dc_sign_context: usize,
     ) -> Result<CoefficientRead, DecoderError> {
         let mut source = EntropyCoefficientSource::new(&mut self.reader, &mut self.cdf);
-        decode_coefficients(&mut source, tx_size, tx_type, plane_type, dc_sign_context)
+        decode_coefficients_with_scratch(
+            &mut source,
+            tx_size,
+            tx_type,
+            plane_type,
+            dc_sign_context,
+            &mut self.coefficient_scratch,
+        )
     }
 }

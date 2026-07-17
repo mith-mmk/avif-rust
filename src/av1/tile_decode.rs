@@ -153,6 +153,7 @@ pub struct TileDecoder<'a> {
     transform_boundaries: Vec<post_filter_state::TransformBoundary>,
     restoration_units: Vec<post_filter_state::RestorationUnit>,
     block_filter_states: Vec<post_filter_state::BlockFilterState>,
+    coefficient_scratch: Vec<i32>,
 }
 
 pub(super) fn is_chroma_reference(
@@ -224,6 +225,7 @@ impl<'a> TileDecoder<'a> {
             transform_boundaries: Vec::new(),
             restoration_units: Vec::new(),
             block_filter_states: Vec::new(),
+            coefficient_scratch: Vec::with_capacity(TxSize::Tx64x64.sample_count()),
         })
     }
 

@@ -141,12 +141,32 @@ pub(super) struct CoefficientRead {
     pub base: CoeffBaseRead,
 }
 
+#[allow(dead_code)]
 pub(super) fn decode_coefficients<S: CoefficientTokenSource>(
     source: &mut S,
     tx_size: TxSize,
     tx_type: TxType,
     plane_type: usize,
     dc_sign_context: usize,
+) -> Result<CoefficientRead, DecoderError> {
+    let mut scratch = Vec::new();
+    decode_coefficients_with_scratch(
+        source,
+        tx_size,
+        tx_type,
+        plane_type,
+        dc_sign_context,
+        &mut scratch,
+    )
+}
+
+pub(super) fn decode_coefficients_with_scratch<S: CoefficientTokenSource>(
+    source: &mut S,
+    tx_size: TxSize,
+    tx_type: TxType,
+    plane_type: usize,
+    dc_sign_context: usize,
+    scratch: &mut Vec<i32>,
 ) -> Result<CoefficientRead, DecoderError> {
     let eob_multisize = usize::from(tx_size.width_log2().min(5) + tx_size.height_log2().min(5) - 4);
     let eob_pt_symbol = source.read_symbol(CoefficientSymbol::EobPoint {
@@ -178,6 +198,7 @@ pub(super) fn decode_coefficients<S: CoefficientTokenSource>(
         eob,
         coeff_base_eob_level,
         dc_sign_context,
+        scratch,
     )?;
     Ok(CoefficientRead {
         eob_multisize,
@@ -228,10 +249,13 @@ fn read_regular_coeff_bases<S: CoefficientTokenSource>(
     eob: usize,
     eob_level: usize,
     dc_sign_context: usize,
+    scratch: &mut Vec<i32>,
 ) -> Result<CoeffBaseRead, DecoderError> {
     let scan = coefficient_scan(tx_size, tx_type);
     let remaining_count = eob - 1;
-    let mut quant = vec![0i32; tx_size.sample_count()];
+    scratch.resize(tx_size.sample_count(), 0);
+    scratch.fill(0);
+    let mut quant = scratch.as_mut_slice();
     let mut base_range_count = 0;
     let mut coeff_br_symbol_count = 0;
     let mut first_coeff_br = None;
@@ -315,7 +339,7 @@ fn read_regular_coeff_bases<S: CoefficientTokenSource>(
     let first_signed_coeff = first_signed_coeff(eob, &scan, &quant)?;
     Ok(CoeffBaseRead {
         probe,
-        base_levels: quant,
+        base_levels: quant.to_vec(),
         non_zero_count,
         base_range_count,
         coeff_br_symbol_count,
