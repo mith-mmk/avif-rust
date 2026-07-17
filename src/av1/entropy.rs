@@ -178,9 +178,13 @@ impl<'a> EntropyDecoder<'a> {
         }
         for bit_position in trailing_bit_position + 1..padding_end_position {
             if bit_at(self.data, bit_position)? != 0 {
-                return Err(DecoderError::Bitstream(
-                    "AV1 entropy trailing zero bit is not zero".to_string(),
-                ));
+                return Err(DecoderError::Bitstream(format!(
+                    "AV1 entropy trailing zero bit is not zero at bit {bit_position} (tell={}, trailing={}, padding_end={}, max_bits={})",
+                    self.bit_offset,
+                    trailing_bit_position,
+                    padding_end_position,
+                    self.symbol_max_bits,
+                )));
             }
         }
         Ok(padding_end_position.div_ceil(8))
