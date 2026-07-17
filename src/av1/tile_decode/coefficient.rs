@@ -12,31 +12,24 @@ use crate::av1::cdf::CdfContext;
 use crate::av1::transform::coefficient_scan;
 
 pub(super) struct CoefficientScanCache {
-    entries: Vec<(TxSize, TxType, Vec<usize>)>,
+    entries: Vec<Option<Vec<usize>>>,
 }
 
 impl CoefficientScanCache {
     pub(super) fn new() -> Self {
         Self {
-            entries: Vec::new(),
+            entries: (0..19 * 7).map(|_| None).collect(),
         }
     }
 
     pub(super) fn get(&mut self, tx_size: TxSize, tx_type: TxType) -> &[usize] {
-        if let Some(index) = self
-            .entries
-            .iter()
-            .position(|(size, kind, _)| *size == tx_size && *kind == tx_type)
-        {
-            return &self.entries[index].2;
+        let index = usize::from(tx_size as u8) * 7 + usize::from(tx_type as u8);
+        if self.entries[index].is_none() {
+            self.entries[index] = Some(coefficient_scan(tx_size, tx_type));
         }
-        self.entries
-            .push((tx_size, tx_type, coefficient_scan(tx_size, tx_type)));
-        &self
-            .entries
-            .last()
+        self.entries[index]
+            .as_deref()
             .expect("scan cache entry was just inserted")
-            .2
     }
 }
 

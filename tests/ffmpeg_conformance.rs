@@ -410,10 +410,7 @@ fn generated_12bit_rect_partition_sample_matches_ffmpeg_when_encoder_present() {
 
 #[test]
 fn generated_12bit_128_superblock_sample_matches_ffmpeg_when_encoder_present() {
-    let root = std::env::temp_dir().join(format!(
-        ".test-avif-12bit-sb128-{}",
-        std::process::id()
-    ));
+    let root = std::env::temp_dir().join(format!(".test-avif-12bit-sb128-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {
         panic!("failed to create temporary AVIF sample directory: {err}");
     }
@@ -442,16 +439,12 @@ fn generated_12bit_128_superblock_sample_matches_ffmpeg_when_encoder_present() {
         .arg(&output_path)
         .status();
     let Ok(status) = status else {
-        eprintln!(
-            "ffmpeg is not available; skipping generated 12-bit 128-superblock sample"
-        );
+        eprintln!("ffmpeg is not available; skipping generated 12-bit 128-superblock sample");
         let _ = std::fs::remove_dir_all(&root);
         return;
     };
     if !status.success() {
-        eprintln!(
-            "libaom 12-bit 128-superblock encoder is unavailable; skipping generated sample"
-        );
+        eprintln!("libaom 12-bit 128-superblock encoder is unavailable; skipping generated sample");
         let _ = std::fs::remove_dir_all(&root);
         return;
     }

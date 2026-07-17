@@ -469,6 +469,7 @@ impl UvPredictionMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum TxSize {
     Tx4x4,
     Tx8x8,
@@ -622,6 +623,7 @@ impl TxSize {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum TxType {
     DctDct,
     AdstDct,
