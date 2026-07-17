@@ -409,6 +409,73 @@ fn generated_12bit_rect_partition_sample_matches_ffmpeg_when_encoder_present() {
 }
 
 #[test]
+fn generated_12bit_128_superblock_sample_matches_ffmpeg_when_encoder_present() {
+    let root = std::env::temp_dir().join(format!(
+        ".test-avif-12bit-sb128-{}",
+        std::process::id()
+    ));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary AVIF sample directory: {err}");
+    }
+    let output_path = root.join("generated-12bit-sb128.avif");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .args(["-f", "lavfi", "-i", "testsrc2=size=1204x800:rate=1"])
+        .args([
+            "-frames:v",
+            "1",
+            "-c:v",
+            "libaom-av1",
+            "-still-picture",
+            "1",
+            "-crf",
+            "18",
+            "-cpu-used",
+            "8",
+            "-pix_fmt",
+            "yuv444p12le",
+            "-aom-params",
+            "sb-size=128:enable-rect-partitions=1:enable-1to4-partitions=1:enable-ab-partitions=1:enable-cdef=0:enable-restoration=0",
+            "-f",
+            "avif",
+        ])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!(
+            "ffmpeg is not available; skipping generated 12-bit 128-superblock sample"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!(
+            "libaom 12-bit 128-superblock encoder is unavailable; skipping generated sample"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let data = std::fs::read(&output_path)
+        .expect("generated 12-bit 128-superblock AVIF should be readable");
+    let frame =
+        avif_rust::decode_frame_bytes(&data).expect("12-bit 128-superblock AVIF should decode");
+    assert_eq!(frame.bit_depth, 12);
+    assert_eq!((frame.width, frame.height), (1204, 800));
+    let image = avif_rust::image_from_bytes(&data)
+        .expect("12-bit 128-superblock public decode should succeed");
+    if let Some(expected) = ffmpeg_decode_rgba_dynamic(&output_path, 1204, 800) {
+        let metrics = diff_rgb_dynamic(&image.rgba, &expected);
+        assert!(
+            metrics.average_rgb_abs <= 100.0,
+            "12-bit 128-superblock FFmpeg RGB error average={} max={}",
+            metrics.average_rgb_abs,
+            metrics.max_rgb_abs
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn generated_lossless_sample_matches_ffmpeg_when_encoder_present() {
     let root = std::env::temp_dir().join(format!(".test-avif-lossless-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {
