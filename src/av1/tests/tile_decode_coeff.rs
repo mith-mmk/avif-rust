@@ -34,6 +34,49 @@ fn coefficient_scan_cache_reuses_scan_storage() {
     assert_eq!(second.len(), first_len);
 }
 
+#[test]
+fn coefficient_scan_cache_indexes_every_transform_variant() {
+    let mut cache = CoefficientScanCache::new();
+    let tx_sizes = [
+        TxSize::Tx4x4,
+        TxSize::Tx8x8,
+        TxSize::Tx16x16,
+        TxSize::Tx32x32,
+        TxSize::Tx64x64,
+        TxSize::Tx4x8,
+        TxSize::Tx8x4,
+        TxSize::Tx8x16,
+        TxSize::Tx16x8,
+        TxSize::Tx16x32,
+        TxSize::Tx32x16,
+        TxSize::Tx32x64,
+        TxSize::Tx64x32,
+        TxSize::Tx4x16,
+        TxSize::Tx16x4,
+        TxSize::Tx8x32,
+        TxSize::Tx32x8,
+        TxSize::Tx16x64,
+        TxSize::Tx64x16,
+    ];
+    let tx_types = [
+        TxType::DctDct,
+        TxType::AdstDct,
+        TxType::DctAdst,
+        TxType::AdstAdst,
+        TxType::Identity,
+        TxType::VerticalDct,
+        TxType::HorizontalDct,
+    ];
+
+    for tx_size in tx_sizes {
+        for tx_type in tx_types {
+            let scan = cache.get(tx_size, tx_type);
+            assert!(!scan.is_empty(), "{tx_size:?} {tx_type:?}");
+            assert!(scan.len() <= tx_size.sample_count());
+        }
+    }
+}
+
 impl ScriptedTokens {
     fn new(tokens: impl IntoIterator<Item = Token>) -> Self {
         Self {
