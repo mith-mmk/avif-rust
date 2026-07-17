@@ -48,6 +48,8 @@ pub(crate) use tile_decode::PostFilterState;
 #[cfg(test)]
 pub(crate) use tile_decode::RestorationUnit;
 pub(crate) use tile_decode::decode_luma_root_block_prefix_with_post_filter_state_and_entropy;
+#[cfg(test)]
+pub(crate) use tile_decode::wiener_filter_unit;
 pub use tile_decode::{
     BlockModeProbe, DecodedBlockPrefix, DecodedLumaBlock, DecodedTransform, PartitionProbe,
     ResidualProbe, TileDecoder, TileEntropyState, decode_first_luma_block,
@@ -58,7 +60,7 @@ pub use tile_decode::{
 pub(crate) use tile_decode::{
     cdef_adjust_primary_strength, cdef_filter_block_region_with_edge_mode,
     cdef_find_direction_with_variance, deblock_filter_edge_with_visible_bounds,
-    sgrproj_filter_unit_into, wiener_filter_unit, wiener_filter_unit_into,
+    sgrproj_filter_unit_into, wiener_filter_unit_into,
 };
 pub use tile_group::{TileGroup, TilePayload, parse_tile_group};
 pub use transform::{

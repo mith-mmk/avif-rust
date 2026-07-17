@@ -2606,6 +2606,188 @@ mod prefilter_diagnostic_tests {
 mod tile_group_merge_tests {
     use super::*;
 
+    fn leb128(mut value: usize) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        loop {
+            let mut byte = (value & 0x7f) as u8;
+            value >>= 7;
+            if value != 0 {
+                byte |= 0x80;
+            }
+            bytes.push(byte);
+            if value == 0 {
+                return bytes;
+            }
+        }
+    }
+
+    fn sized_obu(obu_type: u8, payload: &[u8]) -> Vec<u8> {
+        let mut obu = vec![(obu_type << 3) | 0x02];
+        obu.extend(leb128(payload.len()));
+        obu.extend_from_slice(payload);
+        obu
+    }
+
+    fn find_box(data: &[u8], box_type: &[u8; 4]) -> (usize, usize) {
+        for offset in 0..data.len().saturating_sub(8) {
+            let size = u32::from_be_bytes(data[offset..offset + 4].try_into().unwrap()) as usize;
+            if &data[offset + 4..offset + 8] == box_type
+                && size >= 8
+                && offset
+                    .checked_add(size)
+                    .is_some_and(|end| end <= data.len())
+            {
+                return (offset, size);
+            }
+        }
+        panic!("box {:?} is missing", box_type);
+    }
+
+    fn read_uint(data: &[u8], offset: &mut usize, width: usize) -> usize {
+        let end = offset.checked_add(width).unwrap();
+        let bytes = data.get(*offset..end).unwrap();
+        *offset = end;
+        bytes
+            .iter()
+            .fold(0usize, |value, byte| (value << 8) | usize::from(*byte))
+    }
+
+    fn write_uint(data: &mut [u8], offset: usize, width: usize, value: usize) {
+        let end = offset.checked_add(width).unwrap();
+        let target = data.get_mut(offset..end).unwrap();
+        for (index, byte) in target.iter_mut().enumerate() {
+            *byte = (value >> ((width - index - 1) * 8)) as u8;
+        }
+    }
+
+    fn primary_extent_length_offset(data: &[u8], primary_item_id: u32) -> usize {
+        let (iloc, _) = find_box(data, b"iloc");
+        let mut offset = iloc + 8;
+        let version = data[offset];
+        offset += 4;
+        let sizes = data[offset];
+        offset += 1;
+        let offset_size = usize::from(sizes >> 4);
+        let length_size = usize::from(sizes & 0x0f);
+        let sizes = data[offset];
+        offset += 1;
+        let base_offset_size = usize::from(sizes >> 4);
+        let index_size = usize::from(sizes & 0x0f);
+        let item_count_width = if version >= 2 { 4 } else { 2 };
+        let item_count = read_uint(data, &mut offset, item_count_width);
+        for _ in 0..item_count {
+            let item_id = read_uint(data, &mut offset, item_count_width) as u32;
+            if version == 0 {
+                offset += 2;
+            } else {
+                offset += 4;
+            }
+            offset += base_offset_size;
+            let extent_count = read_uint(data, &mut offset, 2);
+            for _ in 0..extent_count {
+                if version >= 1 {
+                    offset += index_size;
+                }
+                offset += offset_size;
+                let length_offset = offset;
+                offset += length_size;
+                if item_id == primary_item_id {
+                    return length_offset;
+                }
+            }
+        }
+        panic!("primary item extent is missing");
+    }
+
+    fn split_primary_frame_obu(data: &[u8]) -> Vec<u8> {
+        let info = crate::container::parse_avif(data).unwrap();
+        let headers = parse_av1_headers(&info).unwrap();
+        let frame_payload = crate::obu::parse_obu_stream(&info.primary_item_payload)
+            .unwrap()
+            .into_iter()
+            .find(|obu| obu.obu_type == ObuType::Frame)
+            .unwrap()
+            .payload;
+        let frame_header_len = headers.frame.payload_after_header_offset;
+        let tile_group = parse_tile_group(
+            frame_payload,
+            frame_header_len * 8,
+            &headers.frame.tile_info,
+        )
+        .unwrap();
+        assert_eq!(tile_group.tiles.len(), 2);
+        let tiles = tile_group
+            .tiles
+            .iter()
+            .map(|tile| frame_payload[tile.offset..tile.offset + tile.len].to_vec())
+            .collect::<Vec<_>>();
+
+        let frame_payload_offset = info
+            .primary_item_payload
+            .windows(frame_payload.len())
+            .position(|window| window == frame_payload)
+            .unwrap();
+        let mut cursor = 0;
+        let (frame_obu_start, frame_obu_end) = loop {
+            let obu_start = cursor;
+            let header = info.primary_item_payload[cursor];
+            cursor += 1;
+            if header & 0x04 != 0 {
+                cursor += 1;
+            }
+            let mut payload_len = 0usize;
+            let mut shift = 0;
+            while header & 0x02 != 0 {
+                let byte = info.primary_item_payload[cursor];
+                cursor += 1;
+                payload_len |= usize::from(byte & 0x7f) << shift;
+                if byte & 0x80 == 0 {
+                    break;
+                }
+                shift += 7;
+            }
+            let payload_start = cursor;
+            let payload_end = payload_start + payload_len;
+            if payload_start == frame_payload_offset {
+                break (obu_start, payload_end);
+            }
+            cursor = payload_end;
+        };
+        let mut primary_payload = Vec::new();
+        primary_payload.extend_from_slice(&info.primary_item_payload[..frame_obu_start]);
+        primary_payload.extend(sized_obu(3, &frame_payload[..frame_header_len]));
+        let mut first_tile_group = vec![0x80];
+        first_tile_group.extend_from_slice(&tiles[0]);
+        primary_payload.extend(sized_obu(4, &first_tile_group));
+        let mut second_tile_group = vec![0xe0];
+        second_tile_group.extend_from_slice(&tiles[1]);
+        primary_payload.extend(sized_obu(4, &second_tile_group));
+        primary_payload.extend_from_slice(&info.primary_item_payload[frame_obu_end..]);
+
+        let (mdat, mdat_size) = find_box(data, b"mdat");
+        let old_payload_start = mdat + 8;
+        assert_eq!(
+            &data[old_payload_start..old_payload_start + info.primary_item_payload.len()],
+            info.primary_item_payload.as_slice()
+        );
+        let mut output = Vec::with_capacity(data.len() + primary_payload.len());
+        output.extend_from_slice(&data[..old_payload_start]);
+        output.extend_from_slice(&primary_payload);
+        output.extend_from_slice(&data[old_payload_start + info.primary_item_payload.len()..]);
+        write_uint(
+            &mut output,
+            mdat,
+            4,
+            mdat_size - info.primary_item_payload.len() + primary_payload.len(),
+        );
+        let extent_length_offset = primary_extent_length_offset(
+            data,
+            info.primary_item_id.expect("generated AVIF primary item"),
+        );
+        write_uint(&mut output, extent_length_offset, 4, primary_payload.len());
+        output
+    }
+
     fn tile_info() -> crate::av1::TileInfo {
         crate::av1::TileInfo {
             uniform_tile_spacing: true,
@@ -2653,6 +2835,73 @@ mod tile_group_merge_tests {
         assert!(
             matches!(err, DecoderError::Unsupported(message) if message.contains("partial tile"))
         );
+    }
+
+    #[test]
+    fn generated_separate_tile_group_obus_decode_when_ffmpeg_present() {
+        let root =
+            std::env::temp_dir().join(format!(".test-avif-split-obu-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let source_path = root.join("source.avif");
+        let status = std::process::Command::new("ffmpeg")
+            .args(["-y", "-loglevel", "error"])
+            .arg("-i")
+            .arg(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .parent()
+                    .unwrap()
+                    .join("samples/WML2Viewer.png"),
+            )
+            .args([
+                "-frames:v",
+                "1",
+                "-c:v",
+                "libaom-av1",
+                "-still-picture",
+                "1",
+                "-crf",
+                "30",
+                "-cpu-used",
+                "8",
+                "-aom-params",
+                "tile-columns=1:tile-rows=0:enable-cdef=0:enable-restoration=0",
+                "-f",
+                "avif",
+            ])
+            .arg(&source_path)
+            .status();
+        let Ok(status) = status else {
+            eprintln!("ffmpeg is not available; skipping split TileGroup sample");
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        };
+        if !status.success() {
+            eprintln!("libaom encoder is unavailable; skipping split TileGroup sample");
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        let source = std::fs::read(&source_path).unwrap();
+        let split = split_primary_frame_obu(&source);
+        let split_path = root.join("separate-tile-groups.avif");
+        std::fs::write(&split_path, &split).unwrap();
+        let ffmpeg_status = std::process::Command::new("ffmpeg")
+            .args(["-v", "error", "-nostdin"])
+            .arg("-i")
+            .arg(&split_path)
+            .args(["-frames:v", "1", "-f", "null", "-"])
+            .status()
+            .unwrap();
+        assert!(
+            ffmpeg_status.success(),
+            "FFmpeg rejected split TileGroup AVIF"
+        );
+        let info = crate::container::parse_avif(&split).unwrap();
+        let headers = parse_av1_headers(&info).unwrap();
+        assert!(!headers.tile_group.from_frame_obu);
+        let original = crate::image_from_bytes(&source).unwrap();
+        let decoded = crate::image_from_bytes(&split).unwrap();
+        assert_eq!(decoded, original);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 

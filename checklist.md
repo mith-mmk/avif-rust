@@ -303,9 +303,10 @@ and RGBA gates.
 - [x] `irot` rotation composition, including an official 8-bit alpha fixture;
       the `kimono.rotate90.avif` sample still exposes a separate entropy
       trailing-bit mismatch and remains fail-closed.
-- [ ] Multiple tile-group OBU composition for one still frame. Payload
-      assembly now validates duplicates/holes and merges tile IDs in order;
-      full multi-tile entropy validation still needs a real split-OBU fixture.
+- [x] Multiple tile-group OBU composition for one still frame. Payload
+      assembly validates duplicates/holes and merges tile IDs in order; a
+      generated libaom sample is rewritten into separate FrameHeader and
+      single-tile TileGroup OBUs and decoded against the original pixels.
 - [x] AV1 horizontal super-resolution output resize with the normative 8-tap
       phase filter; coded planes are reconstructed at reduced width and
       expanded before colour conversion.
