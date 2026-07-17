@@ -2438,6 +2438,113 @@ mod prefilter_diagnostic_tests {
     }
 
     #[test]
+    #[ignore = "diagnostic comparison of external high-bit-depth filter stages"]
+    fn reports_external_12bit_filter_stages() {
+        let Some(avif_path) = std::env::var_os("AVIF_12BIT_PATH").map(PathBuf::from) else {
+            eprintln!("AVIF_12BIT_PATH is unavailable");
+            return;
+        };
+        if !avif_path.exists() {
+            eprintln!("12-bit AVIF diagnostic sample is unavailable: {avif_path:?}");
+            return;
+        }
+        let data = std::fs::read(&avif_path).unwrap();
+        let info = parse_avif(&data).unwrap();
+        let headers = parse_av1_headers(&info).unwrap();
+        eprintln!(
+            "12-bit headers: bit_depth={}, monochrome={}, subsampling=({}, {}), matrix={:?}, range={:?}, quant={:?}",
+            headers.sequence.color_config.bit_depth,
+            headers.sequence.color_config.monochrome,
+            headers.sequence.color_config.subsampling_x,
+            headers.sequence.color_config.subsampling_y,
+            headers
+                .sequence
+                .color_config
+                .color_description
+                .map(|description| description.matrix_coefficients),
+            headers.sequence.color_config.color_range,
+            headers.frame.quantization
+        );
+        let DecodedStillFrame {
+            frame,
+            post_filter_state,
+            ..
+        } = decode_still_frame_with_filter_policy_and_state(&headers, Some(&info), false).unwrap();
+        let sample_count = frame.width * frame.height;
+        let reference = |skip_loop_filter: bool| {
+            let mut command = Command::new("ffmpeg");
+            command.args(["-v", "error", "-nostdin"]);
+            if skip_loop_filter {
+                command.args(["-skip_loop_filter", "all"]);
+            }
+            command.arg("-i").arg(&avif_path).args([
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "yuv444p12le",
+                "-",
+            ]);
+            let output = command.output().expect("ffmpeg should be available");
+            assert!(
+                output.status.success(),
+                "ffmpeg failed: {:?}",
+                output.status
+            );
+            assert_eq!(output.stdout.len(), sample_count * 3 * 2);
+            output
+                .stdout
+                .chunks_exact(2)
+                .map(|sample| u16::from_le_bytes([sample[0], sample[1]]))
+                .collect::<Vec<_>>()
+        };
+        let prefilter = reference(true);
+        let filtered = reference(false);
+        let report = |label: &str, current: &DecodedFrame, expected: &[u16]| {
+            for (plane_index, plane) in current.buffers.planes.iter().enumerate() {
+                let start = plane_index * sample_count;
+                let expected = &expected[start..start + sample_count];
+                let mut sum = 0u64;
+                let mut max = 0u16;
+                let mut actual_min = u16::MAX;
+                let mut actual_max = 0u16;
+                let mut expected_min = u16::MAX;
+                let mut expected_max = 0u16;
+                for (&actual, &expected) in plane.samples.iter().zip(expected) {
+                    let difference = actual.abs_diff(expected);
+                    sum += u64::from(difference);
+                    max = max.max(difference);
+                    actual_min = actual_min.min(actual);
+                    actual_max = actual_max.max(actual);
+                    expected_min = expected_min.min(expected);
+                    expected_max = expected_max.max(expected);
+                }
+                eprintln!(
+                    "12-bit {label} plane {plane_index}: average_abs={}, max={max}, actual={actual_min}..{actual_max}, expected={expected_min}..{expected_max}, first={:?}/{:?}",
+                    sum as f64 / sample_count as f64,
+                    &plane.samples[..4],
+                    &expected[..4]
+                );
+            }
+        };
+        report("prefilter-vs-ffmpeg-prefilter", &frame, &prefilter);
+        let mut deblock = frame.clone();
+        apply_deblock_stage(&mut deblock, &headers.frame, &post_filter_state);
+        report("deblock-vs-ffmpeg-final", &deblock, &filtered);
+        let mut cdef = deblock.clone();
+        apply_cdef_stage(&mut cdef, &headers.frame, &post_filter_state);
+        report("cdef-vs-ffmpeg-final", &cdef, &filtered);
+        apply_loop_restoration_stage(
+            &mut cdef,
+            &post_filter_state,
+            headers.decode_plan.superblock_size << headers.frame.restoration.unit_shift,
+            &[1, 2],
+        );
+        report("restoration-vs-ffmpeg-final", &cdef, &filtered);
+    }
+
+    #[test]
     #[ignore = "diagnostic execution of the private post-filter pipeline"]
     fn runs_wml2viewer_private_post_filter_pipeline() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
