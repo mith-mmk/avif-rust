@@ -417,11 +417,6 @@ fn decode_still_image(
 }
 
 fn decode_grid_image(info: &AvifInfo) -> Result<ImageBuffer, DecoderError> {
-    if !info.alpha_auxiliary_items.is_empty() {
-        return Err(DecoderError::Unsupported(
-            "AVIF grid alpha auxiliary composition is not supported yet".to_string(),
-        ));
-    }
     let grid = info
         .primary_grid
         .as_ref()
@@ -482,6 +477,11 @@ fn decode_grid_image(info: &AvifInfo) -> Result<ImageBuffer, DecoderError> {
         ));
     }
     let mut image = compose_grid_images(grid, &decoded_cells, &column_widths, &row_heights)?;
+    if let Some(alpha_grid) = info.alpha_grid.as_ref() {
+        apply_alpha_grid(&mut image, alpha_grid)?;
+    } else if !info.alpha_auxiliary_items.is_empty() {
+        apply_alpha_auxiliary(&mut image, info)?;
+    }
     apply_clean_aperture(&mut image, info.clean_aperture)?;
     apply_mirror(&mut image, info.mirror)?;
     apply_rotation(&mut image, info.rotation)?;
@@ -589,6 +589,22 @@ mod grid_composition_tests {
         assert_eq!((image.width, image.height), (1, 2));
         assert_eq!(image.rgba, vec![20, 0, 0, 255, 10, 0, 0, 255]);
     }
+
+    #[test]
+    fn alpha_grid_rejects_mismatched_output_dimensions() {
+        let mut image = cell(2, 1, 90);
+        let grid = GridImage {
+            item_id: 2,
+            rows: 1,
+            columns: 1,
+            output_width: 1,
+            output_height: 1,
+            payload: Vec::new(),
+            cells: Vec::new(),
+        };
+        let error = apply_alpha_grid(&mut image, &grid).unwrap_err();
+        assert!(error.to_string().contains("dimensions do not match"));
+    }
 }
 
 fn decode_grid_cell(info: &AvifInfo, cell: &GridCell) -> Result<ImageBuffer, DecoderError> {
@@ -605,6 +621,7 @@ fn decode_grid_cell(info: &AvifInfo, cell: &GridCell) -> Result<ImageBuffer, Dec
             .or_else(|| info.color_information.clone()),
         alpha_premultiplied: false,
         alpha_auxiliary_items: Vec::new(),
+        alpha_grid: None,
         primary_grid: None,
         clean_aperture: None,
         rotation: None,
@@ -615,6 +632,86 @@ fn decode_grid_cell(info: &AvifInfo, cell: &GridCell) -> Result<ImageBuffer, Dec
     validate_public_container_preflight(&cell_info, true)?;
     let headers = parse_av1_headers(&cell_info)?;
     decode_still_image(&headers, Some(&cell_info))
+}
+
+fn apply_alpha_grid(
+    image: &mut ImageBuffer,
+    grid: &crate::container::GridImage,
+) -> Result<(), DecoderError> {
+    if grid.output_width != image.width as u32 || grid.output_height != image.height as u32 {
+        return Err(DecoderError::Bitstream(
+            "AVIF alpha grid dimensions do not match the primary grid".to_string(),
+        ));
+    }
+    let rows = usize::from(grid.rows);
+    let columns = usize::from(grid.columns);
+    let cell_count = rows.checked_mul(columns).ok_or_else(|| {
+        DecoderError::Bitstream("AVIF alpha grid cell count overflow".to_string())
+    })?;
+    if grid.cells.len() != cell_count {
+        return Err(DecoderError::Bitstream(
+            "AVIF alpha grid cell count does not match its dimensions".to_string(),
+        ));
+    }
+    let mut column_widths = vec![0usize; columns];
+    let mut row_heights = vec![0usize; rows];
+    let mut decoded_cells = Vec::with_capacity(cell_count);
+    for (index, cell) in grid.cells.iter().enumerate() {
+        let width = usize::try_from(cell.width).map_err(|_| {
+            DecoderError::InvalidParam("alpha grid cell width is too large".to_string())
+        })?;
+        let height = usize::try_from(cell.height).map_err(|_| {
+            DecoderError::InvalidParam("alpha grid cell height is too large".to_string())
+        })?;
+        let row = index / columns;
+        let column = index % columns;
+        if column_widths[column] != 0 && column_widths[column] != width {
+            return Err(DecoderError::Bitstream(
+                "alpha grid cells in one column have different widths".to_string(),
+            ));
+        }
+        if row_heights[row] != 0 && row_heights[row] != height {
+            return Err(DecoderError::Bitstream(
+                "alpha grid cells in one row have different heights".to_string(),
+            ));
+        }
+        column_widths[column] = width;
+        row_heights[row] = height;
+        decoded_cells.push(decode_grid_cell_from_alpha(cell)?);
+    }
+    let alpha = compose_grid_images(grid, &decoded_cells, &column_widths, &row_heights)?;
+    for (pixel, alpha_pixel) in image
+        .rgba
+        .chunks_exact_mut(4)
+        .zip(alpha.rgba.chunks_exact(4))
+    {
+        pixel[3] = alpha_pixel[0];
+    }
+    Ok(())
+}
+
+fn decode_grid_cell_from_alpha(cell: &GridCell) -> Result<ImageBuffer, DecoderError> {
+    let info = AvifInfo {
+        major_brand: *b"avif",
+        compatible_brands: vec![*b"avif"],
+        primary_item_id: Some(cell.item_id),
+        width: Some(cell.width),
+        height: Some(cell.height),
+        pixel_information: cell.pixel_information.clone(),
+        color_information: cell.color_information.clone(),
+        alpha_premultiplied: false,
+        alpha_auxiliary_items: Vec::new(),
+        alpha_grid: None,
+        primary_grid: None,
+        clean_aperture: None,
+        rotation: None,
+        mirror: None,
+        av1_config: cell.av1_config.clone(),
+        primary_item_payload: cell.payload.clone(),
+    };
+    validate_public_container_preflight(&info, true)?;
+    let headers = parse_av1_headers(&info)?;
+    decode_still_image(&headers, Some(&info))
 }
 
 fn apply_alpha_auxiliary(image: &mut ImageBuffer, info: &AvifInfo) -> Result<(), DecoderError> {
@@ -631,6 +728,7 @@ fn apply_alpha_auxiliary(image: &mut ImageBuffer, info: &AvifInfo) -> Result<(),
         color_information: None,
         alpha_premultiplied: false,
         alpha_auxiliary_items: Vec::new(),
+        alpha_grid: None,
         primary_grid: None,
         clean_aperture: None,
         rotation: None,

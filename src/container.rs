@@ -24,6 +24,7 @@ pub struct AvifInfo {
     pub color_information: Option<ColorInformation>,
     pub alpha_premultiplied: bool,
     pub alpha_auxiliary_items: Vec<AuxiliaryImage>,
+    pub alpha_grid: Option<GridImage>,
     pub primary_grid: Option<GridImage>,
     pub clean_aperture: Option<CleanAperture>,
     pub rotation: Option<ImageRotation>,
@@ -275,6 +276,7 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
     validate_primary_item_metadata(&meta)?;
     let alpha_auxiliary_items = alpha_auxiliary_items(data, &meta)?;
     let primary_grid = primary_grid(data, &primary_item_payload, &meta)?;
+    let alpha_grid = alpha_grid(data, &alpha_auxiliary_items, &meta)?;
     let primary_metadata = primary_item_metadata(&meta)?;
     Ok(AvifInfo {
         major_brand,
@@ -286,6 +288,7 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
         color_information: primary_metadata.color_information,
         alpha_premultiplied: primary_metadata.alpha_premultiplied,
         alpha_auxiliary_items,
+        alpha_grid,
         primary_grid,
         clean_aperture: primary_metadata.clean_aperture,
         rotation: primary_metadata.rotation,
@@ -1062,17 +1065,42 @@ fn primary_grid(
     if &item_info.item_type != b"grid" {
         return Ok(None);
     }
+    parse_grid_item(data, payload, state, primary_item_id).map(Some)
+}
+
+fn alpha_grid(
+    data: &[u8],
+    auxiliary_items: &[AuxiliaryImage],
+    state: &MetaState,
+) -> Result<Option<GridImage>, DecoderError> {
+    let Some(auxiliary) = auxiliary_items.iter().find(|item| {
+        state
+            .item_infos
+            .iter()
+            .any(|info| info.item_id == item.item_id && info.item_type == *b"grid")
+    }) else {
+        return Ok(None);
+    };
+    parse_grid_item(data, &auxiliary.payload, state, auxiliary.item_id).map(Some)
+}
+
+fn parse_grid_item(
+    data: &[u8],
+    payload: &[u8],
+    state: &MetaState,
+    grid_item_id: u32,
+) -> Result<GridImage, DecoderError> {
     let parsed = parse_grid_payload(payload)?;
     let references = state
         .item_references
         .iter()
         .filter(|reference| {
-            reference.reference_type == *b"dimg" && reference.from_item_id == primary_item_id
+            reference.reference_type == *b"dimg" && reference.from_item_id == grid_item_id
         })
         .collect::<Vec<_>>();
     if references.len() != 1 {
         return Err(DecoderError::Bitstream(format!(
-            "grid item {primary_item_id} must have exactly one dimg reference"
+            "grid item {grid_item_id} must have exactly one dimg reference"
         )));
     }
     let cell_count = usize::from(parsed.rows)
@@ -1081,7 +1109,7 @@ fn primary_grid(
     let cell_ids = &references[0].to_item_ids;
     if cell_ids.len() != cell_count {
         return Err(DecoderError::Bitstream(format!(
-            "grid item {primary_item_id} references {} cells, expected {cell_count}",
+            "grid item {grid_item_id} references {} cells, expected {cell_count}",
             cell_ids.len()
         )));
     }
@@ -1120,15 +1148,15 @@ fn primary_grid(
             payload: item_payload(data, state, item_id)?,
         });
     }
-    Ok(Some(GridImage {
-        item_id: primary_item_id,
+    Ok(GridImage {
+        item_id: grid_item_id,
         rows: parsed.rows,
         columns: parsed.columns,
         output_width: parsed.output_width,
         output_height: parsed.output_height,
         payload: payload.to_vec(),
         cells,
-    }))
+    })
 }
 
 #[cfg(test)]
