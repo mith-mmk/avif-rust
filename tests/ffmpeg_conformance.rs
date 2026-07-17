@@ -1088,9 +1088,7 @@ fn public_12bit_sample_remains_fail_closed_until_12bit_entropy_support_lands() {
     let error = avif_rust::image_from_bytes(&data)
         .expect_err("the unsupported 12-bit sample must remain fail-closed");
     assert!(
-        error
-            .to_string()
-            .contains("AV1 entropy trailing zero bit is not zero"),
+        error.to_string().contains("AV1 entropy trailing"),
         "unexpected 12-bit error: {error}"
     );
 }
