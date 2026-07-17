@@ -337,9 +337,14 @@ impl MatrixCoefficients {
                 kr: 0.2126,
                 kb: 0.0722,
             }),
+            4 => Ok(Self { kr: 0.30, kb: 0.11 }),
             5 | 6 => Ok(Self {
                 kr: 0.299,
                 kb: 0.114,
+            }),
+            7 => Ok(Self {
+                kr: 0.212,
+                kb: 0.087,
             }),
             9 => Ok(Self {
                 kr: 0.2627,

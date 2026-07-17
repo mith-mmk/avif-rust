@@ -294,6 +294,8 @@ and RGBA gates.
       fixtures.
 - [ ] Verify 4:4:4 non-identity colour paths with real AVIF plane/RGBA
       fixtures.
+- [x] Add a generated 8-bit 4:4:4 SMPTE 240M (`matrix_coefficients=7`)
+      AVIF sample and compare its RGBA output against FFmpeg.
 - [x] 10-bit quantisation/reconstruction with dedicated AOM quantizer tables;
       12-bit parsing/output is covered, while film grain is applied for the
       non-overlap still-image path.
@@ -365,6 +367,8 @@ remains allocation-free.
 - [x] Keep container, OBU, frame-header and entropy fuzz targets.
 - [x] Optimise a per-transform coefficient allocation after exact-plane
       conformance passes; retain the public allocating wrapper for compatibility.
+- [x] Reuse a caller-owned 8x8 CDEF output buffer during frame filtering while
+      retaining the allocating kernel wrapper for compatibility.
 - [x] Correct the nested crate repository URL to the independently maintained
       `avif-rust` repository and verify it from a fresh clone.
 - [ ] Add SIMD/parallel paths only with scalar equivalence and Wasm fallback

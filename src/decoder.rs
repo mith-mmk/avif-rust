@@ -7,7 +7,7 @@ use crate::av1::{
     FrameDecodePlan, FrameHeader, PartitionProbe, QuantState, ResidualProbe, SequenceHeader,
     TileEntropyState, TileGroup, alloc_coded_frame_buffers, apply_film_grain,
     apply_superres_horizontal, build_still_decode_plan, cdef_adjust_primary_strength,
-    cdef_filter_block_region_with_edge_mode, cdef_find_direction_with_variance,
+    cdef_filter_block_region_with_edge_mode_into, cdef_find_direction_with_variance,
     crop_frame_buffers_to_plan, deblock_filter_edge_with_visible_bounds,
     decode_luma_root_block_prefix_with_post_filter_state_and_entropy, frame_buffers_to_rgba_16,
     parse_av1_config, parse_frame_header, parse_sequence_header, parse_tile_group,
@@ -1109,6 +1109,7 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
         let width = plane.layout.width;
         let height = plane.layout.height;
         let source = plane.samples.clone();
+        let mut filtered = vec![0u16; 64];
         for &(x, y, index, detected_direction, variance) in &cdef_blocks {
             if x >= width || y >= height {
                 continue;
@@ -1142,22 +1143,23 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
                 .cdef
                 .damping
                 .saturating_sub(u8::from(plane_index != 0));
-            let filtered = cdef_filter_block_region_with_edge_mode(
+            let block_width = (width - x).min(8);
+            let block_height = (height - y).min(8);
+            cdef_filter_block_region_with_edge_mode_into(
                 &source,
                 width,
                 height,
                 x,
                 y,
-                (width - x).min(8),
-                (height - y).min(8),
+                block_width,
+                block_height,
                 direction,
                 primary_strength,
                 secondary_strength,
                 damping,
                 true,
+                &mut filtered,
             );
-            let block_width = (width - x).min(8);
-            let block_height = (height - y).min(8);
             for row in 0..block_height {
                 let start = (y + row) * width + x;
                 let block_start = row * block_width;

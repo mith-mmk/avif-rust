@@ -130,8 +130,48 @@ pub(crate) fn cdef_filter_block_region_with_edge_mode(
     damping: u8,
     use_edge_sentinel: bool,
 ) -> Vec<u16> {
-    const CDEF_VERY_LARGE: i32 = 0x4000;
     let mut output = vec![0u16; block_width * block_height];
+    cdef_filter_block_region_with_edge_mode_into(
+        source,
+        width,
+        height,
+        origin_x,
+        origin_y,
+        block_width,
+        block_height,
+        direction,
+        primary_strength,
+        secondary_strength,
+        damping,
+        use_edge_sentinel,
+        &mut output,
+    );
+    output
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scalar CDEF kernel parameters mirror the normative filter inputs"
+)]
+pub(crate) fn cdef_filter_block_region_with_edge_mode_into(
+    source: &[u16],
+    width: usize,
+    height: usize,
+    origin_x: usize,
+    origin_y: usize,
+    block_width: usize,
+    block_height: usize,
+    direction: usize,
+    primary_strength: u8,
+    secondary_strength: u8,
+    damping: u8,
+    use_edge_sentinel: bool,
+    output: &mut [u16],
+) {
+    if output.len() < block_width.saturating_mul(block_height) {
+        return;
+    }
+    const CDEF_VERY_LARGE: i32 = 0x4000;
     let direction = direction & 7;
     let enable_primary = primary_strength != 0;
     let enable_secondary = secondary_strength != 0;
@@ -208,7 +248,6 @@ pub(crate) fn cdef_filter_block_region_with_edge_mode(
             output[row * block_width + col] = filtered;
         }
     }
-    output
 }
 
 #[allow(dead_code)]
@@ -1272,9 +1311,11 @@ fn store_cdef_block_index(blocks: &mut Vec<CdefBlockIndex>, x: usize, y: usize, 
 mod tests {
     use super::{
         CDEF_DIRECTIONS, CdefUnit, PostFilterState, cdef_adjust_primary_strength, cdef_constrain,
-        cdef_filter_block, cdef_find_direction, cdef_unit_origin, deblock_filter_edge,
-        deblock_filter_edge_with_length, deblock_filter_edge_with_visible_bounds,
-        restoration_sample, sgr_x_by_xplus1, store_cdef_unit,
+        cdef_filter_block, cdef_filter_block_region_with_edge_mode,
+        cdef_filter_block_region_with_edge_mode_into, cdef_find_direction, cdef_unit_origin,
+        deblock_filter_edge, deblock_filter_edge_with_length,
+        deblock_filter_edge_with_visible_bounds, restoration_sample, sgr_x_by_xplus1,
+        store_cdef_unit,
     };
     use crate::av1::syntax::{BlockSize, PredictionMode, UvPredictionMode};
 
@@ -1283,6 +1324,32 @@ mod tests {
         let source = vec![128u16; 16 * 16];
         let filtered = cdef_filter_block(&source, 16, 16, 4, 4, 8, 8, 0, 4, 2, 3);
         assert_eq!(filtered, source);
+    }
+
+    #[test]
+    fn cdef_into_kernel_matches_allocating_wrapper() {
+        let source = (0..32 * 32)
+            .map(|index| ((index * 17 + 9) & 255) as u16)
+            .collect::<Vec<_>>();
+        let expected =
+            cdef_filter_block_region_with_edge_mode(&source, 32, 32, 4, 8, 8, 8, 3, 5, 2, 3, true);
+        let mut actual = vec![0u16; 64];
+        cdef_filter_block_region_with_edge_mode_into(
+            &source,
+            32,
+            32,
+            4,
+            8,
+            8,
+            8,
+            3,
+            5,
+            2,
+            3,
+            true,
+            &mut actual,
+        );
+        assert_eq!(actual, expected);
     }
 
     #[test]
