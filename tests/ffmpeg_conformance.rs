@@ -288,6 +288,123 @@ fn generated_two_tile_sample_matches_ffmpeg_when_encoder_present() {
 }
 
 #[test]
+fn generated_level_zero_qmatrix_sample_matches_ffmpeg_when_encoder_present() {
+    let root = std::env::temp_dir().join(format!(".test-avif-qmatrix-{}", std::process::id()));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary AVIF sample directory: {err}");
+    }
+    let output_path = root.join("level-zero-qmatrix.avif");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .arg("-i")
+        .arg(sample_path("WML2Viewer.png"))
+        .args([
+            "-frames:v",
+            "1",
+            "-c:v",
+            "libaom-av1",
+            "-still-picture",
+            "1",
+            "-crf",
+            "30",
+            "-cpu-used",
+            "8",
+            "-aq-mode",
+            "0",
+            "-pix_fmt",
+            "yuv444p",
+            "-aom-params",
+            "enable-qm=1:qm-min=0:qm-max=0",
+            "-f",
+            "avif",
+        ])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated level-zero qmatrix sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom encoder is unavailable; skipping generated level-zero qmatrix sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let data = std::fs::read(&output_path).expect("generated qmatrix AVIF should be readable");
+    let actual = avif_rust::image_from_bytes(&data).expect("level-zero qmatrix AVIF should decode");
+    assert_eq!((actual.width, actual.height), (SAMPLE_WIDTH, SAMPLE_HEIGHT));
+    if let Some(expected) = ffmpeg_decode_rgba(&output_path) {
+        let metrics = diff_rgb(&actual.rgba, &expected);
+        assert!(
+            metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 32,
+            "identity qmatrix FFmpeg RGB error average={} max={}",
+            metrics.average_rgb_abs,
+            metrics.max_rgb_abs
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn generated_non_identity_qmatrix_sample_matches_ffmpeg_when_encoder_present() {
+    let root =
+        std::env::temp_dir().join(format!(".test-avif-qmatrix-level1-{}", std::process::id()));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary AVIF sample directory: {err}");
+    }
+    let output_path = root.join("non-identity-qmatrix.avif");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .arg("-i")
+        .arg(sample_path("WML2Viewer.png"))
+        .args([
+            "-frames:v",
+            "1",
+            "-c:v",
+            "libaom-av1",
+            "-still-picture",
+            "1",
+            "-crf",
+            "30",
+            "-cpu-used",
+            "8",
+            "-aq-mode",
+            "0",
+            "-pix_fmt",
+            "yuv444p",
+            "-aom-params",
+            "enable-qm=1:qm-min=1:qm-max=1",
+            "-f",
+            "avif",
+        ])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping level-1 qmatrix sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom encoder is unavailable; skipping level-1 qmatrix sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let data = std::fs::read(&output_path).expect("generated qmatrix AVIF should be readable");
+    let actual = avif_rust::image_from_bytes(&data).expect("level-1 qmatrix AVIF should decode");
+    assert_eq!((actual.width, actual.height), (SAMPLE_WIDTH, SAMPLE_HEIGHT));
+    if let Some(expected) = ffmpeg_decode_rgba(&output_path) {
+        let metrics = diff_rgb(&actual.rgba, &expected);
+        assert!(
+            metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 32,
+            "level-1 qmatrix FFmpeg RGB error average={} max={}",
+            metrics.average_rgb_abs,
+            metrics.max_rgb_abs
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn generated_smpte240m_matrix_sample_matches_ffmpeg_when_encoder_present() {
     let root = std::env::temp_dir().join(format!(".test-avif-smpte240m-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {

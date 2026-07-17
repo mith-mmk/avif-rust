@@ -299,6 +299,9 @@ and RGBA gates.
 - [x] 10-bit quantisation/reconstruction with dedicated AOM quantizer tables;
       12-bit parsing/output is covered, while film grain is applied for the
       non-overlap still-image path.
+- [x] Parse and apply AV1 quantisation-matrix levels 0 through 14 using the
+      normative libaom inverse tables; level 15 remains the flat identity
+      matrix. Generated level-0 and level-1 samples match FFmpeg.
 - [x] Grid image-cell composition for still images, including ordered `dimg`
       references and RGBA placement; verified with `sofa_grid1x5_420.avif`.
 - [x] `clap` clean-aperture crop and `imir` horizontal mirror composition.
@@ -344,6 +347,10 @@ The qmatrix parser checkpoint was remeasured on the same host with
 not a replacement release baseline because local scheduling variance is larger
 than the change in this checkpoint.
 
+The full qmatrix-table checkpoint measured `384.70/381.61 ms` on a subsequent
+11-iteration run; retain the earlier release baseline until repeated runs on a
+quiet host are available.
+
 - [x] Add malformed/truncated coverage for the currently supported container,
       OBU, entropy and metadata paths.
 - [ ] Add malformed/truncated cases for each future syntax path as it becomes
@@ -352,11 +359,11 @@ than the change in this checkpoint.
       for overflow and resource limits.
 - [ ] Audit post-filter scratch-buffer sizing once normative filters are
       enabled.
-- [x] Reject active but unimplemented filters, non-identity qmatrix levels and
-      other unsupported AV1 tools before public decode returns an image.
+- [x] Reject malformed qmatrix levels and other unsupported AV1 tools before
+      public decode returns an image.
 - [x] Keep public decode fail-closed (`Unsupported`) whenever an unimplemented
-      filter or non-identity qmatrix is active; identity level 15 is parsed as
-      the normative flat matrix and remains a no-op.
+      filter is active; qmatrix levels 0 through 14 use normative inverse
+      matrices and level 15 remains the flat identity matrix.
 - [x] Validate primary-item info/location, `ipma` property indices and
       essential-property flags.
 - [x] Validate `ispe` dimensions against the AV1 frame dimensions.
@@ -420,9 +427,9 @@ release work.
 
 `decode`, `image_from_bytes`, `decode_frame_bytes` and the `wml2` callback now
 accept the implemented 8-bit 4:4:4 filter and film-grain paths. They
-remain fail-closed with `Unsupported` for unsupported bit depth, non-identity
-qmatrix and other unavailable AV1 tools. Prefilter diagnostics stay private or
-test-only and do not define the public decoded-frame contract.
+remain fail-closed with `Unsupported` for unsupported bit depth, malformed
+qmatrix levels and other unavailable AV1 tools. Prefilter diagnostics stay
+private or test-only and do not define the public decoded-frame contract.
 
 ## Diagnostic history
 

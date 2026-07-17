@@ -7,6 +7,7 @@ mod entropy;
 mod film_grain;
 mod frame;
 mod predict;
+mod qmatrix;
 mod quant;
 mod reconstruct;
 mod sequence;

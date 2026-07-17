@@ -277,6 +277,12 @@ pub(super) fn decode_plane_block_unit(
                 sequence.color_config.bit_depth,
             )?;
         } else {
+            let qmatrix_level = frame.quantization.qmatrix_level(transform.plane);
+            let qmatrix = frame
+                .quantization
+                .using_qmatrix
+                .then_some((qmatrix_level, transform.plane))
+                .filter(|(level, _)| *level < 15);
             reconstruct_transform_block_parts(
                 plane,
                 block,
@@ -285,6 +291,7 @@ pub(super) fn decode_plane_block_unit(
                 quant_state.plane(transform.plane),
                 &prediction,
                 sequence.color_config.bit_depth,
+                qmatrix,
             )?;
         }
         decoder.mark_reconstructed_transform(transform)?;

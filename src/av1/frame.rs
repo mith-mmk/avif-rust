@@ -87,6 +87,7 @@ pub fn parse_frame_header(
             sequence,
             allow_intrabc,
             frame_type_is_intra(FrameType::Key),
+            7,
         )?;
         let film_grain =
             parse_film_grain_params(&mut reader, sequence, FrameType::Key, true, false)?;
@@ -192,6 +193,7 @@ pub fn parse_frame_header(
         sequence,
         allow_intrabc,
         frame_type_is_intra(frame_type),
+        primary_ref_frame,
     )?;
     let film_grain = parse_film_grain_params(
         &mut reader,
@@ -512,9 +514,10 @@ fn parse_frame_header_trailing_params(
     sequence: &SequenceHeader,
     allow_intrabc: bool,
     frame_is_intra: bool,
+    primary_ref_frame: u8,
 ) -> Result<FrameHeaderTrailingParams, DecoderError> {
     let quantization = parse_quantization_params(reader, sequence)?;
-    parse_segmentation_params(reader)?;
+    parse_segmentation_params(reader, primary_ref_frame)?;
     let delta_q = parse_delta_q_params(reader, quantization.base_q_idx)?;
     let delta_lf = parse_delta_lf_params(reader, delta_q.present, allow_intrabc)?;
     let coded_lossless = quantization.coded_lossless();
@@ -569,11 +572,19 @@ pub struct QuantizationParams {
 }
 
 impl QuantizationParams {
-    pub(crate) fn has_non_identity_qmatrix(&self) -> bool {
+    pub(crate) fn has_unsupported_qmatrix(&self) -> bool {
         self.using_qmatrix
             && [self.qm_y, self.qm_u, self.qm_v]
                 .iter()
-                .any(|&level| level != 15)
+                .any(|&level| level > 15)
+    }
+
+    pub(crate) fn qmatrix_level(&self, plane: usize) -> u8 {
+        match plane {
+            0 => self.qm_y,
+            1 => self.qm_u,
+            _ => self.qm_v,
+        }
     }
 
     pub(crate) fn coded_lossless(&self) -> bool {
@@ -655,11 +666,61 @@ fn read_delta_q(reader: &mut BitReader<'_>, name: &str) -> Result<i8, DecoderErr
     }
 }
 
-fn parse_segmentation_params(reader: &mut BitReader<'_>) -> Result<(), DecoderError> {
-    if reader.read_bool("segmentation_enabled")? {
-        return Err(DecoderError::Unsupported(
-            "AV1 segmentation parameters are not supported yet".to_string(),
-        ));
+fn parse_segmentation_params(
+    reader: &mut BitReader<'_>,
+    primary_ref_frame: u8,
+) -> Result<(), DecoderError> {
+    if !reader.read_bool("segmentation_enabled")? {
+        return Ok(());
+    }
+
+    // Still-image AV1 uses primary_ref_frame == PRIMARY_REF_NONE, so these
+    // flags are explicitly coded for the current frame. We parse the full
+    // feature table even when it is not used by reconstruction, keeping the
+    // reader aligned for the following delta-q and loop-filter syntax.
+    let primary_ref_none = primary_ref_frame == 7;
+    let update_map = if primary_ref_none {
+        true
+    } else {
+        reader.read_bool("segmentation_update_map")?
+    };
+    if update_map && !primary_ref_none {
+        let _temporal_update = reader.read_bool("segmentation_temporal_update")?;
+    }
+    let update_data = if primary_ref_none {
+        true
+    } else {
+        reader.read_bool("segmentation_update_data")?
+    };
+    if !update_data {
+        return Ok(());
+    }
+
+    const FEATURE_BITS: [usize; 8] = [8, 6, 6, 6, 6, 3, 0, 0];
+    const FEATURE_SIGNED: [bool; 8] = [true, true, true, true, true, false, false, false];
+    let mut active_feature = None;
+    for segment in 0..8 {
+        for feature in 0..8 {
+            let enabled = reader.read_bool("segmentation_feature_enabled")?;
+            if !enabled {
+                continue;
+            }
+            if active_feature.is_none() {
+                active_feature = Some((segment, feature));
+            }
+            let bits = FEATURE_BITS[feature];
+            if bits != 0 {
+                let value = reader.read_bits(bits, "segmentation_feature_value")?;
+                if FEATURE_SIGNED[feature] && value != 0 {
+                    let _negative = reader.read_bool("segmentation_feature_sign")?;
+                }
+            }
+        }
+    }
+    if let Some((segment, feature)) = active_feature {
+        return Err(DecoderError::Unsupported(format!(
+            "AV1 segmentation feature {feature} on segment {segment} is not supported yet"
+        )));
     }
     Ok(())
 }

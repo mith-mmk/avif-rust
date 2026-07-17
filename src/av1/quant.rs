@@ -1,4 +1,6 @@
 use super::frame::QuantizationParams;
+use super::qmatrix;
+use super::syntax::{TxSize, TxType};
 use crate::DecoderError;
 
 pub const DC_QLOOKUP_8: [i32; 256] = [
@@ -180,6 +182,36 @@ pub fn dequantize_coefficients(
         .collect()
 }
 
+pub(crate) fn dequantize_coefficients_with_qmatrix(
+    quant: &[i32],
+    plane_quant: PlaneQuant,
+    bit_depth: u8,
+    dq_denom: i32,
+    level: u8,
+    plane: usize,
+    tx_size: TxSize,
+    tx_type: TxType,
+) -> Vec<i32> {
+    let limit = 1i32 << (7 + bit_depth);
+    quant
+        .iter()
+        .enumerate()
+        .map(|(index, coeff)| {
+            let base_q = if index == 0 {
+                plane_quant.dc
+            } else {
+                plane_quant.ac
+            };
+            let q = qmatrix::inverse_value(level, plane, tx_size, tx_type, index)
+                .map_or(base_q, |matrix| ((i32::from(matrix) * base_q) + 16) >> 5);
+            let dq = coeff.saturating_mul(q);
+            let sign = if dq < 0 { -1 } else { 1 };
+            let dq2 = sign * ((dq.abs() & 0x00ff_ffff) / dq_denom.max(1));
+            dq2.clamp(-limit, limit - 1)
+        })
+        .collect()
+}
+
 fn dc_q(qindex: i32, bit_depth: u8) -> i32 {
     let index = clip_qindex(qindex);
     match bit_depth {
@@ -234,7 +266,7 @@ mod tests {
             delta_q_v_dc: -2,
             delta_q_v_ac: -3,
             using_qmatrix: false,
-            qm_y: 15,
+            qm_y: 0,
             qm_u: 15,
             qm_v: 15,
         };
@@ -250,26 +282,7 @@ mod tests {
     }
 
     #[test]
-    fn identity_qmatrix_level_is_accepted_without_matrix_math() {
-        let params = QuantizationParams {
-            base_q_idx: 80,
-            delta_q_y_dc: 0,
-            delta_q_u_dc: 0,
-            delta_q_u_ac: 0,
-            delta_q_v_dc: 0,
-            delta_q_v_ac: 0,
-            using_qmatrix: true,
-            qm_y: 15,
-            qm_u: 15,
-            qm_v: 15,
-        };
-
-        assert!(!params.has_non_identity_qmatrix());
-        assert!(QuantState::from_params(&params, 8).is_ok());
-    }
-
-    #[test]
-    fn non_identity_qmatrix_level_remains_explicitly_detectable() {
+    fn supported_qmatrix_level_is_accepted_by_public_preflight() {
         let params = QuantizationParams {
             base_q_idx: 80,
             delta_q_y_dc: 0,
@@ -283,7 +296,26 @@ mod tests {
             qm_v: 15,
         };
 
-        assert!(params.has_non_identity_qmatrix());
+        assert!(!params.has_unsupported_qmatrix());
+        assert!(QuantState::from_params(&params, 8).is_ok());
+    }
+
+    #[test]
+    fn all_normative_qmatrix_levels_are_accepted_by_public_preflight() {
+        let params = QuantizationParams {
+            base_q_idx: 80,
+            delta_q_y_dc: 0,
+            delta_q_u_dc: 0,
+            delta_q_u_ac: 0,
+            delta_q_v_dc: 0,
+            delta_q_v_ac: 0,
+            using_qmatrix: true,
+            qm_y: 14,
+            qm_u: 15,
+            qm_v: 15,
+        };
+
+        assert!(!params.has_unsupported_qmatrix());
     }
 
     #[test]
@@ -303,5 +335,25 @@ mod tests {
         assert_eq!(dequantize_coefficients(&quant, plane, 8, 1), [32, -32]);
         assert_eq!(dequantize_coefficients(&quant, plane, 8, 2), [16, -16]);
         assert_eq!(dequantize_coefficients(&quant, plane, 8, 4), [8, -8]);
+    }
+
+    #[test]
+    fn dequantize_applies_level_zero_inverse_matrix() {
+        let quant = [1, 1];
+        let plane = PlaneQuant { dc: 32, ac: 32 };
+
+        assert_eq!(
+            dequantize_coefficients_with_qmatrix(
+                &quant,
+                plane,
+                8,
+                1,
+                0,
+                0,
+                TxSize::Tx4x4,
+                TxType::DctDct,
+            ),
+            [32, 43]
+        );
     }
 }

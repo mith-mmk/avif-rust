@@ -1,5 +1,5 @@
 use super::decode::PlaneBuffer;
-use super::quant::{PlaneQuant, dequantize_coefficients};
+use super::quant::{PlaneQuant, dequantize_coefficients, dequantize_coefficients_with_qmatrix};
 use super::reconstruct::{add_residual_to_prediction, write_plane_block};
 use super::syntax::{BlockSize, TxSize, TxType};
 use crate::DecoderError;
@@ -307,6 +307,7 @@ pub fn reconstruct_transform_block(
         plane_quant,
         prediction,
         bit_depth,
+        None,
     )
 }
 
@@ -318,6 +319,7 @@ pub(crate) fn reconstruct_transform_block_parts(
     plane_quant: PlaneQuant,
     prediction: &[u16],
     bit_depth: u8,
+    qmatrix: Option<(u8, usize)>,
 ) -> Result<ReconstructedTransform, DecoderError> {
     let tx_size = block.tx_size;
     if coefficients.len() != tx_size.sample_count() {
@@ -335,7 +337,21 @@ pub(crate) fn reconstruct_transform_block_parts(
         .iter()
         .filter(|coefficient| **coefficient != 0)
         .count();
-    let dequant = dequantize_coefficients(coefficients, plane_quant, bit_depth, tx_size.dq_denom());
+    let dequant = qmatrix.map_or_else(
+        || dequantize_coefficients(coefficients, plane_quant, bit_depth, tx_size.dq_denom()),
+        |(level, plane)| {
+            dequantize_coefficients_with_qmatrix(
+                coefficients,
+                plane_quant,
+                bit_depth,
+                tx_size.dq_denom(),
+                level,
+                plane,
+                tx_size,
+                tx_type,
+            )
+        },
+    );
     let residual = inverse_transform(tx_type, tx_size, &dequant, bit_depth)?;
     let reconstructed = add_residual_to_prediction(prediction, &residual, bit_depth)?;
     write_plane_block(
