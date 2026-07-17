@@ -497,21 +497,25 @@ fn predict_plane_block(
             ));
         }
     }
-    let mut prediction = predict_block(
-        plane,
-        prediction_mode,
-        x,
-        y,
-        width,
-        height,
-        angle_delta,
-        filter_intra_mode,
-        bit_depth,
-        enable_intra_edge_filter,
-        smooth_neighbour,
-        top_right_available,
-        bottom_left_available,
-    )?;
+    let mut prediction = if prediction_mode == PredictionMode::Dc && filter_intra_mode.is_none() {
+        predict_dc_block(plane, x, y, width, height, bit_depth)
+    } else {
+        predict_block(
+            plane,
+            prediction_mode,
+            x,
+            y,
+            width,
+            height,
+            angle_delta,
+            filter_intra_mode,
+            bit_depth,
+            enable_intra_edge_filter,
+            smooth_neighbour,
+            top_right_available,
+            bottom_left_available,
+        )?
+    };
     if let Some(alpha_q3) = cfl_alpha_q3 {
         let luma_plane = luma_plane.ok_or_else(|| {
             DecoderError::Bitstream("AV1 CFL prediction is missing its luma plane".to_string())
@@ -530,6 +534,68 @@ fn predict_plane_block(
         )?;
     }
     Ok(prediction)
+}
+
+fn predict_dc_block(
+    plane: &PlaneBuffer,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    bit_depth: u8,
+) -> Vec<u16> {
+    let above_available = y > 0 && plane.layout.width > 0;
+    let left_available = x > 0 && plane.layout.height > 0;
+    let value = match (above_available, left_available) {
+        (true, true) => {
+            let above_sum: u32 = (0..width)
+                .map(|offset| {
+                    u32::from(
+                        plane.samples[(y - 1) * plane.layout.width
+                            + (x + offset).min(plane.layout.width - 1)],
+                    )
+                })
+                .sum();
+            let left_sum: u32 = (0..height)
+                .map(|offset| {
+                    u32::from(
+                        plane.samples[((y + offset).min(plane.layout.height - 1))
+                            * plane.layout.width
+                            + x
+                            - 1],
+                    )
+                })
+                .sum();
+            (above_sum + left_sum + ((width + height) as u32 >> 1)) / (width + height) as u32
+        }
+        (true, false) => {
+            let sum: u32 = (0..width)
+                .map(|offset| {
+                    u32::from(
+                        plane.samples[(y - 1) * plane.layout.width
+                            + (x + offset).min(plane.layout.width - 1)],
+                    )
+                })
+                .sum();
+            (sum + (width as u32 >> 1)) >> width.trailing_zeros()
+        }
+        (false, true) => {
+            let sum: u32 = (0..height)
+                .map(|offset| {
+                    u32::from(
+                        plane.samples[((y + offset).min(plane.layout.height - 1))
+                            * plane.layout.width
+                            + x
+                            - 1],
+                    )
+                })
+                .sum();
+            (sum + (height as u32 >> 1)) >> height.trailing_zeros()
+        }
+        (false, false) => 1u32 << (bit_depth - 1),
+    };
+    let maximum = (1u32 << bit_depth) - 1;
+    vec![value.min(maximum) as u16; width * height]
 }
 
 #[expect(
@@ -679,6 +745,41 @@ mod tests {
                 40, 40, 40, 40,
             ]
         );
+    }
+
+    #[test]
+    fn direct_dc_prediction_matches_edge_reader() {
+        let layout = crate::av1::decode::PlaneLayout {
+            plane: 0,
+            width: 8,
+            height: 8,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 64,
+        };
+        let plane = PlaneBuffer {
+            layout,
+            samples: (0..64).map(|value| (value * 3) as u16).collect(),
+        };
+        for (x, y, width, height) in [(0, 0, 4, 4), (4, 0, 4, 4), (0, 4, 4, 4), (4, 4, 4, 4)] {
+            let expected = predict_block(
+                &plane,
+                PredictionMode::Dc,
+                x,
+                y,
+                width,
+                height,
+                None,
+                None,
+                8,
+                false,
+                false,
+                width,
+                height,
+            )
+            .unwrap();
+            assert_eq!(predict_dc_block(&plane, x, y, width, height, 8), expected);
+        }
     }
 
     #[test]

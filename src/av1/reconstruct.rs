@@ -321,32 +321,33 @@ fn validate_sdr_transfer(color_config: &ColorConfig) -> Result<(), DecoderError>
 }
 
 #[derive(Debug, Clone, Copy)]
-struct MatrixCoefficients {
-    kr: f64,
-    kb: f64,
+enum MatrixCoefficients {
+    Yuv { kr: f64, kb: f64 },
+    YcGco,
 }
 
 impl MatrixCoefficients {
     fn from_av1(matrix_coefficients: u8) -> Result<Self, DecoderError> {
         match matrix_coefficients {
-            1 => Ok(Self {
+            1 => Ok(Self::Yuv {
                 kr: 0.2126,
                 kb: 0.0722,
             }),
-            2 => Ok(Self {
+            2 => Ok(Self::Yuv {
                 kr: 0.2126,
                 kb: 0.0722,
             }),
-            4 => Ok(Self { kr: 0.30, kb: 0.11 }),
-            5 | 6 => Ok(Self {
+            4 => Ok(Self::Yuv { kr: 0.30, kb: 0.11 }),
+            5 | 6 => Ok(Self::Yuv {
                 kr: 0.299,
                 kb: 0.114,
             }),
-            7 => Ok(Self {
+            7 => Ok(Self::Yuv {
                 kr: 0.212,
                 kb: 0.087,
             }),
-            9 => Ok(Self {
+            8 => Ok(Self::YcGco),
+            9 => Ok(Self::Yuv {
                 kr: 0.2627,
                 kb: 0.0593,
             }),
@@ -401,9 +402,23 @@ fn yuv_to_rgb_u16(
     let y = ((f64::from(y_sample) - range.y_offset) / range.y_scale).clamp(0.0, 1.0);
     let cb = (f64::from(u_sample) - range.chroma_offset) / range.chroma_scale;
     let cr = (f64::from(v_sample) - range.chroma_offset) / range.chroma_scale;
-    let r = y + 2.0 * (1.0 - matrix.kr) * cr;
-    let b = y + 2.0 * (1.0 - matrix.kb) * cb;
-    let g = (y - matrix.kr * r - matrix.kb * b) / (1.0 - matrix.kr - matrix.kb);
+    let (r, g, b) = match matrix {
+        MatrixCoefficients::Yuv { kr, kb } => {
+            let r = y + 2.0 * (1.0 - kr) * cr;
+            let b = y + 2.0 * (1.0 - kb) * cb;
+            let g = (y - kr * r - kb * b) / (1.0 - kr - kb);
+            (r, g, b)
+        }
+        MatrixCoefficients::YcGco => {
+            // YCgCo stores Cg and Co around the chroma midpoint.  Its
+            // inverse lifting transform is reversible in the normalized
+            // domain: G=Y+Cg, R=Y-Cg+Co, B=Y-Cg-Co.
+            let g = y + cb;
+            let r = y - cb + cr;
+            let b = y - cb - cr;
+            (r, g, b)
+        }
+    };
     [
         normalized_to_u16(r),
         normalized_to_u16(g),
@@ -603,6 +618,56 @@ mod tests {
         let image = frame_buffers_to_rgba_8(&buffers, &color_config).unwrap();
 
         assert_eq!(image.rgba, vec![0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn rgba_conversion_supports_ycgco_matrix() {
+        let layout = PlaneLayout {
+            plane: 0,
+            width: 1,
+            height: 1,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 1,
+        };
+        let buffers = FrameBuffers {
+            width: 1,
+            height: 1,
+            planes: vec![
+                PlaneBuffer {
+                    layout,
+                    samples: vec![128], // Y = 0.5
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout { plane: 1, ..layout },
+                    samples: vec![128], // Cg = 0
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout { plane: 2, ..layout },
+                    samples: vec![192], // Co = 0.25
+                },
+            ],
+        };
+        let color_config = ColorConfig {
+            high_bitdepth: false,
+            twelve_bit: false,
+            bit_depth: 8,
+            monochrome: false,
+            color_description: Some(super::super::sequence::ColorDescription {
+                color_primaries: 1,
+                transfer_characteristics: 13,
+                matrix_coefficients: 8,
+            }),
+            color_range: super::super::sequence::ColorRange::Full,
+            subsampling_x: false,
+            subsampling_y: false,
+            chroma_sample_position: None,
+            separate_uv_delta_q: false,
+        };
+        let image = frame_buffers_to_rgba_16(&buffers, &color_config).unwrap();
+        assert!(image.rgba[0] > 48_000);
+        assert!((image.rgba[1] as i32 - 32_896).abs() < 512);
+        assert!(image.rgba[2] < 18_000);
     }
 
     #[test]
