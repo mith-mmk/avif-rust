@@ -29,6 +29,8 @@ pub struct BlockModeProbe {
     pub skip_context: usize,
     pub skip_symbol: usize,
     pub skip: bool,
+    pub use_intrabc: bool,
+    pub intra_block_copy_mv: Option<(i32, i32)>,
     pub cdef_idx: Option<u32>,
     pub y_above_context: usize,
     pub y_left_context: usize,

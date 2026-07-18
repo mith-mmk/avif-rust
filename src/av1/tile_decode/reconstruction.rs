@@ -159,6 +159,7 @@ pub(super) fn decode_plane_block_unit(
                 bottom_left_available,
                 luma_plane,
                 cfl_alpha_q3,
+                block_mode.intra_block_copy_mv,
                 subsampling_x,
                 subsampling_y,
             )?;
@@ -213,6 +214,7 @@ pub(super) fn decode_plane_block_unit(
                 bottom_left_available,
                 luma_plane,
                 cfl_alpha_q3,
+                block_mode.intra_block_copy_mv,
                 subsampling_x,
                 subsampling_y,
             )?;
@@ -265,6 +267,7 @@ pub(super) fn decode_plane_block_unit(
             bottom_left_available,
             luma_plane,
             cfl_alpha_q3,
+            block_mode.intra_block_copy_mv,
             subsampling_x,
             subsampling_y,
         )?;
@@ -480,9 +483,22 @@ fn predict_plane_block(
     bottom_left_available: usize,
     luma_plane: Option<&PlaneBuffer>,
     cfl_alpha_q3: Option<i8>,
+    intra_block_copy_mv: Option<(i32, i32)>,
     subsampling_x: usize,
     subsampling_y: usize,
 ) -> Result<Vec<u16>, DecoderError> {
+    if let Some(mv) = intra_block_copy_mv {
+        return predict_intra_block_copy(
+            plane,
+            x,
+            y,
+            width,
+            height,
+            mv,
+            subsampling_x,
+            subsampling_y,
+        );
+    }
     if filter_intra_mode.is_none() && prediction_mode == PredictionMode::Dc {
         let palette_prediction = if plane_index == 0 {
             block_mode
@@ -553,6 +569,53 @@ fn predict_plane_block(
             subsampling_x,
             subsampling_y,
         )?;
+    }
+    Ok(prediction)
+}
+
+fn predict_intra_block_copy(
+    plane: &PlaneBuffer,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    mv: (i32, i32),
+    subsampling_x: usize,
+    subsampling_y: usize,
+) -> Result<Vec<u16>, DecoderError> {
+    let luma_x = i64::try_from(x)
+        .ok()
+        .and_then(|value| value.checked_shl(subsampling_x as u32))
+        .ok_or_else(|| DecoderError::Bitstream("intrabc destination x overflows".to_string()))?;
+    let luma_y = i64::try_from(y)
+        .ok()
+        .and_then(|value| value.checked_shl(subsampling_y as u32))
+        .ok_or_else(|| DecoderError::Bitstream("intrabc destination y overflows".to_string()))?;
+    let source_luma_x = luma_x
+        .checked_add(i64::from(mv.1 / 8))
+        .ok_or_else(|| DecoderError::Bitstream("intrabc source x overflows".to_string()))?;
+    let source_luma_y = luma_y
+        .checked_add(i64::from(mv.0 / 8))
+        .ok_or_else(|| DecoderError::Bitstream("intrabc source y overflows".to_string()))?;
+    let source_x = usize::try_from(source_luma_x >> subsampling_x)
+        .map_err(|_| DecoderError::Bitstream("intrabc source x is negative".to_string()))?;
+    let source_y = usize::try_from(source_luma_y >> subsampling_y)
+        .map_err(|_| DecoderError::Bitstream("intrabc source y is negative".to_string()))?;
+    let source_right = source_x
+        .checked_add(width)
+        .ok_or_else(|| DecoderError::Bitstream("intrabc source width overflows".to_string()))?;
+    let source_bottom = source_y
+        .checked_add(height)
+        .ok_or_else(|| DecoderError::Bitstream("intrabc source height overflows".to_string()))?;
+    if source_right > plane.layout.width || source_bottom > plane.layout.height {
+        return Err(DecoderError::Bitstream(
+            "intrabc source block exceeds plane bounds".to_string(),
+        ));
+    }
+    let mut prediction = Vec::with_capacity(width * height);
+    for row in 0..height {
+        let start = (source_y + row) * plane.layout.width + source_x;
+        prediction.extend_from_slice(&plane.samples[start..start + width]);
     }
     Ok(prediction)
 }

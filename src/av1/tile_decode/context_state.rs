@@ -5,6 +5,43 @@ use crate::av1::decode::TileDecodePlan;
 use crate::av1::syntax::{BlockSize, Partition, TxSize};
 
 impl<'a> TileDecoder<'a> {
+    pub(super) fn intra_bc_mv_predictor(&self, x: usize, y: usize) -> Option<(i32, i32)> {
+        let mi_col = x >> 2;
+        let mi_row = y >> 2;
+        let left = (mi_col > self.tile_mi_col_start)
+            .then(|| self.intra_bc_mv_at(mi_col - 1, mi_row))
+            .flatten();
+        let above = (mi_row > self.tile_mi_row_start)
+            .then(|| self.intra_bc_mv_at(mi_col, mi_row - 1))
+            .flatten();
+        left.or(above)
+    }
+
+    pub(super) fn set_intra_bc_mv(
+        &mut self,
+        x: usize,
+        y: usize,
+        block_size: BlockSize,
+        mv: (i32, i32),
+    ) {
+        super::context_grid::fill_mi_grid(
+            &mut self.intra_bc_mv_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            mv,
+        );
+    }
+
+    fn intra_bc_mv_at(&self, mi_col: usize, mi_row: usize) -> Option<(i32, i32)> {
+        if mi_col >= self.mi_cols || mi_row >= self.mi_rows {
+            return None;
+        }
+        self.intra_bc_mv_grid[mi_row * self.mi_cols + mi_col]
+    }
+
     pub(super) fn reset_left_superblock_contexts(&mut self) {
         self.left_partition_context.fill(0);
         self.left_txfm_context.fill(64);

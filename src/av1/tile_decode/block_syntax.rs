@@ -39,11 +39,6 @@ impl<'a> TileDecoder<'a> {
     ) -> Result<BlockModeProbe, DecoderError> {
         self.configure_plane_entropy_contexts(sequence);
         self.current_cfl = None;
-        if frame.allow_intrabc {
-            return Err(DecoderError::Unsupported(
-                "AV1 intrabc block syntax is not supported yet".to_string(),
-            ));
-        }
 
         let skip_context = self.skip_context(x, y);
         let skip_symbol = self
@@ -54,55 +49,88 @@ impl<'a> TileDecoder<'a> {
         let qindex = self.read_delta_qindex(sequence, frame, block_size, skip, x, y)?;
         let delta_lf = self.read_delta_lf(sequence, frame, block_size, skip, x, y)?;
 
+        let (use_intrabc, intra_block_copy_mv) = if frame.allow_intrabc {
+            let use_intrabc = self.reader.read_symbol(self.cdf.intrabc_cdf_mut())? != 0;
+            if use_intrabc {
+                let predictor = self
+                    .intra_bc_mv_predictor(x, y)
+                    .unwrap_or_else(|| default_intrabc_mv(sequence, frame, tile, y));
+                let mv = self.read_intrabc_mv(predictor)?;
+                validate_intrabc_mv(sequence, frame, tile, block_size, x, y, mv)?;
+                (true, Some(mv))
+            } else {
+                (false, None)
+            }
+        } else {
+            (false, None)
+        };
+
         let y_above_context = self.above_y_mode_context(x, y);
         let y_left_context = self.left_y_mode_context(x, y);
-        let y_mode_symbol = self.reader.read_symbol(
-            self.cdf
-                .intra_frame_y_mode_cdf_mut(y_above_context, y_left_context),
-        )?;
-        let y_mode = PredictionMode::from_intra_symbol(y_mode_symbol).ok_or_else(|| {
-            DecoderError::Bitstream(format!("AV1 y_mode symbol {y_mode_symbol} is invalid"))
-        })?;
         let use_angle_delta = use_angle_delta(block_size);
-        let angle_delta_y = if use_angle_delta && y_mode.is_directional() {
-            Some(self.read_angle_delta(y_mode.directional_index().unwrap())?)
+        let (y_mode_symbol, y_mode, angle_delta_y) = if use_intrabc {
+            (0, PredictionMode::Dc, None)
         } else {
-            None
-        };
-        let has_chroma = !sequence.color_config.monochrome && chroma_reference;
-        let (uv_mode_symbol, uv_mode, angle_delta_uv) = if has_chroma {
-            let cfl_allowed = cfl_is_allowed(
-                frame.quantization.coded_lossless(),
-                block_size,
-                sequence.color_config.subsampling_x,
-                sequence.color_config.subsampling_y,
-            );
-            let uv_symbol = if cfl_allowed {
-                self.reader
-                    .read_symbol(self.cdf.uv_mode_cfl_allowed_cdf_mut(y_mode_symbol))?
-            } else {
-                self.reader
-                    .read_symbol(self.cdf.uv_mode_cfl_not_allowed_cdf_mut(y_mode_symbol))?
-            };
-            let uv_mode = UvPredictionMode::from_symbol(uv_symbol).ok_or_else(|| {
-                DecoderError::Bitstream(format!("AV1 uv_mode symbol {uv_symbol} is invalid"))
+            let y_mode_symbol = self.reader.read_symbol(
+                self.cdf
+                    .intra_frame_y_mode_cdf_mut(y_above_context, y_left_context),
+            )?;
+            let y_mode = PredictionMode::from_intra_symbol(y_mode_symbol).ok_or_else(|| {
+                DecoderError::Bitstream(format!("AV1 y_mode symbol {y_mode_symbol} is invalid"))
             })?;
-            if uv_mode == UvPredictionMode::Cfl {
-                self.current_cfl = Some(self.read_cfl_params()?);
-            }
-            let angle_delta = if use_angle_delta && uv_mode.is_directional() {
-                Some(self.read_angle_delta(uv_mode.directional_index().unwrap())?)
+            let angle_delta_y = if use_angle_delta && y_mode.is_directional() {
+                Some(self.read_angle_delta(y_mode.directional_index().unwrap())?)
             } else {
                 None
             };
-            (Some(uv_symbol), Some(uv_mode), angle_delta)
+            (y_mode_symbol, y_mode, angle_delta_y)
+        };
+        let has_chroma = !sequence.color_config.monochrome && chroma_reference;
+        let (uv_mode_symbol, uv_mode, angle_delta_uv) = if has_chroma {
+            if use_intrabc {
+                (
+                    Some(0),
+                    Some(UvPredictionMode::Intra(PredictionMode::Dc)),
+                    None,
+                )
+            } else {
+                let cfl_allowed = cfl_is_allowed(
+                    frame.quantization.coded_lossless(),
+                    block_size,
+                    sequence.color_config.subsampling_x,
+                    sequence.color_config.subsampling_y,
+                );
+                let uv_symbol = if cfl_allowed {
+                    self.reader
+                        .read_symbol(self.cdf.uv_mode_cfl_allowed_cdf_mut(y_mode_symbol))?
+                } else {
+                    self.reader
+                        .read_symbol(self.cdf.uv_mode_cfl_not_allowed_cdf_mut(y_mode_symbol))?
+                };
+                let uv_mode = UvPredictionMode::from_symbol(uv_symbol).ok_or_else(|| {
+                    DecoderError::Bitstream(format!("AV1 uv_mode symbol {uv_symbol} is invalid"))
+                })?;
+                if uv_mode == UvPredictionMode::Cfl {
+                    self.current_cfl = Some(self.read_cfl_params()?);
+                }
+                let angle_delta = if use_angle_delta && uv_mode.is_directional() {
+                    Some(self.read_angle_delta(uv_mode.directional_index().unwrap())?)
+                } else {
+                    None
+                };
+                (Some(uv_symbol), Some(uv_mode), angle_delta)
+            }
         } else {
             (None, None, None)
         };
-        let palette =
-            self.read_palette_mode_info(sequence, frame, block_size, x, y, y_mode, uv_mode)?;
+        let palette = if use_intrabc {
+            super::PaletteBlockInfo { y: None, uv: None }
+        } else {
+            self.read_palette_mode_info(sequence, frame, block_size, x, y, y_mode, uv_mode)?
+        };
         let mut filter_intra_mode = None;
-        if sequence.enable_filter_intra
+        if !use_intrabc
+            && sequence.enable_filter_intra
             && block_size.width() <= 32
             && block_size.height() <= 32
             && y_mode == PredictionMode::Dc
@@ -143,6 +171,8 @@ impl<'a> TileDecoder<'a> {
             skip_context,
             skip_symbol,
             skip,
+            use_intrabc,
+            intra_block_copy_mv,
             cdef_idx,
             y_above_context,
             y_left_context,
@@ -161,6 +191,46 @@ impl<'a> TileDecoder<'a> {
             tx_size,
             bit_position_after: self.reader.bit_position(),
         })
+    }
+
+    fn read_intrabc_mv(&mut self, predictor: (i32, i32)) -> Result<(i32, i32), DecoderError> {
+        let joint = self
+            .reader
+            .read_symbol(self.cdf.intrabc_mv_joint_cdf_mut())?;
+        let mut mv = predictor;
+        if matches!(joint, 2 | 3) {
+            mv.0 = mv
+                .0
+                .checked_add(self.read_intrabc_mv_component(0)?)
+                .ok_or_else(|| DecoderError::Bitstream("intrabc row MV overflows".to_string()))?;
+        }
+        if matches!(joint, 1 | 3) {
+            mv.1 =
+                mv.1.checked_add(self.read_intrabc_mv_component(1)?)
+                    .ok_or_else(|| {
+                        DecoderError::Bitstream("intrabc column MV overflows".to_string())
+                    })?;
+        }
+        Ok(mv)
+    }
+
+    fn read_intrabc_mv_component(&mut self, component: usize) -> Result<i32, DecoderError> {
+        let cdf = self.cdf.intrabc_mv_component_cdf_mut(component);
+        let sign = self.reader.read_symbol(&mut cdf.sign)?;
+        let class = self.reader.read_symbol(&mut cdf.class)?;
+        let magnitude = if class == 0 {
+            let class0_bit = self.reader.read_symbol(&mut cdf.class0)?;
+            (class0_bit << 3) + 8
+        } else {
+            let mut d = 0usize;
+            for bit in 0..class {
+                d |= self.reader.read_symbol(&mut cdf.bits[bit])? << bit;
+            }
+            (2usize << (class + 2)) + (d << 3) + 8
+        };
+        let magnitude = i32::try_from(magnitude)
+            .map_err(|_| DecoderError::Bitstream("intrabc MV magnitude overflows".to_string()))?;
+        Ok(if sign == 0 { magnitude } else { -magnitude })
     }
 
     fn read_delta_qindex(
@@ -484,6 +554,75 @@ pub(super) fn use_angle_delta(block_size: BlockSize) -> bool {
         block_size,
         BlockSize::Block4x4 | BlockSize::Block4x8 | BlockSize::Block8x4
     )
+}
+
+fn default_intrabc_mv(
+    sequence: &SequenceHeader,
+    _frame: &FrameHeader,
+    tile: &TileDecodePlan,
+    y: usize,
+) -> (i32, i32) {
+    let mib_size = if sequence.use_128x128_superblock {
+        32
+    } else {
+        16
+    };
+    let mi_row = y / 4;
+    if mi_row < mib_size + tile.mi_row_start as usize {
+        (0, -((mib_size * 4 + 256) as i32 * 8))
+    } else {
+        (-((mib_size * 4) as i32 * 8), 0)
+    }
+}
+
+fn validate_intrabc_mv(
+    _sequence: &SequenceHeader,
+    _frame: &FrameHeader,
+    tile: &TileDecodePlan,
+    block_size: BlockSize,
+    x: usize,
+    y: usize,
+    mv: (i32, i32),
+) -> Result<(), DecoderError> {
+    if mv.0 % 8 != 0 || mv.1 % 8 != 0 {
+        return Err(DecoderError::Bitstream(
+            "AV1 intrabc DV must use integer-pixel offsets".to_string(),
+        ));
+    }
+    let source_x = i64::try_from(x)
+        .ok()
+        .and_then(|value| value.checked_add(i64::from(mv.1 / 8)))
+        .ok_or_else(|| DecoderError::Bitstream("AV1 intrabc source x overflows".to_string()))?;
+    let source_y = i64::try_from(y)
+        .ok()
+        .and_then(|value| value.checked_add(i64::from(mv.0 / 8)))
+        .ok_or_else(|| DecoderError::Bitstream("AV1 intrabc source y overflows".to_string()))?;
+    let tile_left = i64::from(tile.mi_col_start) * 4;
+    let tile_top = i64::from(tile.mi_row_start) * 4;
+    let tile_right = i64::from(tile.mi_col_end) * 4;
+    let tile_bottom = i64::from(tile.mi_row_end) * 4;
+    let width = i64::try_from(block_size.width()).unwrap_or(i64::MAX);
+    let height = i64::try_from(block_size.height()).unwrap_or(i64::MAX);
+    let source_right = source_x
+        .checked_add(width)
+        .ok_or_else(|| DecoderError::Bitstream("AV1 intrabc source width overflows".to_string()))?;
+    let source_bottom = source_y.checked_add(height).ok_or_else(|| {
+        DecoderError::Bitstream("AV1 intrabc source height overflows".to_string())
+    })?;
+    if source_x < tile_left
+        || source_y < tile_top
+        || source_right > tile_right
+        || source_bottom > tile_bottom
+    {
+        return Err(DecoderError::Bitstream(format!(
+            "AV1 intrabc DV points outside the tile: dst=({x},{y}) mv=({},{}) src=({source_x},{source_y}) block={}x{} tile=({tile_left},{tile_top})..({tile_right},{tile_bottom})",
+            mv.0,
+            mv.1,
+            block_size.width(),
+            block_size.height(),
+        )));
+    }
+    Ok(())
 }
 
 pub(super) fn cfl_signs(joint_sign: usize) -> Result<(usize, usize), DecoderError> {

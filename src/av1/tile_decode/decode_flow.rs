@@ -80,6 +80,9 @@ pub(super) fn decode_luma_leaf_block(
         block_mode.delta_lf,
     );
     decoder.record_cdef_index(frame, x, y, block_mode.cdef_idx);
+    if let Some(mv) = block_mode.intra_block_copy_mv {
+        decoder.set_intra_bc_mv(x, y, block_mode.block_size, mv);
+    }
     let quant_state = QuantState::from_qindex(
         &frame.quantization,
         block_mode.qindex,

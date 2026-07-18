@@ -26,6 +26,40 @@ pub const PALETTE_BLOCK_SIZE_CONTEXTS: usize = 7;
 pub const PALETTE_COLOR_INDEX_CONTEXTS: usize = 5;
 pub const PALETTE_SIZES: usize = 7;
 pub const PALETTE_COLORS: usize = 8;
+pub const MV_JOINTS: usize = 4;
+pub const MV_CLASSES: usize = 11;
+pub const MV_CLASS_BITS: usize = 10;
+pub const DEFAULT_INTRABC_CDF: [u16; 3] = [30531, 32768, 0];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IntrabcMvCdf {
+    pub joint: [u16; MV_JOINTS + 1],
+    pub class: [u16; MV_CLASSES + 1],
+    pub class0: [u16; 3],
+    pub sign: [u16; 3],
+    pub bits: [[u16; 3]; MV_CLASS_BITS],
+}
+
+const DEFAULT_INTRABC_MV_CDF: IntrabcMvCdf = IntrabcMvCdf {
+    joint: [4096, 11264, 19328, 32768, 0],
+    class: [
+        28672, 30976, 31858, 32320, 32551, 32656, 32740, 32757, 32762, 32767, 32768, 0,
+    ],
+    class0: [27648, 32768, 0],
+    sign: [16384, 32768, 0],
+    bits: [
+        [17408, 32768, 0],
+        [17920, 32768, 0],
+        [18944, 32768, 0],
+        [20480, 32768, 0],
+        [22528, 32768, 0],
+        [24576, 32768, 0],
+        [28672, 32768, 0],
+        [29952, 32768, 0],
+        [29952, 32768, 0],
+        [30720, 32768, 0],
+    ],
+};
 
 pub const DEFAULT_INTRA_EXT_TX_SET1_CDF: [[[u16; INTRA_EXT_TX_TYPES_SET1 + 1]; INTRA_MODES]; 2] = [
     [
@@ -1735,6 +1769,8 @@ pub struct CdfContext {
     pub uv_mode_cfl_allowed: [[u16; INTRA_MODES + 2]; INTRA_MODES],
     pub cfl_sign: [u16; 9],
     pub cfl_alpha: [[u16; 17]; 6],
+    pub intrabc: [u16; 3],
+    pub intrabc_mv: [IntrabcMvCdf; 2],
     pub use_filter_intra: [[u16; 3]; FILTER_INTRA_BLOCK_CONTEXTS],
     pub filter_intra_mode: [u16; FILTER_INTRA_MODES + 1],
     pub angle_delta: [[u16; 8]; DIRECTIONAL_MODES],
@@ -1794,6 +1830,8 @@ impl CdfContext {
             uv_mode_cfl_allowed: DEFAULT_UV_MODE_CFL_ALLOWED_CDF,
             cfl_sign: DEFAULT_CFL_SIGN_CDF,
             cfl_alpha: DEFAULT_CFL_ALPHA_CDF,
+            intrabc: DEFAULT_INTRABC_CDF,
+            intrabc_mv: [DEFAULT_INTRABC_MV_CDF, DEFAULT_INTRABC_MV_CDF],
             use_filter_intra: DEFAULT_USE_FILTER_INTRA_CDF,
             filter_intra_mode: DEFAULT_FILTER_INTRA_MODE_CDF,
             angle_delta: DEFAULT_ANGLE_DELTA_CDF,
@@ -1922,6 +1960,18 @@ impl CdfContext {
 
     pub fn cfl_alpha_cdf_mut(&mut self, context: usize) -> &mut [u16] {
         &mut self.cfl_alpha[context]
+    }
+
+    pub fn intrabc_mv_joint_cdf_mut(&mut self) -> &mut [u16] {
+        &mut self.intrabc_mv[0].joint
+    }
+
+    pub fn intrabc_cdf_mut(&mut self) -> &mut [u16] {
+        &mut self.intrabc
+    }
+
+    pub fn intrabc_mv_component_cdf_mut(&mut self, component: usize) -> &mut IntrabcMvCdf {
+        &mut self.intrabc_mv[component]
     }
 
     pub fn use_filter_intra_cdf_mut(&mut self, block_size_index: usize) -> &mut [u16] {
