@@ -52,11 +52,7 @@ impl<'a> TileDecoder<'a> {
         let skip = skip_symbol != 0;
         let cdef_idx = self.read_cdef_index(sequence, frame, skip, x, y)?;
         let qindex = self.read_delta_qindex(sequence, frame, block_size, skip, x, y)?;
-        if frame.delta_lf.present {
-            return Err(DecoderError::Unsupported(
-                "AV1 delta loop-filter block syntax is not supported yet".to_string(),
-            ));
-        }
+        let delta_lf = self.read_delta_lf(sequence, frame, block_size, skip, x, y)?;
 
         let y_above_context = self.above_y_mode_context(x, y);
         let y_left_context = self.left_y_mode_context(x, y);
@@ -143,6 +139,7 @@ impl<'a> TileDecoder<'a> {
             tile_id: tile.tile_id,
             block_size,
             qindex,
+            delta_lf,
             skip_context,
             skip_symbol,
             skip,
@@ -207,6 +204,64 @@ impl<'a> TileDecoder<'a> {
             self.current_qindex = (i32::from(self.current_qindex) + scaled).clamp(1, 255) as u8;
         }
         Ok(self.current_qindex)
+    }
+
+    fn read_delta_lf(
+        &mut self,
+        sequence: &SequenceHeader,
+        frame: &FrameHeader,
+        block_size: BlockSize,
+        skip: bool,
+        x: usize,
+        y: usize,
+    ) -> Result<[i8; 4], DecoderError> {
+        if !frame.delta_lf.present {
+            return Ok(self.current_delta_lf);
+        }
+
+        let superblock_size = if sequence.use_128x128_superblock {
+            128
+        } else {
+            64
+        };
+        let at_superblock_origin =
+            x.is_multiple_of(superblock_size) && y.is_multiple_of(superblock_size);
+        let is_full_superblock =
+            block_size.width() == superblock_size && block_size.height() == superblock_size;
+        if !at_superblock_origin || (is_full_superblock && skip) {
+            return Ok(self.current_delta_lf);
+        }
+
+        let count = if !frame.delta_lf.multi {
+            1
+        } else if sequence.color_config.monochrome {
+            2
+        } else {
+            4
+        };
+        for index in 0..count {
+            let abs_symbol = if frame.delta_lf.multi {
+                self.reader
+                    .read_symbol(self.cdf.delta_lf_multi_cdf_mut(index))?
+            } else {
+                self.reader.read_symbol(self.cdf.delta_lf_cdf_mut())?
+            };
+            let abs = if abs_symbol == 3 {
+                let rem_bits = self.reader.read_literal(3)? as usize + 1;
+                let abs_bits = self.reader.read_literal(rem_bits)? as i32;
+                abs_bits + (1i32 << rem_bits) + 1
+            } else {
+                abs_symbol as i32
+            };
+            if abs != 0 {
+                let sign = self.reader.read_bool()?;
+                let signed = if sign != 0 { -abs } else { abs };
+                let scaled = signed << frame.delta_lf.res;
+                self.current_delta_lf[index] =
+                    (i32::from(self.current_delta_lf[index]) + scaled).clamp(-63, 63) as i8;
+            }
+        }
+        Ok(self.current_delta_lf)
     }
 
     fn read_intra_tx_size(

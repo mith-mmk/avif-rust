@@ -1668,23 +1668,13 @@ fn apply_deblock_stage(
             };
             let subsampling_x = usize::from(plane_index > 0 && frame.color_config.subsampling_x);
             let subsampling_y = usize::from(plane_index > 0 && frame.color_config.subsampling_y);
-            let level = if plane_index == 0 {
+            let base_level = if plane_index == 0 {
                 frame_header.loop_filter.levels[usize::from(!vertical)]
             } else if plane_index == 1 {
                 frame_header.loop_filter.levels[2]
             } else {
                 frame_header.loop_filter.levels[3]
             };
-            // Still-image decode only has intra blocks, so the applicable
-            // delta is the INTRA_FRAME reference delta. The mode deltas
-            // are still parsed for bitstream alignment and future inter
-            // frame support, but do not apply to intra blocks.
-            let level = apply_loop_filter_deltas(
-                level,
-                frame_header.loop_filter.delta_enabled,
-                frame_header.loop_filter.ref_deltas[0],
-                0,
-            );
             let edge = if vertical { block.x } else { block.y };
             if edge == 0 || !applied_edges.insert((plane_index, block.x, block.y, vertical)) {
                 continue;
@@ -1705,6 +1695,36 @@ fn apply_deblock_stage(
                 } else {
                     block_filter_state_at(edge_x << subsampling_x, edge_y << subsampling_y)
                 };
+                let luma_x = if plane_index == 0 {
+                    edge_x
+                } else {
+                    edge_x << subsampling_x
+                };
+                let luma_y = if plane_index == 0 {
+                    edge_y
+                } else {
+                    edge_y << subsampling_y
+                };
+                let filter_state = block_filter_state_at(luma_x, luma_y);
+                // Still-image decode only has intra blocks, so the applicable
+                // delta is the INTRA_FRAME reference delta. The mode deltas
+                // are still parsed for bitstream alignment and future inter
+                // frame support, but do not apply to intra blocks.
+                let delta_lf_index = if plane_index == 0 {
+                    usize::from(!vertical)
+                } else {
+                    plane_index + 1
+                };
+                let block_delta = filter_state
+                    .map(|state| state.delta_lf[delta_lf_index])
+                    .unwrap_or(0);
+                let level = apply_loop_filter_deltas(
+                    base_level,
+                    frame_header.loop_filter.delta_enabled,
+                    frame_header.loop_filter.ref_deltas[0],
+                    0,
+                    block_delta,
+                );
                 let dimension = if plane_index == 0 {
                     if vertical {
                         block.tx_size.width()
@@ -1799,11 +1819,18 @@ fn apply_deblock_stage(
     }
 }
 
-fn apply_loop_filter_deltas(level: u8, enabled: bool, ref_delta: i8, mode_delta: i8) -> u8 {
+fn apply_loop_filter_deltas(
+    level: u8,
+    enabled: bool,
+    ref_delta: i8,
+    mode_delta: i8,
+    block_delta: i8,
+) -> u8 {
     if !enabled {
-        return level;
+        return (i16::from(level) + i16::from(block_delta)).clamp(0, 63) as u8;
     }
-    let adjusted = i16::from(level) + i16::from(ref_delta) + i16::from(mode_delta);
+    let adjusted =
+        i16::from(level) + i16::from(ref_delta) + i16::from(mode_delta) + i16::from(block_delta);
     adjusted.clamp(0, 63) as u8
 }
 

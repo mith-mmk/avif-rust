@@ -77,6 +77,7 @@ pub(super) fn decode_luma_leaf_block(
         block_mode.skip,
         block_mode.y_mode,
         block_mode.uv_mode,
+        block_mode.delta_lf,
     );
     decoder.record_cdef_index(frame, x, y, block_mode.cdef_idx);
     let quant_state = QuantState::from_qindex(

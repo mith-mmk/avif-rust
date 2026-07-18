@@ -437,6 +437,11 @@ After enabling delta-q parsing and block-local quantizer lookup, the same
 The sample does not signal delta-q, so this is a no-regression checkpoint rather
 than a delta-q speedup claim.
 
+After enabling delta-lf parsing and block-local deblock deltas, the same
+11-iteration WML2Viewer benchmark measured `282.64/291.07 ms` (native/RGBA).
+The sample does not signal delta-lf, so this is a no-regression checkpoint
+rather than a delta-lf speedup claim.
+
 - [x] Add malformed/truncated coverage for the currently supported container,
       OBU, entropy and metadata paths.
 - [ ] Add malformed/truncated cases for each future syntax path as it becomes
@@ -479,8 +484,10 @@ than a delta-q speedup claim.
 - [x] Parse AV1 superblock delta-q syntax, carry the tile-local `CurrentQIndex`
       into block quantization and verify a libaom-generated delta-q AVIF sample
       against FFmpeg.
-- [ ] Implement delta loop-filter block syntax before enabling frames that
-      signal `delta_lf_present`.
+- [x] Implement delta loop-filter block syntax, carry the tile-local four-plane
+      delta state into block filter metadata, apply it at deblock boundaries,
+      and verify a libaom-generated `delta_lf_present` AVIF sample against
+      FFmpeg, including a truncated-input regression.
 - [x] Correct the nested crate repository URL to the independently maintained
       `avif-rust` repository and verify it from a fresh clone.
 - [ ] Add SIMD/parallel paths only with scalar equivalence and Wasm fallback

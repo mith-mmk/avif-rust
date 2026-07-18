@@ -215,6 +215,10 @@ pub const DEFAULT_SKIP_CDF: [[u16; 3]; SKIP_CONTEXTS] =
 // AV1 Default_Delta_Q_Cdf from the normative entropy tables. The decoder
 // stores forward cumulative probabilities (rather than AOM's inverse CDF).
 pub const DEFAULT_DELTA_Q_CDF: [u16; 5] = [28160, 32120, 32677, 32768, 0];
+// AV1 Default_Delta_LF_Cdf and Default_Delta_LF_Multi_Cdf.  The decoder
+// keeps forward cumulative probabilities, matching the other syntax CDFs.
+pub const DEFAULT_DELTA_LF_CDF: [u16; 5] = [28160, 32120, 32677, 32768, 0];
+pub const DEFAULT_DELTA_LF_MULTI_CDF: [[u16; 5]; 4] = [DEFAULT_DELTA_LF_CDF; 4];
 pub const DEFAULT_SWITCHABLE_RESTORE_CDF: [u16; 4] = [9413, 22581, 32768, 0];
 pub const DEFAULT_WIENER_RESTORE_CDF: [u16; 3] = [11570, 32768, 0];
 pub const DEFAULT_SGRPROJ_RESTORE_CDF: [u16; 3] = [16855, 32768, 0];
@@ -1712,6 +1716,8 @@ pub struct CdfContext {
     pub partition_w128: [[u16; 9]; PARTITION_CONTEXTS],
     pub skip: [[u16; 3]; SKIP_CONTEXTS],
     pub delta_q: [u16; 5],
+    pub delta_lf: [u16; 5],
+    pub delta_lf_multi: [[u16; 5]; 4],
     pub switchable_restore: [u16; 4],
     pub wiener_restore: [u16; 3],
     pub sgrproj_restore: [u16; 3],
@@ -1771,6 +1777,8 @@ impl CdfContext {
             partition_w128: DEFAULT_PARTITION_W128_CDF,
             skip: DEFAULT_SKIP_CDF,
             delta_q: DEFAULT_DELTA_Q_CDF,
+            delta_lf: DEFAULT_DELTA_LF_CDF,
+            delta_lf_multi: DEFAULT_DELTA_LF_MULTI_CDF,
             switchable_restore: DEFAULT_SWITCHABLE_RESTORE_CDF,
             wiener_restore: DEFAULT_WIENER_RESTORE_CDF,
             sgrproj_restore: DEFAULT_SGRPROJ_RESTORE_CDF,
@@ -1826,6 +1834,14 @@ impl CdfContext {
 
     pub fn delta_q_cdf_mut(&mut self) -> &mut [u16] {
         &mut self.delta_q
+    }
+
+    pub fn delta_lf_cdf_mut(&mut self) -> &mut [u16] {
+        &mut self.delta_lf
+    }
+
+    pub fn delta_lf_multi_cdf_mut(&mut self, index: usize) -> &mut [u16] {
+        &mut self.delta_lf_multi[index]
     }
 
     pub fn skip_cdf_mut(&mut self, context: usize) -> &mut [u16] {
@@ -2039,6 +2055,8 @@ mod tests {
         assert_eq!(context.partition_w128[0][7], 32768);
         assert_eq!(context.skip[0][1], 32768);
         assert_eq!(context.delta_q[3], 32768);
+        assert_eq!(context.delta_lf[3], 32768);
+        assert_eq!(context.delta_lf_multi[3][3], 32768);
         assert_eq!(context.intra_frame_y_mode[0][0][12], 32768);
         assert_eq!(context.y_mode[0][12], 32768);
         assert_eq!(context.uv_mode_cfl_not_allowed[0][12], 32768);

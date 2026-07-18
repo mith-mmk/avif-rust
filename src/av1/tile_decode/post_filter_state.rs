@@ -1124,6 +1124,7 @@ pub(crate) struct BlockFilterState {
     pub(crate) skip: bool,
     pub(crate) y_mode: PredictionMode,
     pub(crate) uv_mode: Option<UvPredictionMode>,
+    pub(crate) delta_lf: [i8; 4],
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1235,6 +1236,7 @@ impl<'a> TileDecoder<'a> {
         skip: bool,
         y_mode: PredictionMode,
         uv_mode: Option<UvPredictionMode>,
+        delta_lf: [i8; 4],
     ) {
         self.block_filter_states.push(BlockFilterState {
             x,
@@ -1243,6 +1245,7 @@ impl<'a> TileDecoder<'a> {
             skip,
             y_mode,
             uv_mode,
+            delta_lf,
         });
     }
 
@@ -1702,6 +1705,7 @@ mod tests {
                 skip: true,
                 y_mode: PredictionMode::Dc,
                 uv_mode: Some(UvPredictionMode::Intra(PredictionMode::Dc)),
+                delta_lf: [0; 4],
             }],
         });
         assert_eq!(state.block_filter_states.len(), 1);
