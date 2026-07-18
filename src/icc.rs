@@ -17,6 +17,7 @@ enum Curve {
     Identity,
     Gamma(f64),
     Table(Vec<u16>),
+    Parametric { function: u16, parameters: [f64; 7] },
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +63,10 @@ impl Curve {
                 let high = f64::from(table[next]);
                 (low + (high - low) * fraction) / f64::from(u16::MAX)
             }
+            Self::Parametric {
+                function,
+                parameters,
+            } => decode_parametric(*function, *parameters, value),
         }
     }
 }
@@ -164,8 +169,19 @@ fn read_xyz(profile: &[u8], tag: (usize, usize)) -> Result<[f64; 3], DecoderErro
 
 fn read_curve(profile: &[u8], tag: (usize, usize)) -> Result<Curve, DecoderError> {
     let (offset, size) = tag;
-    if size < 12 || &profile[offset..offset + 4] != b"curv" {
-        return Err(unsupported("ICC tone curve is not a supported curv tag"));
+    if size < 12 {
+        return Err(unsupported("ICC tone curve tag is truncated"));
+    }
+    let signature = profile
+        .get(offset..offset + 4)
+        .ok_or_else(|| unsupported("ICC tone curve tag is outside the profile"))?;
+    if signature == b"para" {
+        return read_parametric_curve(profile, offset, size);
+    }
+    if signature != b"curv" {
+        return Err(unsupported(
+            "ICC tone curve is not a supported curv/para tag",
+        ));
     }
     let count = read_u32(profile, offset + 8)?;
     match count {
@@ -194,6 +210,86 @@ fn read_curve(profile: &[u8], tag: (usize, usize)) -> Result<Curve, DecoderError
             Ok(Curve::Table(table))
         }
     }
+}
+
+fn read_parametric_curve(
+    profile: &[u8],
+    offset: usize,
+    size: usize,
+) -> Result<Curve, DecoderError> {
+    let function = read_u16(profile, offset + 8)?;
+    let parameter_count = match function {
+        0 => 1,
+        1 => 3,
+        2 => 4,
+        3 => 5,
+        4 => 7,
+        _ => {
+            return Err(unsupported(format!(
+                "ICC parametric tone curve function {function} is not supported"
+            )));
+        }
+    };
+    let required_size = 12usize
+        .checked_add(parameter_count * 4)
+        .ok_or_else(|| unsupported("ICC parametric tone curve size overflows"))?;
+    if size < required_size {
+        return Err(unsupported("ICC parametric tone curve is truncated"));
+    }
+    let mut parameters = [0.0; 7];
+    for (index, parameter) in parameters.iter_mut().take(parameter_count).enumerate() {
+        *parameter = read_s15_fixed16(profile, offset + 12 + index * 4)?;
+    }
+    if matches!(function, 1 | 2) && parameters[1] == 0.0 {
+        return Err(unsupported(
+            "ICC parametric tone curve has a zero division coefficient",
+        ));
+    }
+    Ok(Curve::Parametric {
+        function,
+        parameters,
+    })
+}
+
+fn decode_parametric(function: u16, parameters: [f64; 7], value: f64) -> f64 {
+    let x = value.clamp(0.0, 1.0);
+    let gamma = parameters[0];
+    let powered = |base: f64| base.max(0.0).powf(gamma);
+    let output = match function {
+        0 => powered(x),
+        1 => {
+            let threshold = -parameters[2] / parameters[1];
+            if x >= threshold {
+                powered(parameters[1] * x + parameters[2])
+            } else {
+                0.0
+            }
+        }
+        2 => {
+            let threshold = -parameters[2] / parameters[1];
+            if x >= threshold {
+                powered(parameters[1] * x + parameters[2]) + parameters[3]
+            } else {
+                parameters[3]
+            }
+        }
+        3 => {
+            if x >= parameters[4] {
+                powered(parameters[1] * x + parameters[2])
+            } else {
+                parameters[3] * x
+            }
+        }
+        4 => {
+            if x >= parameters[4] {
+                powered(parameters[1] * x + parameters[2]) + parameters[5]
+            } else {
+                parameters[3] * x + parameters[6]
+            }
+        }
+        _ => x,
+    };
+    output.clamp(0.0, 1.0)
 }
 
 fn multiply(matrix: [[f64; 3]; 3], vector: [f64; 3]) -> [f64; 3] {
@@ -278,6 +374,60 @@ mod tests {
 
         assert!(
             matches!(error, DecoderError::Unsupported(message) if message.contains("truncated"))
+        );
+    }
+
+    #[test]
+    fn parametric_curve_evaluates_function_one() {
+        let curve = Curve::Parametric {
+            function: 1,
+            parameters: [2.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        };
+
+        assert!((curve.decode(0.25) - 0.0625).abs() < 0.0001);
+    }
+
+    #[test]
+    fn parametric_curve_function_two_uses_the_linear_breakpoint_branch() {
+        let curve = Curve::Parametric {
+            function: 2,
+            parameters: [2.0, 1.0, 0.0, 0.25, 0.0, 0.0, 0.0],
+        };
+
+        assert_eq!(curve.decode(0.0), 0.25);
+        assert!((curve.decode(0.5) - 0.5).abs() < 0.0001);
+    }
+
+    #[test]
+    fn parametric_curve_function_types_have_finite_outputs() {
+        let parameter_counts = [1, 3, 4, 5, 7];
+        for (function, parameter_count) in parameter_counts.into_iter().enumerate() {
+            let mut parameters = [0.0; 7];
+            parameters[0] = 2.0;
+            parameters[1] = 1.0;
+            parameters[3] = 1.0;
+            parameters[4] = 0.5;
+            parameters[5] = 0.1;
+            parameters[6] = 0.0;
+            assert!(parameter_count <= parameters.len());
+            let curve = Curve::Parametric {
+                function: function as u16,
+                parameters,
+            };
+            assert!(curve.decode(0.5).is_finite());
+        }
+    }
+
+    #[test]
+    fn parametric_curve_rejects_zero_division_coefficient() {
+        let mut profile = vec![0; 24];
+        profile[0..4].copy_from_slice(b"para");
+        profile[8..10].copy_from_slice(&1u16.to_be_bytes());
+        profile[12..16].copy_from_slice(&2i32.to_be_bytes());
+        let error = read_curve(&profile, (0, profile.len())).unwrap_err();
+
+        assert!(
+            matches!(error, DecoderError::Unsupported(message) if message.contains("zero division"))
         );
     }
 }

@@ -330,8 +330,10 @@ and RGBA gates.
       explicitly `Unsupported` until implemented.
 - [x] Apply ICC matrix-shaper profiles with identity/gamma and lookup-table
       (`curv`) tone curves, with bounded table sizes and interpolation checks.
+- [x] Apply ICC matrix-shaper parametric (`para`) tone curves for function
+      types 0 through 4, including malformed-coefficient checks.
 - [ ] Implement HDR tone mapping and the remaining ICC display-conversion
-      profile forms (LUT/parametric/CLUT profiles).
+      profile forms (multi-dimensional CLUT/LUT profiles).
 
 ## 5. Safety, performance and release gate
 
