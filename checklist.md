@@ -452,6 +452,8 @@ conversion loop for non-alpha YUV matrices. On
 `fox.profile1.8bpc.yuv444.avif`, the same-host 5-iteration check moved from
 `394.43/430.72 ms` to `384.54/390.38 ms` (native/RGBA); the existing pixel
 oracle remained at average error `0.00192`, maximum `5`.
+The matrix coefficients are now hoisted out of that inner loop; an 11-iteration
+recheck measured `383.43/396.32 ms` on the same host, with the same oracle.
 
 The full qmatrix-table checkpoint measured `384.70/381.61 ms` on a subsequent
 11-iteration run; retain the earlier release baseline until repeated runs on a

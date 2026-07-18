@@ -334,7 +334,11 @@ pub fn frame_buffers_to_rgba_16(
         let plane_v = buffers.planes.get(2);
         let chroma_mid = 1u16 << color_config.bit_depth.saturating_sub(1);
         let alpha_max_source = (1u32 << color_config.bit_depth) - 1;
-        let direct_yuv444 = matches!(matrix, MatrixCoefficients::Yuv { .. })
+        let fast_yuv_coefficients = match matrix {
+            MatrixCoefficients::Yuv { kr, kb } => Some((kr as f32, kb as f32)),
+            _ => None,
+        };
+        let direct_yuv444 = fast_yuv_coefficients.is_some()
             && buffers.planes.get(3).is_none()
             && plane_y.layout.subsampling_x == 0
             && plane_y.layout.subsampling_y == 0
@@ -355,13 +359,15 @@ pub fn frame_buffers_to_rgba_16(
         if direct_yuv444 {
             let plane_u = plane_u.expect("direct YUV444 path requires U plane");
             let plane_v = plane_v.expect("direct YUV444 path requires V plane");
+            let (kr, kb) = fast_yuv_coefficients.expect("YUV matrix was checked above");
             for (index, pixel) in rgba.chunks_exact_mut(4).enumerate() {
                 let rgb = yuv_to_rgb_u16_fast(
                     plane_y.samples[index],
                     plane_u.samples[index],
                     plane_v.samples[index],
                     range,
-                    matrix,
+                    kr,
+                    kb,
                 );
                 pixel[..3].copy_from_slice(&rgb);
                 pixel[3] = u16::MAX;
@@ -477,16 +483,12 @@ fn yuv_to_rgb_u16_fast(
     u_sample: u16,
     v_sample: u16,
     range: SampleRange,
-    matrix: MatrixCoefficients,
+    kr: f32,
+    kb: f32,
 ) -> [u16; 3] {
-    let MatrixCoefficients::Yuv { kr, kb } = matrix else {
-        return yuv_to_rgb_u16(y_sample, u_sample, v_sample, range, matrix);
-    };
     let y = ((f32::from(y_sample) - range.y_offset as f32) / range.y_scale as f32).clamp(0.0, 1.0);
     let cb = (f32::from(u_sample) - range.chroma_offset as f32) / range.chroma_scale as f32;
     let cr = (f32::from(v_sample) - range.chroma_offset as f32) / range.chroma_scale as f32;
-    let kr = kr as f32;
-    let kb = kb as f32;
     let r = y + 2.0 * (1.0 - kr) * cr;
     let b = y + 2.0 * (1.0 - kb) * cb;
     let g = (y - kr * r - kb * b) / (1.0 - kr - kb);
@@ -1286,7 +1288,7 @@ mod tests {
             kr: 0.2627,
             kb: 0.0593,
         };
-        let fast = yuv_to_rgb_u16_fast(128, 96, 160, range, matrix);
+        let fast = yuv_to_rgb_u16_fast(128, 96, 160, range, 0.2627, 0.0593);
         let scalar = yuv_to_rgb_u16(128, 96, 160, range, matrix);
         assert!(
             fast.iter()
