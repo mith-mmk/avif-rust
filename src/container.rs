@@ -239,6 +239,8 @@ fn property_kind(property: &ItemProperty) -> PropertyKind {
 struct MetaState {
     primary_item_id: Option<u32>,
     item_locations: Vec<ItemLocation>,
+    item_construction_methods: Vec<(u32, u16)>,
+    idat_payload: Option<Vec<u8>>,
     item_infos: Vec<ItemInfo>,
     item_references: Vec<ItemReference>,
     item_property_associations: Vec<ItemPropertyAssociation>,
@@ -363,7 +365,12 @@ fn parse_meta_children(
         match &header.box_type {
             b"pitm" => state.primary_item_id = parse_pitm(child_payload)?,
             b"iinf" => state.item_infos = parse_iinf(child_payload)?,
-            b"iloc" => state.item_locations = parse_iloc(child_payload)?,
+            b"iloc" => {
+                let (locations, construction_methods) = parse_iloc_with_methods(child_payload)?;
+                state.item_locations = locations;
+                state.item_construction_methods = construction_methods;
+            }
+            b"idat" => state.idat_payload = Some(child_payload.to_vec()),
             b"iref" => state.item_references = parse_iref(child_payload)?,
             b"iprp" => parse_iprp(source, child_payload, state)?,
             _ => {}
@@ -505,7 +512,14 @@ fn parse_infe(payload: &[u8]) -> Result<ItemInfo, DecoderError> {
     })
 }
 
+#[cfg(test)]
 fn parse_iloc(payload: &[u8]) -> Result<Vec<ItemLocation>, DecoderError> {
+    parse_iloc_with_methods(payload).map(|(locations, _)| locations)
+}
+
+fn parse_iloc_with_methods(
+    payload: &[u8],
+) -> Result<(Vec<ItemLocation>, Vec<(u32, u16)>), DecoderError> {
     if payload.len() < 8 {
         return Err(DecoderError::NotEnoughData(
             "iloc payload is too short".to_string(),
@@ -555,6 +569,7 @@ fn parse_iloc(payload: &[u8]) -> Result<Vec<ItemLocation>, DecoderError> {
     )?;
 
     let mut locations = Vec::with_capacity(item_count);
+    let mut construction_methods = Vec::with_capacity(item_count);
     for _ in 0..item_count {
         let item_id = if version < 2 {
             let value = read_u16(payload, cursor)? as u32;
@@ -566,15 +581,19 @@ fn parse_iloc(payload: &[u8]) -> Result<Vec<ItemLocation>, DecoderError> {
             value
         };
 
-        if version == 1 || version == 2 {
+        let construction_method = if version == 1 || version == 2 {
             let construction_method = read_u16(payload, cursor)? & 0x000f;
             cursor += 2;
-            if construction_method != 0 {
+            if construction_method > 1 {
                 return Err(DecoderError::Unsupported(format!(
                     "iloc construction_method {construction_method} is not supported"
                 )));
             }
-        }
+            construction_method
+        } else {
+            0
+        };
+        construction_methods.push((item_id, construction_method));
 
         let data_reference_index = read_u16(payload, cursor)?;
         cursor += 2;
@@ -615,7 +634,7 @@ fn parse_iloc(payload: &[u8]) -> Result<Vec<ItemLocation>, DecoderError> {
         });
     }
 
-    Ok(locations)
+    Ok((locations, construction_methods))
 }
 
 fn parse_iref(payload: &[u8]) -> Result<Vec<ItemReference>, DecoderError> {
@@ -1252,6 +1271,22 @@ fn item_payload(data: &[u8], state: &MetaState, item_id: u32) -> Result<Vec<u8>,
         .iter()
         .find(|location| location.item_id == item_id)
         .ok_or_else(|| DecoderError::Bitstream(format!("item {item_id} location is missing")))?;
+    let construction_method = state
+        .item_construction_methods
+        .iter()
+        .find_map(|(id, method)| (*id == item_id).then_some(*method))
+        .unwrap_or(0);
+    let source = match construction_method {
+        0 => data,
+        1 => state.idat_payload.as_deref().ok_or_else(|| {
+            DecoderError::Bitstream(format!("item {item_id} references missing idat box"))
+        })?,
+        method => {
+            return Err(DecoderError::Unsupported(format!(
+                "iloc construction_method {method} is not supported"
+            )));
+        }
+    };
 
     let payload_len = location.extents.iter().try_fold(0usize, |sum, extent| {
         let length = usize::try_from(extent.length)
@@ -1272,13 +1307,13 @@ fn item_payload(data: &[u8], state: &MetaState, item_id: u32) -> Result<Vec<u8>,
             .map_err(|_| DecoderError::Bitstream("item extent start is too large".to_string()))?;
         let end = usize::try_from(end)
             .map_err(|_| DecoderError::Bitstream("item extent end is too large".to_string()))?;
-        if end > data.len() || start > end {
+        if end > source.len() || start > end {
             return Err(DecoderError::NotEnoughData(
                 "item extent points outside the file".to_string(),
             ));
         }
     }
-    if payload_len > data.len() {
+    if payload_len > source.len() {
         return Err(DecoderError::Bitstream(
             "item extent payload length exceeds file size".to_string(),
         ));
@@ -1296,12 +1331,12 @@ fn item_payload(data: &[u8], state: &MetaState, item_id: u32) -> Result<Vec<u8>,
             .map_err(|_| DecoderError::Bitstream("item extent start is too large".to_string()))?;
         let end = usize::try_from(end)
             .map_err(|_| DecoderError::Bitstream("item extent end is too large".to_string()))?;
-        if end > data.len() || start > end {
+        if end > source.len() || start > end {
             return Err(DecoderError::NotEnoughData(
                 "item extent points outside the file".to_string(),
             ));
         }
-        payload.extend_from_slice(&data[start..end]);
+        payload.extend_from_slice(&source[start..end]);
     }
     Ok(payload)
 }
@@ -1609,6 +1644,69 @@ mod tests {
 
         assert!(
             matches!(err, DecoderError::NotEnoughData(message) if message.contains("iloc extent count"))
+        );
+    }
+
+    #[test]
+    fn parses_idat_construction_method() {
+        let (locations, methods) = parse_iloc_with_methods(&[
+            1, 0, 0, 0, // version and flags
+            0x44, 0, // four-byte offsets and lengths, no base/index
+            0, 1, // item count
+            0, 1, // item id
+            0, 1, // idat construction method
+            0, 0, // data reference index
+            0, 1, // extent count
+            0, 0, 0, 1, // extent offset
+            0, 0, 0, 3, // extent length
+        ])
+        .unwrap();
+
+        assert_eq!(methods, vec![(1, 1)]);
+        assert_eq!(locations[0].item_id, 1);
+        assert_eq!(locations[0].extents[0].offset, 1);
+        assert_eq!(locations[0].extents[0].length, 3);
+    }
+
+    #[test]
+    fn resolves_item_payload_from_idat() {
+        let state = MetaState {
+            primary_item_id: Some(1),
+            item_locations: vec![ItemLocation {
+                item_id: 1,
+                base_offset: 0,
+                extents: vec![ItemExtent {
+                    offset: 1,
+                    length: 3,
+                }],
+            }],
+            item_construction_methods: vec![(1, 1)],
+            idat_payload: Some(b"xyz123".to_vec()),
+            ..MetaState::default()
+        };
+
+        assert_eq!(primary_item_payload(b"unused", &state).unwrap(), b"yz1");
+    }
+
+    #[test]
+    fn rejects_idat_item_without_idat_box() {
+        let state = MetaState {
+            primary_item_id: Some(1),
+            item_locations: vec![ItemLocation {
+                item_id: 1,
+                base_offset: 0,
+                extents: vec![ItemExtent {
+                    offset: 0,
+                    length: 1,
+                }],
+            }],
+            item_construction_methods: vec![(1, 1)],
+            ..MetaState::default()
+        };
+
+        let err = primary_item_payload(b"unused", &state).unwrap_err();
+        assert!(
+            matches!(err, DecoderError::Bitstream(message) if message.contains("missing idat box"))
         );
     }
 

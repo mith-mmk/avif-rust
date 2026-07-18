@@ -462,6 +462,8 @@ because host scheduling remains variable.
       matrices and level 15 remains the flat identity matrix.
 - [x] Validate primary-item info/location, `ipma` property indices and
       essential-property flags.
+- [x] Resolve `iloc` construction methods 0 and 1, including meta `idat`
+      payloads, with missing-source and extent-boundary regression tests.
 - [x] Validate `ispe` dimensions against the AV1 frame dimensions.
 - [x] Validate SDR `nclx` colour description and range against the AV1
       sequence header, while accepting CICP value `2` as unspecified.
