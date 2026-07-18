@@ -25,10 +25,10 @@ passes the FFmpeg RGB oracle (average absolute error about 0.075, maximum 6).
 | --- | --- |
 | AVIF primary item containing one AV1 still frame | Supported |
 | 8-bit, 10-bit, and 12-bit source planes | Supported (12-bit RGB oracle passes) |
-| Native decoded planes, RGBA8, and RGBA16 | Supported |
+| Native decoded planes, optional alpha plane, RGBA8, and RGBA16 | Supported (alpha is `buffers.planes[3]` when present) |
 | Deblock, CDEF, and loop restoration used by supported streams | Supported |
 | Monochrome, 4:2:0, and 4:2:2 | Supported |
-| Alpha auxiliary images and grid composition | Supported (native planes for primary grids without alpha; aligned `clap`/`irot`/`imir` are applied) |
+| Alpha auxiliary images and grid composition | Supported (native alpha plane and aligned `clap`/`irot`/`imir` are applied) |
 | `clap`, `irot`, and `imir` composition | Supported |
 | One-frame `avis` primary item | Supported |
 | Animated AVIF multi-frame output | Not yet supported |

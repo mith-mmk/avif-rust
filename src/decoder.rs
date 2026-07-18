@@ -91,9 +91,11 @@ pub fn decode_bytes(data: &[u8]) -> Result<ImageBuffer, DecoderError> {
 
 /// Decoded still-frame planes before colour conversion.
 ///
-/// Samples are stored as native AV1 source planes in raster order. The current
-/// decoder only supports a subset of still-image tools, but this type is the
-/// conformance-test boundary for exact Y/U/V/alpha plane comparisons.
+/// Samples are stored as native AV1 source planes in raster order. The first
+/// three planes are Y/U/V (or the profile's native plane order); when an alpha
+/// auxiliary or alpha grid is present, plane index three is the optional alpha
+/// plane. The current decoder only supports a subset of still-image tools, but
+/// this type is the conformance-test boundary for exact plane comparisons.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedFrame {
     pub width: usize,
@@ -143,7 +145,12 @@ pub fn decode_frame_bytes(data: &[u8]) -> Result<DecodedFrame, DecoderError> {
         return decode_grid_frame(&info);
     }
     let headers = parse_av1_headers(&info)?;
-    decode_still_frame(&headers, Some(&info))
+    let mut frame = decode_still_frame(&headers, Some(&info))?;
+    if !info.alpha_auxiliary_items.is_empty() {
+        let alpha_frame = decode_alpha_auxiliary_frame(&info)?;
+        append_alpha_plane(&mut frame, alpha_frame)?;
+    }
+    Ok(frame)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -419,11 +426,6 @@ fn decode_grid_frame(info: &AvifInfo) -> Result<DecodedFrame, DecoderError> {
         .primary_grid
         .as_ref()
         .ok_or_else(|| DecoderError::Bitstream("AVIF grid metadata is missing".to_string()))?;
-    if info.alpha_grid.is_some() || !info.alpha_auxiliary_items.is_empty() {
-        return Err(DecoderError::Unsupported(
-            "AVIF grid native-plane composition with alpha is not supported yet".to_string(),
-        ));
-    }
     let rows = usize::from(grid.rows);
     let columns = usize::from(grid.columns);
     let cell_count = rows
@@ -582,6 +584,13 @@ fn decode_grid_frame(info: &AvifInfo) -> Result<DecodedFrame, DecoderError> {
             planes,
         },
     };
+    if let Some(alpha_grid) = info.alpha_grid.as_ref() {
+        let (alpha_plane, alpha_bit_depth) = decode_alpha_grid_plane(alpha_grid)?;
+        append_alpha_plane_buffer(&mut frame, alpha_plane, alpha_bit_depth)?;
+    } else if !info.alpha_auxiliary_items.is_empty() {
+        let alpha_frame = decode_alpha_auxiliary_frame(info)?;
+        append_alpha_plane(&mut frame, alpha_frame)?;
+    }
     apply_native_grid_geometry(&mut frame, info)?;
     Ok(frame)
 }
@@ -1026,6 +1035,29 @@ mod grid_composition_tests {
             matches!(error, DecoderError::Unsupported(message) if message.contains("subsampling axes"))
         );
     }
+
+    #[test]
+    fn native_grid_alpha_plane_composes_ordered_cells() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace root should exist")
+            .join("test/images/external/avif/unsupported/sofa_grid1x5_420.avif");
+        if !path.is_file() {
+            eprintln!("external grid sample is unavailable; skipping alpha-grid unit oracle");
+            return;
+        }
+        let info = crate::container::parse_avif(
+            &std::fs::read(path).expect("external grid sample should be readable"),
+        )
+        .expect("external grid sample metadata should parse");
+        let grid = info
+            .primary_grid
+            .expect("external sample should contain a grid");
+        let (alpha, _) = decode_alpha_grid_plane(&grid).expect("grid alpha plane should compose");
+        assert_eq!(alpha.layout.plane, 3);
+        assert_eq!((alpha.layout.width, alpha.layout.height), (1024, 770));
+        assert_eq!(alpha.samples.len(), 1024 * 770);
+    }
 }
 
 fn grid_cell_info(info: &AvifInfo, cell: &GridCell) -> AvifInfo {
@@ -1064,6 +1096,250 @@ fn decode_grid_cell_frame(info: &AvifInfo, cell: &GridCell) -> Result<DecodedFra
     validate_public_container_preflight(&cell_info, false)?;
     let headers = parse_av1_headers(&cell_info)?;
     decode_still_frame(&headers, Some(&cell_info))
+}
+
+fn append_alpha_plane(
+    frame: &mut DecodedFrame,
+    alpha_frame: DecodedFrame,
+) -> Result<(), DecoderError> {
+    if alpha_frame.width != frame.width || alpha_frame.height != frame.height {
+        return Err(DecoderError::Bitstream(
+            "AVIF alpha auxiliary dimensions do not match the primary image".to_string(),
+        ));
+    }
+    if alpha_frame.buffers.planes.len() != 1 {
+        return Err(DecoderError::Unsupported(
+            "AVIF alpha auxiliary image must be monochrome".to_string(),
+        ));
+    }
+    let alpha_plane = alpha_frame.buffers.planes.first().ok_or_else(|| {
+        DecoderError::Bitstream("AVIF alpha auxiliary plane is missing".to_string())
+    })?;
+    append_alpha_plane_buffer(frame, alpha_plane.clone(), alpha_frame.bit_depth)
+}
+
+fn append_alpha_plane_buffer(
+    frame: &mut DecodedFrame,
+    mut alpha_plane: PlaneBuffer,
+    alpha_bit_depth: u8,
+) -> Result<(), DecoderError> {
+    if alpha_plane.layout.width == 0 || alpha_plane.layout.height == 0 {
+        return Err(DecoderError::Bitstream(
+            "AVIF alpha plane has zero dimensions".to_string(),
+        ));
+    }
+    if frame
+        .buffers
+        .planes
+        .iter()
+        .any(|plane| plane.layout.plane == 3)
+    {
+        return Err(DecoderError::Bitstream(
+            "AVIF primary image contains duplicate alpha planes".to_string(),
+        ));
+    }
+    if alpha_bit_depth != frame.bit_depth {
+        let source_max = (1u32 << alpha_bit_depth) - 1;
+        let target_max = (1u32 << frame.bit_depth) - 1;
+        for sample in &mut alpha_plane.samples {
+            *sample = ((u32::from(*sample) * target_max + source_max / 2) / source_max) as u16;
+        }
+    }
+    alpha_plane.layout.plane = 3;
+    frame.buffers.planes.push(alpha_plane);
+    Ok(())
+}
+
+fn decode_alpha_auxiliary_frame(info: &AvifInfo) -> Result<DecodedFrame, DecoderError> {
+    let auxiliary = info.alpha_auxiliary_items.first().ok_or_else(|| {
+        DecoderError::Bitstream("AVIF alpha auxiliary item is missing".to_string())
+    })?;
+    let alpha_info = AvifInfo {
+        major_brand: info.major_brand,
+        compatible_brands: info.compatible_brands.clone(),
+        primary_item_id: None,
+        width: None,
+        height: None,
+        pixel_information: None,
+        color_information: None,
+        alpha_premultiplied: false,
+        alpha_auxiliary_items: Vec::new(),
+        alpha_grid: None,
+        primary_grid: None,
+        clean_aperture: None,
+        rotation: None,
+        mirror: None,
+        av1_config: None,
+        primary_item_payload: auxiliary.payload.clone(),
+    };
+    let headers = parse_av1_headers(&alpha_info)?;
+    decode_still_frame(&headers, None)
+}
+
+fn decode_alpha_grid_plane(
+    grid: &crate::container::GridImage,
+) -> Result<(PlaneBuffer, u8), DecoderError> {
+    let rows = usize::from(grid.rows);
+    let columns = usize::from(grid.columns);
+    let cell_count = rows.checked_mul(columns).ok_or_else(|| {
+        DecoderError::Bitstream("AVIF alpha grid cell count overflow".to_string())
+    })?;
+    if grid.cells.len() != cell_count {
+        return Err(DecoderError::Bitstream(
+            "AVIF alpha grid cell count does not match its dimensions".to_string(),
+        ));
+    }
+    let width = usize::try_from(grid.output_width).map_err(|_| {
+        DecoderError::InvalidParam("alpha grid output width is too large".to_string())
+    })?;
+    let height = usize::try_from(grid.output_height).map_err(|_| {
+        DecoderError::InvalidParam("alpha grid output height is too large".to_string())
+    })?;
+    if width == 0 || height == 0 {
+        return Err(DecoderError::Bitstream(
+            "alpha grid output dimensions must be non-zero".to_string(),
+        ));
+    }
+    let mut column_widths = vec![0usize; columns];
+    let mut row_heights = vec![0usize; rows];
+    let mut cells = Vec::with_capacity(cell_count);
+    for (index, cell) in grid.cells.iter().enumerate() {
+        let cell_width = usize::try_from(cell.width).map_err(|_| {
+            DecoderError::InvalidParam("alpha grid cell width is too large".to_string())
+        })?;
+        let cell_height = usize::try_from(cell.height).map_err(|_| {
+            DecoderError::InvalidParam("alpha grid cell height is too large".to_string())
+        })?;
+        let row = index / columns;
+        let column = index % columns;
+        if column_widths[column] != 0 && column_widths[column] != cell_width {
+            return Err(DecoderError::Bitstream(
+                "alpha grid cells in one column have different widths".to_string(),
+            ));
+        }
+        if row_heights[row] != 0 && row_heights[row] != cell_height {
+            return Err(DecoderError::Bitstream(
+                "alpha grid cells in one row have different heights".to_string(),
+            ));
+        }
+        column_widths[column] = cell_width;
+        row_heights[row] = cell_height;
+        let decoded = decode_alpha_grid_cell_frame(cell)?;
+        if decoded.width != cell_width || decoded.height != cell_height {
+            return Err(DecoderError::Bitstream(format!(
+                "alpha grid cell {} decoded as {}x{}, metadata declares {}x{}",
+                cell.item_id, decoded.width, decoded.height, cell_width, cell_height
+            )));
+        }
+        cells.push(decoded);
+    }
+    if column_widths.iter().sum::<usize>() != width || row_heights.iter().sum::<usize>() != height {
+        return Err(DecoderError::Bitstream(
+            "alpha grid cell dimensions do not cover the declared output".to_string(),
+        ));
+    }
+    let first = cells
+        .first()
+        .ok_or_else(|| DecoderError::Bitstream("alpha grid has no cells".to_string()))?;
+    let source = first
+        .buffers
+        .planes
+        .first()
+        .ok_or_else(|| DecoderError::Bitstream("alpha grid cell has no plane".to_string()))?;
+    for cell in &cells {
+        let plane =
+            cell.buffers.planes.first().ok_or_else(|| {
+                DecoderError::Bitstream("alpha grid cell has no plane".to_string())
+            })?;
+        if plane.layout.subsampling_x != source.layout.subsampling_x
+            || plane.layout.subsampling_y != source.layout.subsampling_y
+            || cell.bit_depth != first.bit_depth
+        {
+            return Err(DecoderError::Unsupported(
+                "alpha grid cells use different plane configurations".to_string(),
+            ));
+        }
+    }
+    let subsampling_x = usize::from(source.layout.subsampling_x);
+    let subsampling_y = usize::from(source.layout.subsampling_y);
+    let scale_x = 1usize << subsampling_x;
+    let scale_y = 1usize << subsampling_y;
+    let plane_width = width.div_ceil(scale_x);
+    let plane_height = height.div_ceil(scale_y);
+    let sample_count = plane_width.checked_mul(plane_height).ok_or_else(|| {
+        DecoderError::InvalidParam("alpha grid plane sample count overflows".to_string())
+    })?;
+    let mut output = PlaneBuffer {
+        layout: PlaneLayout {
+            plane: 3,
+            width: plane_width,
+            height: plane_height,
+            subsampling_x: source.layout.subsampling_x,
+            subsampling_y: source.layout.subsampling_y,
+            sample_count,
+        },
+        samples: vec![0; sample_count],
+    };
+    let mut y_offset = 0usize;
+    for row in 0..rows {
+        let mut x_offset = 0usize;
+        for column in 0..columns {
+            let cell = &cells[row * columns + column];
+            let source = cell.buffers.planes.first().ok_or_else(|| {
+                DecoderError::Bitstream("alpha grid cell has no plane".to_string())
+            })?;
+            if x_offset % scale_x != 0 || y_offset % scale_y != 0 {
+                return Err(DecoderError::Unsupported(
+                    "alpha grid cell boundary is not aligned to chroma samples".to_string(),
+                ));
+            }
+            let destination_x = x_offset / scale_x;
+            let destination_y = y_offset / scale_y;
+            if destination_x + source.layout.width > output.layout.width
+                || destination_y + source.layout.height > output.layout.height
+            {
+                return Err(DecoderError::Bitstream(
+                    "alpha grid cell plane exceeds composed output".to_string(),
+                ));
+            }
+            for source_y in 0..source.layout.height {
+                let source_start = source_y * source.layout.width;
+                let destination_start =
+                    (destination_y + source_y) * output.layout.width + destination_x;
+                output.samples[destination_start..destination_start + source.layout.width]
+                    .copy_from_slice(
+                        &source.samples[source_start..source_start + source.layout.width],
+                    );
+            }
+            x_offset += column_widths[column];
+        }
+        y_offset += row_heights[row];
+    }
+    Ok((output, first.bit_depth))
+}
+
+fn decode_alpha_grid_cell_frame(cell: &GridCell) -> Result<DecodedFrame, DecoderError> {
+    let info = AvifInfo {
+        major_brand: *b"avif",
+        compatible_brands: vec![*b"avif"],
+        primary_item_id: Some(cell.item_id),
+        width: Some(cell.width),
+        height: Some(cell.height),
+        pixel_information: cell.pixel_information.clone(),
+        color_information: None,
+        alpha_premultiplied: false,
+        alpha_auxiliary_items: Vec::new(),
+        alpha_grid: None,
+        primary_grid: None,
+        clean_aperture: None,
+        rotation: None,
+        mirror: None,
+        av1_config: cell.av1_config.clone(),
+        primary_item_payload: cell.payload.clone(),
+    };
+    validate_public_container_preflight(&info, false)?;
+    let headers = parse_av1_headers(&info)?;
+    decode_still_frame(&headers, None)
 }
 
 fn apply_alpha_grid(
@@ -1147,29 +1423,7 @@ fn decode_grid_cell_from_alpha(cell: &GridCell) -> Result<ImageBuffer, DecoderEr
 }
 
 fn apply_alpha_auxiliary(image: &mut ImageBuffer, info: &AvifInfo) -> Result<(), DecoderError> {
-    let auxiliary = info.alpha_auxiliary_items.first().ok_or_else(|| {
-        DecoderError::Bitstream("AVIF alpha auxiliary item is missing".to_string())
-    })?;
-    let alpha_info = AvifInfo {
-        major_brand: info.major_brand,
-        compatible_brands: info.compatible_brands.clone(),
-        primary_item_id: None,
-        width: None,
-        height: None,
-        pixel_information: None,
-        color_information: None,
-        alpha_premultiplied: false,
-        alpha_auxiliary_items: Vec::new(),
-        alpha_grid: None,
-        primary_grid: None,
-        clean_aperture: None,
-        rotation: None,
-        mirror: None,
-        av1_config: None,
-        primary_item_payload: auxiliary.payload.clone(),
-    };
-    let headers = parse_av1_headers(&alpha_info)?;
-    let frame = decode_still_frame(&headers, None)?;
+    let frame = decode_alpha_auxiliary_frame(info)?;
     let alpha_plane = frame.buffers.planes.first().ok_or_else(|| {
         DecoderError::Bitstream("AVIF alpha auxiliary plane is missing".to_string())
     })?;

@@ -26,10 +26,10 @@ frame AVIF profileに対応します。1 frameの`avis` primary itemも静止画
 | --- | --- |
 | 1個のAV1静止frameを含むAVIF primary item | 対応 |
 | 8-bit／10-bit／12-bit source plane | 対応（12-bit RGB oracle通過） |
-| native decoded plane、RGBA8、RGBA16 | 対応 |
+| native decoded plane、optional alpha plane、RGBA8、RGBA16 | 対応（alphaがある場合は`buffers.planes[3]`） |
 | 対応streamで使用するdeblock、CDEF、loop restoration | 対応 |
 | monochrome、4:2:0、4:2:2 | 対応 |
-| alpha auxiliary image、grid composition | 対応（alphaなしのprimary gridはnative planeに対応し、整列した`clap`／`irot`／`imir`も適用） |
+| alpha auxiliary image、grid composition | 対応（native alpha planeと整列した`clap`／`irot`／`imir`を適用） |
 | `clap`、`irot`、`imir` composition | 対応 |
 | 1 frameの`avis` primary item | 対応 |
 | animated AVIFの複数frame出力 | 未対応 |

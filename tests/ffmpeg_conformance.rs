@@ -1188,6 +1188,57 @@ fn public_alpha_sample_matches_ffmpeg_rgba_when_present() {
 }
 
 #[test]
+fn public_alpha_sample_exposes_native_alpha_plane_when_present() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("test/images/external/avif/unsupported/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif");
+    if !path.is_file() {
+        eprintln!("external alpha sample is unavailable; skipping native alpha oracle");
+        return;
+    }
+    let data = std::fs::read(&path).expect("external alpha AVIF should be readable");
+    let frame = avif_rust::decode_frame_bytes(&data).expect("alpha frame should decode");
+    assert_eq!((frame.width, frame.height), (128, 128));
+    let alpha = frame
+        .buffers
+        .planes
+        .get(3)
+        .expect("native decoded frame should expose plane 3 as alpha");
+    assert_eq!(alpha.layout.plane, 3);
+    assert_eq!(alpha.samples.len(), 128 * 128);
+    let Some(expected) = ffmpeg_decode_alpha_plane(&path, 128, 128) else {
+        return;
+    };
+    let max_error = alpha
+        .samples
+        .iter()
+        .zip(expected)
+        .map(|(actual, expected)| u8::try_from(*actual).unwrap().abs_diff(expected))
+        .max()
+        .unwrap_or(0);
+    assert!(
+        max_error <= 1,
+        "native alpha plane max error was {max_error}"
+    );
+    let converted = frame
+        .to_rgba8()
+        .expect("native alpha plane should feed RGBA conversion");
+    let expected = ffmpeg_decode_alpha_plane(&path, 128, 128).expect("alpha oracle should exist");
+    let converted_max_error = converted
+        .rgba
+        .chunks_exact(4)
+        .zip(expected)
+        .map(|(pixel, expected)| pixel[3].abs_diff(expected))
+        .max()
+        .unwrap_or(0);
+    assert!(
+        converted_max_error <= 1,
+        "converted native alpha max error was {converted_max_error}"
+    );
+}
+
+#[test]
 fn decoded_frame_rejects_unsupported_icc_profile() {
     let layout = avif_rust::av1::PlaneLayout {
         plane: 0,

@@ -202,7 +202,7 @@ pub fn frame_buffers_to_rgba_16(
             );
             let out = index * 4;
             rgba[out..out + 3].fill(value);
-            rgba[out + 3] = u16::MAX;
+            rgba[out + 3] = alpha_sample(buffers.planes.get(3), x, y, max_source);
         }
         return Ok(Rgba16ImageBuffer {
             width: buffers.width,
@@ -222,11 +222,13 @@ pub fn frame_buffers_to_rgba_16(
         let plane_b = &buffers.planes[1].samples;
         let plane_r = &buffers.planes[2].samples;
         for index in 0..buffers.width * buffers.height {
+            let x = index % buffers.width;
+            let y = index / buffers.width;
             let out = index * 4;
             rgba[out] = scale_sample_to_u16(plane_r[index], max_source);
             rgba[out + 1] = scale_sample_to_u16(plane_g[index], max_source);
             rgba[out + 2] = scale_sample_to_u16(plane_b[index], max_source);
-            rgba[out + 3] = u16::MAX;
+            rgba[out + 3] = alpha_sample(buffers.planes.get(3), x, y, max_source);
         }
     } else {
         let matrix = MatrixCoefficients::from_av1(matrix_coefficients)?;
@@ -235,6 +237,7 @@ pub fn frame_buffers_to_rgba_16(
         let plane_u = buffers.planes.get(1);
         let plane_v = buffers.planes.get(2);
         let chroma_mid = 1u16 << color_config.bit_depth.saturating_sub(1);
+        let alpha_max_source = (1u32 << color_config.bit_depth) - 1;
         for index in 0..buffers.width * buffers.height {
             let x = index % buffers.width;
             let y = index / buffers.width;
@@ -253,7 +256,7 @@ pub fn frame_buffers_to_rgba_16(
             rgba[out] = rgb[0];
             rgba[out + 1] = rgb[1];
             rgba[out + 2] = rgb[2];
-            rgba[out + 3] = u16::MAX;
+            rgba[out + 3] = alpha_sample(buffers.planes.get(3), x, y, alpha_max_source);
         }
     }
 
@@ -268,6 +271,17 @@ fn sample_plane(plane: &super::decode::PlaneBuffer, x: usize, y: usize) -> u16 {
     let source_x = (x >> usize::from(plane.layout.subsampling_x)).min(plane.layout.width - 1);
     let source_y = (y >> usize::from(plane.layout.subsampling_y)).min(plane.layout.height - 1);
     plane.samples[source_y * plane.layout.width + source_x]
+}
+
+fn alpha_sample(
+    plane: Option<&super::decode::PlaneBuffer>,
+    x: usize,
+    y: usize,
+    max_source: u32,
+) -> u16 {
+    plane
+        .map(|plane| scale_sample_to_u16(sample_plane(plane, x, y), max_source))
+        .unwrap_or(u16::MAX)
 }
 
 fn sample_chroma_plane(plane: &super::decode::PlaneBuffer, x: usize, y: usize) -> u16 {
