@@ -127,12 +127,20 @@ pub struct QuantState {
 
 impl QuantState {
     pub fn from_params(params: &QuantizationParams, bit_depth: u8) -> Result<Self, DecoderError> {
+        Self::from_qindex(params, params.base_q_idx, bit_depth)
+    }
+
+    pub fn from_qindex(
+        params: &QuantizationParams,
+        qindex: u8,
+        bit_depth: u8,
+    ) -> Result<Self, DecoderError> {
         if !matches!(bit_depth, 8 | 10 | 12) {
             return Err(DecoderError::Unsupported(format!(
                 "AV1 {bit_depth}-bit quantization is not supported yet"
             )));
         }
-        let base = i32::from(params.base_q_idx);
+        let base = i32::from(qindex);
         Ok(Self {
             y: PlaneQuant {
                 dc: dc_q(base + i32::from(params.delta_q_y_dc), bit_depth),
@@ -279,6 +287,31 @@ mod tests {
         assert_eq!(state.u.ac, ac_q(103, 8));
         assert_eq!(state.v.dc, dc_q(98, 8));
         assert_eq!(state.v.ac, ac_q(97, 8));
+    }
+
+    #[test]
+    fn quant_state_uses_block_qindex_before_plane_deltas() {
+        let params = QuantizationParams {
+            base_q_idx: 40,
+            delta_q_y_dc: 2,
+            delta_q_u_dc: -1,
+            delta_q_u_ac: 3,
+            delta_q_v_dc: 0,
+            delta_q_v_ac: -2,
+            using_qmatrix: false,
+            qm_y: 0,
+            qm_u: 15,
+            qm_v: 15,
+        };
+
+        let state = QuantState::from_qindex(&params, 100, 8).unwrap();
+
+        assert_eq!(state.y.dc, dc_q(102, 8));
+        assert_eq!(state.y.ac, ac_q(100, 8));
+        assert_eq!(state.u.dc, dc_q(99, 8));
+        assert_eq!(state.u.ac, ac_q(103, 8));
+        assert_eq!(state.v.dc, dc_q(100, 8));
+        assert_eq!(state.v.ac, ac_q(98, 8));
     }
 
     #[test]

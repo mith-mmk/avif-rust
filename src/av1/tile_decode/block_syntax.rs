@@ -39,16 +39,6 @@ impl<'a> TileDecoder<'a> {
     ) -> Result<BlockModeProbe, DecoderError> {
         self.configure_plane_entropy_contexts(sequence);
         self.current_cfl = None;
-        if frame.delta_q.present {
-            return Err(DecoderError::Unsupported(
-                "AV1 delta-q block syntax is not supported yet".to_string(),
-            ));
-        }
-        if frame.delta_lf.present {
-            return Err(DecoderError::Unsupported(
-                "AV1 delta loop-filter block syntax is not supported yet".to_string(),
-            ));
-        }
         if frame.allow_intrabc {
             return Err(DecoderError::Unsupported(
                 "AV1 intrabc block syntax is not supported yet".to_string(),
@@ -61,6 +51,12 @@ impl<'a> TileDecoder<'a> {
             .read_symbol(self.cdf.skip_cdf_mut(skip_context))?;
         let skip = skip_symbol != 0;
         let cdef_idx = self.read_cdef_index(sequence, frame, skip, x, y)?;
+        let qindex = self.read_delta_qindex(sequence, frame, block_size, skip, x, y)?;
+        if frame.delta_lf.present {
+            return Err(DecoderError::Unsupported(
+                "AV1 delta loop-filter block syntax is not supported yet".to_string(),
+            ));
+        }
 
         let y_above_context = self.above_y_mode_context(x, y);
         let y_left_context = self.left_y_mode_context(x, y);
@@ -146,6 +142,7 @@ impl<'a> TileDecoder<'a> {
         Ok(BlockModeProbe {
             tile_id: tile.tile_id,
             block_size,
+            qindex,
             skip_context,
             skip_symbol,
             skip,
@@ -167,6 +164,49 @@ impl<'a> TileDecoder<'a> {
             tx_size,
             bit_position_after: self.reader.bit_position(),
         })
+    }
+
+    fn read_delta_qindex(
+        &mut self,
+        sequence: &SequenceHeader,
+        frame: &FrameHeader,
+        block_size: BlockSize,
+        skip: bool,
+        x: usize,
+        y: usize,
+    ) -> Result<u8, DecoderError> {
+        if !frame.delta_q.present {
+            return Ok(self.current_qindex);
+        }
+
+        let superblock_size = if sequence.use_128x128_superblock {
+            128
+        } else {
+            64
+        };
+        let at_superblock_origin =
+            x.is_multiple_of(superblock_size) && y.is_multiple_of(superblock_size);
+        let is_full_superblock =
+            block_size.width() == superblock_size && block_size.height() == superblock_size;
+        if !at_superblock_origin || (is_full_superblock && skip) {
+            return Ok(self.current_qindex);
+        }
+
+        let abs_symbol = self.reader.read_symbol(self.cdf.delta_q_cdf_mut())?;
+        let abs = if abs_symbol == 3 {
+            let rem_bits = self.reader.read_literal(3)? as usize + 1;
+            let abs_bits = self.reader.read_literal(rem_bits)? as i32;
+            abs_bits + (1i32 << rem_bits) + 1
+        } else {
+            abs_symbol as i32
+        };
+        if abs != 0 {
+            let sign = self.reader.read_bool()?;
+            let signed = if sign != 0 { -abs } else { abs };
+            let scaled = signed << frame.delta_q.res;
+            self.current_qindex = (i32::from(self.current_qindex) + scaled).clamp(1, 255) as u8;
+        }
+        Ok(self.current_qindex)
     }
 
     fn read_intra_tx_size(

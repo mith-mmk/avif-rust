@@ -156,6 +156,7 @@ pub struct TileDecoder<'a> {
     block_filter_states: Vec<post_filter_state::BlockFilterState>,
     coefficient_scratch: Vec<i32>,
     coefficient_scan_cache: CoefficientScanCache,
+    current_qindex: u8,
 }
 
 pub(super) fn is_chroma_reference(
@@ -229,6 +230,7 @@ impl<'a> TileDecoder<'a> {
             block_filter_states: Vec::new(),
             coefficient_scratch: Vec::with_capacity(TxSize::Tx64x64.sample_count()),
             coefficient_scan_cache: CoefficientScanCache::new(),
+            current_qindex: frame.base_q_idx,
         })
     }
 

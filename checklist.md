@@ -432,6 +432,11 @@ The full qmatrix-table checkpoint measured `384.70/381.61 ms` on a subsequent
 11-iteration run; retain the earlier release baseline until repeated runs on a
 quiet host are available.
 
+After enabling delta-q parsing and block-local quantizer lookup, the same
+11-iteration WML2Viewer benchmark measured `269.35/276.46 ms` (native/RGBA).
+The sample does not signal delta-q, so this is a no-regression checkpoint rather
+than a delta-q speedup claim.
+
 - [x] Add malformed/truncated coverage for the currently supported container,
       OBU, entropy and metadata paths.
 - [ ] Add malformed/truncated cases for each future syntax path as it becomes
@@ -471,6 +476,11 @@ quiet host are available.
       unit test and decode benchmark.
 - [x] Reserve luma decoded-transform storage from block/transform geometry to
       avoid growth reallocations in the reconstruction loop.
+- [x] Parse AV1 superblock delta-q syntax, carry the tile-local `CurrentQIndex`
+      into block quantization and verify a libaom-generated delta-q AVIF sample
+      against FFmpeg.
+- [ ] Implement delta loop-filter block syntax before enabling frames that
+      signal `delta_lf_present`.
 - [x] Correct the nested crate repository URL to the independently maintained
       `avif-rust` repository and verify it from a fresh clone.
 - [ ] Add SIMD/parallel paths only with scalar equivalence and Wasm fallback

@@ -101,8 +101,6 @@ pub fn probe_first_block_residuals(
     frame: &FrameHeader,
     plan: &FrameDecodePlan,
 ) -> Result<Vec<ResidualProbe>, DecoderError> {
-    let quant_state =
-        QuantState::from_params(&frame.quantization, sequence.color_config.bit_depth)?;
     let mut probes = Vec::with_capacity(tile_group.tiles.len());
     for (index, tile_payload) in tile_group.tiles.iter().enumerate() {
         let payload = tile_payload_bytes(data, tile_payload)?;
@@ -120,6 +118,11 @@ pub fn probe_first_block_residuals(
                 partition.block_size,
                 tile_plan.pixel_x,
                 tile_plan.pixel_y,
+            )?;
+            let quant_state = QuantState::from_qindex(
+                &frame.quantization,
+                block_mode.qindex,
+                sequence.color_config.bit_depth,
             )?;
             let transforms = plan_transform_blocks_with_tx_size(
                 0,
@@ -151,8 +154,6 @@ pub fn decode_first_luma_transform(
     plan: &FrameDecodePlan,
     buffers: &mut FrameBuffers,
 ) -> Result<ResidualProbe, DecoderError> {
-    let quant_state =
-        QuantState::from_params(&frame.quantization, sequence.color_config.bit_depth)?;
     let tile_payload = tile_group.tiles.first().ok_or_else(|| {
         DecoderError::Bitstream("AV1 tile group has no tile payloads".to_string())
     })?;
@@ -172,6 +173,11 @@ pub fn decode_first_luma_transform(
         partition.block_size,
         tile_plan.pixel_x,
         tile_plan.pixel_y,
+    )?;
+    let quant_state = QuantState::from_qindex(
+        &frame.quantization,
+        block_mode.qindex,
+        sequence.color_config.bit_depth,
     )?;
     let transforms = plan_transform_blocks_with_tx_size(
         0,

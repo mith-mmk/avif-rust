@@ -79,8 +79,11 @@ pub(super) fn decode_luma_leaf_block(
         block_mode.uv_mode,
     );
     decoder.record_cdef_index(frame, x, y, block_mode.cdef_idx);
-    let quant_state =
-        QuantState::from_params(&frame.quantization, sequence.color_config.bit_depth)?;
+    let quant_state = QuantState::from_qindex(
+        &frame.quantization,
+        block_mode.qindex,
+        sequence.color_config.bit_depth,
+    )?;
     let chroma = if chroma_reference {
         let uv_mode = block_mode.uv_mode.ok_or_else(|| {
             DecoderError::Bitstream("AV1 chroma block mode is missing".to_string())

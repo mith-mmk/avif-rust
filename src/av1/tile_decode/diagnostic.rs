@@ -24,6 +24,7 @@ pub struct PartitionProbe {
 pub struct BlockModeProbe {
     pub tile_id: u32,
     pub block_size: BlockSize,
+    pub qindex: u8,
     pub skip_context: usize,
     pub skip_symbol: usize,
     pub skip: bool,

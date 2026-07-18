@@ -212,6 +212,9 @@ pub const DEFAULT_PARTITION_W128_CDF: [[u16; 9]; PARTITION_CONTEXTS] = [
 
 pub const DEFAULT_SKIP_CDF: [[u16; 3]; SKIP_CONTEXTS] =
     [[31671, 32768, 0], [16515, 32768, 0], [4576, 32768, 0]];
+// AV1 Default_Delta_Q_Cdf from the normative entropy tables. The decoder
+// stores forward cumulative probabilities (rather than AOM's inverse CDF).
+pub const DEFAULT_DELTA_Q_CDF: [u16; 5] = [28160, 32120, 32677, 32768, 0];
 pub const DEFAULT_SWITCHABLE_RESTORE_CDF: [u16; 4] = [9413, 22581, 32768, 0];
 pub const DEFAULT_WIENER_RESTORE_CDF: [u16; 3] = [11570, 32768, 0];
 pub const DEFAULT_SGRPROJ_RESTORE_CDF: [u16; 3] = [16855, 32768, 0];
@@ -1708,6 +1711,7 @@ pub struct CdfContext {
     pub partition_w64: [[u16; 11]; PARTITION_CONTEXTS],
     pub partition_w128: [[u16; 9]; PARTITION_CONTEXTS],
     pub skip: [[u16; 3]; SKIP_CONTEXTS],
+    pub delta_q: [u16; 5],
     pub switchable_restore: [u16; 4],
     pub wiener_restore: [u16; 3],
     pub sgrproj_restore: [u16; 3],
@@ -1766,6 +1770,7 @@ impl CdfContext {
             partition_w64: DEFAULT_PARTITION_W64_CDF,
             partition_w128: DEFAULT_PARTITION_W128_CDF,
             skip: DEFAULT_SKIP_CDF,
+            delta_q: DEFAULT_DELTA_Q_CDF,
             switchable_restore: DEFAULT_SWITCHABLE_RESTORE_CDF,
             wiener_restore: DEFAULT_WIENER_RESTORE_CDF,
             sgrproj_restore: DEFAULT_SGRPROJ_RESTORE_CDF,
@@ -1817,6 +1822,10 @@ impl CdfContext {
             4 => &mut self.partition_w64[context],
             _ => &mut self.partition_w128[context],
         }
+    }
+
+    pub fn delta_q_cdf_mut(&mut self) -> &mut [u16] {
+        &mut self.delta_q
     }
 
     pub fn skip_cdf_mut(&mut self, context: usize) -> &mut [u16] {
@@ -2029,6 +2038,7 @@ mod tests {
         assert_eq!(context.partition_w64[0][9], 32768);
         assert_eq!(context.partition_w128[0][7], 32768);
         assert_eq!(context.skip[0][1], 32768);
+        assert_eq!(context.delta_q[3], 32768);
         assert_eq!(context.intra_frame_y_mode[0][0][12], 32768);
         assert_eq!(context.y_mode[0][12], 32768);
         assert_eq!(context.uv_mode_cfl_not_allowed[0][12], 32768);
