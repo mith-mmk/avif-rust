@@ -328,6 +328,9 @@ and RGBA gates.
       subsampled chroma planes.
 - [x] Decode CICP PQ (transfer 16) and HLG (transfer 18) through a bounded
       SDR tone map for the existing RGBA8/16 output API.
+- [x] Decode CICP gamma 2.2/2.8 (transfer 4/5) and linear (transfer 8) curves
+      into the existing sRGB RGBA8/16 output API; generated gamma 2.2 AVIF is
+      checked against FFmpeg after an explicit zscale transfer conversion.
 - [x] Apply ICC matrix-shaper profiles with identity/gamma and lookup-table
       (`curv`) tone curves, with bounded table sizes and interpolation checks.
 - [x] Apply ICC matrix-shaper parametric (`para`) tone curves for function
@@ -372,6 +375,11 @@ The HDR transfer-map validation run measured `298.35/300.26 ms` (native/RGBA,
 11 iterations on 2026-07-18); retain the release baseline above because the
 PQ/HLG branch is not exercised by `samples/WML2Viewer.avif` and the host has
 shown scheduling variance across adjacent runs.
+
+The SDR transfer-curve validation run measured `306.92/313.03 ms` (native/RGBA,
+11 iterations on 2026-07-18); the WML2Viewer sample uses transfer 13, so the
+new gamma/linear conversion loop is not entered. Retain the release baseline
+because this host remains scheduling-sensitive.
 
 The full qmatrix-table checkpoint measured `384.70/381.61 ms` on a subsequent
 11-iteration run; retain the earlier release baseline until repeated runs on a

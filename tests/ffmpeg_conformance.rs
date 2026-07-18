@@ -82,6 +82,43 @@ fn ffmpeg_decode_rgba_dynamic(path: &Path, width: usize, height: usize) -> Optio
     Some(output.stdout)
 }
 
+fn ffmpeg_decode_rgba_with_filter(
+    path: &Path,
+    width: usize,
+    height: usize,
+    filter: &str,
+) -> Option<Vec<u8>> {
+    let output = match Command::new("ffmpeg")
+        .args(["-v", "error", "-nostdin"])
+        .arg("-i")
+        .arg(path)
+        .args([
+            "-vf",
+            filter,
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgba",
+            "-",
+        ])
+        .output()
+    {
+        Ok(output) => output,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return None,
+        Err(err) => panic!("failed to execute ffmpeg: {err}"),
+    };
+    assert!(
+        output.status.success(),
+        "ffmpeg filtered decode failed for {}: {}",
+        path.display(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout.len(), width * height * 4);
+    Some(output.stdout)
+}
+
 fn ffmpeg_decode_raw(path: &Path, pixel_format: &str) -> Option<Vec<u8>> {
     let executable = std::env::var_os("AVIF_FFMPEG")
         .map(std::path::PathBuf::from)
@@ -280,6 +317,64 @@ fn generated_two_tile_sample_matches_ffmpeg_when_encoder_present() {
         assert!(
             metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 128,
             "two-tile FFmpeg RGB error average={} max={}",
+            metrics.average_rgb_abs,
+            metrics.max_rgb_abs
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn generated_gamma22_transfer_sample_matches_ffmpeg_when_encoder_present() {
+    let root = std::env::temp_dir().join(format!(".test-avif-gamma22-{}", std::process::id()));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary AVIF sample directory: {err}");
+    }
+    let output_path = root.join("gamma22.avif");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .arg("-i")
+        .arg(sample_path("WML2Viewer.png"))
+        .args([
+            "-vf",
+            "scale=4:4:flags=neighbor,setparams=colorspace=bt709:color_primaries=bt709:color_trc=4,format=yuv444p",
+            "-frames:v",
+            "1",
+            "-c:v",
+            "libaom-av1",
+            "-still-picture",
+            "1",
+            "-crf",
+            "0",
+            "-f",
+            "avif",
+        ])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated gamma22 sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom gamma22 encoder is unavailable; skipping generated sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let data = std::fs::read(&output_path).expect("generated gamma22 AVIF should be readable");
+    let actual = avif_rust::image_from_bytes(&data).expect("gamma22 AVIF should decode");
+    assert_eq!((actual.width, actual.height), (4, 4));
+    if let Some(expected) =
+        ffmpeg_decode_rgba_with_filter(&output_path, 4, 4, "zscale=tin=4:t=13,format=rgba")
+    {
+        let metrics = diff_rgb_dynamic(&actual.rgba, &expected);
+        eprintln!(
+            "gamma22 transfer: average RGB absolute error={} max={}",
+            metrics.average_rgb_abs, metrics.max_rgb_abs
+        );
+        assert!(
+            metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 32,
+            "gamma22 FFmpeg RGB error average={} max={}",
             metrics.average_rgb_abs,
             metrics.max_rgb_abs
         );

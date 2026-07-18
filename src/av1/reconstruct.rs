@@ -247,7 +247,7 @@ pub fn frame_buffers_to_rgba_16(
             rgba[out + 3] = alpha_sample(buffers.planes.get(3), x, y, max_source);
         }
         if let Some(transfer) = hdr_transfer {
-            apply_hdr_tone_map(&mut rgba, transfer);
+            apply_transfer_function(&mut rgba, transfer);
         }
         return Ok(Rgba16ImageBuffer {
             width: buffers.width,
@@ -306,7 +306,7 @@ pub fn frame_buffers_to_rgba_16(
     }
 
     if let Some(transfer) = hdr_transfer {
-        apply_hdr_tone_map(&mut rgba, transfer);
+        apply_transfer_function(&mut rgba, transfer);
     }
 
     Ok(Rgba16ImageBuffer {
@@ -367,46 +367,66 @@ fn validate_rgba_conversion(buffers: &FrameBuffers) -> Result<(), DecoderError> 
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum HdrTransfer {
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum TransferFunction {
+    Gamma22,
+    Gamma28,
+    Linear,
     Pq,
     Hlg,
 }
 
 fn transfer_characteristics(
     color_config: &ColorConfig,
-) -> Result<Option<HdrTransfer>, DecoderError> {
+) -> Result<Option<TransferFunction>, DecoderError> {
     let Some(description) = color_config.color_description else {
         return Ok(None);
     };
     match description.transfer_characteristics {
-        1 | 6 | 13 => Ok(None),
-        16 => Ok(Some(HdrTransfer::Pq)),
-        18 => Ok(Some(HdrTransfer::Hlg)),
+        // These curves are already display-referred for the existing RGBA
+        // API. BT.2020 10/12-bit uses the BT.709 OETF.
+        1 | 6 | 7 | 13 | 14 | 15 => Ok(None),
+        4 => Ok(Some(TransferFunction::Gamma22)),
+        5 => Ok(Some(TransferFunction::Gamma28)),
+        8 => Ok(Some(TransferFunction::Linear)),
+        16 => Ok(Some(TransferFunction::Pq)),
+        18 => Ok(Some(TransferFunction::Hlg)),
         transfer => Err(DecoderError::Unsupported(format!(
             "AV1 transfer characteristics {transfer} RGBA conversion is not supported yet"
         ))),
     }
 }
 
-fn apply_hdr_tone_map(rgba: &mut [u16], transfer: HdrTransfer) {
+fn apply_transfer_function(rgba: &mut [u16], transfer: TransferFunction) {
     for pixel in rgba.chunks_exact_mut(4) {
-        pixel[0] = hdr_to_sdr(pixel[0], transfer);
-        pixel[1] = hdr_to_sdr(pixel[1], transfer);
-        pixel[2] = hdr_to_sdr(pixel[2], transfer);
+        pixel[0] = transfer_to_sdr(pixel[0], transfer);
+        pixel[1] = transfer_to_sdr(pixel[1], transfer);
+        pixel[2] = transfer_to_sdr(pixel[2], transfer);
     }
 }
 
-fn hdr_to_sdr(sample: u16, transfer: HdrTransfer) -> u16 {
+fn transfer_to_sdr(sample: u16, transfer: TransferFunction) -> u16 {
+    let encoded = f64::from(sample) / f64::from(u16::MAX);
+    match transfer {
+        TransferFunction::Gamma22 => linear_to_srgb(encoded.powf(2.2)),
+        TransferFunction::Gamma28 => linear_to_srgb(encoded.powf(2.8)),
+        TransferFunction::Linear => linear_to_srgb(encoded),
+        TransferFunction::Pq | TransferFunction::Hlg => hdr_to_sdr(encoded, transfer),
+    }
+}
+
+fn hdr_to_sdr(encoded: f64, transfer: TransferFunction) -> u16 {
     // Convert PQ to a 100-nit SDR reference and HLG to its relative scene
     // value, then use a bounded Reinhard-style shoulder before sRGB encoding.
     // This keeps the existing RGBA8/16 API display-safe without pretending to
     // perform display-specific HDR gamut or tone calibration.
     const HDR_REFERENCE_WHITE: f64 = 4.0;
-    let encoded = f64::from(sample) / f64::from(u16::MAX);
     let linear = match transfer {
-        HdrTransfer::Pq => pq_to_linear(encoded) * 100.0,
-        HdrTransfer::Hlg => hlg_to_linear(encoded),
+        TransferFunction::Pq => pq_to_linear(encoded) * 100.0,
+        TransferFunction::Hlg => hlg_to_linear(encoded),
+        TransferFunction::Gamma22 | TransferFunction::Gamma28 | TransferFunction::Linear => {
+            unreachable!("SDR transfer functions are handled before HDR tone mapping")
+        }
     };
     let mapped = (linear / (1.0 + linear)) * ((HDR_REFERENCE_WHITE + 1.0) / HDR_REFERENCE_WHITE);
     linear_to_srgb(mapped.clamp(0.0, 1.0))
@@ -976,9 +996,26 @@ mod tests {
         }
 
         let mut rgba = [u16::MAX, u16::MAX / 2, 0, 1234];
-        apply_hdr_tone_map(&mut rgba, HdrTransfer::Pq);
+        apply_transfer_function(&mut rgba, TransferFunction::Pq);
         assert_eq!(rgba[3], 1234);
         assert!(rgba[..3].iter().all(|sample| *sample <= u16::MAX));
+    }
+
+    #[test]
+    fn sdr_transfer_curves_decode_to_srgb() {
+        let midpoint = u16::MAX / 2;
+        let gamma22 = transfer_to_sdr(midpoint, TransferFunction::Gamma22);
+        let gamma28 = transfer_to_sdr(midpoint, TransferFunction::Gamma28);
+        let linear = transfer_to_sdr(midpoint, TransferFunction::Linear);
+
+        assert_eq!(transfer_to_sdr(0, TransferFunction::Linear), 0);
+        assert_eq!(
+            transfer_to_sdr(u16::MAX, TransferFunction::Gamma22),
+            u16::MAX
+        );
+        assert!(gamma28 < gamma22);
+        assert!(gamma22 < linear);
+        assert!(linear < u16::MAX);
     }
 
     fn assert_rgb_close(actual: &[u8], expected: &[u8], tolerance: u8) {
