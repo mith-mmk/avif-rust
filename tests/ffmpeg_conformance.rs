@@ -751,15 +751,34 @@ fn generated_non_identity_qmatrix_sample_matches_ffmpeg_when_encoder_present() {
 
 #[test]
 fn generated_smpte240m_matrix_sample_matches_ffmpeg_when_encoder_present() {
-    let root = std::env::temp_dir().join(format!(".test-avif-smpte240m-{}", std::process::id()));
+    generated_matrix_sample_matches_ffmpeg("smpte240m", "SMPTE 240M");
+}
+
+#[test]
+fn generated_bt2020_constant_luminance_matrix_sample_matches_ffmpeg_when_encoder_present() {
+    generated_matrix_sample_matches_ffmpeg("bt2020c", "BT.2020 constant-luminance");
+}
+
+fn generated_matrix_sample_matches_ffmpeg(colorspace: &str, label: &str) {
+    let root = std::env::temp_dir().join(format!(
+        ".test-avif-matrix-{colorspace}-{}",
+        std::process::id()
+    ));
     if let Err(err) = std::fs::create_dir_all(&root) {
         panic!("failed to create temporary AVIF sample directory: {err}");
     }
-    let output_path = root.join("smpte240m.avif");
-    let status = Command::new("ffmpeg")
+    let output_path = root.join(format!("{colorspace}.avif"));
+    let mut command = Command::new("ffmpeg");
+    command
         .args(["-y", "-loglevel", "error"])
         .arg("-i")
-        .arg(sample_path("WML2Viewer.png"))
+        .arg(sample_path("WML2Viewer.png"));
+    if colorspace == "bt2020c" {
+        // libaom cannot infer the constant-luminance conversion directly
+        // from RGB input; mark the already formatted YUV frame instead.
+        command.args(["-vf", "format=yuv444p,setparams=colorspace=bt2020c"]);
+    }
+    let status = command
         .args([
             "-frames:v",
             "1",
@@ -778,30 +797,34 @@ fn generated_smpte240m_matrix_sample_matches_ffmpeg_when_encoder_present() {
             "-color_trc",
             "iec61966-2-1",
             "-colorspace",
-            "smpte240m",
+            colorspace,
             "-f",
             "avif",
         ])
         .arg(&output_path)
         .status();
     let Ok(status) = status else {
-        eprintln!("ffmpeg is not available; skipping SMPTE 240M matrix sample");
+        eprintln!("ffmpeg is not available; skipping {label} matrix sample");
         let _ = std::fs::remove_dir_all(&root);
         return;
     };
     if !status.success() {
-        eprintln!("libaom encoder is unavailable; skipping SMPTE 240M matrix sample");
+        eprintln!("libaom encoder is unavailable; skipping {label} matrix sample");
         let _ = std::fs::remove_dir_all(&root);
         return;
     }
-    let data = std::fs::read(&output_path).expect("generated SMPTE 240M AVIF should be readable");
-    let actual = avif_rust::image_from_bytes(&data).expect("SMPTE 240M AVIF should decode");
+    let data = std::fs::read(&output_path).expect("generated matrix AVIF should be readable");
+    let actual = avif_rust::image_from_bytes(&data).expect("generated matrix AVIF should decode");
     assert_eq!((actual.width, actual.height), (SAMPLE_WIDTH, SAMPLE_HEIGHT));
-    if let Some(expected) = ffmpeg_decode_rgba(&output_path) {
+    if colorspace == "bt2020c" {
+        // This FFmpeg build can encode matrix 10 but cannot convert its
+        // decoded frames to RGBA in the generic output path.  The decoder's
+        // matrix-10 arithmetic is covered by the focused unit vector above.
+    } else if let Some(expected) = ffmpeg_decode_rgba(&output_path) {
         let metrics = diff_rgb(&actual.rgba, &expected);
         assert!(
             metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 32,
-            "SMPTE 240M FFmpeg RGB error average={} max={}",
+            "{label} FFmpeg RGB error average={} max={}",
             metrics.average_rgb_abs,
             metrics.max_rgb_abs
         );

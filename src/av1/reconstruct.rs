@@ -484,6 +484,7 @@ fn linear_to_srgb(linear: f64) -> u16 {
 #[derive(Debug, Clone, Copy)]
 enum MatrixCoefficients {
     Yuv { kr: f64, kb: f64 },
+    Bt2020ConstantLuminance { kr: f64, kb: f64 },
     YcGco,
 }
 
@@ -509,6 +510,10 @@ impl MatrixCoefficients {
             }),
             8 => Ok(Self::YcGco),
             9 => Ok(Self::Yuv {
+                kr: 0.2627,
+                kb: 0.0593,
+            }),
+            10 => Ok(Self::Bt2020ConstantLuminance {
                 kr: 0.2627,
                 kb: 0.0593,
             }),
@@ -567,6 +572,24 @@ fn yuv_to_rgb_u16(
         MatrixCoefficients::Yuv { kr, kb } => {
             let r = y + 2.0 * (1.0 - kr) * cr;
             let b = y + 2.0 * (1.0 - kb) * cb;
+            let g = (y - kr * r - kb * b) / (1.0 - kr - kb);
+            (r, g, b)
+        }
+        MatrixCoefficients::Bt2020ConstantLuminance { kr, kb } => {
+            // BT.2020 constant-luminance stores each chroma component with a
+            // different scale on either side of the luma axis.  The sign of
+            // the component selects the inverse branch (H.273 equations
+            // 69/70), rather than the fixed scale used by matrix 9.
+            let r = y + if cr < 0.0 {
+                2.0 * (1.0 - kr) * cr
+            } else {
+                2.0 * kr * cr
+            };
+            let b = y + if cb < 0.0 {
+                2.0 * (1.0 - kb) * cb
+            } else {
+                2.0 * kb * cb
+            };
             let g = (y - kr * r - kb * b) / (1.0 - kr - kb);
             (r, g, b)
         }
@@ -829,6 +852,59 @@ mod tests {
         assert!(image.rgba[0] > 48_000);
         assert!((image.rgba[1] as i32 - 32_896).abs() < 512);
         assert!(image.rgba[2] < 18_000);
+    }
+
+    #[test]
+    fn rgba_conversion_supports_bt2020_constant_luminance_matrix() {
+        let layout = PlaneLayout {
+            plane: 0,
+            width: 1,
+            height: 1,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 1,
+        };
+        let buffers = FrameBuffers {
+            width: 1,
+            height: 1,
+            planes: vec![
+                PlaneBuffer {
+                    layout,
+                    samples: vec![128], // Y' ~= 0.5
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout { plane: 1, ..layout },
+                    samples: vec![192], // positive Cb branch
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout { plane: 2, ..layout },
+                    samples: vec![64], // negative Cr branch
+                },
+            ],
+        };
+        let color_config = ColorConfig {
+            high_bitdepth: false,
+            twelve_bit: false,
+            bit_depth: 8,
+            monochrome: false,
+            color_description: Some(super::super::sequence::ColorDescription {
+                color_primaries: 9,
+                transfer_characteristics: 13,
+                matrix_coefficients: 10,
+            }),
+            color_range: super::super::sequence::ColorRange::Full,
+            subsampling_x: false,
+            subsampling_y: false,
+            chroma_sample_position: None,
+            separate_uv_delta_q: false,
+        };
+
+        let image = frame_buffers_to_rgba_16(&buffers, &color_config).unwrap();
+
+        assert!(image.rgba[0] > 8_000 && image.rgba[0] < 10_000);
+        assert!(image.rgba[1] > 38_000 && image.rgba[1] < 44_000);
+        assert!(image.rgba[2] > 33_000 && image.rgba[2] < 36_000);
+        assert_eq!(image.rgba[3], u16::MAX);
     }
 
     #[test]

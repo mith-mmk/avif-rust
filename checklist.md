@@ -298,6 +298,11 @@ and RGBA gates.
       fixtures.
 - [x] Add a generated 8-bit 4:4:4 SMPTE 240M (`matrix_coefficients=7`)
       AVIF sample and compare its RGBA output against FFmpeg.
+- [x] Decode BT.2020 constant-luminance (`matrix_coefficients=10`) with the
+      sign-dependent chroma branches from H.273. A focused vector covers both
+      branches, and a generated libaom sample exercises AVIF metadata parsing;
+      this FFmpeg build can encode matrix 10 but cannot convert it to RGBA for
+      an independent pixel oracle.
 - [x] 10-bit quantisation/reconstruction with dedicated AOM quantizer tables;
       12-bit parsing/output is covered, while film grain is applied for the
       non-overlap still-image path.
