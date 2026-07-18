@@ -529,6 +529,14 @@ allocation-reduction checkpoint, not a stable speedup claim until a quieter
 host confirms the delta. The allocating compatibility wrapper and exact
 oracle paths remain unchanged.
 
+The dequantized coefficient block now uses a second TileDecoder-owned 64x64
+`i32` scratch buffer, covering both ordinary and qmatrix dequantization while
+preserving the allocating quantization APIs. The next seven-iteration recheck
+measured `283.85/293.76 ms` (native/RGBA); host scheduling remains variable,
+so this is recorded as an allocation-reduction checkpoint rather than a
+stable speedup claim. Quantization unit tests and the strict plane/RGBA gates
+remain green.
+
 The full qmatrix-table checkpoint measured `384.70/381.61 ms` on a subsequent
 11-iteration run; retain the earlier release baseline until repeated runs on a
 quiet host are available.

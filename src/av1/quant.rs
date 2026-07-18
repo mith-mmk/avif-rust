@@ -172,24 +172,40 @@ pub fn dequantize_coefficients(
     bit_depth: u8,
     dq_denom: i32,
 ) -> Vec<i32> {
-    let limit = 1i32 << (7 + bit_depth);
-    quant
-        .iter()
-        .enumerate()
-        .map(|(index, coeff)| {
-            let q = if index == 0 {
-                plane_quant.dc
-            } else {
-                plane_quant.ac
-            };
-            let dq = coeff.saturating_mul(q);
-            let sign = if dq < 0 { -1 } else { 1 };
-            let dq2 = sign * ((dq.abs() & 0x00ff_ffff) / dq_denom.max(1));
-            dq2.clamp(-limit, limit - 1)
-        })
-        .collect()
+    let mut output = vec![0; quant.len()];
+    dequantize_coefficients_into(quant, plane_quant, bit_depth, dq_denom, &mut output)
+        .expect("dequantization output has the input coefficient length");
+    output
 }
 
+pub fn dequantize_coefficients_into(
+    quant: &[i32],
+    plane_quant: PlaneQuant,
+    bit_depth: u8,
+    dq_denom: i32,
+    output: &mut [i32],
+) -> Result<(), DecoderError> {
+    if output.len() != quant.len() {
+        return Err(DecoderError::InvalidParam(
+            "AV1 dequantization output count does not match coefficients".to_string(),
+        ));
+    }
+    let limit = 1i32 << (7 + bit_depth);
+    for (index, (output, coeff)) in output.iter_mut().zip(quant).enumerate() {
+        let q = if index == 0 {
+            plane_quant.dc
+        } else {
+            plane_quant.ac
+        };
+        let dq = coeff.saturating_mul(q);
+        let sign = if dq < 0 { -1 } else { 1 };
+        let dq2 = sign * ((dq.abs() & 0x00ff_ffff) / dq_denom.max(1));
+        *output = dq2.clamp(-limit, limit - 1);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 pub(crate) fn dequantize_coefficients_with_qmatrix(
     quant: &[i32],
     plane_quant: PlaneQuant,
@@ -200,24 +216,53 @@ pub(crate) fn dequantize_coefficients_with_qmatrix(
     tx_size: TxSize,
     tx_type: TxType,
 ) -> Vec<i32> {
+    let mut output = vec![0; quant.len()];
+    dequantize_coefficients_with_qmatrix_into(
+        quant,
+        plane_quant,
+        bit_depth,
+        dq_denom,
+        level,
+        plane,
+        tx_size,
+        tx_type,
+        &mut output,
+    )
+    .expect("qmatrix dequantization output has the input coefficient length");
+    output
+}
+
+pub(crate) fn dequantize_coefficients_with_qmatrix_into(
+    quant: &[i32],
+    plane_quant: PlaneQuant,
+    bit_depth: u8,
+    dq_denom: i32,
+    level: u8,
+    plane: usize,
+    tx_size: TxSize,
+    tx_type: TxType,
+    output: &mut [i32],
+) -> Result<(), DecoderError> {
+    if output.len() != quant.len() {
+        return Err(DecoderError::InvalidParam(
+            "AV1 qmatrix dequantization output count does not match coefficients".to_string(),
+        ));
+    }
     let limit = 1i32 << (7 + bit_depth);
-    quant
-        .iter()
-        .enumerate()
-        .map(|(index, coeff)| {
-            let base_q = if index == 0 {
-                plane_quant.dc
-            } else {
-                plane_quant.ac
-            };
-            let q = qmatrix::inverse_value(level, plane, tx_size, tx_type, index)
-                .map_or(base_q, |matrix| ((i32::from(matrix) * base_q) + 16) >> 5);
-            let dq = coeff.saturating_mul(q);
-            let sign = if dq < 0 { -1 } else { 1 };
-            let dq2 = sign * ((dq.abs() & 0x00ff_ffff) / dq_denom.max(1));
-            dq2.clamp(-limit, limit - 1)
-        })
-        .collect()
+    for (index, (output, coeff)) in output.iter_mut().zip(quant).enumerate() {
+        let base_q = if index == 0 {
+            plane_quant.dc
+        } else {
+            plane_quant.ac
+        };
+        let q = qmatrix::inverse_value(level, plane, tx_size, tx_type, index)
+            .map_or(base_q, |matrix| ((i32::from(matrix) * base_q) + 16) >> 5);
+        let dq = coeff.saturating_mul(q);
+        let sign = if dq < 0 { -1 } else { 1 };
+        let dq2 = sign * ((dq.abs() & 0x00ff_ffff) / dq_denom.max(1));
+        *output = dq2.clamp(-limit, limit - 1);
+    }
+    Ok(())
 }
 
 fn dc_q(qindex: i32, bit_depth: u8) -> i32 {
@@ -358,6 +403,18 @@ mod tests {
         assert_eq!(dequant[0], 8);
         assert_eq!(dequant[1], -24);
         assert_eq!(dequant[2], (1 << 15) - 1);
+    }
+
+    #[test]
+    fn dequantize_into_matches_allocating_wrapper() {
+        let quant = [2, -3, 100_000];
+        let plane = PlaneQuant { dc: 4, ac: 8 };
+        let expected = dequantize_coefficients(&quant, plane, 8, 1);
+        let mut actual = [0; 3];
+
+        dequantize_coefficients_into(&quant, plane, 8, 1, &mut actual).unwrap();
+
+        assert_eq!(actual, expected.as_slice());
     }
 
     #[test]

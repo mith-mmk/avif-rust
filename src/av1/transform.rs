@@ -1,5 +1,9 @@
 use super::decode::PlaneBuffer;
-use super::quant::{PlaneQuant, dequantize_coefficients, dequantize_coefficients_with_qmatrix};
+#[cfg(test)]
+use super::quant::dequantize_coefficients;
+use super::quant::{
+    PlaneQuant, dequantize_coefficients_into, dequantize_coefficients_with_qmatrix_into,
+};
 #[cfg(test)]
 use super::reconstruct::add_residual_to_prediction;
 use super::reconstruct::{add_residual_to_prediction_into, write_plane_block};
@@ -322,6 +326,7 @@ pub(crate) fn reconstruct_transform_block_parts(
     bit_depth: u8,
     qmatrix: Option<(u8, usize)>,
 ) -> Result<ReconstructedTransform, DecoderError> {
+    let mut dequant = vec![0; block.tx_size.sample_count()];
     let mut reconstructed = vec![0; block.tx_size.sample_count()];
     reconstruct_transform_block_parts_into(
         plane,
@@ -332,6 +337,7 @@ pub(crate) fn reconstruct_transform_block_parts(
         prediction,
         bit_depth,
         qmatrix,
+        &mut dequant,
         &mut reconstructed,
     )
 }
@@ -345,6 +351,7 @@ pub(crate) fn reconstruct_transform_block_parts_into(
     prediction: &[u16],
     bit_depth: u8,
     qmatrix: Option<(u8, usize)>,
+    dequant: &mut [i32],
     reconstructed: &mut [u16],
 ) -> Result<ReconstructedTransform, DecoderError> {
     let tx_size = block.tx_size;
@@ -363,27 +370,38 @@ pub(crate) fn reconstruct_transform_block_parts_into(
             "AV1 reconstruction output count does not match transform size".to_string(),
         ));
     }
+    if dequant.len() != tx_size.sample_count() {
+        return Err(DecoderError::InvalidParam(
+            "AV1 dequantization output count does not match transform size".to_string(),
+        ));
+    }
 
     let non_zero_coefficients = coefficients
         .iter()
         .filter(|coefficient| **coefficient != 0)
         .count();
-    let dequant = qmatrix.map_or_else(
-        || dequantize_coefficients(coefficients, plane_quant, bit_depth, tx_size.dq_denom()),
-        |(level, plane)| {
-            dequantize_coefficients_with_qmatrix(
-                coefficients,
-                plane_quant,
-                bit_depth,
-                tx_size.dq_denom(),
-                level,
-                plane,
-                tx_size,
-                tx_type,
-            )
-        },
-    );
-    let residual = inverse_transform(tx_type, tx_size, &dequant, bit_depth)?;
+    if let Some((level, plane)) = qmatrix {
+        dequantize_coefficients_with_qmatrix_into(
+            coefficients,
+            plane_quant,
+            bit_depth,
+            tx_size.dq_denom(),
+            level,
+            plane,
+            tx_size,
+            tx_type,
+            dequant,
+        )?;
+    } else {
+        dequantize_coefficients_into(
+            coefficients,
+            plane_quant,
+            bit_depth,
+            tx_size.dq_denom(),
+            dequant,
+        )?;
+    }
+    let residual = inverse_transform(tx_type, tx_size, dequant, bit_depth)?;
     add_residual_to_prediction_into(prediction, &residual, bit_depth, reconstructed)?;
     write_plane_block(
         plane,
@@ -427,6 +445,7 @@ pub(crate) fn reconstruct_lossless_transform_block_parts(
     prediction: &[u16],
     bit_depth: u8,
 ) -> Result<ReconstructedTransform, DecoderError> {
+    let mut dequant = vec![0; TxSize::Tx4x4.sample_count()];
     let mut reconstructed = vec![0; TxSize::Tx4x4.sample_count()];
     reconstruct_lossless_transform_block_parts_into(
         plane,
@@ -436,6 +455,7 @@ pub(crate) fn reconstruct_lossless_transform_block_parts(
         plane_quant,
         prediction,
         bit_depth,
+        &mut dequant,
         &mut reconstructed,
     )
 }
@@ -448,6 +468,7 @@ pub(crate) fn reconstruct_lossless_transform_block_parts_into(
     plane_quant: PlaneQuant,
     prediction: &[u16],
     bit_depth: u8,
+    dequant: &mut [i32],
     reconstructed: &mut [u16],
 ) -> Result<ReconstructedTransform, DecoderError> {
     if block.tx_size != TxSize::Tx4x4 {
@@ -467,18 +488,24 @@ pub(crate) fn reconstruct_lossless_transform_block_parts_into(
             "AV1 lossless reconstruction output count does not match 4x4".to_string(),
         ));
     }
+    if dequant.len() != TxSize::Tx4x4.sample_count() {
+        return Err(DecoderError::InvalidParam(
+            "AV1 lossless dequantization output count does not match 4x4".to_string(),
+        ));
+    }
 
     let non_zero_coefficients = coefficients
         .iter()
         .filter(|coefficient| **coefficient != 0)
         .count();
-    let dequant = dequantize_coefficients(
+    dequantize_coefficients_into(
         coefficients,
         plane_quant,
         bit_depth,
         TxSize::Tx4x4.dq_denom(),
-    );
-    let residual = inverse_lossless_transform_4x4(&dequant);
+        dequant,
+    )?;
+    let residual = inverse_lossless_transform_4x4(dequant);
     add_residual_to_prediction_into(prediction, &residual, bit_depth, reconstructed)?;
     write_plane_block(plane, block.x, block.y, 4, 4, reconstructed)?;
 

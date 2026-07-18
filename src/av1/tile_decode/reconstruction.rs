@@ -282,6 +282,7 @@ pub(super) fn decode_plane_block_unit(
         )?;
         let block = decoded_transform.transform;
         let tx_type = decoded_transform.tx_type;
+        let dequant = &mut decoder.dequant_scratch[..prediction_len];
         let reconstructed = &mut decoder.reconstruction_scratch[..prediction_len];
         if frame.quantization.coded_lossless() {
             reconstruct_lossless_transform_block_parts_into(
@@ -292,6 +293,7 @@ pub(super) fn decode_plane_block_unit(
                 quant_state.plane(transform.plane),
                 &prediction,
                 sequence.color_config.bit_depth,
+                dequant,
                 reconstructed,
             )?;
         } else {
@@ -310,6 +312,7 @@ pub(super) fn decode_plane_block_unit(
                 &prediction,
                 sequence.color_config.bit_depth,
                 qmatrix,
+                dequant,
                 reconstructed,
             )?;
         }
