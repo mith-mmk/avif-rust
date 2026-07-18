@@ -181,31 +181,67 @@ pub(crate) fn read_intra_edges_into(
 pub fn frame_buffers_to_identity_rgba_8(
     buffers: &FrameBuffers,
 ) -> Result<ImageBuffer, DecoderError> {
-    frame_buffers_to_rgba_8(
-        buffers,
-        &ColorConfig {
-            high_bitdepth: false,
-            twelve_bit: false,
-            bit_depth: 8,
-            monochrome: false,
-            color_description: Some(super::sequence::ColorDescription {
-                color_primaries: 1,
-                transfer_characteristics: 13,
-                matrix_coefficients: 0,
-            }),
-            color_range: super::sequence::ColorRange::Full,
-            subsampling_x: false,
-            subsampling_y: false,
-            chroma_sample_position: None,
-            separate_uv_delta_q: false,
-        },
-    )
+    frame_buffers_to_identity_rgba_8_fast(buffers)
+}
+
+fn frame_buffers_to_identity_rgba_8_fast(
+    buffers: &FrameBuffers,
+) -> Result<ImageBuffer, DecoderError> {
+    validate_rgba_conversion(buffers)?;
+    if buffers.planes.len() < 3
+        || buffers.planes[..3]
+            .iter()
+            .any(|plane| plane.layout.subsampling_x != 0 || plane.layout.subsampling_y != 0)
+    {
+        return Err(DecoderError::Bitstream(
+            "AV1 identity GBR planes must be full-resolution".to_string(),
+        ));
+    }
+    let plane_g = &buffers.planes[0].samples;
+    let plane_b = &buffers.planes[1].samples;
+    let plane_r = &buffers.planes[2].samples;
+    let mut rgba = vec![0u8; buffers.width * buffers.height * 4];
+    for (index, pixel) in rgba.chunks_exact_mut(4).enumerate() {
+        pixel[0] = plane_r[index] as u8;
+        pixel[1] = plane_g[index] as u8;
+        pixel[2] = plane_b[index] as u8;
+        pixel[3] = u8::try_from(
+            buffers
+                .planes
+                .get(3)
+                .map(|plane| plane.samples[index])
+                .unwrap_or(u16::MAX),
+        )
+        .unwrap_or(u8::MAX);
+    }
+    Ok(ImageBuffer {
+        width: buffers.width,
+        height: buffers.height,
+        rgba,
+    })
 }
 
 pub fn frame_buffers_to_rgba_8(
     buffers: &FrameBuffers,
     color_config: &ColorConfig,
 ) -> Result<ImageBuffer, DecoderError> {
+    if color_config.bit_depth == 8
+        && !color_config.monochrome
+        && !color_config.subsampling_x
+        && !color_config.subsampling_y
+        && color_config
+            .color_description
+            .is_none_or(|description| description.transfer_characteristics == 13)
+        && color_config
+            .color_description
+            .is_some_and(|description| description.matrix_coefficients == 0)
+        && buffers
+            .planes
+            .iter()
+            .all(|plane| plane.layout.subsampling_x == 0 && plane.layout.subsampling_y == 0)
+    {
+        return frame_buffers_to_identity_rgba_8_fast(buffers);
+    }
     let rgba16 = frame_buffers_to_rgba_16(buffers, color_config)?;
     let rgba = rgba16
         .rgba

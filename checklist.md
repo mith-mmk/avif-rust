@@ -442,6 +442,11 @@ After enabling delta-lf parsing and block-local deblock deltas, the same
 The sample does not signal delta-lf, so this is a no-regression checkpoint
 rather than a delta-lf speedup claim.
 
+The 8-bit identity-GBR RGBA fast path now bypasses the intermediate RGBA16
+buffer when no ICC profile is present. The same 11-iteration benchmark measured
+`274.15/279.31 ms` (native/RGBA); the improvement is recorded as a checkpoint
+because host scheduling remains variable.
+
 - [x] Add malformed/truncated coverage for the currently supported container,
       OBU, entropy and metadata paths.
 - [ ] Add malformed/truncated cases for each future syntax path as it becomes
