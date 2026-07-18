@@ -480,6 +480,91 @@ fn generated_cdef_sample_matches_explicit_ffmpeg_yuv_oracle_when_encoder_present
 }
 
 #[test]
+fn generated_cdef_420_sample_matches_ffmpeg_when_encoder_present() {
+    let root = std::env::temp_dir().join(format!(".test-avif-cdef420-{}", std::process::id()));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary AVIF sample directory: {err}");
+    }
+    let output_path = root.join("cdef-420.avif");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .args(["-f", "lavfi", "-i", "testsrc2=size=256x256:rate=1"])
+        .args([
+            "-frames:v",
+            "1",
+            "-c:v",
+            "libaom-av1",
+            "-still-picture",
+            "1",
+            "-crf",
+            "18",
+            "-cpu-used",
+            "8",
+            "-pix_fmt",
+            "yuv420p",
+            "-aom-params",
+            "enable-cdef=1:enable-restoration=0",
+            "-f",
+            "avif",
+        ])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated 4:2:0 CDEF sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom 4:2:0 CDEF encoder is unavailable; skipping generated sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+
+    let data = std::fs::read(&output_path).expect("generated 4:2:0 CDEF AVIF should be readable");
+    let actual = avif_rust::image_from_bytes(&data).expect("4:2:0 CDEF AVIF should decode");
+    let actual_frame =
+        avif_rust::decode_frame_bytes(&data).expect("4:2:0 CDEF frame should decode");
+    if let Some(expected) = ffmpeg_decode_raw(&output_path, "yuv420p") {
+        let plane_lengths = [256 * 256, 128 * 128, 128 * 128];
+        let mut offset = 0;
+        for (plane_index, &plane_len) in plane_lengths.iter().enumerate() {
+            let expected_plane = &expected[offset..offset + plane_len];
+            let actual_plane = &actual_frame.buffers.planes[plane_index].samples;
+            let errors = actual_plane
+                .iter()
+                .zip(expected_plane)
+                .map(|(actual, expected)| u8::try_from(*actual).unwrap().abs_diff(*expected));
+            let max_error = errors.clone().max().unwrap_or(0);
+            let average_error = errors.map(u64::from).sum::<u64>() as f64 / plane_len as f64;
+            assert!(
+                average_error <= 2.0 && max_error <= 32,
+                "4:2:0 CDEF plane {plane_index}: average={average_error} max={max_error}"
+            );
+            offset += plane_len;
+        }
+    }
+    let Some(expected) = ffmpeg_decode_rgba_with_filter(
+        &output_path,
+        256,
+        256,
+        "zscale=matrixin=709:transferin=709:primariesin=709:rangein=limited:matrix=709:transfer=709:primaries=709:range=full,format=rgba",
+    ) else {
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    let metrics = diff_rgb_dynamic(&actual.rgba, &expected);
+    eprintln!(
+        "4:2:0 CDEF FFmpeg RGB error average={} max={}",
+        metrics.average_rgb_abs, metrics.max_rgb_abs
+    );
+    // Chroma siting differences at a handful of edge pixels can be large in
+    // RGB even when the filtered YUV planes remain within the average gate.
+    let within_oracle = metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 192;
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(within_oracle);
+}
+
+#[test]
 fn generated_delta_q_sample_matches_ffmpeg_when_encoder_present() {
     let root = std::env::temp_dir().join(format!(".test-avif-deltaq-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {

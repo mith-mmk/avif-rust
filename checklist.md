@@ -259,6 +259,10 @@ public decoded-frame shape.
 - [x] Collect tile-local CDEF indices during traversal.
 - [ ] Integrate frame-level CDEF state and apply each decoded per-block index
       after deblock; verify all planes against a CDEF oracle.
+- [x] Map each luma CDEF block to its subsampled chroma-plane origin and block
+      extent; add a generated non-lossless 4:2:0 CDEF sample against FFmpeg
+      (native YUV average error <=`2`, maximum <=`32`; RGB average error
+      `1.217`, maximum `179`).
 - [ ] Match normative CDEF frame preparation and block semantics: luma
       direction/variance is shared with chroma, luma primary strength uses the
       directional-variance adjustment, secondary strength `3` maps to `4`,
@@ -493,6 +497,11 @@ intra-block-copy reconstruction, the five-iteration recheck measured
 (native/RGBA). Host scheduling variance remains larger than the observed delta,
 so this is recorded as a no-regression allocation-reduction checkpoint rather
 than a stable speedup claim.
+
+After mapping CDEF blocks to subsampled chroma coordinates, the seven-iteration
+WML2Viewer recheck measured `303.72/282.87 ms` (native/RGBA). The sample is
+4:4:4, so this confirms no regression in the existing hot loop; the new 4:2:0
+coverage is validated separately by the generated CDEF oracle.
 
 The full qmatrix-table checkpoint measured `384.70/381.61 ms` on a subsequent
 11-iteration run; retain the earlier release baseline until repeated runs on a

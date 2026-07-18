@@ -1939,10 +1939,16 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
     for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
         let width = plane.layout.width;
         let height = plane.layout.height;
+        let subsampling_x = usize::from(plane_index > 0 && frame.color_config.subsampling_x);
+        let subsampling_y = usize::from(plane_index > 0 && frame.color_config.subsampling_y);
+        let scale_x = 1usize << subsampling_x;
+        let scale_y = 1usize << subsampling_y;
         let source = plane.samples.clone();
         let mut filtered = vec![0u16; 64];
         for &(x, y, index, detected_direction, variance) in &cdef_blocks {
-            if x >= width || y >= height {
+            let plane_x = x / scale_x;
+            let plane_y = y / scale_y;
+            if plane_x >= width || plane_y >= height {
                 continue;
             }
             let strength = &frame_header.cdef.strengths[index];
@@ -1974,14 +1980,14 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
                 .cdef
                 .damping
                 .saturating_sub(u8::from(plane_index != 0));
-            let block_width = (width - x).min(8);
-            let block_height = (height - y).min(8);
+            let block_width = (width - plane_x).min(8usize.div_ceil(scale_x));
+            let block_height = (height - plane_y).min(8usize.div_ceil(scale_y));
             cdef_filter_block_region_with_edge_mode_into(
                 &source,
                 width,
                 height,
-                x,
-                y,
+                plane_x,
+                plane_y,
                 block_width,
                 block_height,
                 direction,
@@ -1992,7 +1998,7 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
                 &mut filtered,
             );
             for row in 0..block_height {
-                let start = (y + row) * width + x;
+                let start = (plane_y + row) * width + plane_x;
                 let block_start = row * block_width;
                 plane.samples[start..start + block_width]
                     .copy_from_slice(&filtered[block_start..block_start + block_width]);
