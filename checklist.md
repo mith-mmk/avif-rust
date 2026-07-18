@@ -493,6 +493,11 @@ is still required before marking the full tool supported.
 - [x] Replace per-block residual-unit ordering allocations with a fixed-state
       iterator and verify the 64x64 interleaving order against the existing
       unit test and decode benchmark.
+- [x] Collect decoded luma blocks directly during recursive partition traversal
+      instead of allocating and concatenating a temporary `Vec` per partition;
+      two same-condition runs measured `274.56/273.46` and `270.81/273.23 ms`
+      (native/RGBA, 7 iterations) on 2026-07-18. Keep the result as a host-
+      sensitive checkpoint until a quieter host confirms the delta.
 - [x] Reserve luma decoded-transform storage from block/transform geometry to
       avoid growth reallocations in the reconstruction loop.
 - [x] Parse AV1 superblock delta-q syntax, carry the tile-local `CurrentQIndex`

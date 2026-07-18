@@ -323,6 +323,7 @@ pub fn decode_luma_root_block_prefix(
         ));
     }
     let mut blocks = Vec::new();
+    blocks.reserve(max_blocks.min(plan.width.saturating_mul(plan.height)));
     let mut block_budget = max_blocks;
     for (tile_index, tile_payload) in tile_group.tiles.iter().enumerate() {
         let payload = tile_payload_bytes(data, tile_payload)?;
@@ -343,7 +344,8 @@ pub fn decode_luma_root_block_prefix(
                 let x = (sb_col as usize * plan.superblock_size).min(plan.width);
                 let y = (sb_row as usize * plan.superblock_size).min(plan.height);
                 decoder.read_restoration_units(sequence, x, y)?;
-                let decoded = match decode_luma_block_tree(
+                let block_start = blocks.len();
+                let result = decode_luma_block_tree(
                     &mut decoder,
                     sequence,
                     frame,
@@ -354,17 +356,18 @@ pub fn decode_luma_root_block_prefix(
                     x,
                     y,
                     &mut block_budget,
-                ) {
-                    Ok(blocks) => blocks,
-                    Err(err @ DecoderError::Unsupported(_)) if !blocks.is_empty() => {
+                    &mut blocks,
+                );
+                match result {
+                    Ok(()) => {}
+                    Err(err @ DecoderError::Unsupported(_)) if blocks.len() > block_start => {
                         return Ok(DecodedBlockPrefix {
                             blocks,
                             next_unsupported: Some(err),
                         });
                     }
                     Err(err) => return Err(err),
-                };
-                blocks.extend(decoded);
+                }
             }
         }
     }
@@ -420,7 +423,8 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy(
                 let x = (sb_col as usize * plan.superblock_size).min(plan.width);
                 let y = (sb_row as usize * plan.superblock_size).min(plan.height);
                 decoder.read_restoration_units(sequence, x, y)?;
-                let decoded = match decode_luma_block_tree(
+                let block_start = blocks.len();
+                let result = decode_luma_block_tree(
                     &mut decoder,
                     sequence,
                     frame,
@@ -431,9 +435,11 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy(
                     x,
                     y,
                     &mut block_budget,
-                ) {
-                    Ok(blocks) => blocks,
-                    Err(err @ DecoderError::Unsupported(_)) if !blocks.is_empty() => {
+                    &mut blocks,
+                );
+                match result {
+                    Ok(()) => {}
+                    Err(err @ DecoderError::Unsupported(_)) if blocks.len() > block_start => {
                         post_filter_state.merge(decoder.take_post_filter_state());
                         return Ok((
                             DecodedBlockPrefix {
@@ -444,9 +450,8 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy(
                         ));
                     }
                     Err(err) => return Err(err),
-                };
-                post_filter_state.record_luma_blocks(&decoded);
-                blocks.extend(decoded);
+                }
+                post_filter_state.record_luma_blocks(&blocks[block_start..]);
             }
         }
         if validate_entropy {

@@ -313,11 +313,12 @@ pub(super) fn decode_luma_block_tree(
     x: usize,
     y: usize,
     block_budget: &mut usize,
-) -> Result<Vec<DecodedLumaBlock>, DecoderError> {
+    blocks: &mut Vec<DecodedLumaBlock>,
+) -> Result<(), DecoderError> {
     let coded_width = decoder.mi_cols << 2;
     let coded_height = decoder.mi_rows << 2;
     if *block_budget == 0 || x >= coded_width || y >= coded_height {
-        return Ok(Vec::new());
+        return Ok(());
     }
     // AV1 does not signal a partition for blocks smaller than 8x8; they are
     // implicit leaves even when one dimension is 4 pixels.
@@ -326,18 +327,20 @@ pub(super) fn decode_luma_block_tree(
             decoder, sequence, frame, tile_plan, plan, buffers, block_size, x, y,
         )?;
         *block_budget -= 1;
-        return Ok(vec![block]);
+        blocks.push(block);
+        return Ok(());
     }
     let partition = decoder
         .read_partition(tile_plan, block_size, x, y)?
         .partition;
-    let decoded = match partition {
+    match partition {
         Partition::None => {
             let block = decode_luma_leaf_block(
                 decoder, sequence, frame, tile_plan, plan, buffers, block_size, x, y,
             )?;
             *block_budget -= 1;
-            Ok(vec![block])
+            blocks.push(block);
+            Ok(())
         }
         Partition::Horizontal => {
             let subsize = block_size.horizontal_subsize().ok_or_else(|| {
@@ -354,6 +357,7 @@ pub(super) fn decode_luma_block_tree(
                 buffers,
                 &[(subsize, x, y), (subsize, x, y + subsize.height())],
                 block_budget,
+                blocks,
             )
         }
         Partition::Vertical => {
@@ -371,6 +375,7 @@ pub(super) fn decode_luma_block_tree(
                 buffers,
                 &[(subsize, x, y), (subsize, x + subsize.width(), y)],
                 block_budget,
+                blocks,
             )
         }
         Partition::Split => {
@@ -394,6 +399,7 @@ pub(super) fn decode_luma_block_tree(
                     (x + subsize.width(), y + subsize.height()),
                 ],
                 block_budget,
+                blocks,
             )
         }
         Partition::HorizontalA => {
@@ -420,6 +426,7 @@ pub(super) fn decode_luma_block_tree(
                     (horizontal_subsize, x, y + split_subsize.height()),
                 ],
                 block_budget,
+                blocks,
             )
         }
         Partition::HorizontalB => {
@@ -450,6 +457,7 @@ pub(super) fn decode_luma_block_tree(
                     ),
                 ],
                 block_budget,
+                blocks,
             )
         }
         Partition::VerticalA => {
@@ -476,6 +484,7 @@ pub(super) fn decode_luma_block_tree(
                     (vertical_subsize, x + split_subsize.width(), y),
                 ],
                 block_budget,
+                blocks,
             )
         }
         Partition::VerticalB => {
@@ -506,6 +515,7 @@ pub(super) fn decode_luma_block_tree(
                     ),
                 ],
                 block_budget,
+                blocks,
             )
         }
         Partition::Horizontal4 => {
@@ -528,6 +538,7 @@ pub(super) fn decode_luma_block_tree(
                     (subsize, x, y + subsize.height() * 3),
                 ],
                 block_budget,
+                blocks,
             )
         }
         Partition::Vertical4 => {
@@ -550,11 +561,12 @@ pub(super) fn decode_luma_block_tree(
                     (subsize, x + subsize.width() * 3, y),
                 ],
                 block_budget,
+                blocks,
             )
         }
     }?;
     decoder.update_ext_partition_context(x, y, block_size, partition)?;
-    Ok(decoded)
+    Ok(())
 }
 
 #[expect(
@@ -571,13 +583,13 @@ fn decode_luma_partition_children(
     subsize: BlockSize,
     children: &[(usize, usize)],
     block_budget: &mut usize,
-) -> Result<Vec<DecodedLumaBlock>, DecoderError> {
-    let mut blocks = Vec::new();
+    blocks: &mut Vec<DecodedLumaBlock>,
+) -> Result<(), DecoderError> {
     for &(sub_x, sub_y) in children {
         if *block_budget == 0 {
-            return Ok(blocks);
+            return Ok(());
         }
-        let decoded = decode_luma_block_tree(
+        decode_luma_block_tree(
             decoder,
             sequence,
             frame,
@@ -588,10 +600,10 @@ fn decode_luma_partition_children(
             sub_x,
             sub_y,
             block_budget,
+            blocks,
         )?;
-        blocks.extend(decoded);
     }
-    Ok(blocks)
+    Ok(())
 }
 
 #[expect(
@@ -607,11 +619,11 @@ fn decode_luma_partition_runs(
     buffers: &mut FrameBuffers,
     children: &[(BlockSize, usize, usize)],
     block_budget: &mut usize,
-) -> Result<Vec<DecodedLumaBlock>, DecoderError> {
-    let mut blocks = Vec::new();
+    blocks: &mut Vec<DecodedLumaBlock>,
+) -> Result<(), DecoderError> {
     for &(subsize, sub_x, sub_y) in children {
         if *block_budget == 0 {
-            return Ok(blocks);
+            return Ok(());
         }
         if sub_x >= decoder.mi_cols << 2 || sub_y >= decoder.mi_rows << 2 {
             continue;
@@ -622,5 +634,5 @@ fn decode_luma_partition_runs(
         *block_budget -= 1;
         blocks.push(decoded);
     }
-    Ok(blocks)
+    Ok(())
 }
