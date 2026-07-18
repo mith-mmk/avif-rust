@@ -111,27 +111,31 @@ pub(super) fn decode_plane_block_unit(
             plane_width,
             plane_height,
         )
-    }
-    .into_iter()
-    .filter(|transform| {
-        let unit_x = plane_block_origin(unit_x, block_mode.block_size.width(), subsampling_x);
-        let unit_y = plane_block_origin(unit_y, block_mode.block_size.height(), subsampling_y);
-        // A chroma reference made from a sub-8x8 luma block still carries a
-        // legal 4x4 chroma residual block. Keep the minimum plane unit at
-        // 4x4 instead of filtering that transform out as a 2-pixel unit.
-        let unit_width = ceil_shift(unit_width, subsampling_x).max(4);
-        let unit_height = ceil_shift(unit_height, subsampling_y).max(4);
+    };
+    let unit_x = plane_block_origin(unit_x, block_mode.block_size.width(), subsampling_x);
+    let unit_y = plane_block_origin(unit_y, block_mode.block_size.height(), subsampling_y);
+    // A chroma reference made from a sub-8x8 luma block still carries a
+    // legal 4x4 chroma residual block. Keep the minimum plane unit at
+    // 4x4 instead of filtering that transform out as a 2-pixel unit.
+    let unit_width = ceil_shift(unit_width, subsampling_x).max(4);
+    let unit_height = ceil_shift(unit_height, subsampling_y).max(4);
+    let transform_in_unit = |transform: &crate::av1::transform::TransformBlock| {
         transform.x >= unit_x
             && transform.x < unit_x.saturating_add(unit_width)
             && transform.y >= unit_y
             && transform.y < unit_y.saturating_add(unit_height)
-    })
-    .collect::<Vec<_>>();
-    for transform in &transforms {
+    };
+    for transform in transforms
+        .iter()
+        .filter(|transform| transform_in_unit(transform))
+    {
         decoder.record_transform_boundary(*transform, TxType::DctDct, 0);
     }
     if block_mode.skip {
-        for transform in &transforms {
+        for transform in transforms
+            .iter()
+            .filter(|transform| transform_in_unit(transform))
+        {
             decoder.set_txb_entropy_context(*transform, 0);
             let (top_right_available, bottom_left_available) =
                 decoder.reconstructed_extension_availability(plane, *transform)?;
@@ -171,8 +175,11 @@ pub(super) fn decode_plane_block_unit(
         return Ok(Vec::new());
     }
 
-    let mut decoded = Vec::new();
-    for transform in transforms {
+    let mut decoded = Vec::with_capacity(transforms.len());
+    for transform in transforms
+        .into_iter()
+        .filter(|transform| transform_in_unit(transform))
+    {
         let txb_context = decoder.txb_context(plane_block_size, transform);
         let skip_cdf = decoder
             .cdf
@@ -627,30 +634,33 @@ pub(super) fn apply_cfl_prediction(
         ));
     }
 
-    let mut luma_q3 = Vec::with_capacity(sample_count);
+    let luma_q3_at = |row: usize, col: usize| {
+        let source_x = (x + col) << subsampling_x;
+        let source_y = (y + row) << subsampling_y;
+        let mut luma_sum = 0u32;
+        let sample_count = 1usize << (subsampling_x + subsampling_y);
+        for luma_row in 0..(1usize << subsampling_y) {
+            let source_y = (source_y + luma_row).min(luma_height - 1);
+            for luma_col in 0..(1usize << subsampling_x) {
+                let source_x = (source_x + luma_col).min(luma_width - 1);
+                luma_sum += u32::from(luma_plane.samples[source_y * luma_width + source_x]);
+            }
+        }
+        let value = (luma_sum + (sample_count as u32 / 2)) / sample_count as u32;
+        (value as i32) << 3
+    };
     let mut sum = 0i64;
     for row in 0..height {
         for col in 0..width {
-            let source_x = (x + col) << subsampling_x;
-            let source_y = (y + row) << subsampling_y;
-            let mut luma_sum = 0u32;
-            let sample_count = 1usize << (subsampling_x + subsampling_y);
-            for luma_row in 0..(1usize << subsampling_y) {
-                let source_y = (source_y + luma_row).min(luma_height - 1);
-                for luma_col in 0..(1usize << subsampling_x) {
-                    let source_x = (source_x + luma_col).min(luma_width - 1);
-                    luma_sum += u32::from(luma_plane.samples[source_y * luma_width + source_x]);
-                }
-            }
-            let value = (luma_sum + (sample_count as u32 / 2)) / sample_count as u32;
-            let value_q3 = (value as i32) << 3;
-            luma_q3.push(value_q3);
-            sum += i64::from(value_q3);
+            sum += i64::from(luma_q3_at(row, col));
         }
     }
     let average_q3 = ((sum + sample_count as i64 / 2) / sample_count as i64) as i32;
     let maximum = (1i32 << bit_depth) - 1;
-    for (destination, value_q3) in prediction.iter_mut().zip(luma_q3) {
+    for (index, destination) in prediction.iter_mut().enumerate() {
+        let row = index / width;
+        let col = index % width;
+        let value_q3 = luma_q3_at(row, col);
         let scaled = round_power_of_two_signed(i32::from(alpha_q3) * (value_q3 - average_q3), 6);
         *destination = (i32::from(*destination) + scaled).clamp(0, maximum) as u16;
     }

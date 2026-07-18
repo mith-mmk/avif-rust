@@ -424,12 +424,6 @@ fn decode_grid_frame(info: &AvifInfo) -> Result<DecodedFrame, DecoderError> {
             "AVIF grid native-plane composition with alpha is not supported yet".to_string(),
         ));
     }
-    if info.clean_aperture.is_some() || info.rotation.is_some() || info.mirror.is_some() {
-        return Err(DecoderError::Unsupported(
-            "AVIF grid native-plane composition with geometry transforms is not supported yet"
-                .to_string(),
-        ));
-    }
     let rows = usize::from(grid.rows);
     let columns = usize::from(grid.columns);
     let cell_count = rows
@@ -573,7 +567,7 @@ fn decode_grid_frame(info: &AvifInfo) -> Result<DecodedFrame, DecoderError> {
         }
         y_offset += row_heights[row];
     }
-    Ok(DecodedFrame {
+    let mut frame = DecodedFrame {
         width,
         height,
         render_width: width,
@@ -587,7 +581,179 @@ fn decode_grid_frame(info: &AvifInfo) -> Result<DecodedFrame, DecoderError> {
             height,
             planes,
         },
-    })
+    };
+    apply_native_grid_geometry(&mut frame, info)?;
+    Ok(frame)
+}
+
+fn apply_native_grid_geometry(
+    frame: &mut DecodedFrame,
+    info: &AvifInfo,
+) -> Result<(), DecoderError> {
+    if let Some(aperture) = info.clean_aperture {
+        let (start_x, start_y, width, height) =
+            clean_aperture_rect(frame.width, frame.height, aperture)?;
+        for plane in &mut frame.buffers.planes {
+            let scale_x = 1usize << plane.layout.subsampling_x;
+            let scale_y = 1usize << plane.layout.subsampling_y;
+            if start_x % scale_x != 0 || start_y % scale_y != 0 {
+                return Err(DecoderError::Unsupported(
+                    "AVIF native-plane clean aperture is not aligned to chroma samples".to_string(),
+                ));
+            }
+            let plane_start_x = start_x / scale_x;
+            let plane_start_y = start_y / scale_y;
+            let plane_width = width.div_ceil(scale_x);
+            let plane_height = height.div_ceil(scale_y);
+            if plane_start_x + plane_width > plane.layout.width
+                || plane_start_y + plane_height > plane.layout.height
+            {
+                return Err(DecoderError::Bitstream(
+                    "AVIF native-plane clean aperture exceeds a source plane".to_string(),
+                ));
+            }
+            let mut cropped = vec![0; plane_width * plane_height];
+            for row in 0..plane_height {
+                let source_start = (plane_start_y + row) * plane.layout.width + plane_start_x;
+                let destination_start = row * plane_width;
+                cropped[destination_start..destination_start + plane_width]
+                    .copy_from_slice(&plane.samples[source_start..source_start + plane_width]);
+            }
+            plane.layout.width = plane_width;
+            plane.layout.height = plane_height;
+            plane.layout.sample_count = cropped.len();
+            plane.samples = cropped;
+        }
+        frame.width = width;
+        frame.height = height;
+        frame.render_width = width;
+        frame.render_height = height;
+        frame.buffers.width = width;
+        frame.buffers.height = height;
+    }
+    if let Some(mirror) = info.mirror {
+        apply_native_mirror(&mut frame.buffers, mirror)?;
+    }
+    if let Some(rotation) = info.rotation {
+        apply_native_rotation(frame, rotation)?;
+    }
+    Ok(())
+}
+
+fn clean_aperture_rect(
+    image_width: usize,
+    image_height: usize,
+    aperture: CleanAperture,
+) -> Result<(usize, usize, usize, usize), DecoderError> {
+    if aperture.width_d == 0
+        || aperture.height_d == 0
+        || aperture.horizontal_offset_d == 0
+        || aperture.vertical_offset_d == 0
+    {
+        return Err(DecoderError::Bitstream(
+            "AVIF clean aperture has a zero denominator".to_string(),
+        ));
+    }
+    let width = (u64::from(aperture.width_n) / u64::from(aperture.width_d)) as usize;
+    let height = (u64::from(aperture.height_n) / u64::from(aperture.height_d)) as usize;
+    let center_x = image_width as i64 / 2;
+    let center_y = image_height as i64 / 2;
+    let offset_x_n = i32::from_be_bytes(aperture.horizontal_offset_n.to_be_bytes());
+    let offset_y_n = i32::from_be_bytes(aperture.vertical_offset_n.to_be_bytes());
+    let offset_x = i64::from(offset_x_n) / i64::from(aperture.horizontal_offset_d);
+    let offset_y = i64::from(offset_y_n) / i64::from(aperture.vertical_offset_d);
+    let start_x = center_x + offset_x - width as i64 / 2;
+    let start_y = center_y + offset_y - height as i64 / 2;
+    if width == 0
+        || height == 0
+        || start_x < 0
+        || start_y < 0
+        || start_x as usize + width > image_width
+        || start_y as usize + height > image_height
+    {
+        return Err(DecoderError::Bitstream(
+            "AVIF clean aperture is outside the decoded image".to_string(),
+        ));
+    }
+    Ok((start_x as usize, start_y as usize, width, height))
+}
+
+fn apply_native_mirror(
+    buffers: &mut FrameBuffers,
+    mirror: ImageMirror,
+) -> Result<(), DecoderError> {
+    if mirror.axis > 1 {
+        return Err(DecoderError::Bitstream(format!(
+            "AVIF mirror axis {} is invalid",
+            mirror.axis
+        )));
+    }
+    for plane in &mut buffers.planes {
+        if mirror.axis == 0 {
+            for row in plane.samples.chunks_exact_mut(plane.layout.width) {
+                row.reverse();
+            }
+        } else {
+            let width = plane.layout.width;
+            let height = plane.layout.height;
+            for row in 0..height / 2 {
+                let opposite = height - 1 - row;
+                for column in 0..width {
+                    plane
+                        .samples
+                        .swap(row * width + column, opposite * width + column);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn apply_native_rotation(
+    frame: &mut DecodedFrame,
+    rotation: ImageRotation,
+) -> Result<(), DecoderError> {
+    if rotation.angle > 3 {
+        return Err(DecoderError::Bitstream(format!(
+            "AVIF rotation angle {} is invalid",
+            rotation.angle
+        )));
+    }
+    if rotation.angle % 2 == 1
+        && frame
+            .buffers
+            .planes
+            .iter()
+            .any(|plane| plane.layout.subsampling_x != plane.layout.subsampling_y)
+    {
+        return Err(DecoderError::Unsupported(
+            "AVIF native-plane quarter-turn would swap chroma subsampling axes".to_string(),
+        ));
+    }
+    for _ in 0..rotation.angle {
+        for plane in &mut frame.buffers.planes {
+            let width = plane.layout.width;
+            let height = plane.layout.height;
+            let mut transformed = vec![0; plane.samples.len()];
+            let new_width = height;
+            for y in 0..height {
+                for x in 0..width {
+                    let destination_x = y;
+                    let destination_y = width - 1 - x;
+                    transformed[destination_y * new_width + destination_x] =
+                        plane.samples[y * width + x];
+                }
+            }
+            plane.layout.width = new_width;
+            plane.layout.height = width;
+            plane.layout.sample_count = transformed.len();
+            plane.samples = transformed;
+        }
+        std::mem::swap(&mut frame.width, &mut frame.height);
+        std::mem::swap(&mut frame.render_width, &mut frame.render_height);
+        std::mem::swap(&mut frame.buffers.width, &mut frame.buffers.height);
+    }
+    Ok(())
 }
 
 fn decode_grid_image(info: &AvifInfo) -> Result<ImageBuffer, DecoderError> {
@@ -779,6 +945,87 @@ mod grid_composition_tests {
         let error = apply_alpha_grid(&mut image, &grid).unwrap_err();
         assert!(error.to_string().contains("dimensions do not match"));
     }
+
+    fn native_frame(width: usize, height: usize, plane: PlaneBuffer) -> DecodedFrame {
+        DecodedFrame {
+            width,
+            height,
+            render_width: width,
+            render_height: height,
+            bit_depth: 8,
+            color_config: ColorConfig {
+                high_bitdepth: false,
+                twelve_bit: false,
+                bit_depth: 8,
+                monochrome: true,
+                color_description: None,
+                color_range: ColorRange::Full,
+                subsampling_x: false,
+                subsampling_y: false,
+                chroma_sample_position: None,
+                separate_uv_delta_q: false,
+            },
+            color_information: None,
+            alpha_premultiplied: false,
+            buffers: FrameBuffers {
+                width,
+                height,
+                planes: vec![plane],
+            },
+        }
+    }
+
+    fn native_plane(width: usize, height: usize, samples: Vec<u16>) -> PlaneBuffer {
+        PlaneBuffer {
+            layout: PlaneLayout {
+                plane: 0,
+                width,
+                height,
+                subsampling_x: 0,
+                subsampling_y: 0,
+                sample_count: width * height,
+            },
+            samples,
+        }
+    }
+
+    #[test]
+    fn native_grid_mirror_reverses_each_plane_without_reallocation() {
+        let mut frame = native_frame(3, 2, native_plane(3, 2, vec![1, 2, 3, 4, 5, 6]));
+        apply_native_mirror(&mut frame.buffers, ImageMirror { axis: 0 }).unwrap();
+        assert_eq!(frame.buffers.planes[0].samples, vec![3, 2, 1, 6, 5, 4]);
+    }
+
+    #[test]
+    fn native_grid_rotation_updates_frame_and_plane_dimensions() {
+        let mut frame = native_frame(2, 3, native_plane(2, 3, vec![1, 2, 3, 4, 5, 6]));
+        apply_native_rotation(&mut frame, ImageRotation { angle: 1 }).unwrap();
+        assert_eq!((frame.width, frame.height), (3, 2));
+        assert_eq!(frame.buffers.planes[0].samples, vec![2, 4, 6, 1, 3, 5]);
+    }
+
+    #[test]
+    fn native_grid_rotation_rejects_swapped_422_subsampling_axes() {
+        let mut frame = native_frame(
+            4,
+            2,
+            PlaneBuffer {
+                layout: PlaneLayout {
+                    plane: 0,
+                    width: 4,
+                    height: 2,
+                    subsampling_x: 1,
+                    subsampling_y: 0,
+                    sample_count: 8,
+                },
+                samples: vec![0; 8],
+            },
+        );
+        let error = apply_native_rotation(&mut frame, ImageRotation { angle: 1 }).unwrap_err();
+        assert!(
+            matches!(error, DecoderError::Unsupported(message) if message.contains("subsampling axes"))
+        );
+    }
 }
 
 fn grid_cell_info(info: &AvifInfo, cell: &GridCell) -> AvifInfo {
@@ -959,39 +1206,11 @@ fn apply_clean_aperture(
     let Some(aperture) = aperture else {
         return Ok(());
     };
-    if aperture.width_d == 0
-        || aperture.height_d == 0
-        || aperture.horizontal_offset_d == 0
-        || aperture.vertical_offset_d == 0
-    {
-        return Err(DecoderError::Bitstream(
-            "AVIF clean aperture has a zero denominator".to_string(),
-        ));
-    }
-    let width = (u64::from(aperture.width_n) / u64::from(aperture.width_d)) as usize;
-    let height = (u64::from(aperture.height_n) / u64::from(aperture.height_d)) as usize;
-    let center_x = image.width as i64 / 2;
-    let center_y = image.height as i64 / 2;
-    let offset_x_n = i32::from_be_bytes(aperture.horizontal_offset_n.to_be_bytes());
-    let offset_y_n = i32::from_be_bytes(aperture.vertical_offset_n.to_be_bytes());
-    let offset_x = i64::from(offset_x_n) / i64::from(aperture.horizontal_offset_d);
-    let offset_y = i64::from(offset_y_n) / i64::from(aperture.vertical_offset_d);
-    let start_x = center_x + offset_x - width as i64 / 2;
-    let start_y = center_y + offset_y - height as i64 / 2;
-    if width == 0
-        || height == 0
-        || start_x < 0
-        || start_y < 0
-        || start_x as usize + width > image.width
-        || start_y as usize + height > image.height
-    {
-        return Err(DecoderError::Bitstream(
-            "AVIF clean aperture is outside the decoded image".to_string(),
-        ));
-    }
+    let (start_x, start_y, width, height) =
+        clean_aperture_rect(image.width, image.height, aperture)?;
     let mut cropped = vec![0; width * height * 4];
     for row in 0..height {
-        let src = ((start_y as usize + row) * image.width + start_x as usize) * 4;
+        let src = ((start_y + row) * image.width + start_x) * 4;
         let dst = row * width * 4;
         cropped[dst..dst + width * 4].copy_from_slice(&image.rgba[src..src + width * 4]);
     }

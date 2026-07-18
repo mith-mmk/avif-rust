@@ -304,7 +304,9 @@ and RGBA gates.
       matrix. Generated level-0 and level-1 samples match FFmpeg.
 - [x] Grid image-cell composition for still images, including ordered `dimg`
       references and RGBA/native-plane placement; verified with
-      `sofa_grid1x5_420.avif`.
+      `sofa_grid1x5_420.avif`. Native planes also apply aligned `clap`/`imir`/
+      `irot` geometry for 4:4:4 and 4:2:0; alpha grids and axis-swapping
+      4:2:2 quarter-turns remain explicit `Unsupported` boundaries.
 - [x] `clap` clean-aperture crop and `imir` horizontal mirror composition.
 - [x] `irot` rotation composition, including an official 8-bit alpha fixture;
       `kimono.rotate90.avif` now decodes and converts with the expected
