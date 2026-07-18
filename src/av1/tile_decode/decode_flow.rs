@@ -95,7 +95,15 @@ pub(super) fn decode_luma_leaf_block(
     };
 
     let plane_count = if chroma.is_some() { 3 } else { 1 };
-    let mut decoded = Vec::new();
+    let transform_columns = block_mode
+        .block_size
+        .width()
+        .div_ceil(block_mode.tx_size.width());
+    let transform_rows = block_mode
+        .block_size
+        .height()
+        .div_ceil(block_mode.tx_size.height());
+    let mut decoded = Vec::with_capacity(transform_columns * transform_rows);
     for unit in residual_unit_order(block_mode.block_size, x, y, plane_count) {
         let (prediction_mode, angle_delta, filter_intra_mode, smooth_neighbour, cfl_alpha_q3) =
             match unit.plane_index {

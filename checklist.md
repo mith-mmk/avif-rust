@@ -469,6 +469,8 @@ quiet host are available.
 - [x] Replace per-block residual-unit ordering allocations with a fixed-state
       iterator and verify the 64x64 interleaving order against the existing
       unit test and decode benchmark.
+- [x] Reserve luma decoded-transform storage from block/transform geometry to
+      avoid growth reallocations in the reconstruction loop.
 - [x] Correct the nested crate repository URL to the independently maintained
       `avif-rust` repository and verify it from a fresh clone.
 - [ ] Add SIMD/parallel paths only with scalar equivalence and Wasm fallback
