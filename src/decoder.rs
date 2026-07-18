@@ -2216,6 +2216,14 @@ fn validate_av1_config(
             "av1C chroma subsampling does not match sequence header".to_string(),
         ));
     }
+    if let Some(sequence_position) = sequence.color_config.chroma_sample_position {
+        if config.chroma_sample_position != sequence_position {
+            return Err(DecoderError::Bitstream(format!(
+                "av1C chroma sample position {:?} does not match sequence header {:?}",
+                config.chroma_sample_position, sequence_position
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -2917,6 +2925,87 @@ mod color_metadata_tests {
         assert!(
             matches!(error, DecoderError::Bitstream(message) if message.contains("does not match"))
         );
+    }
+}
+
+#[cfg(test)]
+mod av1_config_tests {
+    use super::*;
+    use crate::av1::ChromaSamplePosition;
+
+    fn av1_config(position: ChromaSamplePosition) -> Av1CodecConfiguration {
+        Av1CodecConfiguration {
+            version: 1,
+            seq_profile: 0,
+            seq_level_idx_0: 5,
+            seq_tier_0: false,
+            high_bitdepth: false,
+            twelve_bit: false,
+            monochrome: false,
+            chroma_subsampling_x: true,
+            chroma_subsampling_y: true,
+            chroma_sample_position: position,
+            initial_presentation_delay: None,
+        }
+    }
+
+    fn sequence(position: ChromaSamplePosition) -> SequenceHeader {
+        SequenceHeader {
+            seq_profile: 0,
+            still_picture: true,
+            reduced_still_picture_header: true,
+            seq_level_idx_0: 5,
+            frame_width_bits: 8,
+            frame_height_bits: 8,
+            max_frame_width: 64,
+            max_frame_height: 64,
+            frame_id_numbers_present: false,
+            use_128x128_superblock: false,
+            enable_filter_intra: false,
+            enable_intra_edge_filter: false,
+            enable_order_hint: false,
+            order_hint_bits: 0,
+            seq_force_screen_content_tools: 0,
+            seq_force_integer_mv: 0,
+            enable_superres: false,
+            enable_cdef: false,
+            enable_restoration: false,
+            color_config: ColorConfig {
+                high_bitdepth: false,
+                twelve_bit: false,
+                bit_depth: 8,
+                monochrome: false,
+                color_description: None,
+                color_range: ColorRange::Full,
+                subsampling_x: true,
+                subsampling_y: true,
+                chroma_sample_position: Some(position),
+                separate_uv_delta_q: false,
+            },
+            film_grain_params_present: false,
+        }
+    }
+
+    #[test]
+    fn av1_config_rejects_chroma_sample_position_mismatch() {
+        let error = validate_av1_config(
+            &av1_config(ChromaSamplePosition::Colocated),
+            &sequence(ChromaSamplePosition::Vertical),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            DecoderError::Bitstream(message) if message.contains("chroma sample position")
+        ));
+    }
+
+    #[test]
+    fn av1_config_accepts_matching_chroma_sample_position() {
+        validate_av1_config(
+            &av1_config(ChromaSamplePosition::Vertical),
+            &sequence(ChromaSamplePosition::Vertical),
+        )
+        .unwrap();
     }
 }
 
