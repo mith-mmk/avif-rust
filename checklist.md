@@ -378,6 +378,8 @@ and RGBA gates.
 - [x] Apply bounded ICC `A2B0` `mAB` RGB-to-XYZ pipelines with A/CLUT/B and
       A/CLUT/M/matrix/B combinations, embedded `curv` curves, PCS-Lab output,
       and malformed offset/curve pairing checks.
+- [x] Fall back to ICC `A2B1`/`A2B2` RGB-to-PCS LUT tags when a profile omits
+      `A2B0`; synthetic `mft1` coverage keeps alpha and RGB conversion checks.
 - [ ] Add display-specific HDR gamut/tone calibration and the remaining ICC
       display-conversion profile forms (for example `mBA`/PCS-Lab pipelines).
 

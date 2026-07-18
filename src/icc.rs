@@ -43,10 +43,16 @@ struct Clut {
 }
 
 pub(crate) fn apply_to_rgba16(rgba: &mut [u16], profile: &[u8]) -> Result<(), DecoderError> {
-    if let Some(tag) = find_profile_tag(profile, b"A2B0")? {
+    // Prefer the perceptual rendering table, but accept profiles that only
+    // provide one of the other RGB-to-PCS tables.  Compact camera profiles
+    // commonly omit A2B0 while still carrying a usable A2B1/A2B2 pipeline.
+    let a2b_tag = find_profile_tag(profile, b"A2B0")?
+        .or(find_profile_tag(profile, b"A2B1")?)
+        .or(find_profile_tag(profile, b"A2B2")?);
+    if let Some(tag) = a2b_tag {
         let signature = profile
             .get(tag.0..tag.0 + 4)
-            .ok_or_else(|| unsupported("ICC A2B0 tag is outside the profile"))?;
+            .ok_or_else(|| unsupported("ICC A2B tag is outside the profile"))?;
         if signature == b"mft1" || signature == b"mft2" {
             let profile = LutProfile::parse(profile, tag)?;
             for pixel in rgba.chunks_exact_mut(4) {
@@ -61,7 +67,7 @@ pub(crate) fn apply_to_rgba16(rgba: &mut [u16], profile: &[u8]) -> Result<(), De
             }
             return Ok(());
         }
-        return Err(unsupported("ICC A2B0 tag is not an mft1/mft2/mAB LUT"));
+        return Err(unsupported("ICC A2B tag is not an mft1/mft2/mAB LUT"));
     }
     let profile = MatrixShaperProfile::parse(profile)?;
     for pixel in rgba.chunks_exact_mut(4) {
@@ -1320,6 +1326,22 @@ mod tests {
         assert!(rgba[0] < 2_000);
         assert!(rgba[1] > 64_000);
         assert!(rgba[2] > 64_000);
+    }
+
+    #[test]
+    fn lut_profile_uses_a2b_fallback_when_a2b0_is_absent() {
+        for tag in [b"A2B1", b"A2B2"] {
+            let mut profile = synthetic_lut_profile(b"mft1", 2, 0);
+            profile[132..136].copy_from_slice(tag);
+            let mut rgba = [u16::MAX, 0, 0, 12_345];
+
+            apply_to_rgba16(&mut rgba, &profile).unwrap();
+
+            assert!(rgba[0] > 64_000);
+            assert!(rgba[1] < 6_000);
+            assert!(rgba[2] < 6_000);
+            assert_eq!(rgba[3], 12_345);
+        }
     }
 
     #[test]
