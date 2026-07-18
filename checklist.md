@@ -336,7 +336,7 @@ and RGBA gates.
 
 The release benchmark uses `AVIF_BENCH_ITERS=11 cargo bench --bench decode`
 against `samples/WML2Viewer.avif`. The current optimized run measured
-`302.22/305.00 ms` (native/RGBA, 11 iterations on 2026-07-18); the restoration
+`295.40/292.58 ms` (native/RGBA, 7 iterations on 2026-07-18); the restoration
 stage now writes directly into the destination plane instead of cloning the
 whole plane for every restoration chunk. The earlier 348.14/346.93 ms run
 remains the previous checkpoint for comparison. The deblock stage now indexes block filter
@@ -345,6 +345,8 @@ edge. The reconstruction hot path also passes
 decoded coefficient slices directly instead of cloning a coefficient `Vec`
 for every transform. Rectangular inverse transforms now reuse fixed-size
 stack scratch buffers instead of allocating a `Vec` for every row and column;
+intra prediction similarly reuses fixed-size edge scratch instead of allocating
+two `Vec`s for every non-DC transform block;
 compare medians on the same host because this benchmark is sensitive to local
 scheduling. Keep the image and plane oracle gates green
 when changing this path. Super-resolution uses the scalar 64-phase resize
@@ -388,6 +390,8 @@ quiet host are available.
 - [x] Keep container, OBU, frame-header and entropy fuzz targets.
 - [x] Optimise a per-transform coefficient allocation after exact-plane
       conformance passes; retain the public allocating wrapper for compatibility.
+- [x] Reuse fixed-size intra-prediction edge scratch in the reconstruction hot
+      path; retain the public allocating edge-reader wrapper for compatibility.
 - [x] Reuse a caller-owned 8x8 CDEF output buffer during frame filtering while
       retaining the allocating kernel wrapper for compatibility.
 - [x] Correct the nested crate repository URL to the independently maintained

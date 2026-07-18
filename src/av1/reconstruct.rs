@@ -84,48 +84,24 @@ pub fn read_intra_edges_with_extension_availability(
     top_right_available: usize,
     bottom_left_available: usize,
 ) -> OwnedIntraEdges {
-    let mid = 1u16 << (bit_depth - 1);
-    let above_available = y > 0 && plane.layout.width > 0;
-    let left_available = x > 0 && plane.layout.height > 0;
-    let directional_edge_len = width + height;
-    let mut above = Vec::with_capacity(directional_edge_len);
-    let mut left = Vec::with_capacity(directional_edge_len);
-
-    for dx in 0..directional_edge_len {
-        if !above_available {
-            above.push(mid - 1);
-        } else {
-            let extension_end = width.saturating_add(top_right_available);
-            let edge_dx = if dx >= extension_end {
-                extension_end.saturating_sub(1)
-            } else {
-                dx
-            };
-            let sample_x = (x + edge_dx).min(plane.layout.width - 1);
-            above.push(plane.samples[(y - 1) * plane.layout.width + sample_x]);
-        }
-    }
-
-    for dy in 0..directional_edge_len {
-        if !left_available {
-            left.push(mid + 1);
-        } else {
-            let extension_end = height.saturating_add(bottom_left_available);
-            let edge_dy = if dy >= extension_end {
-                extension_end.saturating_sub(1)
-            } else {
-                dy
-            };
-            let sample_y = (y + edge_dy).min(plane.layout.height - 1);
-            left.push(plane.samples[sample_y * plane.layout.width + x - 1]);
-        }
-    }
-
-    let above_left = if x == 0 || y == 0 || plane.layout.width == 0 {
-        mid
-    } else {
-        plane.samples[(y - 1) * plane.layout.width + x - 1]
-    };
+    let directional_edge_len = width
+        .checked_add(height)
+        .expect("AV1 intra edge length overflows");
+    let mut above = vec![0; directional_edge_len];
+    let mut left = vec![0; directional_edge_len];
+    let (above_available, left_available, above_left) = read_intra_edges_into(
+        plane,
+        x,
+        y,
+        width,
+        height,
+        bit_depth,
+        top_right_available,
+        bottom_left_available,
+        &mut above,
+        &mut left,
+    )
+    .expect("owned AV1 intra edge buffers have the requested length");
 
     OwnedIntraEdges {
         above,
@@ -134,6 +110,72 @@ pub fn read_intra_edges_with_extension_availability(
         above_available,
         left_available,
     }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "internal edge scratch follows the established AV1 prediction inputs"
+)]
+pub(crate) fn read_intra_edges_into(
+    plane: &PlaneBuffer,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    bit_depth: u8,
+    top_right_available: usize,
+    bottom_left_available: usize,
+    above: &mut [u16],
+    left: &mut [u16],
+) -> Result<(bool, bool, u16), DecoderError> {
+    let mid = 1u16 << (bit_depth - 1);
+    let directional_edge_len = width
+        .checked_add(height)
+        .ok_or_else(|| DecoderError::InvalidParam("AV1 intra edge length overflows".to_string()))?;
+    if above.len() < directional_edge_len || left.len() < directional_edge_len {
+        return Err(DecoderError::InvalidParam(
+            "AV1 intra edge scratch is shorter than the prediction block".to_string(),
+        ));
+    }
+    let above_available = y > 0 && plane.layout.width > 0;
+    let left_available = x > 0 && plane.layout.height > 0;
+
+    for dx in 0..directional_edge_len {
+        above[dx] = if !above_available {
+            mid - 1
+        } else {
+            let extension_end = width.saturating_add(top_right_available);
+            let edge_dx = if dx >= extension_end {
+                extension_end.saturating_sub(1)
+            } else {
+                dx
+            };
+            let sample_x = (x + edge_dx).min(plane.layout.width - 1);
+            plane.samples[(y - 1) * plane.layout.width + sample_x]
+        };
+    }
+
+    for dy in 0..directional_edge_len {
+        left[dy] = if !left_available {
+            mid + 1
+        } else {
+            let extension_end = height.saturating_add(bottom_left_available);
+            let edge_dy = if dy >= extension_end {
+                extension_end.saturating_sub(1)
+            } else {
+                dy
+            };
+            let sample_y = (y + edge_dy).min(plane.layout.height - 1);
+            plane.samples[sample_y * plane.layout.width + x - 1]
+        };
+    }
+
+    let above_left = if x == 0 || y == 0 || plane.layout.width == 0 {
+        mid
+    } else {
+        plane.samples[(y - 1) * plane.layout.width + x - 1]
+    };
+    Ok((above_available, left_available, above_left))
 }
 
 pub fn frame_buffers_to_identity_rgba_8(

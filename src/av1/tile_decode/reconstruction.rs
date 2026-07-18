@@ -6,7 +6,7 @@ use crate::av1::decode::{FrameBuffers, FrameDecodePlan, PlaneBuffer};
 use crate::av1::frame::FrameHeader;
 use crate::av1::predict::{IntraEdges, predict_filter_intra, predict_intra_with_edge_filter};
 use crate::av1::quant::QuantState;
-use crate::av1::reconstruct::{read_intra_edges_with_extension_availability, write_plane_block};
+use crate::av1::reconstruct::{read_intra_edges_into, write_plane_block};
 use crate::av1::sequence::SequenceHeader;
 use crate::av1::syntax::{PredictionMode, TxSize, TxType};
 use crate::av1::tile_decode::palette::PALETTE_MAX_SIZE;
@@ -324,7 +324,20 @@ pub(super) fn predict_block(
     top_right_available: usize,
     bottom_left_available: usize,
 ) -> Result<Vec<u16>, DecoderError> {
-    let mut edges = read_intra_edges_with_extension_availability(
+    // AV1 prediction blocks can reach 128x128, so each directional edge needs
+    // room for the sum of both dimensions (2 * MAX_SB_SIZE).
+    const MAX_INTRA_EDGE_LEN: usize = 256;
+    let edge_len = width
+        .checked_add(height)
+        .ok_or_else(|| DecoderError::InvalidParam("AV1 intra edge length overflows".to_string()))?;
+    if edge_len > MAX_INTRA_EDGE_LEN {
+        return Err(DecoderError::Unsupported(format!(
+            "AV1 intra prediction edge length {edge_len} exceeds the supported maximum"
+        )));
+    }
+    let mut above_storage = [0u16; MAX_INTRA_EDGE_LEN];
+    let mut left_storage = [0u16; MAX_INTRA_EDGE_LEN];
+    let (above_available, left_available, edge_above_left) = read_intra_edges_into(
         plane,
         x,
         y,
@@ -333,31 +346,35 @@ pub(super) fn predict_block(
         bit_depth,
         top_right_available,
         bottom_left_available,
-    );
+        &mut above_storage,
+        &mut left_storage,
+    )?;
+    let above = &mut above_storage[..edge_len];
+    let left = &mut left_storage[..edge_len];
     let midpoint = 1u16 << (bit_depth - 1);
-    let above_left = match (edges.above_available, edges.left_available) {
-        (true, true) => edges.above_left,
-        (true, false) => edges.above[0],
-        (false, true) => edges.left[0],
+    let above_left = match (above_available, left_available) {
+        (true, true) => edge_above_left,
+        (true, false) => above[0],
+        (false, true) => left[0],
         (false, false) => midpoint,
     };
-    if !edges.above_available && edges.left_available {
-        edges.above.fill(edges.left[0]);
+    if !above_available && left_available {
+        above.fill(left[0]);
     }
-    if !edges.left_available && edges.above_available {
-        edges.left.fill(edges.above[0]);
+    if !left_available && above_available {
+        left.fill(above[0]);
     }
     let edges = if prediction_mode == PredictionMode::Dc && filter_intra_mode.is_none() {
         IntraEdges {
-            above: edges.above_available.then_some(edges.above.as_slice()),
-            left: edges.left_available.then_some(edges.left.as_slice()),
+            above: above_available.then_some(&*above),
+            left: left_available.then_some(&*left),
             above_left: Some(above_left),
             bit_depth,
         }
     } else {
         IntraEdges {
-            above: Some(&edges.above),
-            left: Some(&edges.left),
+            above: Some(&*above),
+            left: Some(&*left),
             above_left: Some(above_left),
             bit_depth,
         }
