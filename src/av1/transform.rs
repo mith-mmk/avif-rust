@@ -375,12 +375,32 @@ pub fn reconstruct_lossless_transform_block(
     prediction: &[u16],
     bit_depth: u8,
 ) -> Result<ReconstructedTransform, DecoderError> {
-    if quantized.block.tx_size != TxSize::Tx4x4 {
+    reconstruct_lossless_transform_block_parts(
+        plane,
+        quantized.block,
+        quantized.tx_type,
+        &quantized.coefficients,
+        plane_quant,
+        prediction,
+        bit_depth,
+    )
+}
+
+pub(crate) fn reconstruct_lossless_transform_block_parts(
+    plane: &mut PlaneBuffer,
+    block: TransformBlock,
+    tx_type: TxType,
+    coefficients: &[i32],
+    plane_quant: PlaneQuant,
+    prediction: &[u16],
+    bit_depth: u8,
+) -> Result<ReconstructedTransform, DecoderError> {
+    if block.tx_size != TxSize::Tx4x4 {
         return Err(DecoderError::Unsupported(
             "AV1 lossless transform must be 4x4".to_string(),
         ));
     }
-    if quantized.coefficients.len() != TxSize::Tx4x4.sample_count()
+    if coefficients.len() != TxSize::Tx4x4.sample_count()
         || prediction.len() != TxSize::Tx4x4.sample_count()
     {
         return Err(DecoderError::InvalidParam(
@@ -388,31 +408,23 @@ pub fn reconstruct_lossless_transform_block(
         ));
     }
 
-    let non_zero_coefficients = quantized
-        .coefficients
+    let non_zero_coefficients = coefficients
         .iter()
         .filter(|coefficient| **coefficient != 0)
         .count();
     let dequant = dequantize_coefficients(
-        &quantized.coefficients,
+        coefficients,
         plane_quant,
         bit_depth,
         TxSize::Tx4x4.dq_denom(),
     );
     let residual = inverse_lossless_transform_4x4(&dequant);
     let reconstructed = add_residual_to_prediction(prediction, &residual, bit_depth)?;
-    write_plane_block(
-        plane,
-        quantized.block.x,
-        quantized.block.y,
-        4,
-        4,
-        &reconstructed,
-    )?;
+    write_plane_block(plane, block.x, block.y, 4, 4, &reconstructed)?;
 
     Ok(ReconstructedTransform {
-        block: quantized.block,
-        tx_type: quantized.tx_type,
+        block,
+        tx_type,
         non_zero_coefficients,
     })
 }

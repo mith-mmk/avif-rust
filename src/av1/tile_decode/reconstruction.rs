@@ -11,7 +11,7 @@ use crate::av1::sequence::SequenceHeader;
 use crate::av1::syntax::{PredictionMode, TxSize, TxType};
 use crate::av1::tile_decode::palette::PALETTE_MAX_SIZE;
 use crate::av1::transform::{
-    QuantizedTransform, plan_transform_blocks_with_tx_size, reconstruct_lossless_transform_block,
+    plan_transform_blocks_with_tx_size, reconstruct_lossless_transform_block_parts,
     reconstruct_transform_block_parts,
 };
 
@@ -264,14 +264,11 @@ pub(super) fn decode_plane_block_unit(
         let block = decoded_transform.transform;
         let tx_type = decoded_transform.tx_type;
         if frame.quantization.coded_lossless() {
-            let quantized = QuantizedTransform {
+            reconstruct_lossless_transform_block_parts(
+                plane,
                 block,
                 tx_type,
-                coefficients: decoded_transform.coefficients.clone(),
-            };
-            reconstruct_lossless_transform_block(
-                plane,
-                &quantized,
+                &decoded_transform.coefficients,
                 quant_state.plane(transform.plane),
                 &prediction,
                 sequence.color_config.bit_depth,
