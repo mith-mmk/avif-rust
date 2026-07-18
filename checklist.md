@@ -53,6 +53,8 @@ from the consumer-facing crate archive.
 - [x] Convert the external 8-bit YUV420, monochrome and YUV422 samples and
       verify their `1204x800` PNG dimensions.
 - [x] Add pixel-level RGBA oracle coverage for the new subsampling paths.
+- [x] Add a reproducible libaom adaptive-quantization still-image sample and
+      compare its decoded dimensions and RGBA output with FFmpeg.
 - [x] Add native-plane oracle coverage for the new subsampling paths.
 - [x] Convert all 25 external samples, including the 12-bit, grid, alpha,
       ICC, subsampling and transform variants, with no partial PNG output.
@@ -78,6 +80,8 @@ remain ignored as well.
 - Keep temporary files under ignored `.test*` directories and remove them.
 - Unsupported AV1/AVIF tools must return explicit `Unsupported` rather than a
   partially decoded image presented as valid output.
+- [x] Reject unknown essential `ipco` properties before public decode instead
+      of silently accepting a potentially incomplete interpretation.
 - `avif/` is an independently managed nested repository; inspect and test it
   directly.
 

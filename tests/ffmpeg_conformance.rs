@@ -405,6 +405,67 @@ fn generated_delta_q_sample_matches_ffmpeg_when_encoder_present() {
 }
 
 #[test]
+fn generated_adaptive_quantization_sample_matches_ffmpeg_when_encoder_present() {
+    let root = std::env::temp_dir().join(format!(".test-avif-aq-{}", std::process::id()));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary AVIF sample directory: {err}");
+    }
+    let output_path = root.join("adaptive-quantization.avif");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .arg("-i")
+        .arg(sample_path("WML2Viewer.png"))
+        .args([
+            "-frames:v",
+            "1",
+            "-c:v",
+            "libaom-av1",
+            "-still-picture",
+            "1",
+            "-crf",
+            "30",
+            "-cpu-used",
+            "6",
+            "-aq-mode",
+            "3",
+            "-pix_fmt",
+            "yuv444p",
+            "-f",
+            "avif",
+        ])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated adaptive-quantization sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom adaptive-quantization encoder is unavailable; skipping generated sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let data = std::fs::read(&output_path)
+        .expect("generated adaptive-quantization AVIF should be readable");
+    let decoded =
+        avif_rust::image_from_bytes(&data).expect("adaptive-quantization AVIF should decode");
+    assert_eq!(
+        (decoded.width, decoded.height),
+        (SAMPLE_WIDTH, SAMPLE_HEIGHT)
+    );
+    if let Some(expected) = ffmpeg_decode_rgba_dynamic(&output_path, SAMPLE_WIDTH, SAMPLE_HEIGHT) {
+        let metrics = diff_rgb_dynamic(&decoded.rgba, &expected);
+        assert!(
+            metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 128,
+            "adaptive-quantization FFmpeg RGB error average={} max={}",
+            metrics.average_rgb_abs,
+            metrics.max_rgb_abs
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn generated_delta_lf_sample_matches_ffmpeg_when_encoder_present() {
     let root = std::env::temp_dir().join(format!(".test-avif-delta-lf-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {

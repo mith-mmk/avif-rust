@@ -802,6 +802,12 @@ fn validate_primary_item_metadata(state: &MetaState) -> Result<(), DecoderError>
                 )));
             }
             let kind = property_kind(&state.item_properties[usize::from(index) - 1]);
+            if property.essential && kind == PropertyKind::Other {
+                return Err(DecoderError::Unsupported(format!(
+                    "item {} has an essential unsupported property at index {}",
+                    association.item_id, index
+                )));
+            }
             if kind.is_singleton() && seen_kinds.contains(&kind) {
                 return Err(DecoderError::Bitstream(format!(
                     "item {} has duplicate {kind:?} property association",
@@ -1888,6 +1894,65 @@ mod tests {
                 }],
             }]
         );
+    }
+
+    #[test]
+    fn rejects_essential_unknown_item_property() {
+        let state = MetaState {
+            primary_item_id: Some(1),
+            item_infos: vec![ItemInfo {
+                item_id: 1,
+                item_type: *b"av01",
+                item_name: "primary".to_string(),
+            }],
+            item_locations: vec![ItemLocation {
+                item_id: 1,
+                base_offset: 0,
+                extents: vec![ItemExtent {
+                    offset: 0,
+                    length: 1,
+                }],
+            }],
+            item_property_associations: vec![ItemPropertyAssociation {
+                item_id: 1,
+                associations: vec![
+                    PropertyAssociation {
+                        index: 1,
+                        essential: true,
+                    },
+                    PropertyAssociation {
+                        index: 2,
+                        essential: true,
+                    },
+                    PropertyAssociation {
+                        index: 3,
+                        essential: true,
+                    },
+                    PropertyAssociation {
+                        index: 4,
+                        essential: true,
+                    },
+                ],
+            }],
+            item_properties: vec![
+                ItemProperty::SpatialExtents(ImageSpatialExtents {
+                    width: 1,
+                    height: 1,
+                }),
+                ItemProperty::PixelInformation(PixelInformation {
+                    bits_per_channel: vec![8, 8, 8],
+                }),
+                ItemProperty::Av1Config(vec![0x81, 0, 0, 0]),
+                ItemProperty::Other,
+            ],
+            ..MetaState::default()
+        };
+
+        let error = validate_primary_item_metadata(&state).unwrap_err();
+        assert!(matches!(
+            error,
+            DecoderError::Unsupported(message) if message.contains("essential unsupported property")
+        ));
     }
 
     #[test]
