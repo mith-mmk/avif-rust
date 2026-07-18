@@ -509,8 +509,12 @@ measured `283.52/284.93` and `273.72/279.85 ms` (native/RGBA). Directional
 zone output now also writes directly to the caller-owned buffer; two subsequent
 rechecks measured `298.45/315.11` and `346.08/364.89 ms`. These runs remain
 allocation-reduction/no-regression checkpoints because host scheduling variance
-is larger than a stable speedup claim; directional edge construction and
-filter-intra still retain their existing scratch path.
+is larger than a stable speedup claim.
+
+The directional edge construction was then moved to fixed stack scratch,
+including corner filtering and upsampled samples. A serial seven-iteration
+recheck measured `285.10/291.76 ms` (native/RGBA); this is recorded as a
+no-regression/allocation-reduction checkpoint, not a stable speedup claim.
 
 The full qmatrix-table checkpoint measured `384.70/381.61 ms` on a subsequent
 11-iteration run; retain the earlier release baseline until repeated runs on a
@@ -574,7 +578,8 @@ is still required before marking the full tool supported.
 - [x] Route DC, straight horizontal/vertical, smooth and Paeth intra prediction
       through caller-owned output buffers while retaining allocating wrappers.
 - [x] Route directional zone 1/2/3 output through caller-owned buffers; retain
-      the existing directional edge construction and filter-intra scratch path.
+      fixed stack scratch for edge extension, corner filtering and upsampling;
+      allocating edge helpers are test-only.
 - [x] Sort references to retained transform boundaries for each deblock pass
       instead of cloning every boundary record twice.
 - [x] Reuse a caller-owned 8x8 CDEF output buffer during frame filtering while

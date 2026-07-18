@@ -353,31 +353,46 @@ fn predict_directional_into(
         return copy_left_into(width, height, edges, output);
     }
 
+    const MAX_DIRECTIONAL_EDGE_LEN: usize = 256;
+    const MAX_DIRECTIONAL_SAMPLE_LEN: usize = MAX_DIRECTIONAL_EDGE_LEN * 2 + 1;
     let above_len = width + usize::from(angle < 90) * height;
     let left_len = height + usize::from(angle > 180) * width;
-    let mut above = extended_edge(above, above_left, above_len);
-    let mut left = extended_edge(left, above_left, left_len);
+    if above_len > MAX_DIRECTIONAL_EDGE_LEN || left_len > MAX_DIRECTIONAL_EDGE_LEN {
+        return Err(DecoderError::Unsupported(
+            "AV1 directional edge exceeds the supported 256-sample limit".to_string(),
+        ));
+    }
+    let mut above_storage = [0u16; MAX_DIRECTIONAL_EDGE_LEN];
+    let mut left_storage = [0u16; MAX_DIRECTIONAL_EDGE_LEN];
+    let mut above_filter_scratch = [0u16; MAX_DIRECTIONAL_EDGE_LEN + 1];
+    let mut left_filter_scratch = [0u16; MAX_DIRECTIONAL_EDGE_LEN + 1];
+    let above = extended_edge_into(above, above_left, above_len, &mut above_storage)?;
+    let left = extended_edge_into(left, above_left, left_len, &mut left_storage)?;
     if enable_intra_edge_filter && angle != 90 && angle != 180 {
         if angle > 90 && angle < 180 && width + height >= 24 {
             above_left = filter_intra_edge_corner(above_left, above[0], left[0]);
         }
         if angle < 180 {
-            filter_intra_edge_with_corner(
-                &mut above,
+            filter_intra_edge_with_corner_into(
+                above,
                 above_left,
                 intra_edge_filter_strength(width, height, angle - 90, smooth_neighbour),
+                &mut above_filter_scratch,
             );
         }
         if angle > 90 {
-            filter_intra_edge_with_corner(
-                &mut left,
+            filter_intra_edge_with_corner_into(
+                left,
                 above_left,
                 intra_edge_filter_strength(height, width, angle - 180, smooth_neighbour),
+                &mut left_filter_scratch,
             );
         }
     }
-    let above = DirectionalEdge::new(
-        &above,
+    let mut above_samples = [0u16; MAX_DIRECTIONAL_SAMPLE_LEN];
+    let mut left_samples = [0u16; MAX_DIRECTIONAL_SAMPLE_LEN];
+    let above = DirectionalEdgeView::new(
+        above,
         above_left,
         above_len,
         use_directional_edge_upsample(
@@ -388,9 +403,10 @@ fn predict_directional_into(
             smooth_neighbour,
         ),
         edges.bit_depth,
-    );
-    let left = DirectionalEdge::new(
-        &left,
+        &mut above_samples,
+    )?;
+    let left = DirectionalEdgeView::new(
+        left,
         above_left,
         left_len,
         use_directional_edge_upsample(
@@ -401,7 +417,8 @@ fn predict_directional_into(
             smooth_neighbour,
         ),
         edges.bit_depth,
-    );
+        &mut left_samples,
+    )?;
 
     if angle < 90 {
         predict_directional_zone1_into(width, height, &above, dx, output);
@@ -413,10 +430,21 @@ fn predict_directional_into(
     Ok(())
 }
 
-fn extended_edge(source: &[u16], corner: u16, len: usize) -> Vec<u16> {
-    let mut edge = source.to_vec();
-    edge.resize(len, *source.last().unwrap_or(&corner));
-    edge
+fn extended_edge_into<'a>(
+    source: &[u16],
+    corner: u16,
+    len: usize,
+    output: &'a mut [u16],
+) -> Result<&'a mut [u16], DecoderError> {
+    if len > output.len() {
+        return Err(DecoderError::Unsupported(
+            "AV1 directional edge scratch buffer is too small".to_string(),
+        ));
+    }
+    let fill = *source.last().unwrap_or(&corner);
+    output[..len].fill(fill);
+    output[..len.min(source.len())].copy_from_slice(&source[..len.min(source.len())]);
+    Ok(&mut output[..len])
 }
 
 fn intra_edge_filter_strength(
@@ -470,24 +498,36 @@ fn intra_edge_filter_strength(
     }
 }
 
-fn filter_intra_edge_with_corner(edge: &mut [u16], corner: u16, strength: usize) {
+fn filter_intra_edge_with_corner_into(
+    edge: &mut [u16],
+    corner: u16,
+    strength: usize,
+    scratch: &mut [u16],
+) {
     if strength == 0 || edge.is_empty() {
         return;
     }
-    let mut samples = Vec::with_capacity(edge.len() + 1);
-    samples.push(corner);
-    samples.extend_from_slice(edge);
-    filter_intra_edge(&mut samples, strength);
-    edge.copy_from_slice(&samples[1..]);
+    let sample_len = edge.len() + 1;
+    if sample_len > scratch.len() {
+        return;
+    }
+    scratch[0] = corner;
+    scratch[1..sample_len].copy_from_slice(edge);
+    filter_intra_edge_with_corner_source(edge, &scratch[..sample_len], strength);
 }
 
+#[cfg(test)]
 fn filter_intra_edge(edge: &mut [u16], strength: usize) {
-    const KERNELS: [[i32; 5]; 3] = [[0, 4, 8, 4, 0], [0, 5, 6, 5, 0], [2, 4, 4, 4, 2]];
+    let source = edge.to_vec();
+    filter_intra_edge_from_source(edge, &source, strength);
+}
+
+#[cfg(test)]
+fn filter_intra_edge_from_source(edge: &mut [u16], source: &[u16], strength: usize) {
     if strength == 0 || edge.len() < 2 {
         return;
     }
-    let source = edge.to_vec();
-    let kernel = &KERNELS[strength.min(KERNELS.len()) - 1];
+    let kernel = &INTRA_EDGE_FILTER_KERNELS[strength.min(INTRA_EDGE_FILTER_KERNELS.len()) - 1];
     for (index, output) in edge.iter_mut().enumerate().skip(1) {
         let mut sum = 0i32;
         for (tap, weight) in kernel.iter().enumerate() {
@@ -499,10 +539,31 @@ fn filter_intra_edge(edge: &mut [u16], strength: usize) {
     }
 }
 
+fn filter_intra_edge_with_corner_source(edge: &mut [u16], source: &[u16], strength: usize) {
+    if strength == 0 || edge.is_empty() {
+        return;
+    }
+    let kernel = &INTRA_EDGE_FILTER_KERNELS[strength.min(INTRA_EDGE_FILTER_KERNELS.len()) - 1];
+    for (index, output) in edge.iter_mut().enumerate() {
+        let source_index = index + 1;
+        let mut sum = 0i32;
+        for (tap, weight) in kernel.iter().enumerate() {
+            let tap_index = (source_index as isize + tap as isize - 2)
+                .clamp(0, source.len() as isize - 1) as usize;
+            sum += i32::from(source[tap_index]) * weight;
+        }
+        *output = ((sum + 8) >> 4) as u16;
+    }
+}
+
+const INTRA_EDGE_FILTER_KERNELS: [[i32; 5]; 3] =
+    [[0, 4, 8, 4, 0], [0, 5, 6, 5, 0], [2, 4, 4, 4, 2]];
+
 fn filter_intra_edge_corner(corner: u16, above: u16, left: u16) -> u16 {
     ((5 * u32::from(left) + 6 * u32::from(corner) + 5 * u32::from(above) + 8) >> 4) as u16
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DirectionalEdge {
     samples: Vec<u16>,
@@ -510,6 +571,7 @@ struct DirectionalEdge {
     upsampled: bool,
 }
 
+#[cfg(test)]
 impl DirectionalEdge {
     fn new(source: &[u16], corner: u16, len: usize, upsampled: bool, bit_depth: u8) -> Self {
         let mut edge = source.to_vec();
@@ -553,6 +615,93 @@ impl DirectionalEdge {
     }
 }
 
+trait DirectionalEdgeAccess {
+    fn sample(&self, index: i32) -> u16;
+
+    fn upsampled(&self) -> bool;
+}
+
+#[cfg(test)]
+impl DirectionalEdgeAccess for DirectionalEdge {
+    fn sample(&self, index: i32) -> u16 {
+        DirectionalEdge::sample(self, index)
+    }
+
+    fn upsampled(&self) -> bool {
+        self.upsampled
+    }
+}
+
+struct DirectionalEdgeView<'a> {
+    samples: &'a [u16],
+    offset: i32,
+    upsampled: bool,
+}
+
+impl<'a> DirectionalEdgeView<'a> {
+    fn new(
+        source: &[u16],
+        corner: u16,
+        len: usize,
+        upsampled: bool,
+        bit_depth: u8,
+        storage: &'a mut [u16],
+    ) -> Result<Self, DecoderError> {
+        let sample_len = if upsampled { len * 2 + 1 } else { len + 1 };
+        if source.len() < len || sample_len > storage.len() {
+            return Err(DecoderError::Unsupported(
+                "AV1 directional sample scratch buffer is too small".to_string(),
+            ));
+        }
+        if !upsampled {
+            storage[0] = corner;
+            storage[1..sample_len].copy_from_slice(&source[..len]);
+            return Ok(Self {
+                samples: &storage[..sample_len],
+                offset: 1,
+                upsampled: false,
+            });
+        }
+
+        storage[0] = corner;
+        let last = source[len - 1];
+        for index in 0..len {
+            let input = |position: usize| {
+                if position < 2 {
+                    corner
+                } else if position < len + 2 {
+                    source[position - 2]
+                } else {
+                    last
+                }
+            };
+            let interpolated = -i32::from(input(index))
+                + 9 * i32::from(input(index + 1))
+                + 9 * i32::from(input(index + 2))
+                - i32::from(input(index + 3));
+            storage[1 + index * 2] = clip1_signed((interpolated + 8) >> 4, bit_depth);
+            storage[2 + index * 2] = source[index];
+        }
+        Ok(Self {
+            samples: &storage[..sample_len],
+            offset: 2,
+            upsampled: true,
+        })
+    }
+}
+
+impl DirectionalEdgeAccess for DirectionalEdgeView<'_> {
+    fn sample(&self, index: i32) -> u16 {
+        let position =
+            (index + self.offset).clamp(0, self.samples.len().saturating_sub(1) as i32) as usize;
+        self.samples[position]
+    }
+
+    fn upsampled(&self) -> bool {
+        self.upsampled
+    }
+}
+
 fn use_directional_edge_upsample(
     first_size: usize,
     second_size: usize,
@@ -577,14 +726,14 @@ fn predict_directional_zone1(
     output
 }
 
-fn predict_directional_zone1_into(
+fn predict_directional_zone1_into<E: DirectionalEdgeAccess>(
     width: usize,
     height: usize,
-    above: &DirectionalEdge,
+    above: &E,
     dx: i32,
     output: &mut [u16],
 ) {
-    let upsample = i32::from(above.upsampled);
+    let upsample = i32::from(above.upsampled());
     let max_base = ((width + height - 1) as i32) << upsample;
     let frac_bits = 6 - upsample;
     let base_increment = 1 << upsample;
@@ -617,11 +766,11 @@ fn predict_directional_zone2(
     output
 }
 
-fn predict_directional_zone2_into(
+fn predict_directional_zone2_into<E: DirectionalEdgeAccess>(
     width: usize,
     height: usize,
-    above: &DirectionalEdge,
-    left: &DirectionalEdge,
+    above: &E,
+    left: &E,
     dx: i32,
     dy: i32,
     output: &mut [u16],
@@ -629,7 +778,7 @@ fn predict_directional_zone2_into(
     for row in 0..height {
         for column in 0..width {
             let x = ((column as i32) << 6) - (row as i32 + 1) * dx;
-            let above_upsample = i32::from(above.upsampled);
+            let above_upsample = i32::from(above.upsampled());
             let base_x = x >> (6 - above_upsample);
             output[row * width + column] = if base_x >= -(1 << above_upsample) {
                 directional_interpolate(
@@ -639,7 +788,7 @@ fn predict_directional_zone2_into(
                 )
             } else {
                 let y = ((row as i32) << 6) - (column as i32 + 1) * dy;
-                let left_upsample = i32::from(left.upsampled);
+                let left_upsample = i32::from(left.upsampled());
                 let base_y = y >> (6 - left_upsample);
                 directional_interpolate(
                     left.sample(base_y),
@@ -663,14 +812,14 @@ fn predict_directional_zone3(
     output
 }
 
-fn predict_directional_zone3_into(
+fn predict_directional_zone3_into<E: DirectionalEdgeAccess>(
     width: usize,
     height: usize,
-    left: &DirectionalEdge,
+    left: &E,
     dy: i32,
     output: &mut [u16],
 ) {
-    let upsample = i32::from(left.upsampled);
+    let upsample = i32::from(left.upsampled());
     let max_base = ((width + height - 1) as i32) << upsample;
     let frac_bits = 6 - upsample;
     let base_increment = 1 << upsample;
@@ -1130,6 +1279,31 @@ mod tests {
         assert_eq!(edge.sample(1), 15);
         assert_eq!(edge.sample(2), 20);
         assert_eq!(edge.sample(3), 25);
+    }
+
+    #[test]
+    fn stack_directional_edge_view_matches_allocating_reference() {
+        for upsampled in [false, true] {
+            let source = [10, 20, 30, 40, 50, 60, 70, 80];
+            let reference = DirectionalEdge::new(&source, 4, source.len(), upsampled, 8);
+            let mut storage = [0; 2 * 8 + 1];
+            let view = DirectionalEdgeView::new(
+                &source,
+                4,
+                source.len(),
+                upsampled,
+                8,
+                &mut storage,
+            )
+            .unwrap();
+            for index in -2..=16 {
+                assert_eq!(
+                    view.sample(index),
+                    reference.sample(index),
+                    "upsampled={upsampled} index={index}"
+                );
+            }
+        }
     }
 
     #[test]
