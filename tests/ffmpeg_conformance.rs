@@ -1129,6 +1129,16 @@ fn generated_smpte240m_matrix_sample_matches_ffmpeg_when_encoder_present() {
 }
 
 #[test]
+fn generated_bt709_matrix_sample_matches_ffmpeg_when_encoder_present() {
+    generated_matrix_sample_matches_ffmpeg("bt709", "BT.709", "bt709");
+}
+
+#[test]
+fn generated_bt470bg_matrix_sample_matches_ffmpeg_when_encoder_present() {
+    generated_matrix_sample_matches_ffmpeg("bt470bg", "BT.470 BG", "bt470bg");
+}
+
+#[test]
 fn generated_bt2020_constant_luminance_matrix_sample_matches_ffmpeg_when_encoder_present() {
     generated_matrix_sample_matches_ffmpeg("bt2020c", "BT.2020 constant-luminance", "bt2020");
 }

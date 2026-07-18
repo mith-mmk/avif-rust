@@ -301,8 +301,8 @@ and RGBA gates.
       optional native `DecodedFrame.buffers.planes[3]` alpha output and RGBA
       conversion coverage.
 - [x] Keep the limited SDR BT.601/BT.709 colour-conversion core.
-- [ ] Verify the SDR BT.601/BT.709 conversion core with real AVIF plane/RGBA
-      fixtures.
+- [x] Verify the SDR BT.601/BT.709 conversion core with generated BT.709 and
+      BT.470 BG AVIF plane/RGBA fixtures against the FFmpeg oracle.
 - [x] Verify 4:4:4 non-identity colour paths with a real AVIF plane/RGBA
       fixture (`fox.profile1.8bpc.yuv444.avif`); the external oracle reports
       average RGB error `0.00192` and maximum channel error `5`.
@@ -456,6 +456,11 @@ conversion loop for non-alpha YUV matrices. On
 oracle remained at average error `0.00192`, maximum `5`.
 The matrix coefficients are now hoisted out of that inner loop; an 11-iteration
 recheck measured `383.43/396.32 ms` on the same host, with the same oracle.
+
+The current five-iteration release-sample recheck measured
+`277.93/275.37 ms` (native/RGBA) on 2026-07-18. This confirms the optimized
+path remains within the previous scheduling range; it is not treated as a
+stable speedup claim without a longer quiet-host run.
 
 The full qmatrix-table checkpoint measured `384.70/381.61 ms` on a subsequent
 11-iteration run; retain the earlier release baseline until repeated runs on a
