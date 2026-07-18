@@ -353,8 +353,11 @@ and RGBA gates.
       (`curv`) tone curves, with bounded table sizes and interpolation checks.
 - [x] Apply ICC matrix-shaper parametric (`para`) tone curves for function
       types 0 through 4, including malformed-coefficient checks.
+- [x] Apply bounded ICC `A2B0` `mft1`/`mft2` RGB-to-XYZ LUT profiles with
+      trilinear CLUT interpolation, table-bound checks and synthetic coverage
+      for both LUT precisions.
 - [ ] Add display-specific HDR gamut/tone calibration and the remaining ICC
-      display-conversion profile forms (multi-dimensional CLUT/LUT profiles).
+      display-conversion profile forms (for example `mAB`/`mBA` pipelines).
 
 ## 5. Safety, performance and release gate
 
@@ -364,7 +367,9 @@ The release benchmark uses `AVIF_BENCH_ITERS=11 cargo bench --bench decode`
 against `samples/WML2Viewer.avif`. The current optimized run measured
 `295.40/292.58 ms` (native/RGBA, 7 iterations on 2026-07-18); the restoration
 stage now writes directly into the destination plane instead of cloning the
-whole plane for every restoration chunk. The earlier 348.14/346.93 ms run
+whole plane for every restoration chunk. A follow-up 11-iteration run on the
+same sample measured `288.35/295.41 ms` (native/RGBA), so the ICC LUT path did
+not regress the no-profile decode benchmark. The earlier 348.14/346.93 ms run
 remains the previous checkpoint for comparison. The deblock stage now indexes block filter
 state on an 8-pixel grid instead of linearly scanning every block for each
 edge. The reconstruction hot path also passes
