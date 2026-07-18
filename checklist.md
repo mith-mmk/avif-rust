@@ -356,8 +356,11 @@ and RGBA gates.
 - [x] Apply bounded ICC `A2B0` `mft1`/`mft2` RGB-to-XYZ LUT profiles with
       trilinear CLUT interpolation, table-bound checks and synthetic coverage
       for both LUT precisions.
+- [x] Apply bounded ICC `A2B0` `mAB` RGB-to-XYZ pipelines with A/CLUT/B and
+      A/CLUT/M/matrix/B combinations, embedded `curv` curves, PCS-Lab output,
+      and malformed offset/curve pairing checks.
 - [ ] Add display-specific HDR gamut/tone calibration and the remaining ICC
-      display-conversion profile forms (for example `mAB`/`mBA` pipelines).
+      display-conversion profile forms (for example `mBA`/PCS-Lab pipelines).
 
 ## 5. Safety, performance and release gate
 
@@ -372,7 +375,9 @@ same sample measured `288.35/295.41 ms` (native/RGBA), so the ICC LUT path did
 not regress the no-profile decode benchmark. The earlier 348.14/346.93 ms run
 remains the previous checkpoint for comparison. The deblock stage now indexes block filter
 state on an 8-pixel grid instead of linearly scanning every block for each
-edge. The reconstruction hot path also passes
+edge. A post-mAB 11-iteration validation measured `294.64/295.22 ms`
+(native/RGBA); this remains within the host's observed scheduling variance and
+is not claimed as a speedup. The reconstruction hot path also passes
 decoded coefficient slices directly instead of cloning a coefficient `Vec`
 for every transform. Rectangular inverse transforms now reuse fixed-size
 stack scratch buffers instead of allocating a `Vec` for every row and column;
