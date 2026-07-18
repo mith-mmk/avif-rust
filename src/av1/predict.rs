@@ -1287,15 +1287,9 @@ mod tests {
             let source = [10, 20, 30, 40, 50, 60, 70, 80];
             let reference = DirectionalEdge::new(&source, 4, source.len(), upsampled, 8);
             let mut storage = [0; 2 * 8 + 1];
-            let view = DirectionalEdgeView::new(
-                &source,
-                4,
-                source.len(),
-                upsampled,
-                8,
-                &mut storage,
-            )
-            .unwrap();
+            let view =
+                DirectionalEdgeView::new(&source, 4, source.len(), upsampled, 8, &mut storage)
+                    .unwrap();
             for index in -2..=16 {
                 assert_eq!(
                     view.sample(index),
