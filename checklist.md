@@ -291,6 +291,8 @@ and RGBA gates.
 - [x] Honour AV1 4:2:0 chroma sample positions (unknown/vertical/colocated)
       during RGBA conversion, with generated three-position FFmpeg oracle
       coverage.
+- [x] Validate 4:2:0 chroma sample position consistency between the AVIF
+      `av1C` property and the AV1 sequence header before public decode.
 - [x] Public alpha auxiliary composition for the 8-bit 4:4:4 sample, including
       optional native `DecodedFrame.buffers.planes[3]` alpha output and RGBA
       conversion coverage.
