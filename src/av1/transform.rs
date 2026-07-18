@@ -546,7 +546,10 @@ fn inverse_transform_rect(
     // with 1/sqrt(2) before the row transform.
     let rect_log_ratio = width.ilog2().abs_diff(height.ilog2());
     let scale_rectangular_input = rect_log_ratio % 2 == 1;
-    let mut intermediate = vec![0i32; width * height];
+    const MAX_RECTANGULAR_SAMPLES: usize = 64 * 64;
+    let sample_count = width * height;
+    debug_assert!(sample_count <= MAX_RECTANGULAR_SAMPLES);
+    let mut intermediate = [0i32; MAX_RECTANGULAR_SAMPLES];
     let mut input = [0i32; 64];
     let mut values = [0i32; 64];
     for row in 0..height {
@@ -566,7 +569,7 @@ fn inverse_transform_rect(
     }
 
     let residual_limit = 1i32 << (bit_depth + 7);
-    let mut output = vec![0i32; width * height];
+    let mut output = vec![0i32; sample_count];
     for column in 0..width {
         for row in 0..height {
             input[row] = clamp_signed(intermediate[row * width + column], bit_depth + 8);

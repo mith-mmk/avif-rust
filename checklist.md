@@ -516,6 +516,11 @@ including corner filtering and upsampled samples. A serial seven-iteration
 recheck measured `285.10/291.76 ms` (native/RGBA); this is recorded as a
 no-regression/allocation-reduction checkpoint, not a stable speedup claim.
 
+Rectangular inverse-transform row/column intermediates now use a bounded
+64x64 stack scratch array instead of allocating an intermediate Vec per
+transform. A serial seven-iteration recheck measured `314.53/331.84 ms`
+(native/RGBA); host variance makes this a no-regression checkpoint only.
+
 The full qmatrix-table checkpoint measured `384.70/381.61 ms` on a subsequent
 11-iteration run; retain the earlier release baseline until repeated runs on a
 quiet host are available.
@@ -571,6 +576,8 @@ is still required before marking the full tool supported.
 - [x] Keep container, OBU, frame-header and entropy fuzz targets.
 - [x] Optimise a per-transform coefficient allocation after exact-plane
       conformance passes; retain the public allocating wrapper for compatibility.
+- [x] Keep rectangular inverse-transform intermediates in bounded stack scratch;
+      retain the allocating public transform wrapper for compatibility.
 - [x] Reuse fixed-size intra-prediction edge scratch in the reconstruction hot
       path; retain the public allocating edge-reader wrapper for compatibility.
 - [x] Reuse a fixed 64x64 prediction scratch buffer for DC, palette and
