@@ -323,7 +323,6 @@ pub fn decode_luma_root_block_prefix(
         ));
     }
     let mut blocks = Vec::new();
-    blocks.reserve(max_blocks.min(plan.width.saturating_mul(plan.height)));
     let mut block_budget = max_blocks;
     for (tile_index, tile_payload) in tile_group.tiles.iter().enumerate() {
         let payload = tile_payload_bytes(data, tile_payload)?;
