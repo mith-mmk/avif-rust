@@ -506,6 +506,8 @@ fn validate_rgba_conversion(buffers: &FrameBuffers) -> Result<(), DecoderError> 
 enum TransferFunction {
     Gamma22,
     Gamma28,
+    Log,
+    LogSqrt,
     Linear,
     Smpte428,
     Pq,
@@ -526,6 +528,8 @@ fn transfer_characteristics(
         1 | 2 | 6 | 7 | 11 | 12 | 13 | 14 | 15 => Ok(None),
         4 => Ok(Some(TransferFunction::Gamma22)),
         5 => Ok(Some(TransferFunction::Gamma28)),
+        9 => Ok(Some(TransferFunction::Log)),
+        10 => Ok(Some(TransferFunction::LogSqrt)),
         8 => Ok(Some(TransferFunction::Linear)),
         16 => Ok(Some(TransferFunction::Pq)),
         17 => Ok(Some(TransferFunction::Smpte428)),
@@ -549,6 +553,8 @@ fn transfer_to_sdr(sample: u16, transfer: TransferFunction) -> u16 {
     match transfer {
         TransferFunction::Gamma22 => linear_to_srgb(encoded.powf(2.2)),
         TransferFunction::Gamma28 => linear_to_srgb(encoded.powf(2.8)),
+        TransferFunction::Log => linear_to_srgb(log_to_linear(encoded)),
+        TransferFunction::LogSqrt => linear_to_srgb(log_sqrt_to_linear(encoded)),
         TransferFunction::Linear => linear_to_srgb(encoded),
         TransferFunction::Smpte428 => linear_to_srgb(smpte428_to_linear(encoded)),
         TransferFunction::Pq | TransferFunction::Hlg => hdr_to_sdr(encoded, transfer),
@@ -566,6 +572,8 @@ fn hdr_to_sdr(encoded: f64, transfer: TransferFunction) -> u16 {
         TransferFunction::Hlg => hlg_to_linear(encoded),
         TransferFunction::Gamma22
         | TransferFunction::Gamma28
+        | TransferFunction::Log
+        | TransferFunction::LogSqrt
         | TransferFunction::Linear
         | TransferFunction::Smpte428 => {
             unreachable!("SDR transfer functions are handled before HDR tone mapping")
@@ -588,6 +596,22 @@ fn pq_to_linear(encoded: f64) -> f64 {
     let numerator = (powered - C1).max(0.0);
     let denominator = (C2 - C3 * powered).max(f64::MIN_POSITIVE);
     (numerator / denominator).powf(1.0 / M1)
+}
+
+fn log_to_linear(encoded: f64) -> f64 {
+    if encoded <= 0.0 {
+        0.01
+    } else {
+        10.0_f64.powf(2.0 * (encoded - 1.0))
+    }
+}
+
+fn log_sqrt_to_linear(encoded: f64) -> f64 {
+    if encoded <= 0.0 {
+        10.0_f64.sqrt() / 1000.0
+    } else {
+        10.0_f64.powf(2.5 * (encoded - 1.0))
+    }
 }
 
 fn hlg_to_linear(encoded: f64) -> f64 {
@@ -1487,6 +1511,8 @@ mod tests {
         let midpoint = u16::MAX / 2;
         let gamma22 = transfer_to_sdr(midpoint, TransferFunction::Gamma22);
         let gamma28 = transfer_to_sdr(midpoint, TransferFunction::Gamma28);
+        let log = transfer_to_sdr(midpoint, TransferFunction::Log);
+        let log_sqrt = transfer_to_sdr(midpoint, TransferFunction::LogSqrt);
         let linear = transfer_to_sdr(midpoint, TransferFunction::Linear);
         let smpte428 = transfer_to_sdr(midpoint, TransferFunction::Smpte428);
 
@@ -1496,10 +1522,14 @@ mod tests {
             u16::MAX
         );
         assert!(gamma28 < gamma22);
+        assert!(log < linear);
+        assert!(log_sqrt < linear);
         assert!(gamma22 < linear);
         assert!(smpte428 < linear);
         assert!(linear < u16::MAX);
         assert!((smpte428_to_linear(1.0) - 52.37 / 48.0).abs() < 1e-12);
+        assert!((log_to_linear(0.0) - 0.01).abs() < 1e-12);
+        assert!((log_sqrt_to_linear(0.0) - 10.0_f64.sqrt() / 1000.0).abs() < 1e-12);
     }
 
     #[test]

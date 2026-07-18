@@ -619,6 +619,16 @@ fn generated_iec61966_2_4_transfer_sample_matches_ffmpeg_when_encoder_present() 
 }
 
 #[test]
+fn generated_log_transfer_sample_matches_ffmpeg_when_encoder_present() {
+    generated_transfer_sample_matches_ffmpeg(9, "log", "zscale=tin=9:t=13,format=rgba");
+}
+
+#[test]
+fn generated_log_sqrt_transfer_sample_matches_ffmpeg_when_encoder_present() {
+    generated_transfer_sample_matches_ffmpeg(10, "log-sqrt", "zscale=tin=10:t=13,format=rgba");
+}
+
+#[test]
 fn generated_chroma_sample_positions_match_ffmpeg_when_encoder_present() {
     let root =
         std::env::temp_dir().join(format!(".test-avif-chroma-position-{}", std::process::id()));

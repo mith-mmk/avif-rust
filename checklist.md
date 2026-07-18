@@ -365,6 +365,9 @@ and RGBA gates.
 - [x] Accept CICP IEC 61966-2-4 and BT.1361 extended transfer metadata
       (transfers 11/12) in the display-referred RGBA path; a generated
       BT.1361 sample verifies that metadata no longer fails as `Unsupported`.
+- [x] Decode CICP logarithmic and log-sqrt transfer curves (transfers 9/10)
+      into the existing sRGB RGBA output; generated FFmpeg samples cover both
+      metadata paths.
 - [x] Apply ICC matrix-shaper profiles with identity/gamma and lookup-table
       (`curv`) tone curves, with bounded table sizes and interpolation checks.
 - [x] Apply ICC matrix-shaper parametric (`para`) tone curves for function
