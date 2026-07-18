@@ -1662,141 +1662,138 @@ fn apply_deblock_stage(
         }
         for boundary in &boundaries {
             let block = boundary.block;
-            for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
-                if block.plane != plane_index {
-                    continue;
-                }
-                let subsampling_x =
-                    usize::from(plane_index > 0 && frame.color_config.subsampling_x);
-                let subsampling_y =
-                    usize::from(plane_index > 0 && frame.color_config.subsampling_y);
-                let level = if plane_index == 0 {
-                    frame_header.loop_filter.levels[usize::from(!vertical)]
-                } else if plane_index == 1 {
-                    frame_header.loop_filter.levels[2]
+            let plane_index = block.plane;
+            let Some(plane) = frame.buffers.planes.get_mut(plane_index) else {
+                continue;
+            };
+            let subsampling_x = usize::from(plane_index > 0 && frame.color_config.subsampling_x);
+            let subsampling_y = usize::from(plane_index > 0 && frame.color_config.subsampling_y);
+            let level = if plane_index == 0 {
+                frame_header.loop_filter.levels[usize::from(!vertical)]
+            } else if plane_index == 1 {
+                frame_header.loop_filter.levels[2]
+            } else {
+                frame_header.loop_filter.levels[3]
+            };
+            // Still-image decode only has intra blocks, so the applicable
+            // delta is the INTRA_FRAME reference delta. The mode deltas
+            // are still parsed for bitstream alignment and future inter
+            // frame support, but do not apply to intra blocks.
+            let level = apply_loop_filter_deltas(
+                level,
+                frame_header.loop_filter.delta_enabled,
+                frame_header.loop_filter.ref_deltas[0],
+                0,
+            );
+            let edge = if vertical { block.x } else { block.y };
+            if edge == 0 || !applied_edges.insert((plane_index, block.x, block.y, vertical)) {
+                continue;
+            }
+            let span = if vertical {
+                block.tx_size.height()
+            } else {
+                block.tx_size.width()
+            };
+            for offset in (0..span).step_by(4) {
+                let (edge_x, edge_y) = if vertical {
+                    (block.x, block.y + offset)
                 } else {
-                    frame_header.loop_filter.levels[3]
+                    (block.x + offset, block.y)
                 };
-                // Still-image decode only has intra blocks, so the applicable
-                // delta is the INTRA_FRAME reference delta. The mode deltas
-                // are still parsed for bitstream alignment and future inter
-                // frame support, but do not apply to intra blocks.
-                let level = apply_loop_filter_deltas(
-                    level,
-                    frame_header.loop_filter.delta_enabled,
-                    frame_header.loop_filter.ref_deltas[0],
-                    0,
-                );
-                let edge = if vertical { block.x } else { block.y };
-                if edge == 0 || !applied_edges.insert((plane_index, block.x, block.y, vertical)) {
-                    continue;
-                }
-                let span = if vertical {
-                    block.tx_size.height()
+                let current_block = if plane_index == 0 {
+                    None
                 } else {
-                    block.tx_size.width()
+                    block_filter_state_at(edge_x << subsampling_x, edge_y << subsampling_y)
                 };
-                for offset in (0..span).step_by(4) {
-                    let (edge_x, edge_y) = if vertical {
-                        (block.x, block.y + offset)
+                let dimension = if plane_index == 0 {
+                    if vertical {
+                        block.tx_size.width()
                     } else {
-                        (block.x + offset, block.y)
-                    };
-                    let current_block = if plane_index == 0 {
-                        None
-                    } else {
-                        block_filter_state_at(edge_x << subsampling_x, edge_y << subsampling_y)
-                    };
-                    let dimension = if plane_index == 0 {
-                        if vertical {
-                            block.tx_size.width()
-                        } else {
-                            block.tx_size.height()
-                        }
-                    } else {
-                        current_block
-                            .map(|current| {
-                                if vertical {
-                                    ceil_shift(current.block_size.width(), subsampling_x).min(64)
-                                } else {
-                                    ceil_shift(current.block_size.height(), subsampling_y).min(64)
-                                }
-                            })
-                            .unwrap_or_else(|| {
-                                if vertical {
-                                    block.tx_size.width()
-                                } else {
-                                    block.tx_size.height()
-                                }
-                            })
-                    };
-                    let previous_block = if plane_index == 0 {
-                        None
-                    } else if vertical {
-                        edge_x.checked_sub(1).and_then(|x| {
-                            block_filter_state_at(x << subsampling_x, edge_y << subsampling_y)
+                        block.tx_size.height()
+                    }
+                } else {
+                    current_block
+                        .map(|current| {
+                            if vertical {
+                                ceil_shift(current.block_size.width(), subsampling_x).min(64)
+                            } else {
+                                ceil_shift(current.block_size.height(), subsampling_y).min(64)
+                            }
                         })
-                    } else {
-                        edge_y.checked_sub(1).and_then(|y| {
-                            block_filter_state_at(edge_x << subsampling_x, y << subsampling_y)
+                        .unwrap_or_else(|| {
+                            if vertical {
+                                block.tx_size.width()
+                            } else {
+                                block.tx_size.height()
+                            }
                         })
-                    };
-                    let previous_dimension = if plane_index != 0 {
-                        previous_block
-                            .map(|previous| {
-                                if vertical {
-                                    ceil_shift(previous.block_size.width(), subsampling_x).min(64)
-                                } else {
-                                    ceil_shift(previous.block_size.height(), subsampling_y).min(64)
-                                }
-                            })
-                            .unwrap_or(dimension)
-                    } else if vertical {
-                        previous_vertical
-                            .get(&(plane_index, edge_x))
-                            .into_iter()
-                            .flat_map(|entries| entries.iter())
-                            .find(|(y, height, _)| edge_y >= *y && edge_y < *y + *height)
-                            .map(|(_, _, width)| *width)
-                            .unwrap_or(dimension)
-                    } else {
-                        previous_horizontal
-                            .get(&(plane_index, edge_y))
-                            .into_iter()
-                            .flat_map(|entries| entries.iter())
-                            .find(|(x, width, _)| edge_x >= *x && edge_x < *x + *width)
-                            .map(|(_, _, height)| *height)
-                            .unwrap_or(dimension)
-                    };
-                    let dimension = dimension.min(previous_dimension);
-                    let filter_length = if plane_index == 0 {
-                        if dimension <= 4 {
-                            4
-                        } else if dimension <= 8 {
-                            8
-                        } else {
-                            14
-                        }
-                    } else if dimension <= 4 {
+                };
+                let previous_block = if plane_index == 0 {
+                    None
+                } else if vertical {
+                    edge_x.checked_sub(1).and_then(|x| {
+                        block_filter_state_at(x << subsampling_x, edge_y << subsampling_y)
+                    })
+                } else {
+                    edge_y.checked_sub(1).and_then(|y| {
+                        block_filter_state_at(edge_x << subsampling_x, y << subsampling_y)
+                    })
+                };
+                let previous_dimension = if plane_index != 0 {
+                    previous_block
+                        .map(|previous| {
+                            if vertical {
+                                ceil_shift(previous.block_size.width(), subsampling_x).min(64)
+                            } else {
+                                ceil_shift(previous.block_size.height(), subsampling_y).min(64)
+                            }
+                        })
+                        .unwrap_or(dimension)
+                } else if vertical {
+                    previous_vertical
+                        .get(&(plane_index, edge_x))
+                        .into_iter()
+                        .flat_map(|entries| entries.iter())
+                        .find(|(y, height, _)| edge_y >= *y && edge_y < *y + *height)
+                        .map(|(_, _, width)| *width)
+                        .unwrap_or(dimension)
+                } else {
+                    previous_horizontal
+                        .get(&(plane_index, edge_y))
+                        .into_iter()
+                        .flat_map(|entries| entries.iter())
+                        .find(|(x, width, _)| edge_x >= *x && edge_x < *x + *width)
+                        .map(|(_, _, height)| *height)
+                        .unwrap_or(dimension)
+                };
+                let dimension = dimension.min(previous_dimension);
+                let filter_length = if plane_index == 0 {
+                    if dimension <= 4 {
                         4
+                    } else if dimension <= 8 {
+                        8
                     } else {
-                        6
-                    };
-                    deblock_filter_edge_with_visible_bounds(
-                        &mut plane.samples,
-                        plane.layout.width,
-                        plane.layout.height,
-                        ceil_shift(frame.width, subsampling_x),
-                        ceil_shift(frame.height, subsampling_y),
-                        edge_x,
-                        edge_y,
-                        vertical,
-                        level,
-                        frame_header.loop_filter.sharpness,
-                        frame.bit_depth,
-                        filter_length,
-                    );
-                }
+                        14
+                    }
+                } else if dimension <= 4 {
+                    4
+                } else {
+                    6
+                };
+                deblock_filter_edge_with_visible_bounds(
+                    &mut plane.samples,
+                    plane.layout.width,
+                    plane.layout.height,
+                    ceil_shift(frame.width, subsampling_x),
+                    ceil_shift(frame.height, subsampling_y),
+                    edge_x,
+                    edge_y,
+                    vertical,
+                    level,
+                    frame_header.loop_filter.sharpness,
+                    frame.bit_depth,
+                    filter_length,
+                );
             }
         }
     }

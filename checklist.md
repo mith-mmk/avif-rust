@@ -388,6 +388,11 @@ The subsequent transfer metadata validation run measured `292.67/297.65 ms`
 (native/RGBA, 11 iterations on 2026-07-18); this is a validation checkpoint,
 not a claimed speedup because adjacent host runs vary materially.
 
+The deblock plane-lookup optimization validation runs measured `295.23/298.45`
+and `294.26/299.74 ms` (native/RGBA, 11 iterations on 2026-07-18). It removes
+the per-boundary scan over unrelated planes while preserving the release
+baseline until a quieter host produces a stable delta.
+
 The full qmatrix-table checkpoint measured `384.70/381.61 ms` on a subsequent
 11-iteration run; retain the earlier release baseline until repeated runs on a
 quiet host are available.
