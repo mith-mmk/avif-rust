@@ -377,7 +377,11 @@ remains the previous checkpoint for comparison. The deblock stage now indexes bl
 state on an 8-pixel grid instead of linearly scanning every block for each
 edge. A post-mAB 11-iteration validation measured `294.64/295.22 ms`
 (native/RGBA); this remains within the host's observed scheduling variance and
-is not claimed as a speedup. The reconstruction hot path also passes
+is not claimed as a speedup. After replacing per-block residual-unit `Vec`
+construction with a fixed-state iterator, three follow-up runs measured
+`285.84/295.79`, `272.72/275.69` and `270.29/278.15 ms` (native/RGBA).
+This is a promising decode-path improvement, but retain the baseline until a
+quieter host confirms it. The reconstruction hot path also passes
 decoded coefficient slices directly instead of cloning a coefficient `Vec`
 for every transform. Rectangular inverse transforms now reuse fixed-size
 stack scratch buffers instead of allocating a `Vec` for every row and column;
@@ -462,6 +466,9 @@ quiet host are available.
       instead of cloning every boundary record twice.
 - [x] Reuse a caller-owned 8x8 CDEF output buffer during frame filtering while
       retaining the allocating kernel wrapper for compatibility.
+- [x] Replace per-block residual-unit ordering allocations with a fixed-state
+      iterator and verify the 64x64 interleaving order against the existing
+      unit test and decode benchmark.
 - [x] Correct the nested crate repository URL to the independently maintained
       `avif-rust` repository and verify it from a fresh clone.
 - [ ] Add SIMD/parallel paths only with scalar equivalence and Wasm fallback

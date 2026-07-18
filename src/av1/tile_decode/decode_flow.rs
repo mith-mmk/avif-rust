@@ -168,25 +168,56 @@ fn residual_unit_order(
     x: usize,
     y: usize,
     plane_count: usize,
-) -> Vec<ResidualUnit> {
-    const MAX_UNIT_SIZE: usize = 64;
-    let mut units = Vec::new();
-    for unit_y in (y..y + block_size.height()).step_by(MAX_UNIT_SIZE) {
-        for unit_x in (x..x + block_size.width()).step_by(MAX_UNIT_SIZE) {
-            let width = MAX_UNIT_SIZE.min(x + block_size.width() - unit_x);
-            let height = MAX_UNIT_SIZE.min(y + block_size.height() - unit_y);
-            for plane_index in 0..plane_count {
-                units.push(ResidualUnit {
-                    plane_index,
-                    x: unit_x,
-                    y: unit_y,
-                    width,
-                    height,
-                });
+) -> ResidualUnitIter {
+    ResidualUnitIter {
+        x,
+        y,
+        width: block_size.width(),
+        height: block_size.height(),
+        plane_count,
+        local_x: 0,
+        local_y: 0,
+        plane_index: 0,
+    }
+}
+
+struct ResidualUnitIter {
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    plane_count: usize,
+    local_x: usize,
+    local_y: usize,
+    plane_index: usize,
+}
+
+impl Iterator for ResidualUnitIter {
+    type Item = ResidualUnit;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        const MAX_UNIT_SIZE: usize = 64;
+        if self.local_y >= self.height || self.plane_count == 0 {
+            return None;
+        }
+        let unit = ResidualUnit {
+            plane_index: self.plane_index,
+            x: self.x + self.local_x,
+            y: self.y + self.local_y,
+            width: MAX_UNIT_SIZE.min(self.width - self.local_x),
+            height: MAX_UNIT_SIZE.min(self.height - self.local_y),
+        };
+        self.plane_index += 1;
+        if self.plane_index == self.plane_count {
+            self.plane_index = 0;
+            self.local_x += MAX_UNIT_SIZE;
+            if self.local_x >= self.width {
+                self.local_x = 0;
+                self.local_y += MAX_UNIT_SIZE;
             }
         }
+        Some(unit)
     }
-    units
 }
 
 #[cfg(test)]
@@ -200,7 +231,7 @@ mod tests {
 
     #[test]
     fn residuals_interleave_planes_within_64x64_units() {
-        let units = residual_unit_order(BlockSize::Block128x128, 768, 0, 3);
+        let units: Vec<_> = residual_unit_order(BlockSize::Block128x128, 768, 0, 3).collect();
         assert_eq!(units.len(), 12);
         assert_eq!(
             &units[..6],
