@@ -487,6 +487,13 @@ After the ICC mBA pipeline addition, a quiet five-iteration recheck measured
 `269.89/271.23 ms` (native/RGBA) on 2026-07-18; this is also recorded as a
 no-regression checkpoint.
 
+After reusing a fixed 64x64 prediction scratch buffer for DC, palette and
+intra-block-copy reconstruction, the five-iteration recheck measured
+`274.52/276.26 ms`; a 15-iteration follow-up measured `293.95/287.20 ms`
+(native/RGBA). Host scheduling variance remains larger than the observed delta,
+so this is recorded as a no-regression allocation-reduction checkpoint rather
+than a stable speedup claim.
+
 The full qmatrix-table checkpoint measured `384.70/381.61 ms` on a subsequent
 11-iteration run; retain the earlier release baseline until repeated runs on a
 quiet host are available.
@@ -544,6 +551,8 @@ is still required before marking the full tool supported.
       conformance passes; retain the public allocating wrapper for compatibility.
 - [x] Reuse fixed-size intra-prediction edge scratch in the reconstruction hot
       path; retain the public allocating edge-reader wrapper for compatibility.
+- [x] Reuse a fixed 64x64 prediction scratch buffer for DC, palette and
+      intra-block-copy reconstruction paths while preserving scalar conformance.
 - [x] Sort references to retained transform boundaries for each deblock pass
       instead of cloning every boundary record twice.
 - [x] Reuse a caller-owned 8x8 CDEF output buffer during frame filtering while

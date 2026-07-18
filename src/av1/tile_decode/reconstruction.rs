@@ -139,7 +139,9 @@ pub(super) fn decode_plane_block_unit(
             decoder.set_txb_entropy_context(*transform, 0);
             let (top_right_available, bottom_left_available) =
                 decoder.reconstructed_extension_availability(plane, *transform)?;
-            let prediction = predict_plane_block(
+            let prediction_len = transform.tx_size.width() * transform.tx_size.height();
+            let prediction = &mut decoder.prediction_scratch[..prediction_len];
+            predict_plane_block_into(
                 plane,
                 block_mode,
                 plane_index,
@@ -162,6 +164,7 @@ pub(super) fn decode_plane_block_unit(
                 block_mode.intra_block_copy_mv,
                 subsampling_x,
                 subsampling_y,
+                prediction,
             )?;
             write_plane_block(
                 plane,
@@ -194,7 +197,9 @@ pub(super) fn decode_plane_block_unit(
             decoder.set_txb_entropy_context(transform, 0);
             let (top_right_available, bottom_left_available) =
                 decoder.reconstructed_extension_availability(plane, transform)?;
-            let prediction = predict_plane_block(
+            let prediction_len = transform.tx_size.width() * transform.tx_size.height();
+            let prediction = &mut decoder.prediction_scratch[..prediction_len];
+            predict_plane_block_into(
                 plane,
                 block_mode,
                 plane_index,
@@ -217,6 +222,7 @@ pub(super) fn decode_plane_block_unit(
                 block_mode.intra_block_copy_mv,
                 subsampling_x,
                 subsampling_y,
+                prediction,
             )?;
             write_plane_block(
                 plane,
@@ -247,7 +253,9 @@ pub(super) fn decode_plane_block_unit(
         );
         let (top_right_available, bottom_left_available) =
             decoder.reconstructed_extension_availability(plane, transform)?;
-        let prediction = predict_plane_block(
+        let prediction_len = transform.tx_size.width() * transform.tx_size.height();
+        let prediction = &mut decoder.prediction_scratch[..prediction_len];
+        predict_plane_block_into(
             plane,
             block_mode,
             plane_index,
@@ -270,6 +278,7 @@ pub(super) fn decode_plane_block_unit(
             block_mode.intra_block_copy_mv,
             subsampling_x,
             subsampling_y,
+            prediction,
         )?;
         let block = decoded_transform.transform;
         let tx_type = decoded_transform.tx_type;
@@ -463,7 +472,7 @@ fn plane_block_size(
     clippy::too_many_arguments,
     reason = "plane prediction keeps palette, CFL, edge, and geometry inputs explicit"
 )]
-fn predict_plane_block(
+fn predict_plane_block_into(
     plane: &PlaneBuffer,
     block_mode: &BlockModeProbe,
     plane_index: usize,
@@ -486,9 +495,18 @@ fn predict_plane_block(
     intra_block_copy_mv: Option<(i32, i32)>,
     subsampling_x: usize,
     subsampling_y: usize,
-) -> Result<Vec<u16>, DecoderError> {
+    output: &mut [u16],
+) -> Result<(), DecoderError> {
+    let sample_count = width.checked_mul(height).ok_or_else(|| {
+        DecoderError::InvalidParam("AV1 prediction dimensions overflow".to_string())
+    })?;
+    if output.len() != sample_count {
+        return Err(DecoderError::InvalidParam(
+            "AV1 prediction output dimensions do not match block".to_string(),
+        ));
+    }
     if let Some(mv) = intra_block_copy_mv {
-        return predict_intra_block_copy(
+        predict_intra_block_copy_into(
             plane,
             x,
             y,
@@ -497,31 +515,36 @@ fn predict_plane_block(
             mv,
             subsampling_x,
             subsampling_y,
-        );
-    }
-    if filter_intra_mode.is_none() && prediction_mode == PredictionMode::Dc {
-        let palette_prediction = if plane_index == 0 {
-            block_mode
-                .palette
-                .y
-                .as_ref()
-                .map(|palette| (palette, 0, palette.colors.len()))
-        } else {
-            block_mode.palette.uv.as_ref().map(|palette| {
-                let palette_size = palette.colors.len() / 2;
-                (
-                    palette,
-                    usize::from(plane_index == 2) * palette_size,
-                    palette_size,
-                )
-            })
-        };
+            output,
+        )?;
+    } else {
+        let palette_prediction =
+            if filter_intra_mode.is_none() && prediction_mode == PredictionMode::Dc {
+                if plane_index == 0 {
+                    block_mode
+                        .palette
+                        .y
+                        .as_ref()
+                        .map(|palette| (palette, 0, palette.colors.len()))
+                } else {
+                    block_mode.palette.uv.as_ref().map(|palette| {
+                        let palette_size = palette.colors.len() / 2;
+                        (
+                            palette,
+                            usize::from(plane_index == 2) * palette_size,
+                            palette_size,
+                        )
+                    })
+                }
+            } else {
+                None
+            };
         if let Some((palette, color_offset, palette_size)) = palette_prediction
             && !palette.color_map.is_empty()
             && palette.map_width > 0
             && palette.map_height > 0
         {
-            return Ok(predict_palette_block(
+            predict_palette_block_into(
                 palette,
                 color_offset,
                 palette_size,
@@ -531,34 +554,35 @@ fn predict_plane_block(
                 y,
                 width,
                 height,
-            ));
+                output,
+            );
+        } else if prediction_mode == PredictionMode::Dc && filter_intra_mode.is_none() {
+            predict_dc_block_into(plane, x, y, width, height, bit_depth, output);
+        } else {
+            let prediction = predict_block(
+                plane,
+                prediction_mode,
+                x,
+                y,
+                width,
+                height,
+                angle_delta,
+                filter_intra_mode,
+                bit_depth,
+                enable_intra_edge_filter,
+                smooth_neighbour,
+                top_right_available,
+                bottom_left_available,
+            )?;
+            output.copy_from_slice(&prediction);
         }
     }
-    let mut prediction = if prediction_mode == PredictionMode::Dc && filter_intra_mode.is_none() {
-        predict_dc_block(plane, x, y, width, height, bit_depth)
-    } else {
-        predict_block(
-            plane,
-            prediction_mode,
-            x,
-            y,
-            width,
-            height,
-            angle_delta,
-            filter_intra_mode,
-            bit_depth,
-            enable_intra_edge_filter,
-            smooth_neighbour,
-            top_right_available,
-            bottom_left_available,
-        )?
-    };
     if let Some(alpha_q3) = cfl_alpha_q3 {
         let luma_plane = luma_plane.ok_or_else(|| {
             DecoderError::Bitstream("AV1 CFL prediction is missing its luma plane".to_string())
         })?;
         apply_cfl_prediction(
-            &mut prediction,
+            output,
             luma_plane,
             x,
             y,
@@ -570,10 +594,14 @@ fn predict_plane_block(
             subsampling_y,
         )?;
     }
-    Ok(prediction)
+    Ok(())
 }
 
-fn predict_intra_block_copy(
+#[expect(
+    clippy::too_many_arguments,
+    reason = "intra block copy geometry is explicit for bounds and subsampling checks"
+)]
+fn predict_intra_block_copy_into(
     plane: &PlaneBuffer,
     x: usize,
     y: usize,
@@ -582,7 +610,16 @@ fn predict_intra_block_copy(
     mv: (i32, i32),
     subsampling_x: usize,
     subsampling_y: usize,
-) -> Result<Vec<u16>, DecoderError> {
+    output: &mut [u16],
+) -> Result<(), DecoderError> {
+    let expected_len = width
+        .checked_mul(height)
+        .ok_or_else(|| DecoderError::Bitstream("intrabc prediction size overflows".to_string()))?;
+    if output.len() != expected_len {
+        return Err(DecoderError::Bitstream(
+            "intrabc prediction buffer has an invalid size".to_string(),
+        ));
+    }
     let luma_x = i64::try_from(x)
         .ok()
         .and_then(|value| value.checked_shl(subsampling_x as u32))
@@ -612,14 +649,79 @@ fn predict_intra_block_copy(
             "intrabc source block exceeds plane bounds".to_string(),
         ));
     }
-    let mut prediction = Vec::with_capacity(width * height);
     for row in 0..height {
-        let start = (source_y + row) * plane.layout.width + source_x;
-        prediction.extend_from_slice(&plane.samples[start..start + width]);
+        let source_start = (source_y + row) * plane.layout.width + source_x;
+        let output_start = row * width;
+        output[output_start..output_start + width]
+            .copy_from_slice(&plane.samples[source_start..source_start + width]);
     }
-    Ok(prediction)
+    Ok(())
 }
 
+fn predict_dc_block_into(
+    plane: &PlaneBuffer,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    bit_depth: u8,
+    output: &mut [u16],
+) {
+    let above_available = y > 0 && plane.layout.width > 0;
+    let left_available = x > 0 && plane.layout.height > 0;
+    let value = match (above_available, left_available) {
+        (true, true) => {
+            let above_sum: u32 = (0..width)
+                .map(|offset| {
+                    u32::from(
+                        plane.samples[(y - 1) * plane.layout.width
+                            + (x + offset).min(plane.layout.width - 1)],
+                    )
+                })
+                .sum();
+            let left_sum: u32 = (0..height)
+                .map(|offset| {
+                    u32::from(
+                        plane.samples[((y + offset).min(plane.layout.height - 1))
+                            * plane.layout.width
+                            + x
+                            - 1],
+                    )
+                })
+                .sum();
+            (above_sum + left_sum + ((width + height) as u32 >> 1)) / (width + height) as u32
+        }
+        (true, false) => {
+            let sum: u32 = (0..width)
+                .map(|offset| {
+                    u32::from(
+                        plane.samples[(y - 1) * plane.layout.width
+                            + (x + offset).min(plane.layout.width - 1)],
+                    )
+                })
+                .sum();
+            (sum + (width as u32 >> 1)) >> width.trailing_zeros()
+        }
+        (false, true) => {
+            let sum: u32 = (0..height)
+                .map(|offset| {
+                    u32::from(
+                        plane.samples[((y + offset).min(plane.layout.height - 1))
+                            * plane.layout.width
+                            + x
+                            - 1],
+                    )
+                })
+                .sum();
+            (sum + (height as u32 >> 1)) >> height.trailing_zeros()
+        }
+        (false, false) => 1u32 << (bit_depth - 1),
+    };
+    let value = value.min((1u32 << bit_depth) - 1) as u16;
+    output.fill(value);
+}
+
+#[cfg(test)]
 fn predict_dc_block(
     plane: &PlaneBuffer,
     x: usize,
@@ -760,6 +862,7 @@ fn round_power_of_two_signed(value: i32, bits: u32) -> i32 {
     clippy::too_many_arguments,
     reason = "palette prediction keeps source-map and destination geometry explicit"
 )]
+#[cfg(test)]
 fn predict_palette_block(
     palette: &PalettePlaneInfo,
     color_offset: usize,
@@ -784,6 +887,37 @@ fn predict_palette_block(
         }
     }
     prediction
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "palette prediction keeps source-map and destination geometry explicit"
+)]
+fn predict_palette_block_into(
+    palette: &PalettePlaneInfo,
+    color_offset: usize,
+    palette_size: usize,
+    block_x: usize,
+    block_y: usize,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    output: &mut [u16],
+) {
+    let palette_size = palette_size.min(PALETTE_MAX_SIZE);
+    let mut index = 0;
+    for row in 0..height {
+        let map_row = (y + row).saturating_sub(block_y);
+        for col in 0..width {
+            let map_col = (x + col).saturating_sub(block_x);
+            let map_index = map_row.min(palette.map_height - 1) * palette.map_width
+                + map_col.min(palette.map_width - 1);
+            let color_index = usize::from(palette.color_map[map_index]).min(palette_size - 1);
+            output[index] = palette.colors[color_offset + color_index];
+            index += 1;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -867,6 +1001,26 @@ mod tests {
             .unwrap();
             assert_eq!(predict_dc_block(&plane, x, y, width, height, 8), expected);
         }
+    }
+
+    #[test]
+    fn direct_dc_prediction_writes_caller_buffer() {
+        let layout = crate::av1::decode::PlaneLayout {
+            plane: 0,
+            width: 4,
+            height: 4,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 16,
+        };
+        let plane = PlaneBuffer {
+            layout,
+            samples: (0..16).map(|value| value as u16).collect(),
+        };
+        let expected = predict_dc_block(&plane, 2, 2, 2, 2, 8);
+        let mut output = [0; 4];
+        predict_dc_block_into(&plane, 2, 2, 2, 2, 8, &mut output);
+        assert_eq!(output, expected.as_slice());
     }
 
     #[test]
@@ -966,5 +1120,18 @@ mod tests {
                 assert_eq!(prediction[row * 8 + col], expected);
             }
         }
+    }
+
+    #[test]
+    fn palette_prediction_writes_caller_buffer() {
+        let palette = PalettePlaneInfo {
+            colors: vec![10, 20, 30],
+            color_map: vec![0, 1, 2, 1],
+            map_width: 2,
+            map_height: 2,
+        };
+        let mut output = [0; 4];
+        predict_palette_block_into(&palette, 0, 3, 0, 0, 0, 0, 2, 2, &mut output);
+        assert_eq!(output, [10, 20, 30, 20]);
     }
 }
