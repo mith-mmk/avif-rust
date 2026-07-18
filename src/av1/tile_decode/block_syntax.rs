@@ -53,7 +53,7 @@ impl<'a> TileDecoder<'a> {
             let use_intrabc = self.reader.read_symbol(self.cdf.intrabc_cdf_mut())? != 0;
             if use_intrabc {
                 let predictor = self
-                    .intra_bc_mv_predictor(x, y)
+                    .intra_bc_mv_predictor(x, y, block_size)
                     .unwrap_or_else(|| default_intrabc_mv(sequence, frame, tile, y));
                 let mv = self.read_intrabc_mv(predictor)?;
                 validate_intrabc_mv(sequence, frame, tile, block_size, x, y, mv)?;

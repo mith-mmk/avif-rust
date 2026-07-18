@@ -4,17 +4,50 @@ use crate::DecoderError;
 use crate::av1::decode::TileDecodePlan;
 use crate::av1::syntax::{BlockSize, Partition, TxSize};
 
+fn intra_bc_candidate_offsets(block_size: BlockSize) -> [(isize, isize); 9] {
+    let n8_w = block_size.width().max(8) / 8;
+    let n8_h = block_size.height().max(8) / 8;
+    [
+        ((n8_h.saturating_sub(1) * 2) as isize, -2),
+        (-2isize, n8_w.saturating_sub(1) as isize * 2),
+        (-2, ((n8_w.saturating_sub(1) / 2) * 2) as isize),
+        (((n8_h.saturating_sub(1) / 2) * 2) as isize, -2),
+        (-2, -2),
+        (-2, (n8_w * 2) as isize),
+        ((n8_h * 2) as isize, -2),
+        (-2, -6),
+        ((n8_h.saturating_sub(1) * 2) as isize, -6),
+    ]
+}
+
 impl<'a> TileDecoder<'a> {
-    pub(super) fn intra_bc_mv_predictor(&self, x: usize, y: usize) -> Option<(i32, i32)> {
+    pub(super) fn intra_bc_mv_predictor(
+        &self,
+        x: usize,
+        y: usize,
+        block_size: BlockSize,
+    ) -> Option<(i32, i32)> {
         let mi_col = x >> 2;
         let mi_row = y >> 2;
-        let left = (mi_col > self.tile_mi_col_start)
-            .then(|| self.intra_bc_mv_at(mi_col - 1, mi_row))
-            .flatten();
-        let above = (mi_row > self.tile_mi_row_start)
-            .then(|| self.intra_bc_mv_at(mi_col, mi_row - 1))
-            .flatten();
-        left.or(above)
+        for (row_offset, col_offset) in intra_bc_candidate_offsets(block_size) {
+            let candidate_row = mi_row.checked_add_signed(row_offset);
+            let candidate_col = mi_col.checked_add_signed(col_offset);
+            let (Some(candidate_row), Some(candidate_col)) = (candidate_row, candidate_col) else {
+                continue;
+            };
+            if candidate_row < self.tile_mi_row_start
+                || candidate_col < self.tile_mi_col_start
+                || candidate_row >= self.mi_rows
+                || candidate_col >= self.mi_cols
+            {
+                continue;
+            }
+            let Some(mv) = self.intra_bc_mv_at(candidate_col, candidate_row) else {
+                continue;
+            };
+            return Some(mv);
+        }
+        None
     }
 
     pub(super) fn set_intra_bc_mv(
@@ -250,5 +283,33 @@ impl<'a> TileDecoder<'a> {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::intra_bc_candidate_offsets;
+    use crate::av1::syntax::BlockSize;
+
+    #[test]
+    fn intrabc_candidate_offsets_follow_block_geometry() {
+        assert_eq!(
+            intra_bc_candidate_offsets(BlockSize::Block16x16),
+            [
+                (2, -2),
+                (-2, 2),
+                (-2, 0),
+                (0, -2),
+                (-2, -2),
+                (-2, 4),
+                (4, -2),
+                (-2, -6),
+                (2, -6),
+            ]
+        );
+        assert_eq!(
+            intra_bc_candidate_offsets(BlockSize::Block4x16)[..4],
+            [(2, -2), (-2, 0), (-2, 0), (0, -2)]
+        );
     }
 }
