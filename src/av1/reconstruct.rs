@@ -1,5 +1,5 @@
 use super::decode::{FrameBuffers, PlaneBuffer};
-use super::sequence::ColorConfig;
+use super::sequence::{ChromaSamplePosition, ColorConfig};
 use crate::{DecoderError, ImageBuffer, Rgba16ImageBuffer};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -340,10 +340,14 @@ pub fn frame_buffers_to_rgba_16(
                 let rgb = yuv_to_rgb_u16(
                     sample_plane(plane_y, x, y),
                     plane_u
-                        .map(|plane| sample_chroma_plane(plane, x, y))
+                        .map(|plane| {
+                            sample_chroma_plane(plane, x, y, color_config.chroma_sample_position)
+                        })
                         .unwrap_or(chroma_mid),
                     plane_v
-                        .map(|plane| sample_chroma_plane(plane, x, y))
+                        .map(|plane| {
+                            sample_chroma_plane(plane, x, y, color_config.chroma_sample_position)
+                        })
                         .unwrap_or(chroma_mid),
                     range,
                     matrix,
@@ -385,7 +389,12 @@ fn alpha_sample(
         .unwrap_or(u16::MAX)
 }
 
-fn sample_chroma_plane(plane: &super::decode::PlaneBuffer, x: usize, y: usize) -> u16 {
+fn sample_chroma_plane(
+    plane: &super::decode::PlaneBuffer,
+    x: usize,
+    y: usize,
+    position: Option<ChromaSamplePosition>,
+) -> u16 {
     let subsampling_x = usize::from(plane.layout.subsampling_x);
     let subsampling_y = usize::from(plane.layout.subsampling_y);
     if subsampling_x == 0 && subsampling_y == 0 {
@@ -395,15 +404,20 @@ fn sample_chroma_plane(plane: &super::decode::PlaneBuffer, x: usize, y: usize) -
     let source_y = (y >> subsampling_y).min(plane.layout.height - 1);
     let next_x = (source_x + 1).min(plane.layout.width - 1);
     let next_y = (source_y + 1).min(plane.layout.height - 1);
-    // The AV1 still-image samples in the supported path use colocated
-    // horizontal chroma.  Keep the horizontal sample nearest while applying
-    // vertical interpolation for 4:2:0, which matches the reference edge
-    // behavior for odd-height images.
-    let fraction_x = 0;
-    let fraction_y = if subsampling_y == 0 {
-        0
+    let (fraction_x, fraction_y) = if subsampling_x == 1 && subsampling_y == 1 {
+        match position.unwrap_or(ChromaSamplePosition::Unknown) {
+            // Horizontally co-located and halfway between vertical samples.
+            ChromaSamplePosition::Vertical => (0, (y & 1) as u32),
+            // Co-located with the top-left luma sample of each 2x2 block.
+            ChromaSamplePosition::Colocated => (0, 0),
+            // Unknown is kept on the historical vertical path.  AV1 leaves
+            // the source-side placement to the container/application when it
+            // is unknown; this is also the fallback used by FFmpeg/libaom.
+            ChromaSamplePosition::Unknown | ChromaSamplePosition::Reserved => (0, (y & 1) as u32),
+        }
     } else {
-        (y & 1) as u32
+        // AV1 4:2:2 uses horizontally co-located chroma in this path.
+        (0, 0)
     };
     let top_left = u32::from(plane.samples[source_y * plane.layout.width + source_x]);
     let top_right = u32::from(plane.samples[source_y * plane.layout.width + next_x]);
@@ -914,6 +928,34 @@ mod tests {
         let image = frame_buffers_to_identity_rgba_8(&buffers).unwrap();
 
         assert_eq!(image.rgba, vec![10, 30, 50, 255, 20, 40, 60, 255]);
+    }
+
+    #[test]
+    fn chroma_sample_position_selects_420_interpolation() {
+        let plane = PlaneBuffer {
+            layout: PlaneLayout {
+                plane: 1,
+                width: 2,
+                height: 2,
+                subsampling_x: 1,
+                subsampling_y: 1,
+                sample_count: 4,
+            },
+            samples: vec![10, 20, 30, 40],
+        };
+
+        assert_eq!(
+            sample_chroma_plane(&plane, 1, 1, Some(ChromaSamplePosition::Vertical)),
+            20
+        );
+        assert_eq!(
+            sample_chroma_plane(&plane, 1, 1, Some(ChromaSamplePosition::Colocated)),
+            10
+        );
+        assert_eq!(
+            sample_chroma_plane(&plane, 1, 1, Some(ChromaSamplePosition::Unknown)),
+            20
+        );
     }
 
     #[test]

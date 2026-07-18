@@ -288,6 +288,9 @@ and RGBA gates.
 - [x] Public 8-bit monochrome decode and luma-to-RGB conversion.
 - [x] Public 8-bit 4:2:0 decode with subsampled chroma conversion.
 - [x] Public 8-bit 4:2:2 decode with subsampled chroma conversion.
+- [x] Honour AV1 4:2:0 chroma sample positions (unknown/vertical/colocated)
+      during RGBA conversion, with generated three-position FFmpeg oracle
+      coverage.
 - [x] Public alpha auxiliary composition for the 8-bit 4:4:4 sample, including
       optional native `DecodedFrame.buffers.planes[3]` alpha output and RGBA
       conversion coverage.

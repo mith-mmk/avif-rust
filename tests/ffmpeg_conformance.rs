@@ -475,6 +475,69 @@ fn generated_smpte428_transfer_sample_matches_ffmpeg_when_encoder_present() {
     generated_transfer_sample_matches_ffmpeg(17, "smpte428", "zscale=tin=17:t=13,format=rgba");
 }
 
+#[test]
+fn generated_chroma_sample_positions_match_ffmpeg_when_encoder_present() {
+    let root =
+        std::env::temp_dir().join(format!(".test-avif-chroma-position-{}", std::process::id()));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary AVIF sample directory: {err}");
+    }
+    for (position, label) in [(0u8, "unknown"), (1, "vertical"), (2, "colocated")] {
+        let output_path = root.join(format!("{label}.avif"));
+        let status = Command::new("ffmpeg")
+            .args(["-y", "-loglevel", "error"])
+            .arg("-i")
+            .arg(sample_path("WML2Viewer.png"))
+            .args([
+                "-vf",
+                "scale=64:64:flags=neighbor,format=yuv420p",
+                "-frames:v",
+                "1",
+                "-c:v",
+                "libaom-av1",
+                "-still-picture",
+                "1",
+                "-cpu-used",
+                "8",
+                "-crf",
+                "0",
+                "-bsf:v",
+            ])
+            .arg(format!("av1_metadata=chroma_sample_position={position}"))
+            .args(["-f", "avif"])
+            .arg(&output_path)
+            .status();
+        let Ok(status) = status else {
+            eprintln!("ffmpeg is not available; skipping generated {label} chroma sample");
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        };
+        if !status.success() {
+            eprintln!("libaom chroma-position encoder is unavailable; skipping generated sample");
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        let data = std::fs::read(&output_path).expect("generated chroma AVIF should be readable");
+        let actual =
+            avif_rust::image_from_bytes(&data).expect("chroma-position AVIF should decode");
+        assert_eq!((actual.width, actual.height), (64, 64));
+        if let Some(expected) = ffmpeg_decode_rgba_dynamic(&output_path, 64, 64) {
+            let metrics = diff_rgb_dynamic(&actual.rgba, &expected);
+            eprintln!(
+                "{label} chroma position: average RGB absolute error={} max={}",
+                metrics.average_rgb_abs, metrics.max_rgb_abs
+            );
+            assert!(
+                metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 64,
+                "{label} chroma-position FFmpeg RGB error average={} max={}",
+                metrics.average_rgb_abs,
+                metrics.max_rgb_abs
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 fn generated_transfer_sample_matches_ffmpeg(transfer: u8, label: &str, oracle_filter: &str) {
     let root = std::env::temp_dir().join(format!(
         ".test-avif-transfer-{label}-{}",
