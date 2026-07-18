@@ -466,6 +466,66 @@ fn generated_adaptive_quantization_sample_matches_ffmpeg_when_encoder_present() 
 }
 
 #[test]
+fn generated_ictcp_sample_matches_ffmpeg_when_encoder_present() {
+    let root = std::env::temp_dir().join(format!(".test-avif-ictcp-{}", std::process::id()));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary AVIF sample directory: {err}");
+    }
+    let output_path = root.join("ictcp.avif");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .arg("-i")
+        .arg(sample_path("WML2Viewer.png"))
+        .args([
+            "-frames:v",
+            "1",
+            "-vf",
+            "zscale=primaries=2020:transfer=smpte2084:matrix=ictcp,format=yuv444p",
+            "-c:v",
+            "libaom-av1",
+            "-still-picture",
+            "1",
+            "-crf",
+            "30",
+            "-cpu-used",
+            "8",
+            "-f",
+            "avif",
+        ])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated ICTCP sample");
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom ICTCP encoder is unavailable; skipping generated ICTCP sample");
+        return;
+    }
+
+    let data = std::fs::read(&output_path).expect("generated ICTCP AVIF should be readable");
+    let actual = avif_rust::image_from_bytes(&data).expect("ICTCP AVIF should decode");
+    let Some(expected) = ffmpeg_decode_rgba_with_filter(
+        &output_path,
+        SAMPLE_WIDTH,
+        SAMPLE_HEIGHT,
+        "zscale=matrix=bt709:transfer=bt709:primaries=2020,format=gbrp,format=rgba",
+    ) else {
+        return;
+    };
+    assert_eq!(actual.width, SAMPLE_WIDTH);
+    assert_eq!(actual.height, SAMPLE_HEIGHT);
+    let metrics = diff_rgb(&actual.rgba, &expected);
+    eprintln!(
+        "ICTCP FFmpeg RGB error average={} max={}",
+        metrics.average_rgb_abs, metrics.max_rgb_abs
+    );
+    assert!(metrics.average_rgb_abs <= 10.0);
+    assert!(metrics.max_rgb_abs <= 64);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn generated_delta_lf_sample_matches_ffmpeg_when_encoder_present() {
     let root = std::env::temp_dir().join(format!(".test-avif-delta-lf-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {

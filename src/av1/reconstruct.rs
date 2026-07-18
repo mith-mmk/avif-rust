@@ -553,6 +553,7 @@ enum MatrixCoefficients {
     Bt2020ConstantLuminance { kr: f64, kb: f64 },
     Smpte2085,
     YcGco,
+    Ictcp,
 }
 
 impl MatrixCoefficients {
@@ -593,6 +594,7 @@ impl MatrixCoefficients {
                 let (kr, kb) = derived_luma_coefficients(color_primaries)?;
                 Ok(Self::Bt2020ConstantLuminance { kr, kb })
             }
+            14 => Ok(Self::Ictcp),
             _ => Err(DecoderError::Unsupported(format!(
                 "AV1 matrix coefficients {matrix_coefficients} RGBA conversion is not supported yet"
             ))),
@@ -776,6 +778,20 @@ fn yuv_to_rgb_u16(
             let g = y + cb;
             let r = y - cb + cr;
             let b = y - cb - cr;
+            (r, g, b)
+        }
+        MatrixCoefficients::Ictcp => {
+            // BT.2100 ICtCp stores PQ-coded LMS' values transformed into
+            // I/Ct/Cp.  The inverse matrices below are the exact inverse of
+            // the integer matrices from BT.2100 (with the 4096 scale
+            // cancelled), so the result remains PQ-coded until the common
+            // transfer-characteristics stage converts it to display RGB.
+            let l = y + 0.008609037037932756 * cb + 0.11102962500302596 * cr;
+            let m = y - 0.008609037037932756 * cb - 0.11102962500302596 * cr;
+            let s = y + 0.5600313357106791 * cb - 0.32062717498731885 * cr;
+            let r = 3.4366066943330784 * l - 2.50645211865627 * m + 0.06984542432319148 * s;
+            let g = -0.7913295555989287 * l + 1.9836004517922907 * m - 0.192270896193362 * s;
+            let b = -0.025949899690592672 * l - 0.09891371471172644 * m + 1.1248636144023192 * s;
             (r, g, b)
         }
     };
@@ -1179,6 +1195,10 @@ mod tests {
         assert!(matches!(
             MatrixCoefficients::from_av1(13, 9),
             Ok(MatrixCoefficients::Bt2020ConstantLuminance { .. })
+        ));
+        assert!(matches!(
+            MatrixCoefficients::from_av1(14, 9),
+            Ok(MatrixCoefficients::Ictcp)
         ));
     }
 

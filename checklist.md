@@ -318,6 +318,9 @@ and RGBA gates.
       chroma scaling and a generated libaom sample exercises metadata parsing;
       the available external decoders do not expose a stable RGBA oracle for
       this matrix.
+- [x] Decode BT.2100 ICtCp (`matrix_coefficients=14`) by reversing the
+      normative LMS'/ICtCp matrices. A generated FFmpeg/libaom PQ sample now
+      exercises the path against an independent zscale RGB oracle.
 - [x] Decode chromaticity-derived non-constant/constant luminance matrices
       (`matrix_coefficients=12/13`) by deriving KR/KB from the H.273 primary
       chromaticities. BT.2020 vectors cover the derived coefficients, unknown
