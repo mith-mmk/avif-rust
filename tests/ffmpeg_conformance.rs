@@ -1142,6 +1142,7 @@ fn public_subsampling_samples_match_ffmpeg_rgba_when_present() {
         .parent()
         .expect("workspace root should exist");
     let cases = [
+        ("avif/supported/fox.profile1.8bpc.yuv444.avif", 1204, 800),
         ("avif/unsupported/fox.profile0.8bpc.yuv420.avif", 1204, 800),
         (
             "avif/unsupported/fox.profile0.8bpc.yuv420.monochrome.avif",
@@ -1216,6 +1217,11 @@ fn public_subsampling_planes_match_ffmpeg_when_present() {
         .parent()
         .expect("workspace root should exist");
     let cases = [
+        (
+            "avif/supported/fox.profile1.8bpc.yuv444.avif",
+            "yuv444p",
+            [1204 * 800, 1204 * 800, 1204 * 800],
+        ),
         (
             "avif/unsupported/fox.profile0.8bpc.yuv420.avif",
             "yuv420p",
