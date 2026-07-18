@@ -348,6 +348,77 @@ fn generated_two_tile_sample_matches_ffmpeg_when_encoder_present() {
 }
 
 #[test]
+fn generated_sequence_sample_decodes_first_frame_when_encoder_present() {
+    let root = std::env::temp_dir().join(format!(".test-avif-sequence-{}", std::process::id()));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary AVIF sequence directory: {err}");
+    }
+    let output_path = root.join("sequence.avifs");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .args(["-f", "lavfi", "-i", "testsrc2=size=64x64:rate=1"])
+        .args([
+            "-t",
+            "2",
+            "-c:v",
+            "libaom-av1",
+            "-cpu-used",
+            "8",
+            "-crf",
+            "0",
+            "-g",
+            "1",
+            "-aom-params",
+            "enable-cdef=0:enable-restoration=0",
+            "-colorspace",
+            "bt709",
+            "-color_primaries",
+            "bt709",
+            "-color_trc",
+            "bt709",
+            "-color_range",
+            "tv",
+            "-f",
+            "avif",
+        ])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated sequence sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom sequence encoder is unavailable; skipping generated sequence sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let data = std::fs::read(&output_path).expect("generated AVIF sequence should be readable");
+    let decoded = avif_rust::image_from_bytes(&data)
+        .expect("the first frame of an AVIF sequence should decode");
+    assert_eq!((decoded.width, decoded.height), (64, 64));
+    if let Some(expected) = ffmpeg_decode_rgba_with_filter(
+        &output_path,
+        64,
+        64,
+        "zscale=matrixin=709:transferin=709:primariesin=709:rangein=limited:matrix=709:transfer=709:primaries=709:range=full,format=rgba",
+    ) {
+        let metrics = diff_rgb_dynamic(&decoded.rgba, &expected);
+        eprintln!(
+            "generated sequence first frame: average RGB absolute error={} max={}",
+            metrics.average_rgb_abs, metrics.max_rgb_abs
+        );
+        assert!(
+            metrics.average_rgb_abs <= 8.0 && metrics.max_rgb_abs <= 224,
+            "sequence first-frame FFmpeg RGB error average={} max={}",
+            metrics.average_rgb_abs,
+            metrics.max_rgb_abs
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn generated_cdef_sample_matches_explicit_ffmpeg_yuv_oracle_when_encoder_present() {
     let root = std::env::temp_dir().join(format!(".test-avif-cdef-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {

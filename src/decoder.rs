@@ -20,7 +20,7 @@ use crate::compat::{DataMap, DecodeOptions, InitOptions};
 use crate::container::{
     AvifInfo, CleanAperture, ColorInformation, GridCell, ImageMirror, ImageRotation, parse_avif,
 };
-use crate::obu::{ObuType, count_obus, find_obu_payloads, parse_obu_stream};
+use crate::obu::{ObuType, find_obu_payloads, parse_obu_stream};
 use crate::{DecoderError, ImageBuffer, Rgba16ImageBuffer};
 use bin_rs::reader::BinaryReader;
 use std::io::SeekFrom;
@@ -195,13 +195,6 @@ struct ParsedTileGroup {
 }
 
 fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
-    let frame_obu_count = count_obus(&info.primary_item_payload, ObuType::Frame)?;
-    let frame_header_obu_count = count_obus(&info.primary_item_payload, ObuType::FrameHeader)?;
-    if frame_obu_count > 1 || frame_header_obu_count > 1 {
-        return Err(DecoderError::Unsupported(
-            "AVIF multiple frames in one primary item are not supported yet".to_string(),
-        ));
-    }
     let [
         sequence_payload,
         frame_payload,
@@ -267,11 +260,24 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
             DecoderError::Bitstream("AV1 frame header OBU is missing".to_string())
         })?;
         let frame = parse_frame_header(frame_header_payload, &sequence)?;
-        let tile_group_payloads = parse_obu_stream(&info.primary_item_payload)?
-            .into_iter()
-            .filter(|obu| obu.obu_type == ObuType::TileGroup)
-            .map(|obu| obu.payload)
-            .collect::<Vec<_>>();
+        // A primary item may carry an AV1 sequence. The still-image API
+        // exposes the first frame, so stop collecting tiles at the next
+        // frame boundary instead of mixing subsequent frames into it.
+        let mut tile_group_payloads = Vec::new();
+        let mut first_frame_started = false;
+        for obu in parse_obu_stream(&info.primary_item_payload)? {
+            match obu.obu_type {
+                ObuType::FrameHeader => {
+                    if first_frame_started {
+                        break;
+                    }
+                    first_frame_started = true;
+                }
+                ObuType::TemporalDelimiter if first_frame_started => break,
+                ObuType::TileGroup if first_frame_started => tile_group_payloads.push(obu.payload),
+                _ => {}
+            }
+        }
         if tile_group_payloads.is_empty() {
             return Err(DecoderError::Bitstream(
                 "AV1 tile group OBU is missing".to_string(),

@@ -353,6 +353,10 @@ and RGBA gates.
       assembly validates duplicates/holes and merges tile IDs in order; a
       generated libaom sample is rewritten into separate FrameHeader and
       single-tile TileGroup OBUs and decoded against the original pixels.
+- [x] Accept a primary-item AV1 sequence by selecting the first frame's OBU
+      and tile groups up to the next frame boundary; generated two-frame AVIF
+      coverage verifies the existing still-image API returns frame one without
+      mixing later tiles.
 - [x] AV1 horizontal super-resolution output resize with the normative 8-tap
       phase filter; coded planes are reconstructed at reduced width and
       expanded before colour conversion.
@@ -471,6 +475,10 @@ stable speedup claim without a longer quiet-host run.
 A subsequent five-iteration recheck measured `270.24/273.09 ms`
 (native/RGBA) on the same host after the GBR and post-filter coverage changes;
 this remains a no-regression checkpoint rather than a stable speedup claim.
+
+After the primary-item sequence boundary change, a five-iteration recheck
+measured `270.08/275.89 ms` (native/RGBA) on 2026-07-18; this is within the
+same host-sensitive range and is recorded as a no-regression checkpoint.
 
 The full qmatrix-table checkpoint measured `384.70/381.61 ms` on a subsequent
 11-iteration run; retain the earlier release baseline until repeated runs on a
