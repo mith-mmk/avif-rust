@@ -12,13 +12,14 @@ const D65_TO_SRGB: [[f64; 3]; 3] = [
     [0.0556434, -0.2040259, 1.0572252],
 ];
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum Curve {
     Identity,
     Gamma(f64),
+    Table(Vec<u16>),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct MatrixShaperProfile {
     to_xyz: [[f64; 3]; 3],
     xyz_to_srgb: [[f64; 3]; 3],
@@ -48,10 +49,19 @@ pub(crate) fn apply_to_rgba16(rgba: &mut [u16], profile: &[u8]) -> Result<(), De
 }
 
 impl Curve {
-    fn decode(self, value: f64) -> f64 {
+    fn decode(&self, value: f64) -> f64 {
         match self {
             Self::Identity => value,
-            Self::Gamma(gamma) => value.powf(gamma),
+            Self::Gamma(gamma) => value.powf(*gamma),
+            Self::Table(table) => {
+                let position = value.clamp(0.0, 1.0) * (table.len() - 1) as f64;
+                let index = position.floor() as usize;
+                let next = (index + 1).min(table.len() - 1);
+                let fraction = position - index as f64;
+                let low = f64::from(table[index]);
+                let high = f64::from(table[next]);
+                (low + (high - low) * fraction) / f64::from(u16::MAX)
+            }
         }
     }
 }
@@ -163,9 +173,26 @@ fn read_curve(profile: &[u8], tag: (usize, usize)) -> Result<Curve, DecoderError
         1 if size >= 14 => Ok(Curve::Gamma(
             f64::from(read_u16(profile, offset + 12)?) / 256.0,
         )),
-        _ => Err(unsupported(
-            "ICC tone curves with lookup tables are not supported",
-        )),
+        count => {
+            const MAX_CURVE_ENTRIES: usize = 65_536;
+            let count = usize::try_from(count)
+                .map_err(|_| unsupported("ICC tone curve entry count overflows"))?;
+            if count > MAX_CURVE_ENTRIES {
+                return Err(unsupported("ICC tone curve lookup table is too large"));
+            }
+            let table_bytes = count
+                .checked_mul(2)
+                .and_then(|bytes| 12usize.checked_add(bytes))
+                .ok_or_else(|| unsupported("ICC tone curve lookup table size overflows"))?;
+            if size < table_bytes {
+                return Err(unsupported("ICC tone curve lookup table is truncated"));
+            }
+            let mut table = Vec::with_capacity(count);
+            for index in 0..count {
+                table.push(read_u16(profile, offset + 12 + index * 2)?);
+            }
+            Ok(Curve::Table(table))
+        }
     }
 }
 
@@ -230,5 +257,27 @@ mod tests {
     fn white_point_tolerance_accepts_standard_profiles() {
         assert!(close_to_white([0.9642, 1.0, 0.8249], [0.9642, 1.0, 0.8249]));
         assert!(!close_to_white([0.9, 1.0, 0.9], [0.9642, 1.0, 0.8249]));
+    }
+
+    #[test]
+    fn curve_lookup_table_interpolates_normalized_samples() {
+        let curve = Curve::Table(vec![0, 16_384, 65_535]);
+
+        assert_eq!(curve.decode(0.0), 0.0);
+        assert!((curve.decode(0.25) - 0.125).abs() < 0.0001);
+        assert_eq!(curve.decode(1.0), 1.0);
+    }
+
+    #[test]
+    fn curve_lookup_table_rejects_truncated_payload() {
+        let mut profile = vec![0; 16];
+        profile[0..4].copy_from_slice(b"curv");
+        profile[8..12].copy_from_slice(&3u32.to_be_bytes());
+        profile[12..14].copy_from_slice(&0u16.to_be_bytes());
+        let error = read_curve(&profile, (0, profile.len())).unwrap_err();
+
+        assert!(
+            matches!(error, DecoderError::Unsupported(message) if message.contains("truncated"))
+        );
     }
 }

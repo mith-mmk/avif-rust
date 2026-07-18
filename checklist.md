@@ -326,9 +326,12 @@ and RGBA gates.
       normative Gaussian sequence, AR synthesis and chroma scaling paths.
 - [x] Film grain overlap blending (`overlap_flag == 1`) for luma and
       subsampled chroma planes.
-- [x] Keep HDR transfer characteristics and ICC profiles explicitly
-      `Unsupported` until implemented.
-- [ ] Implement HDR tone mapping and ICC display conversion.
+- [x] Keep HDR transfer characteristics and unsupported ICC profile forms
+      explicitly `Unsupported` until implemented.
+- [x] Apply ICC matrix-shaper profiles with identity/gamma and lookup-table
+      (`curv`) tone curves, with bounded table sizes and interpolation checks.
+- [ ] Implement HDR tone mapping and the remaining ICC display-conversion
+      profile forms (LUT/parametric/CLUT profiles).
 
 ## 5. Safety, performance and release gate
 
@@ -392,6 +395,8 @@ quiet host are available.
       conformance passes; retain the public allocating wrapper for compatibility.
 - [x] Reuse fixed-size intra-prediction edge scratch in the reconstruction hot
       path; retain the public allocating edge-reader wrapper for compatibility.
+- [x] Sort references to retained transform boundaries for each deblock pass
+      instead of cloning every boundary record twice.
 - [x] Reuse a caller-owned 8x8 CDEF output buffer during frame filtering while
       retaining the allocating kernel wrapper for compatibility.
 - [x] Correct the nested crate repository URL to the independently maintained

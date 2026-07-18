@@ -1641,8 +1641,8 @@ fn apply_deblock_stage(
             .or_default()
             .push((block.x, block.tx_size.width(), block.tx_size.height()));
     }
+    let mut boundaries = state.transform_boundaries.iter().collect::<Vec<_>>();
     for vertical in [true, false] {
-        let mut boundaries = state.transform_boundaries.clone();
         if vertical {
             boundaries.sort_by_key(|boundary| (boundary.block.y, boundary.block.x));
         } else {
