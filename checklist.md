@@ -546,6 +546,30 @@ ignored samples. AV1 intrabc decoding now searches the block-geometry-specific
 neighbor MV candidates; a successful high-complexity external intrabc fixture
 is still required before marking the full tool supported.
 
+### Unsupported-syntax audit checkpoint (2026-07-19)
+
+The external compatibility manifest now exercises the formerly labelled
+`unsupported/` 8-bit YUV420, monochrome and YUV422 samples as successful
+decodes (25 successes, no partial PNGs). The remaining AV1 `Unsupported`
+branches were reviewed against the frame/tile parser and grouped as follows:
+
+- `show_existing_frame`, inter-frame reference tools and inherited inter-frame
+  film grain still require reference-frame storage and are intentionally
+  rejected before reconstruction.
+- Active segmentation features are parsed completely but rejected because the
+  tile decoder does not yet carry a segmentation map/CDF or apply per-segment
+  quantizer, loop-filter, reference and skip state.
+- `iloc` construction methods beyond 0/1, malformed partial tile groups and
+  invalid rectangular-transform combinations remain fail-closed container or
+  syntax errors rather than partial images.
+- Axis-swapping 4:2:2 geometry is covered for native single-frame rotation;
+  grid cases still require a sample with chroma-aligned cell boundaries before
+  they can be promoted.
+
+This audit keeps the unsupported boundary explicit while the next expansion
+targets segmentation/reference-frame state instead of silently ignoring a
+signalled tool.
+
 - [x] Add malformed/truncated coverage for the currently supported container,
       OBU, entropy and metadata paths.
 - [ ] Add malformed/truncated cases for each future syntax path as it becomes
