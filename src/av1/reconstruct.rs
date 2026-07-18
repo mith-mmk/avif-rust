@@ -334,29 +334,73 @@ pub fn frame_buffers_to_rgba_16(
         let plane_v = buffers.planes.get(2);
         let chroma_mid = 1u16 << color_config.bit_depth.saturating_sub(1);
         let alpha_max_source = (1u32 << color_config.bit_depth) - 1;
-        for y in 0..buffers.height {
-            for x in 0..buffers.width {
-                let index = y * buffers.width + x;
-                let rgb = yuv_to_rgb_u16(
-                    sample_plane(plane_y, x, y),
-                    plane_u
-                        .map(|plane| {
-                            sample_chroma_plane(plane, x, y, color_config.chroma_sample_position)
-                        })
-                        .unwrap_or(chroma_mid),
-                    plane_v
-                        .map(|plane| {
-                            sample_chroma_plane(plane, x, y, color_config.chroma_sample_position)
-                        })
-                        .unwrap_or(chroma_mid),
+        let direct_yuv444 = matches!(matrix, MatrixCoefficients::Yuv { .. })
+            && buffers.planes.get(3).is_none()
+            && plane_y.layout.subsampling_x == 0
+            && plane_y.layout.subsampling_y == 0
+            && plane_y.layout.width == buffers.width
+            && plane_y.layout.height == buffers.height
+            && plane_u.is_some_and(|plane| {
+                plane.layout.subsampling_x == 0
+                    && plane.layout.subsampling_y == 0
+                    && plane.layout.width == buffers.width
+                    && plane.layout.height == buffers.height
+            })
+            && plane_v.is_some_and(|plane| {
+                plane.layout.subsampling_x == 0
+                    && plane.layout.subsampling_y == 0
+                    && plane.layout.width == buffers.width
+                    && plane.layout.height == buffers.height
+            });
+        if direct_yuv444 {
+            let plane_u = plane_u.expect("direct YUV444 path requires U plane");
+            let plane_v = plane_v.expect("direct YUV444 path requires V plane");
+            for (index, pixel) in rgba.chunks_exact_mut(4).enumerate() {
+                let rgb = yuv_to_rgb_u16_fast(
+                    plane_y.samples[index],
+                    plane_u.samples[index],
+                    plane_v.samples[index],
                     range,
                     matrix,
                 );
-                let out = index * 4;
-                rgba[out] = rgb[0];
-                rgba[out + 1] = rgb[1];
-                rgba[out + 2] = rgb[2];
-                rgba[out + 3] = alpha_sample(buffers.planes.get(3), x, y, alpha_max_source);
+                pixel[..3].copy_from_slice(&rgb);
+                pixel[3] = u16::MAX;
+            }
+        } else {
+            for y in 0..buffers.height {
+                for x in 0..buffers.width {
+                    let index = y * buffers.width + x;
+                    let rgb = yuv_to_rgb_u16(
+                        sample_plane(plane_y, x, y),
+                        plane_u
+                            .map(|plane| {
+                                sample_chroma_plane(
+                                    plane,
+                                    x,
+                                    y,
+                                    color_config.chroma_sample_position,
+                                )
+                            })
+                            .unwrap_or(chroma_mid),
+                        plane_v
+                            .map(|plane| {
+                                sample_chroma_plane(
+                                    plane,
+                                    x,
+                                    y,
+                                    color_config.chroma_sample_position,
+                                )
+                            })
+                            .unwrap_or(chroma_mid),
+                        range,
+                        matrix,
+                    );
+                    let out = index * 4;
+                    rgba[out] = rgb[0];
+                    rgba[out + 1] = rgb[1];
+                    rgba[out + 2] = rgb[2];
+                    rgba[out + 3] = alpha_sample(buffers.planes.get(3), x, y, alpha_max_source);
+                }
             }
         }
     }
@@ -428,6 +472,31 @@ fn sample_chroma_plane(
     ((top * (2 - fraction_y) + bottom * fraction_y + 2) / 4) as u16
 }
 
+fn yuv_to_rgb_u16_fast(
+    y_sample: u16,
+    u_sample: u16,
+    v_sample: u16,
+    range: SampleRange,
+    matrix: MatrixCoefficients,
+) -> [u16; 3] {
+    let MatrixCoefficients::Yuv { kr, kb } = matrix else {
+        return yuv_to_rgb_u16(y_sample, u_sample, v_sample, range, matrix);
+    };
+    let y = ((f32::from(y_sample) - range.y_offset as f32) / range.y_scale as f32).clamp(0.0, 1.0);
+    let cb = (f32::from(u_sample) - range.chroma_offset as f32) / range.chroma_scale as f32;
+    let cr = (f32::from(v_sample) - range.chroma_offset as f32) / range.chroma_scale as f32;
+    let kr = kr as f32;
+    let kb = kb as f32;
+    let r = y + 2.0 * (1.0 - kr) * cr;
+    let b = y + 2.0 * (1.0 - kb) * cb;
+    let g = (y - kr * r - kb * b) / (1.0 - kr - kb);
+    [
+        normalized_to_u16_fast(r),
+        normalized_to_u16_fast(g),
+        normalized_to_u16_fast(b),
+    ]
+}
+
 fn validate_rgba_conversion(buffers: &FrameBuffers) -> Result<(), DecoderError> {
     let _ = buffers;
     Ok(())
@@ -450,9 +519,11 @@ fn transfer_characteristics(
         return Ok(None);
     };
     match description.transfer_characteristics {
-        // These curves are already display-referred for the existing RGBA
-        // API. BT.2020 10/12-bit uses the BT.709 OETF.
-        1 | 2 | 6 | 7 | 13 | 14 | 15 => Ok(None),
+        // These display-referred curves preserve the encoded samples for the
+        // existing RGBA API. BT.2020 10/12-bit uses the BT.709 OETF; the
+        // IEC 61966-2-4 and BT.1361 variants are equivalent in this bounded,
+        // non-negative display path.
+        1 | 2 | 6 | 7 | 11 | 12 | 13 | 14 | 15 => Ok(None),
         4 => Ok(Some(TransferFunction::Gamma22)),
         5 => Ok(Some(TransferFunction::Gamma28)),
         8 => Ok(Some(TransferFunction::Linear)),
@@ -804,6 +875,10 @@ fn yuv_to_rgb_u16(
 
 fn normalized_to_u16(value: f64) -> u16 {
     (value.clamp(0.0, 1.0) * f64::from(u16::MAX)).round() as u16
+}
+
+fn normalized_to_u16_fast(value: f32) -> u16 {
+    (value.clamp(0.0, 1.0) * f32::from(u16::MAX)).round() as u16
 }
 
 fn scale_sample_to_u16(sample: u16, max_source: u32) -> u16 {
@@ -1178,6 +1253,22 @@ mod tests {
         assert!(image.rgba[1] > 31_000 && image.rgba[1] < 34_000);
         assert!(image.rgba[2] > 45_000 && image.rgba[2] < 49_000);
         assert_eq!(image.rgba[3], u16::MAX);
+    }
+
+    #[test]
+    fn fast_yuv444_conversion_stays_within_one_code_value_of_scalar_path() {
+        let range = SampleRange::new(8, super::super::sequence::ColorRange::Studio).unwrap();
+        let matrix = MatrixCoefficients::Yuv {
+            kr: 0.2627,
+            kb: 0.0593,
+        };
+        let fast = yuv_to_rgb_u16_fast(128, 96, 160, range, matrix);
+        let scalar = yuv_to_rgb_u16(128, 96, 160, range, matrix);
+        assert!(
+            fast.iter()
+                .zip(scalar)
+                .all(|(fast, scalar)| fast.abs_diff(scalar) <= 1)
+        );
     }
 
     #[test]

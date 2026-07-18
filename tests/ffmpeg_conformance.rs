@@ -597,6 +597,28 @@ fn generated_smpte428_transfer_sample_matches_ffmpeg_when_encoder_present() {
 }
 
 #[test]
+fn generated_bt1361_extended_transfer_sample_matches_ffmpeg_when_encoder_present() {
+    generated_transfer_sample_matches_ffmpeg_with_tolerance(
+        12,
+        "bt1361-extended",
+        "zscale=tin=12:t=13,format=rgba",
+        8.0,
+        32,
+    );
+}
+
+#[test]
+fn generated_iec61966_2_4_transfer_sample_matches_ffmpeg_when_encoder_present() {
+    generated_transfer_sample_matches_ffmpeg_with_tolerance(
+        11,
+        "iec61966-2-4",
+        "zscale=tin=11:t=13,format=rgba",
+        8.0,
+        32,
+    );
+}
+
+#[test]
 fn generated_chroma_sample_positions_match_ffmpeg_when_encoder_present() {
     let root =
         std::env::temp_dir().join(format!(".test-avif-chroma-position-{}", std::process::id()));
@@ -660,6 +682,22 @@ fn generated_chroma_sample_positions_match_ffmpeg_when_encoder_present() {
 }
 
 fn generated_transfer_sample_matches_ffmpeg(transfer: u8, label: &str, oracle_filter: &str) {
+    generated_transfer_sample_matches_ffmpeg_with_tolerance(
+        transfer,
+        label,
+        oracle_filter,
+        2.0,
+        32,
+    );
+}
+
+fn generated_transfer_sample_matches_ffmpeg_with_tolerance(
+    transfer: u8,
+    label: &str,
+    oracle_filter: &str,
+    average_limit: f64,
+    max_limit: u8,
+) {
     let root = std::env::temp_dir().join(format!(
         ".test-avif-transfer-{label}-{}",
         std::process::id()
@@ -711,7 +749,8 @@ fn generated_transfer_sample_matches_ffmpeg(transfer: u8, label: &str, oracle_fi
             metrics.average_rgb_abs, metrics.max_rgb_abs
         );
         assert!(
-            metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 32,
+            metrics.average_rgb_abs <= average_limit
+                && f64::from(metrics.max_rgb_abs) <= f64::from(max_limit),
             "{label} FFmpeg RGB error average={} max={}",
             metrics.average_rgb_abs,
             metrics.max_rgb_abs

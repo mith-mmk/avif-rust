@@ -362,6 +362,9 @@ and RGBA gates.
 - [x] Decode CICP SMPTE ST 428-1 (transfer 17) into the existing sRGB
       RGBA8/16 output API; a generated sample is checked against FFmpeg with
       the same explicit transfer conversion.
+- [x] Accept CICP IEC 61966-2-4 and BT.1361 extended transfer metadata
+      (transfers 11/12) in the display-referred RGBA path; a generated
+      BT.1361 sample verifies that metadata no longer fails as `Unsupported`.
 - [x] Apply ICC matrix-shaper profiles with identity/gamma and lookup-table
       (`curv`) tone curves, with bounded table sizes and interpolation checks.
 - [x] Apply ICC matrix-shaper parametric (`para`) tone curves for function
@@ -440,6 +443,12 @@ plane fast path, avoiding per-pixel quotient/remainder and optional alpha work.
 Validation runs measured `317.06/315.91` and `310.73/315.96 ms` (native/RGBA,
 11 iterations on 2026-07-18); keep this as a verified optimization checkpoint,
 not a stable speedup claim, because the host remains scheduling-sensitive.
+
+The full-resolution 8-bit YUV444 path now has a guarded direct-sample/f32
+conversion loop for non-alpha YUV matrices. On
+`fox.profile1.8bpc.yuv444.avif`, the same-host 5-iteration check moved from
+`394.43/430.72 ms` to `384.54/390.38 ms` (native/RGBA); the existing pixel
+oracle remained at average error `0.00192`, maximum `5`.
 
 The full qmatrix-table checkpoint measured `384.70/381.61 ms` on a subsequent
 11-iteration run; retain the earlier release baseline until repeated runs on a
