@@ -28,13 +28,51 @@ pub(crate) fn predict_intra_with_edge_filter(
     enable_intra_edge_filter: bool,
     smooth_neighbour: bool,
 ) -> Result<Vec<u16>, DecoderError> {
+    let sample_count = width.checked_mul(height).ok_or_else(|| {
+        DecoderError::InvalidParam("AV1 prediction dimensions overflow".to_string())
+    })?;
+    let mut output = vec![0; sample_count];
+    predict_intra_with_edge_filter_into(
+        mode,
+        angle_delta,
+        width,
+        height,
+        edges,
+        enable_intra_edge_filter,
+        smooth_neighbour,
+        &mut output,
+    )?;
+    Ok(output)
+}
+
+pub(crate) fn predict_intra_with_edge_filter_into(
+    mode: PredictionMode,
+    angle_delta: Option<i8>,
+    width: usize,
+    height: usize,
+    edges: IntraEdges<'_>,
+    enable_intra_edge_filter: bool,
+    smooth_neighbour: bool,
+    output: &mut [u16],
+) -> Result<(), DecoderError> {
+    let sample_count = width.checked_mul(height).ok_or_else(|| {
+        DecoderError::InvalidParam("AV1 prediction dimensions overflow".to_string())
+    })?;
+    if output.len() != sample_count {
+        return Err(DecoderError::InvalidParam(
+            "AV1 prediction output dimensions do not match block".to_string(),
+        ));
+    }
     match mode {
-        PredictionMode::Dc => Ok(predict_dc(width, height, edges)),
+        PredictionMode::Dc => {
+            output.fill(predict_dc_value(width, height, edges));
+            Ok(())
+        }
         PredictionMode::Vertical if angle_delta.unwrap_or(0) == 0 => {
-            copy_above(width, height, edges)
+            copy_above_into(width, height, edges, output)
         }
         PredictionMode::Horizontal if angle_delta.unwrap_or(0) == 0 => {
-            copy_left(width, height, edges)
+            copy_left_into(width, height, edges, output)
         }
         PredictionMode::Vertical
         | PredictionMode::Horizontal
@@ -43,19 +81,27 @@ pub(crate) fn predict_intra_with_edge_filter(
         | PredictionMode::D113
         | PredictionMode::D135
         | PredictionMode::D157
-        | PredictionMode::D203 => predict_directional(
-            mode,
-            angle_delta.unwrap_or(0),
-            width,
-            height,
-            edges,
-            enable_intra_edge_filter,
-            smooth_neighbour,
-        ),
-        PredictionMode::Smooth => predict_smooth(width, height, edges),
-        PredictionMode::SmoothVertical => predict_smooth_vertical(width, height, edges),
-        PredictionMode::SmoothHorizontal => predict_smooth_horizontal(width, height, edges),
-        PredictionMode::Paeth => predict_paeth(width, height, edges),
+        | PredictionMode::D203 => {
+            let prediction = predict_directional(
+                mode,
+                angle_delta.unwrap_or(0),
+                width,
+                height,
+                edges,
+                enable_intra_edge_filter,
+                smooth_neighbour,
+            )?;
+            output.copy_from_slice(&prediction);
+            Ok(())
+        }
+        PredictionMode::Smooth => predict_smooth_into(width, height, edges, output),
+        PredictionMode::SmoothVertical => {
+            predict_smooth_vertical_into(width, height, edges, output)
+        }
+        PredictionMode::SmoothHorizontal => {
+            predict_smooth_horizontal_into(width, height, edges, output)
+        }
+        PredictionMode::Paeth => predict_paeth_into(width, height, edges, output),
     }
 }
 
@@ -184,8 +230,8 @@ const FILTER_INTRA_TAPS: [[[i8; 8]; 8]; 5] = [
     ],
 ];
 
-fn predict_dc(width: usize, height: usize, edges: IntraEdges<'_>) -> Vec<u16> {
-    let value = match (edges.left, edges.above) {
+fn predict_dc_value(width: usize, height: usize, edges: IntraEdges<'_>) -> u16 {
+    match (edges.left, edges.above) {
         (Some(left), Some(above)) => {
             let sum: u32 = left
                 .iter()
@@ -223,8 +269,7 @@ fn predict_dc(width: usize, height: usize, edges: IntraEdges<'_>) -> Vec<u16> {
             )
         }
         (None, None) => 1u16 << (edges.bit_depth - 1),
-    };
-    vec![value; width * height]
+    }
 }
 
 fn copy_above(
@@ -247,6 +292,26 @@ fn copy_above(
     Ok(out)
 }
 
+fn copy_above_into(
+    width: usize,
+    height: usize,
+    edges: IntraEdges<'_>,
+    output: &mut [u16],
+) -> Result<(), DecoderError> {
+    let above = edges.above.ok_or_else(|| {
+        DecoderError::Bitstream("AV1 vertical intra prediction requires above edge".to_string())
+    })?;
+    if above.len() < width {
+        return Err(DecoderError::NotEnoughData(
+            "AV1 above edge is shorter than prediction width".to_string(),
+        ));
+    }
+    for row in 0..height {
+        output[row * width..(row + 1) * width].copy_from_slice(&above[..width]);
+    }
+    Ok(())
+}
+
 fn copy_left(width: usize, height: usize, edges: IntraEdges<'_>) -> Result<Vec<u16>, DecoderError> {
     let left = edges.left.ok_or_else(|| {
         DecoderError::Bitstream("AV1 horizontal intra prediction requires left edge".to_string())
@@ -261,6 +326,26 @@ fn copy_left(width: usize, height: usize, edges: IntraEdges<'_>) -> Result<Vec<u
         out.extend(std::iter::repeat_n(*value, width));
     }
     Ok(out)
+}
+
+fn copy_left_into(
+    width: usize,
+    height: usize,
+    edges: IntraEdges<'_>,
+    output: &mut [u16],
+) -> Result<(), DecoderError> {
+    let left = edges.left.ok_or_else(|| {
+        DecoderError::Bitstream("AV1 horizontal intra prediction requires left edge".to_string())
+    })?;
+    if left.len() < height {
+        return Err(DecoderError::NotEnoughData(
+            "AV1 left edge is shorter than prediction height".to_string(),
+        ));
+    }
+    for (row, value) in left.iter().take(height).enumerate() {
+        output[row * width..(row + 1) * width].fill(*value);
+    }
+    Ok(())
 }
 
 fn predict_directional(
@@ -645,11 +730,12 @@ const DIRECTIONAL_DERIVATIVE: [i32; 90] = [
     0, 7, 0, 0, 3, 0, 0,
 ];
 
-fn predict_smooth(
+fn predict_smooth_into(
     width: usize,
     height: usize,
     edges: IntraEdges<'_>,
-) -> Result<Vec<u16>, DecoderError> {
+    output: &mut [u16],
+) -> Result<(), DecoderError> {
     let above = edges.above.ok_or_else(|| {
         DecoderError::Bitstream("AV1 smooth prediction requires above edge".to_string())
     })?;
@@ -665,24 +751,24 @@ fn predict_smooth(
     let weights_y = smooth_weights(height)?;
     let bottom = left[height - 1];
     let right = above[width - 1];
-    let mut out = Vec::with_capacity(width * height);
     for y in 0..height {
         for x in 0..width {
             let sum = u32::from(weights_y[y]) * u32::from(above[x])
                 + (256 - u32::from(weights_y[y])) * u32::from(bottom)
                 + u32::from(weights_x[x]) * u32::from(left[y])
                 + (256 - u32::from(weights_x[x])) * u32::from(right);
-            out.push(((sum + 256) >> 9) as u16);
+            output[y * width + x] = ((sum + 256) >> 9) as u16;
         }
     }
-    Ok(out)
+    Ok(())
 }
 
-fn predict_smooth_vertical(
+fn predict_smooth_vertical_into(
     width: usize,
     height: usize,
     edges: IntraEdges<'_>,
-) -> Result<Vec<u16>, DecoderError> {
+    output: &mut [u16],
+) -> Result<(), DecoderError> {
     let above = edges.above.ok_or_else(|| {
         DecoderError::Bitstream(
             "AV1 smooth vertical intra prediction requires above edge".to_string(),
@@ -700,20 +786,20 @@ fn predict_smooth_vertical(
     }
     let weights = smooth_weights(height)?;
     let bottom = left[height - 1];
-    let mut out = Vec::with_capacity(width * height);
-    for weight in weights.iter().take(height) {
-        for top in above.iter().take(width) {
-            out.push(weighted_avg(*top, bottom, *weight));
+    for (row, weight) in weights.iter().take(height).enumerate() {
+        for (column, top) in above.iter().take(width).enumerate() {
+            output[row * width + column] = weighted_avg(*top, bottom, *weight);
         }
     }
-    Ok(out)
+    Ok(())
 }
 
-fn predict_smooth_horizontal(
+fn predict_smooth_horizontal_into(
     width: usize,
     height: usize,
     edges: IntraEdges<'_>,
-) -> Result<Vec<u16>, DecoderError> {
+    output: &mut [u16],
+) -> Result<(), DecoderError> {
     let above = edges.above.ok_or_else(|| {
         DecoderError::Bitstream(
             "AV1 smooth horizontal intra prediction requires above edge".to_string(),
@@ -731,20 +817,20 @@ fn predict_smooth_horizontal(
     }
     let weights = smooth_weights(width)?;
     let right = above[width - 1];
-    let mut out = Vec::with_capacity(width * height);
-    for left_value in left.iter().take(height) {
-        for weight in weights.iter().take(width) {
-            out.push(weighted_avg(*left_value, right, *weight));
+    for (row, left_value) in left.iter().take(height).enumerate() {
+        for (column, weight) in weights.iter().take(width).enumerate() {
+            output[row * width + column] = weighted_avg(*left_value, right, *weight);
         }
     }
-    Ok(out)
+    Ok(())
 }
 
-fn predict_paeth(
+fn predict_paeth_into(
     width: usize,
     height: usize,
     edges: IntraEdges<'_>,
-) -> Result<Vec<u16>, DecoderError> {
+    output: &mut [u16],
+) -> Result<(), DecoderError> {
     let above = edges.above.ok_or_else(|| {
         DecoderError::Bitstream("AV1 Paeth intra prediction requires above edge".to_string())
     })?;
@@ -759,25 +845,22 @@ fn predict_paeth(
             "AV1 Paeth edges are shorter than prediction block".to_string(),
         ));
     }
-
-    let mut out = Vec::with_capacity(width * height);
-    for left_value in left.iter().take(height) {
-        for above_value in above.iter().take(width) {
+    for (row, left_value) in left.iter().take(height).enumerate() {
+        for (column, above_value) in above.iter().take(width).enumerate() {
             let base = i32::from(*above_value) + i32::from(*left_value) - i32::from(top_left);
             let p_left = (base - i32::from(*left_value)).abs();
             let p_top = (base - i32::from(*above_value)).abs();
             let p_top_left = (base - i32::from(top_left)).abs();
-            let value = if p_left <= p_top && p_left <= p_top_left {
+            output[row * width + column] = if p_left <= p_top && p_left <= p_top_left {
                 *left_value
             } else if p_top <= p_top_left {
                 *above_value
             } else {
                 top_left
             };
-            out.push(value);
         }
     }
-    Ok(out)
+    Ok(())
 }
 
 fn edge_sample(edge: &[u16], index: usize) -> u16 {

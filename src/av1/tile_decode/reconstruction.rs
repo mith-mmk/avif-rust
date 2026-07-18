@@ -4,7 +4,7 @@ use super::{
 use crate::DecoderError;
 use crate::av1::decode::{FrameBuffers, FrameDecodePlan, PlaneBuffer};
 use crate::av1::frame::FrameHeader;
-use crate::av1::predict::{IntraEdges, predict_filter_intra, predict_intra_with_edge_filter};
+use crate::av1::predict::{IntraEdges, predict_filter_intra, predict_intra_with_edge_filter_into};
 use crate::av1::quant::QuantState;
 use crate::av1::reconstruct::{read_intra_edges_into, write_plane_block};
 use crate::av1::sequence::SequenceHeader;
@@ -321,6 +321,7 @@ pub(super) fn decode_plane_block_unit(
     clippy::too_many_arguments,
     reason = "prediction arguments mirror the AV1 intra prediction inputs"
 )]
+#[allow(dead_code)]
 pub(super) fn predict_block(
     plane: &PlaneBuffer,
     prediction_mode: PredictionMode,
@@ -336,6 +337,49 @@ pub(super) fn predict_block(
     top_right_available: usize,
     bottom_left_available: usize,
 ) -> Result<Vec<u16>, DecoderError> {
+    let sample_count = width.checked_mul(height).ok_or_else(|| {
+        DecoderError::InvalidParam("AV1 prediction dimensions overflow".to_string())
+    })?;
+    let mut output = vec![0; sample_count];
+    predict_block_into(
+        plane,
+        prediction_mode,
+        x,
+        y,
+        width,
+        height,
+        angle_delta,
+        filter_intra_mode,
+        bit_depth,
+        enable_intra_edge_filter,
+        smooth_neighbour,
+        top_right_available,
+        bottom_left_available,
+        &mut output,
+    )?;
+    Ok(output)
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "prediction arguments mirror the AV1 intra prediction inputs"
+)]
+fn predict_block_into(
+    plane: &PlaneBuffer,
+    prediction_mode: PredictionMode,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    angle_delta: Option<i8>,
+    filter_intra_mode: Option<usize>,
+    bit_depth: u8,
+    enable_intra_edge_filter: bool,
+    smooth_neighbour: bool,
+    top_right_available: usize,
+    bottom_left_available: usize,
+    output: &mut [u16],
+) -> Result<(), DecoderError> {
     // AV1 prediction blocks can reach 128x128, so each directional edge needs
     // room for the sum of both dimensions (2 * MAX_SB_SIZE).
     const MAX_INTRA_EDGE_LEN: usize = 256;
@@ -346,6 +390,14 @@ pub(super) fn predict_block(
         return Err(DecoderError::Unsupported(format!(
             "AV1 intra prediction edge length {edge_len} exceeds the supported maximum"
         )));
+    }
+    let sample_count = width.checked_mul(height).ok_or_else(|| {
+        DecoderError::InvalidParam("AV1 prediction dimensions overflow".to_string())
+    })?;
+    if output.len() != sample_count {
+        return Err(DecoderError::InvalidParam(
+            "AV1 prediction output dimensions do not match block".to_string(),
+        ));
     }
     let mut above_storage = [0u16; MAX_INTRA_EDGE_LEN];
     let mut left_storage = [0u16; MAX_INTRA_EDGE_LEN];
@@ -392,9 +444,11 @@ pub(super) fn predict_block(
         }
     };
     if let Some(filter_intra_mode) = filter_intra_mode {
-        return predict_filter_intra(filter_intra_mode, width, height, edges);
+        let prediction = predict_filter_intra(filter_intra_mode, width, height, edges)?;
+        output.copy_from_slice(&prediction);
+        return Ok(());
     }
-    predict_intra_with_edge_filter(
+    predict_intra_with_edge_filter_into(
         prediction_mode,
         angle_delta,
         width,
@@ -402,6 +456,7 @@ pub(super) fn predict_block(
         edges,
         enable_intra_edge_filter,
         smooth_neighbour,
+        output,
     )
 }
 
@@ -559,7 +614,7 @@ fn predict_plane_block_into(
         } else if prediction_mode == PredictionMode::Dc && filter_intra_mode.is_none() {
             predict_dc_block_into(plane, x, y, width, height, bit_depth, output);
         } else {
-            let prediction = predict_block(
+            predict_block_into(
                 plane,
                 prediction_mode,
                 x,
@@ -573,8 +628,8 @@ fn predict_plane_block_into(
                 smooth_neighbour,
                 top_right_available,
                 bottom_left_available,
+                output,
             )?;
-            output.copy_from_slice(&prediction);
         }
     }
     if let Some(alpha_q3) = cfl_alpha_q3 {
