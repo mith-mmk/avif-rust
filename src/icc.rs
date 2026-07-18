@@ -60,14 +60,14 @@ pub(crate) fn apply_to_rgba16(rgba: &mut [u16], profile: &[u8]) -> Result<(), De
             }
             return Ok(());
         }
-        if signature == b"mAB " {
-            let profile = MabProfile::parse(profile, tag)?;
+        if signature == b"mAB " || signature == b"mBA " {
+            let profile = MabProfile::parse(profile, tag, signature == b"mBA ")?;
             for pixel in rgba.chunks_exact_mut(4) {
                 profile.apply(pixel);
             }
             return Ok(());
         }
-        return Err(unsupported("ICC A2B tag is not an mft1/mft2/mAB LUT"));
+        return Err(unsupported("ICC A2B tag is not an mft1/mft2/mAB/mBA LUT"));
     }
     let profile = MatrixShaperProfile::parse(profile)?;
     for pixel in rgba.chunks_exact_mut(4) {
@@ -278,14 +278,15 @@ struct MabProfile {
     matrix: Option<([[f64; 3]; 3], [f64; 3])>,
     b_curves: Option<[Curve; 3]>,
     pcs_lab: bool,
+    reverse: bool,
     white: [f64; 3],
     xyz_to_srgb: [[f64; 3]; 3],
 }
 
 impl MabProfile {
-    fn parse(profile: &[u8], tag: (usize, usize)) -> Result<Self, DecoderError> {
+    fn parse(profile: &[u8], tag: (usize, usize), reverse: bool) -> Result<Self, DecoderError> {
         if profile.len() < 132 || &profile[16..20] != b"RGB " {
-            return Err(unsupported("ICC mAB profile must be RGB to XYZ"));
+            return Err(unsupported("ICC mAB/mBA profile must be RGB to XYZ"));
         }
         let pcs_lab = match &profile[20..24] {
             b"XYZ " => false,
@@ -296,14 +297,18 @@ impl MabProfile {
         let tag_end = offset
             .checked_add(size)
             .ok_or_else(|| unsupported("ICC mAB tag size overflows"))?;
-        if size < 32 || tag_end > profile.len() || &profile[offset..offset + 4] != b"mAB " {
-            return Err(unsupported("ICC mAB tag is truncated"));
+        let expected_signature = if reverse { b"mBA " } else { b"mAB " };
+        if size < 32
+            || tag_end > profile.len()
+            || &profile[offset..offset + 4] != expected_signature
+        {
+            return Err(unsupported("ICC mAB/mBA tag is truncated"));
         }
         let input_channels = profile[offset + 8];
         let output_channels = profile[offset + 9];
         if input_channels != 3 || output_channels != 3 {
             return Err(unsupported(
-                "ICC mAB profiles with non-RGB channel counts are not supported",
+                "ICC mAB/mBA profiles with non-RGB channel counts are not supported",
             ));
         }
         let b_offset = mab_element_offset(profile, offset, size, 12, "B curves")?;
@@ -312,10 +317,12 @@ impl MabProfile {
         let clut_offset = mab_element_offset(profile, offset, size, 24, "CLUT")?;
         let a_offset = mab_element_offset(profile, offset, size, 28, "A curves")?;
         if a_offset.is_some() && clut_offset.is_none() {
-            return Err(unsupported("ICC mAB A curves require a CLUT"));
+            return Err(unsupported("ICC mAB/mBA A curves require a CLUT"));
         }
         if m_offset.is_some() != matrix_offset.is_some() {
-            return Err(unsupported("ICC mAB M curves and matrix must be paired"));
+            return Err(unsupported(
+                "ICC mAB/mBA M curves and matrix must be paired",
+            ));
         }
         let a_curves = a_offset
             .map(|start| parse_embedded_curves(profile, start, tag_end, "A"))
@@ -334,8 +341,9 @@ impl MabProfile {
             .transpose()?;
         let white = read_xyz(
             profile,
-            find_profile_tag(profile, b"wtpt")?
-                .ok_or_else(|| unsupported("ICC mAB profile media white point tag is missing"))?,
+            find_profile_tag(profile, b"wtpt")?.ok_or_else(|| {
+                unsupported("ICC mAB/mBA profile media white point tag is missing")
+            })?,
         )?;
         Ok(Self {
             a_curves,
@@ -344,6 +352,7 @@ impl MabProfile {
             matrix,
             b_curves,
             pcs_lab,
+            reverse,
             white,
             xyz_to_srgb: xyz_to_srgb_matrix(white)?,
         })
@@ -356,31 +365,22 @@ impl MabProfile {
             f64::from(pixel[2]) / f64::from(u16::MAX),
         ];
         let mut values = source;
-        if let Some(curves) = &self.a_curves {
-            for (value, curve) in values.iter_mut().zip(curves) {
-                *value = curve.decode(*value);
+        if self.reverse {
+            apply_curves(&mut values, self.b_curves.as_ref());
+            apply_matrix(&mut values, self.matrix);
+            apply_curves(&mut values, self.m_curves.as_ref());
+            if let Some(clut) = &self.clut {
+                values = clut.lookup(values);
             }
-        }
-        if let Some(clut) = &self.clut {
-            values = clut.lookup(values);
-        }
-        if let Some(curves) = &self.m_curves {
-            for (value, curve) in values.iter_mut().zip(curves) {
-                *value = curve.decode(*value);
+            apply_curves(&mut values, self.a_curves.as_ref());
+        } else {
+            apply_curves(&mut values, self.a_curves.as_ref());
+            if let Some(clut) = &self.clut {
+                values = clut.lookup(values);
             }
-        }
-        if let Some((matrix, offset)) = self.matrix {
-            let transformed = multiply(matrix, values);
-            values = [
-                (transformed[0] + offset[0]).clamp(0.0, 1.0),
-                (transformed[1] + offset[1]).clamp(0.0, 1.0),
-                (transformed[2] + offset[2]).clamp(0.0, 1.0),
-            ];
-        }
-        if let Some(curves) = &self.b_curves {
-            for (value, curve) in values.iter_mut().zip(curves) {
-                *value = curve.decode(*value);
-            }
+            apply_curves(&mut values, self.m_curves.as_ref());
+            apply_matrix(&mut values, self.matrix);
+            apply_curves(&mut values, self.b_curves.as_ref());
         }
         let xyz = if self.pcs_lab {
             lab_to_xyz(values, self.white)
@@ -391,6 +391,25 @@ impl MabProfile {
         pixel[0] = encode_srgb(rgb[0]);
         pixel[1] = encode_srgb(rgb[1]);
         pixel[2] = encode_srgb(rgb[2]);
+    }
+}
+
+fn apply_curves(values: &mut [f64; 3], curves: Option<&[Curve; 3]>) {
+    if let Some(curves) = curves {
+        for (value, curve) in values.iter_mut().zip(curves) {
+            *value = curve.decode(*value);
+        }
+    }
+}
+
+fn apply_matrix(values: &mut [f64; 3], matrix: Option<([[f64; 3]; 3], [f64; 3])>) {
+    if let Some((matrix, offset)) = matrix {
+        let transformed = multiply(matrix, *values);
+        *values = [
+            (transformed[0] + offset[0]).clamp(0.0, 1.0),
+            (transformed[1] + offset[1]).clamp(0.0, 1.0),
+            (transformed[2] + offset[2]).clamp(0.0, 1.0),
+        ];
     }
 }
 
@@ -1121,6 +1140,13 @@ mod tests {
         profile
     }
 
+    fn synthetic_mba_profile(include_matrix: bool, pcs_lab: bool) -> Vec<u8> {
+        let mut profile = synthetic_mab_profile(include_matrix, pcs_lab);
+        let (offset, _) = find_profile_tag(&profile, b"A2B0").unwrap().unwrap();
+        profile[offset..offset + 4].copy_from_slice(b"mBA ");
+        profile
+    }
+
     fn append_mab_curve_set(data: &mut Vec<u8>) -> usize {
         let mut offset = data.len();
         while offset % 4 != 0 {
@@ -1345,13 +1371,16 @@ mod tests {
     }
 
     #[test]
-    fn lut_profile_rejects_unknown_a2b0_type() {
-        let profile = synthetic_lut_profile(b"mBA ", 2, 0);
-        let error = apply_to_rgba16(&mut [0, 0, 0, u16::MAX], &profile).unwrap_err();
+    fn mba_profile_applies_reverse_pipeline_and_preserves_alpha() {
+        for (include_matrix, pcs_lab) in [(false, false), (true, false), (false, true)] {
+            let profile = synthetic_mba_profile(include_matrix, pcs_lab);
+            let mut rgba = [u16::MAX, 0, 0, 12_345];
 
-        assert!(
-            matches!(error, DecoderError::Unsupported(message) if message.contains("mft1/mft2/mAB"))
-        );
+            apply_to_rgba16(&mut rgba, &profile).unwrap();
+
+            assert!(rgba[..3].iter().any(|value| *value != 0));
+            assert_eq!(rgba[3], 12_345);
+        }
     }
 
     #[test]

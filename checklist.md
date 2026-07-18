@@ -390,8 +390,11 @@ and RGBA gates.
       and malformed offset/curve pairing checks.
 - [x] Fall back to ICC `A2B1`/`A2B2` RGB-to-PCS LUT tags when a profile omits
       `A2B0`; synthetic `mft1` coverage keeps alpha and RGB conversion checks.
+- [x] Accept ICC `mBA` multi-process LUT tags in the bounded RGB pipeline by
+      applying the reverse B/matrix/M/CLUT/A stage order; a synthetic profile
+      covers the path and alpha preservation.
 - [ ] Add display-specific HDR gamut/tone calibration and the remaining ICC
-      display-conversion profile forms (for example `mBA`/PCS-Lab pipelines).
+      display-conversion profile forms beyond the bounded `mBA`/PCS-Lab path.
 
 ## 5. Safety, performance and release gate
 
@@ -479,6 +482,10 @@ this remains a no-regression checkpoint rather than a stable speedup claim.
 After the primary-item sequence boundary change, a five-iteration recheck
 measured `270.08/275.89 ms` (native/RGBA) on 2026-07-18; this is within the
 same host-sensitive range and is recorded as a no-regression checkpoint.
+
+After the ICC mBA pipeline addition, a quiet five-iteration recheck measured
+`269.89/271.23 ms` (native/RGBA) on 2026-07-18; this is also recorded as a
+no-regression checkpoint.
 
 The full qmatrix-table checkpoint measured `384.70/381.61 ms` on a subsequent
 11-iteration run; retain the earlier release baseline until repeated runs on a
