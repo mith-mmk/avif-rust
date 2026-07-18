@@ -119,7 +119,7 @@ impl DecodedFrame {
                 .color_config
                 .color_description
                 .is_some_and(|description| {
-                    description.matrix_coefficients == 0
+                    matches!(description.matrix_coefficients, 0 | 3)
                         && description.transfer_characteristics == 13
                 })
             && self

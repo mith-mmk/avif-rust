@@ -163,7 +163,7 @@ pub(crate) fn apply(buffers: &mut FrameBuffers, color: &ColorConfig, params: &Fi
     let sub_y = color.subsampling_y;
     let is_identity = color
         .color_description
-        .is_some_and(|description| description.matrix_coefficients == 0);
+        .is_some_and(|description| matches!(description.matrix_coefficients, 0 | 3));
     for (plane_index, points, coeffs, mult, luma_mult, offset) in [
         (
             1usize,

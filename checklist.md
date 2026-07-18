@@ -268,6 +268,8 @@ public decoded-frame shape.
 - [x] Generate a local diagnostic oracle with deblock enabled and restoration
       disabled; keep the CDEF result non-authoritative until all plane values
       are exact and add a reproducible bootstrap recipe before release.
+- [x] Add a generated lossless 8-bit 4:4:4 CDEF sample with an explicit
+      BT.709/range oracle; current RGB error is average `0.216`, maximum `9`.
 - [x] Implement loop restoration and restoration-unit boundary handling for
       the 8-bit 4:4:4 diagnostic path, including AOM stripe halos and the
       150%-sized final restoration unit.
@@ -303,6 +305,10 @@ and RGBA gates.
 - [x] Keep the limited SDR BT.601/BT.709 colour-conversion core.
 - [x] Verify the SDR BT.601/BT.709 conversion core with generated BT.709 and
       BT.470 BG AVIF plane/RGBA fixtures against the FFmpeg oracle.
+- [x] Accept H.273 GBR (`matrix_coefficients=3`) through the native GBR
+      identity plane order for 8/16-bit output and film-grain handling; a
+      synthetic metadata vector covers the path because FFmpeg does not emit
+      this matrix value directly.
 - [x] Verify 4:4:4 non-identity colour paths with a real AVIF plane/RGBA
       fixture (`fox.profile1.8bpc.yuv444.avif`); the external oracle reports
       average RGB error `0.00192` and maximum channel error `5`.
@@ -461,6 +467,10 @@ The current five-iteration release-sample recheck measured
 `277.93/275.37 ms` (native/RGBA) on 2026-07-18. This confirms the optimized
 path remains within the previous scheduling range; it is not treated as a
 stable speedup claim without a longer quiet-host run.
+
+A subsequent five-iteration recheck measured `270.24/273.09 ms`
+(native/RGBA) on the same host after the GBR and post-filter coverage changes;
+this remains a no-regression checkpoint rather than a stable speedup claim.
 
 The full qmatrix-table checkpoint measured `384.70/381.61 ms` on a subsequent
 11-iteration run; retain the earlier release baseline until repeated runs on a

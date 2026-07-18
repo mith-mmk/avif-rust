@@ -348,6 +348,67 @@ fn generated_two_tile_sample_matches_ffmpeg_when_encoder_present() {
 }
 
 #[test]
+fn generated_cdef_sample_matches_explicit_ffmpeg_yuv_oracle_when_encoder_present() {
+    let root = std::env::temp_dir().join(format!(".test-avif-cdef-{}", std::process::id()));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary AVIF sample directory: {err}");
+    }
+    let output_path = root.join("cdef.avif");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .args(["-f", "lavfi", "-i", "testsrc2=size=256x256:rate=1"])
+        .args([
+            "-frames:v",
+            "1",
+            "-c:v",
+            "libaom-av1",
+            "-still-picture",
+            "1",
+            "-lossless",
+            "1",
+            "-cpu-used",
+            "8",
+            "-pix_fmt",
+            "yuv444p",
+            "-aom-params",
+            "enable-cdef=1:enable-restoration=0",
+            "-f",
+            "avif",
+        ])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated CDEF sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom CDEF encoder is unavailable; skipping generated sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+
+    let data = std::fs::read(&output_path).expect("generated CDEF AVIF should be readable");
+    let actual = avif_rust::image_from_bytes(&data).expect("CDEF AVIF should decode");
+    let Some(expected) = ffmpeg_decode_rgba_with_filter(
+        &output_path,
+        256,
+        256,
+        "zscale=matrixin=709:transferin=709:primariesin=709:rangein=limited:matrix=709:transfer=709:primaries=709:range=full,format=rgba",
+    ) else {
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    let metrics = diff_rgb_dynamic(&actual.rgba, &expected);
+    eprintln!(
+        "CDEF FFmpeg RGB error average={} max={}",
+        metrics.average_rgb_abs, metrics.max_rgb_abs
+    );
+    assert!(metrics.average_rgb_abs <= 0.5 && metrics.max_rgb_abs <= 16);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn generated_delta_q_sample_matches_ffmpeg_when_encoder_present() {
     let root = std::env::temp_dir().join(format!(".test-avif-deltaq-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {

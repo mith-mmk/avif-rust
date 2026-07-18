@@ -234,7 +234,7 @@ pub fn frame_buffers_to_rgba_8(
             .is_none_or(|description| description.transfer_characteristics == 13)
         && color_config
             .color_description
-            .is_some_and(|description| description.matrix_coefficients == 0)
+            .is_some_and(|description| matches!(description.matrix_coefficients, 0 | 3))
         && buffers
             .planes
             .iter()
@@ -298,7 +298,7 @@ pub fn frame_buffers_to_rgba_16(
         .unwrap_or(2);
     let mut rgba = vec![0u16; buffers.width * buffers.height * 4];
 
-    if matrix_coefficients == 0 {
+    if matches!(matrix_coefficients, 0 | 3) {
         let max_source = (1u32 << color_config.bit_depth) - 1;
         let plane_g = &buffers.planes[0].samples;
         let plane_b = &buffers.planes[1].samples;
@@ -919,6 +919,7 @@ fn scale_sample_to_u16(sample: u16, max_source: u32) -> u16 {
 mod tests {
     use super::*;
     use crate::av1::decode::{PlaneBuffer, PlaneLayout};
+    use crate::av1::{ColorDescription, ColorRange};
 
     #[test]
     fn add_residual_clips_to_bit_depth() {
@@ -1045,6 +1046,59 @@ mod tests {
         let image = frame_buffers_to_identity_rgba_8(&buffers).unwrap();
 
         assert_eq!(image.rgba, vec![10, 30, 50, 255, 20, 40, 60, 255]);
+    }
+
+    #[test]
+    fn matrix_three_gbr_uses_identity_plane_order_for_16_bit_output() {
+        let layout = PlaneLayout {
+            plane: 0,
+            width: 2,
+            height: 1,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 2,
+        };
+        let buffers = FrameBuffers {
+            width: 2,
+            height: 1,
+            planes: vec![
+                PlaneBuffer {
+                    layout,
+                    samples: vec![30, 40],
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout { plane: 1, ..layout },
+                    samples: vec![50, 60],
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout { plane: 2, ..layout },
+                    samples: vec![10, 20],
+                },
+            ],
+        };
+        let color_config = ColorConfig {
+            high_bitdepth: false,
+            twelve_bit: false,
+            bit_depth: 8,
+            monochrome: false,
+            color_description: Some(ColorDescription {
+                color_primaries: 1,
+                transfer_characteristics: 13,
+                matrix_coefficients: 3,
+            }),
+            color_range: ColorRange::Full,
+            subsampling_x: false,
+            subsampling_y: false,
+            chroma_sample_position: None,
+            separate_uv_delta_q: false,
+        };
+
+        let image = frame_buffers_to_rgba_16(&buffers, &color_config).unwrap();
+
+        assert_eq!(
+            image.rgba,
+            vec![2570, 7710, 12850, u16::MAX, 5140, 10280, 15420, u16::MAX]
+        );
     }
 
     #[test]
