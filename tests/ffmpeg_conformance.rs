@@ -1050,6 +1050,52 @@ fn public_grid_sample_matches_ffmpeg_when_present() {
 }
 
 #[test]
+fn public_grid_sample_exposes_native_planes_when_present() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("test/images/external/avif/unsupported/sofa_grid1x5_420.avif");
+    if !path.is_file() {
+        eprintln!("external grid sample is unavailable; skipping native-plane oracle");
+        return;
+    }
+    let data = std::fs::read(&path).expect("grid AVIF should be readable");
+    let frame =
+        avif_rust::decode_frame_bytes(&data).expect("grid native-plane composition should succeed");
+    assert_eq!((frame.width, frame.height), (1024, 770));
+    assert_eq!(frame.buffers.planes.len(), 3);
+    let Some(expected) = ffmpeg_decode_raw(&path, "yuv420p") else {
+        return;
+    };
+    let expected_lengths = [1024 * 770, 512 * 385, 512 * 385];
+    assert_eq!(expected.len(), expected_lengths.iter().sum());
+    let mut offset = 0;
+    for (plane_index, &plane_length) in expected_lengths.iter().enumerate() {
+        let expected_plane = &expected[offset..offset + plane_length];
+        let actual_plane = &frame.buffers.planes[plane_index].samples;
+        assert_eq!(actual_plane.len(), plane_length, "grid plane {plane_index}");
+        let max_error = actual_plane
+            .iter()
+            .zip(expected_plane)
+            .map(|(actual, expected)| u8::try_from(*actual).unwrap().abs_diff(*expected))
+            .max()
+            .unwrap_or(0);
+        let average_error = actual_plane
+            .iter()
+            .zip(expected_plane)
+            .map(|(actual, expected)| f64::from(u8::try_from(*actual).unwrap().abs_diff(*expected)))
+            .sum::<f64>()
+            / plane_length as f64;
+        eprintln!("grid plane {plane_index}: average={average_error} max={max_error}");
+        assert!(
+            average_error <= 2.0 && max_error <= 32,
+            "grid plane {plane_index}: average={average_error} max={max_error}"
+        );
+        offset += plane_length;
+    }
+}
+
+#[test]
 fn public_sequence_primary_item_decodes_first_frame_when_present() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

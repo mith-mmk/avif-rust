@@ -28,11 +28,11 @@ passes the FFmpeg RGB oracle (average absolute error about 0.075, maximum 6).
 | Native decoded planes, RGBA8, and RGBA16 | Supported |
 | Deblock, CDEF, and loop restoration used by supported streams | Supported |
 | Monochrome, 4:2:0, and 4:2:2 | Supported |
-| Alpha auxiliary images and grid composition | Supported |
+| Alpha auxiliary images and grid composition | Supported (native planes for primary grids without alpha/transforms) |
 | `clap`, `irot`, and `imir` composition | Supported |
 | One-frame `avis` primary item | Supported |
 | Animated AVIF multi-frame output | Not yet supported |
-| HDR tone mapping, non-matrix ICC display conversion, and film grain | Not yet supported |
+| HDR tone mapping and non-matrix ICC display conversion | Not yet supported |
 
 Unsupported composition or AV1 tools return `DecoderError::Unsupported`. The
 decoder intentionally fails closed instead of returning a partially decoded

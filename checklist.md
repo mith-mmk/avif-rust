@@ -303,7 +303,8 @@ and RGBA gates.
       normative libaom inverse tables; level 15 remains the flat identity
       matrix. Generated level-0 and level-1 samples match FFmpeg.
 - [x] Grid image-cell composition for still images, including ordered `dimg`
-      references and RGBA placement; verified with `sofa_grid1x5_420.avif`.
+      references and RGBA/native-plane placement; verified with
+      `sofa_grid1x5_420.avif`.
 - [x] `clap` clean-aperture crop and `imir` horizontal mirror composition.
 - [x] `irot` rotation composition, including an official 8-bit alpha fixture;
       `kimono.rotate90.avif` now decodes and converts with the expected

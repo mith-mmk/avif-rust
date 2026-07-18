@@ -4,11 +4,12 @@ use crate::av1::PostFilterState;
 use crate::av1::alloc_frame_buffers;
 use crate::av1::{
     Av1CodecConfiguration, BlockModeProbe, ColorConfig, FilmGrainParams, FrameBuffers,
-    FrameDecodePlan, FrameHeader, PartitionProbe, QuantState, ResidualProbe, SequenceHeader,
-    TileEntropyState, TileGroup, alloc_coded_frame_buffers, apply_film_grain,
-    apply_superres_horizontal, build_still_decode_plan, cdef_adjust_primary_strength,
-    cdef_filter_block_region_with_edge_mode_into, cdef_find_direction_with_variance,
-    crop_frame_buffers_to_plan, deblock_filter_edge_with_visible_bounds,
+    FrameDecodePlan, FrameHeader, PartitionProbe, PlaneBuffer, PlaneLayout, QuantState,
+    ResidualProbe, SequenceHeader, TileEntropyState, TileGroup, alloc_coded_frame_buffers,
+    apply_film_grain, apply_superres_horizontal, build_still_decode_plan,
+    cdef_adjust_primary_strength, cdef_filter_block_region_with_edge_mode_into,
+    cdef_find_direction_with_variance, crop_frame_buffers_to_plan,
+    deblock_filter_edge_with_visible_bounds,
     decode_luma_root_block_prefix_with_post_filter_state_and_entropy, frame_buffers_to_rgba_16,
     parse_av1_config, parse_frame_header, parse_sequence_header, parse_tile_group,
     plan_transform_blocks_with_tx_size, prepare_tile_entropy, probe_first_block_residuals,
@@ -139,10 +140,7 @@ pub fn decode_frame_bytes(data: &[u8]) -> Result<DecodedFrame, DecoderError> {
     let info = parse_avif(data)?;
     validate_public_container_preflight(&info, false)?;
     if info.primary_grid.is_some() {
-        return Err(DecoderError::Unsupported(
-            "AVIF grid native-plane composition is not exposed by decode_frame_bytes yet"
-                .to_string(),
-        ));
+        return decode_grid_frame(&info);
     }
     let headers = parse_av1_headers(&info)?;
     decode_still_frame(&headers, Some(&info))
@@ -416,6 +414,182 @@ fn decode_still_image(
     Ok(image)
 }
 
+fn decode_grid_frame(info: &AvifInfo) -> Result<DecodedFrame, DecoderError> {
+    let grid = info
+        .primary_grid
+        .as_ref()
+        .ok_or_else(|| DecoderError::Bitstream("AVIF grid metadata is missing".to_string()))?;
+    if info.alpha_grid.is_some() || !info.alpha_auxiliary_items.is_empty() {
+        return Err(DecoderError::Unsupported(
+            "AVIF grid native-plane composition with alpha is not supported yet".to_string(),
+        ));
+    }
+    if info.clean_aperture.is_some() || info.rotation.is_some() || info.mirror.is_some() {
+        return Err(DecoderError::Unsupported(
+            "AVIF grid native-plane composition with geometry transforms is not supported yet"
+                .to_string(),
+        ));
+    }
+    let rows = usize::from(grid.rows);
+    let columns = usize::from(grid.columns);
+    let cell_count = rows
+        .checked_mul(columns)
+        .ok_or_else(|| DecoderError::Bitstream("grid cell count overflow".to_string()))?;
+    if grid.cells.len() != cell_count {
+        return Err(DecoderError::Bitstream(format!(
+            "grid has {} cells, expected {cell_count}",
+            grid.cells.len()
+        )));
+    }
+    let width = usize::try_from(grid.output_width)
+        .map_err(|_| DecoderError::InvalidParam("grid output width is too large".to_string()))?;
+    let height = usize::try_from(grid.output_height)
+        .map_err(|_| DecoderError::InvalidParam("grid output height is too large".to_string()))?;
+    if width == 0 || height == 0 {
+        return Err(DecoderError::Bitstream(
+            "grid output dimensions must be non-zero".to_string(),
+        ));
+    }
+    let mut column_widths = vec![0usize; columns];
+    let mut row_heights = vec![0usize; rows];
+    let mut decoded_cells = Vec::with_capacity(cell_count);
+    for (index, cell) in grid.cells.iter().enumerate() {
+        let cell_width = usize::try_from(cell.width)
+            .map_err(|_| DecoderError::InvalidParam("grid cell width is too large".to_string()))?;
+        let cell_height = usize::try_from(cell.height)
+            .map_err(|_| DecoderError::InvalidParam("grid cell height is too large".to_string()))?;
+        if cell_width == 0 || cell_height == 0 {
+            return Err(DecoderError::Bitstream(format!(
+                "grid cell {} has zero dimensions",
+                cell.item_id
+            )));
+        }
+        let row = index / columns;
+        let column = index % columns;
+        if column_widths[column] != 0 && column_widths[column] != cell_width {
+            return Err(DecoderError::Bitstream(
+                "grid cells in one column have different widths".to_string(),
+            ));
+        }
+        if row_heights[row] != 0 && row_heights[row] != cell_height {
+            return Err(DecoderError::Bitstream(
+                "grid cells in one row have different heights".to_string(),
+            ));
+        }
+        column_widths[column] = cell_width;
+        row_heights[row] = cell_height;
+        let decoded = decode_grid_cell_frame(info, cell)?;
+        if decoded.width != cell_width || decoded.height != cell_height {
+            return Err(DecoderError::Bitstream(format!(
+                "grid cell {} decoded as {}x{}, metadata declares {}x{}",
+                cell.item_id, decoded.width, decoded.height, cell_width, cell_height
+            )));
+        }
+        decoded_cells.push(decoded);
+    }
+    if column_widths.iter().sum::<usize>() != width || row_heights.iter().sum::<usize>() != height {
+        return Err(DecoderError::Bitstream(
+            "grid cell dimensions do not cover the declared output".to_string(),
+        ));
+    }
+    let first = decoded_cells
+        .first()
+        .ok_or_else(|| DecoderError::Bitstream("grid has no cells".to_string()))?;
+    let plane_count = first.buffers.planes.len();
+    for cell in &decoded_cells {
+        if cell.buffers.planes.len() != plane_count
+            || cell.bit_depth != first.bit_depth
+            || cell.color_config != first.color_config
+        {
+            return Err(DecoderError::Unsupported(
+                "grid cells use different AV1 plane or color configurations".to_string(),
+            ));
+        }
+    }
+    let mut planes = Vec::with_capacity(plane_count);
+    for source in &first.buffers.planes {
+        let subsampling_x = source.layout.subsampling_x;
+        let subsampling_y = source.layout.subsampling_y;
+        let plane_width = width.div_ceil(1usize << subsampling_x);
+        let plane_height = height.div_ceil(1usize << subsampling_y);
+        let sample_count = plane_width.checked_mul(plane_height).ok_or_else(|| {
+            DecoderError::InvalidParam("grid plane sample count overflows".to_string())
+        })?;
+        planes.push(PlaneBuffer {
+            layout: PlaneLayout {
+                plane: source.layout.plane,
+                width: plane_width,
+                height: plane_height,
+                subsampling_x,
+                subsampling_y,
+                sample_count,
+            },
+            samples: vec![0; sample_count],
+        });
+    }
+    let mut y_offset = 0usize;
+    for row in 0..rows {
+        let mut x_offset = 0usize;
+        for column in 0..columns {
+            let cell = &decoded_cells[row * columns + column];
+            for (plane_index, source) in cell.buffers.planes.iter().enumerate() {
+                let destination = planes.get_mut(plane_index).ok_or_else(|| {
+                    DecoderError::Bitstream("grid cell plane count differs".to_string())
+                })?;
+                if source.layout.subsampling_x != destination.layout.subsampling_x
+                    || source.layout.subsampling_y != destination.layout.subsampling_y
+                {
+                    return Err(DecoderError::Unsupported(
+                        "grid cells use different chroma subsampling".to_string(),
+                    ));
+                }
+                let scale_x = 1usize << source.layout.subsampling_x;
+                let scale_y = 1usize << source.layout.subsampling_y;
+                if x_offset % scale_x != 0 || y_offset % scale_y != 0 {
+                    return Err(DecoderError::Unsupported(
+                        "grid cell boundary is not aligned to chroma samples".to_string(),
+                    ));
+                }
+                let destination_x = x_offset / scale_x;
+                let destination_y = y_offset / scale_y;
+                if destination_x + source.layout.width > destination.layout.width
+                    || destination_y + source.layout.height > destination.layout.height
+                {
+                    return Err(DecoderError::Bitstream(
+                        "grid cell plane exceeds composed output".to_string(),
+                    ));
+                }
+                for source_y in 0..source.layout.height {
+                    let source_start = source_y * source.layout.width;
+                    let destination_start =
+                        (destination_y + source_y) * destination.layout.width + destination_x;
+                    destination.samples[destination_start..destination_start + source.layout.width]
+                        .copy_from_slice(
+                            &source.samples[source_start..source_start + source.layout.width],
+                        );
+                }
+            }
+            x_offset += column_widths[column];
+        }
+        y_offset += row_heights[row];
+    }
+    Ok(DecodedFrame {
+        width,
+        height,
+        render_width: width,
+        render_height: height,
+        bit_depth: first.bit_depth,
+        color_config: first.color_config,
+        color_information: info.color_information.clone(),
+        alpha_premultiplied: info.alpha_premultiplied,
+        buffers: FrameBuffers {
+            width,
+            height,
+            planes,
+        },
+    })
+}
+
 fn decode_grid_image(info: &AvifInfo) -> Result<ImageBuffer, DecoderError> {
     let grid = info
         .primary_grid
@@ -607,8 +781,8 @@ mod grid_composition_tests {
     }
 }
 
-fn decode_grid_cell(info: &AvifInfo, cell: &GridCell) -> Result<ImageBuffer, DecoderError> {
-    let cell_info = AvifInfo {
+fn grid_cell_info(info: &AvifInfo, cell: &GridCell) -> AvifInfo {
+    AvifInfo {
         major_brand: info.major_brand,
         compatible_brands: info.compatible_brands.clone(),
         primary_item_id: Some(cell.item_id),
@@ -628,10 +802,21 @@ fn decode_grid_cell(info: &AvifInfo, cell: &GridCell) -> Result<ImageBuffer, Dec
         mirror: None,
         av1_config: cell.av1_config.clone(),
         primary_item_payload: cell.payload.clone(),
-    };
+    }
+}
+
+fn decode_grid_cell(info: &AvifInfo, cell: &GridCell) -> Result<ImageBuffer, DecoderError> {
+    let cell_info = grid_cell_info(info, cell);
     validate_public_container_preflight(&cell_info, true)?;
     let headers = parse_av1_headers(&cell_info)?;
     decode_still_image(&headers, Some(&cell_info))
+}
+
+fn decode_grid_cell_frame(info: &AvifInfo, cell: &GridCell) -> Result<DecodedFrame, DecoderError> {
+    let cell_info = grid_cell_info(info, cell);
+    validate_public_container_preflight(&cell_info, false)?;
+    let headers = parse_av1_headers(&cell_info)?;
+    decode_still_frame(&headers, Some(&cell_info))
 }
 
 fn apply_alpha_grid(

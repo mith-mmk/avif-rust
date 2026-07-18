@@ -29,11 +29,11 @@ frame AVIF profileに対応します。1 frameの`avis` primary itemも静止画
 | native decoded plane、RGBA8、RGBA16 | 対応 |
 | 対応streamで使用するdeblock、CDEF、loop restoration | 対応 |
 | monochrome、4:2:0、4:2:2 | 対応 |
-| alpha auxiliary image、grid composition | 対応 |
+| alpha auxiliary image、grid composition | 対応（alpha／変換なしのprimary gridはnative planeにも対応） |
 | `clap`、`irot`、`imir` composition | 対応 |
 | 1 frameの`avis` primary item | 対応 |
 | animated AVIFの複数frame出力 | 未対応 |
-| HDR tone mapping、matrix-shaper以外のICC表示変換、film grain | 未対応 |
+| HDR tone mapping、matrix-shaper以外のICC表示変換 | 未対応 |
 
 未対応のcompositionやAV1 toolは`DecoderError::Unsupported`を返します。不完全な
 画像を正常な出力として返さない、fail-closedの方針です。
