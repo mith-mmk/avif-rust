@@ -287,7 +287,11 @@ pub fn frame_buffers_to_rgba_16(
             }
         }
     } else {
-        let matrix = MatrixCoefficients::from_av1(matrix_coefficients)?;
+        let color_primaries = color_config
+            .color_description
+            .map(|description| description.color_primaries)
+            .unwrap_or(2);
+        let matrix = MatrixCoefficients::from_av1(matrix_coefficients, color_primaries)?;
         let range = SampleRange::new(color_config.bit_depth, color_config.color_range)?;
         let plane_y = &buffers.planes[0];
         let plane_u = buffers.planes.get(1);
@@ -502,7 +506,7 @@ enum MatrixCoefficients {
 }
 
 impl MatrixCoefficients {
-    fn from_av1(matrix_coefficients: u8) -> Result<Self, DecoderError> {
+    fn from_av1(matrix_coefficients: u8, color_primaries: u8) -> Result<Self, DecoderError> {
         match matrix_coefficients {
             1 => Ok(Self::Yuv {
                 kr: 0.2126,
@@ -531,11 +535,111 @@ impl MatrixCoefficients {
                 kb: 0.0593,
             }),
             11 => Ok(Self::Smpte2085),
+            12 => {
+                let (kr, kb) = derived_luma_coefficients(color_primaries)?;
+                Ok(Self::Yuv { kr, kb })
+            }
+            13 => {
+                let (kr, kb) = derived_luma_coefficients(color_primaries)?;
+                Ok(Self::Bt2020ConstantLuminance { kr, kb })
+            }
             _ => Err(DecoderError::Unsupported(format!(
                 "AV1 matrix coefficients {matrix_coefficients} RGBA conversion is not supported yet"
             ))),
         }
     }
+}
+
+fn derived_luma_coefficients(color_primaries: u8) -> Result<(f64, f64), DecoderError> {
+    let (red, green, blue, white) = match color_primaries {
+        1 => (
+            (0.640, 0.330),
+            (0.300, 0.600),
+            (0.150, 0.060),
+            (0.3127, 0.3290),
+        ),
+        4 => (
+            (0.670, 0.330),
+            (0.210, 0.710),
+            (0.140, 0.080),
+            (0.310, 0.316),
+        ),
+        5 => (
+            (0.640, 0.330),
+            (0.290, 0.600),
+            (0.150, 0.060),
+            (0.3127, 0.3290),
+        ),
+        6 | 7 => (
+            (0.630, 0.340),
+            (0.310, 0.595),
+            (0.155, 0.070),
+            (0.3127, 0.3290),
+        ),
+        8 => (
+            (0.681, 0.319),
+            (0.243, 0.692),
+            (0.145, 0.049),
+            (0.310, 0.316),
+        ),
+        9 => (
+            (0.708, 0.292),
+            (0.170, 0.797),
+            (0.131, 0.046),
+            (0.3127, 0.3290),
+        ),
+        10 => ((1.0, 0.0), (0.0, 1.0), (0.0, 0.0), (1.0 / 3.0, 1.0 / 3.0)),
+        11 => (
+            (0.680, 0.320),
+            (0.265, 0.690),
+            (0.150, 0.060),
+            (0.314, 0.351),
+        ),
+        12 => (
+            (0.680, 0.320),
+            (0.265, 0.690),
+            (0.150, 0.060),
+            (0.3127, 0.3290),
+        ),
+        22 => (
+            (0.630, 0.340),
+            (0.310, 0.595),
+            (0.155, 0.070),
+            (0.3127, 0.3290),
+        ),
+        _ => {
+            return Err(DecoderError::Unsupported(format!(
+                "AV1 colour primaries {color_primaries} are required for chromaticity-derived matrix"
+            )));
+        }
+    };
+    let to_xyz = |(x, y): (f64, f64)| [x / y, 1.0, (1.0 - x - y) / y];
+    let [xr, _, zr] = to_xyz(red);
+    let [xg, _, zg] = to_xyz(green);
+    let [xb, _, zb] = to_xyz(blue);
+    let xw = white.0 / white.1;
+    let zw = (1.0 - white.0 - white.1) / white.1;
+    let ax = xr - xb;
+    let bx = xg - xb;
+    let az = zr - zb;
+    let bz = zg - zb;
+    let det = ax * bz - bx * az;
+    if det.abs() < f64::EPSILON {
+        return Err(DecoderError::Unsupported(
+            "AV1 chromaticity-derived matrix has singular primaries".to_string(),
+        ));
+    }
+    let rhs_x = xw - xb;
+    let rhs_z = zw - zb;
+    let kr = (rhs_x * bz - bx * rhs_z) / det;
+    let kg = (ax * rhs_z - rhs_x * az) / det;
+    let kb = 1.0 - kr - kg;
+    if ![kr, kg, kb].iter().all(|value| value.is_finite()) {
+        return Err(DecoderError::Unsupported(
+            "AV1 chromaticity-derived matrix coefficients are not finite".to_string(),
+        ));
+    }
+    Ok((kr, kb))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -980,6 +1084,32 @@ mod tests {
         assert!(image.rgba[1] > 31_000 && image.rgba[1] < 34_000);
         assert!(image.rgba[2] > 45_000 && image.rgba[2] < 49_000);
         assert_eq!(image.rgba[3], u16::MAX);
+    }
+
+    #[test]
+    fn chromaticity_derived_matrices_match_bt2020_coefficients() {
+        let (kr, kb) = derived_luma_coefficients(9).unwrap();
+        assert!((kr - 0.2627).abs() < 0.0001);
+        assert!((kb - 0.0593).abs() < 0.0001);
+        let dci = derived_luma_coefficients(11).unwrap();
+        let d65 = derived_luma_coefficients(12).unwrap();
+        assert!((dci.0 - d65.0).abs() > 0.0001);
+        assert!(matches!(
+            MatrixCoefficients::from_av1(12, 9),
+            Ok(MatrixCoefficients::Yuv { .. })
+        ));
+        assert!(matches!(
+            MatrixCoefficients::from_av1(13, 9),
+            Ok(MatrixCoefficients::Bt2020ConstantLuminance { .. })
+        ));
+    }
+
+    #[test]
+    fn chromaticity_derived_matrices_reject_unspecified_primaries() {
+        let error = MatrixCoefficients::from_av1(12, 2).unwrap_err();
+        assert!(
+            matches!(error, DecoderError::Unsupported(message) if message.contains("colour primaries"))
+        );
     }
 
     #[test]

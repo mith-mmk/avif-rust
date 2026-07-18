@@ -774,20 +774,38 @@ fn generated_non_identity_qmatrix_sample_matches_ffmpeg_when_encoder_present() {
 
 #[test]
 fn generated_smpte240m_matrix_sample_matches_ffmpeg_when_encoder_present() {
-    generated_matrix_sample_matches_ffmpeg("smpte240m", "SMPTE 240M");
+    generated_matrix_sample_matches_ffmpeg("smpte240m", "SMPTE 240M", "bt709");
 }
 
 #[test]
 fn generated_bt2020_constant_luminance_matrix_sample_matches_ffmpeg_when_encoder_present() {
-    generated_matrix_sample_matches_ffmpeg("bt2020c", "BT.2020 constant-luminance");
+    generated_matrix_sample_matches_ffmpeg("bt2020c", "BT.2020 constant-luminance", "bt2020");
 }
 
 #[test]
 fn generated_smpte2085_matrix_sample_decodes_when_encoder_present() {
-    generated_matrix_sample_matches_ffmpeg("smpte2085", "SMPTE ST 2085");
+    generated_matrix_sample_matches_ffmpeg("smpte2085", "SMPTE ST 2085", "bt2020");
 }
 
-fn generated_matrix_sample_matches_ffmpeg(colorspace: &str, label: &str) {
+#[test]
+fn generated_chroma_derived_ncl_matrix_sample_decodes_when_encoder_present() {
+    generated_matrix_sample_matches_ffmpeg(
+        "chroma-derived-nc",
+        "chroma-derived non-constant-luminance",
+        "bt2020",
+    );
+}
+
+#[test]
+fn generated_chroma_derived_cl_matrix_sample_decodes_when_encoder_present() {
+    generated_matrix_sample_matches_ffmpeg(
+        "chroma-derived-c",
+        "chroma-derived constant-luminance",
+        "bt2020",
+    );
+}
+
+fn generated_matrix_sample_matches_ffmpeg(colorspace: &str, label: &str, primaries: &str) {
     let root = std::env::temp_dir().join(format!(
         ".test-avif-matrix-{colorspace}-{}",
         std::process::id()
@@ -801,12 +819,15 @@ fn generated_matrix_sample_matches_ffmpeg(colorspace: &str, label: &str) {
         .args(["-y", "-loglevel", "error"])
         .arg("-i")
         .arg(sample_path("WML2Viewer.png"));
-    if matches!(colorspace, "bt2020c" | "smpte2085") {
+    if matches!(
+        colorspace,
+        "bt2020c" | "smpte2085" | "chroma-derived-nc" | "chroma-derived-c"
+    ) {
         // libaom cannot infer these non-default matrix conversions directly
         // from RGB input; mark the already formatted YUV frame instead.
-        command
-            .arg("-vf")
-            .arg(format!("format=yuv444p,setparams=colorspace={colorspace}"));
+        command.arg("-vf").arg(format!(
+            "format=yuv444p,setparams=colorspace={colorspace}:color_primaries={primaries}"
+        ));
     }
     let status = command
         .args([
@@ -823,7 +844,7 @@ fn generated_matrix_sample_matches_ffmpeg(colorspace: &str, label: &str) {
             "-pix_fmt",
             "yuv444p",
             "-color_primaries",
-            "bt709",
+            primaries,
             "-color_trc",
             "iec61966-2-1",
             "-colorspace",
@@ -861,7 +882,10 @@ fn generated_matrix_sample_matches_ffmpeg(colorspace: &str, label: &str) {
                 metrics.max_rgb_abs
             );
         }
-    } else if colorspace != "smpte2085" {
+    } else if !matches!(
+        colorspace,
+        "smpte2085" | "chroma-derived-nc" | "chroma-derived-c"
+    ) {
         if let Some(expected) = ffmpeg_decode_rgba(&output_path) {
             let metrics = diff_rgb(&actual.rgba, &expected);
             assert!(

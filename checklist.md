@@ -308,6 +308,11 @@ and RGBA gates.
       chroma scaling and a generated libaom sample exercises metadata parsing;
       the available external decoders do not expose a stable RGBA oracle for
       this matrix.
+- [x] Decode chromaticity-derived non-constant/constant luminance matrices
+      (`matrix_coefficients=12/13`) by deriving KR/KB from the H.273 primary
+      chromaticities. BT.2020 vectors cover the derived coefficients, unknown
+      primaries remain fail-closed, and generated libaom samples exercise both
+      metadata paths.
 - [x] 10-bit quantisation/reconstruction with dedicated AOM quantizer tables;
       12-bit parsing/output is covered, while film grain is applied for the
       non-overlap still-image path.
