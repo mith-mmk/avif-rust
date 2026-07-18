@@ -505,10 +505,12 @@ coverage is validated separately by the generated CDEF oracle.
 
 After routing DC, straight horizontal/vertical, smooth and Paeth intra
 prediction through caller-owned output buffers, two seven-iteration rechecks
-measured `283.52/284.93` and `273.72/279.85 ms` (native/RGBA). The result is
-recorded as an allocation-reduction/no-regression checkpoint because host
-scheduling variance is still larger than a stable speedup claim; directional
-and filter-intra prediction retain their existing scratch path for now.
+measured `283.52/284.93` and `273.72/279.85 ms` (native/RGBA). Directional
+zone output now also writes directly to the caller-owned buffer; two subsequent
+rechecks measured `298.45/315.11` and `346.08/364.89 ms`. These runs remain
+allocation-reduction/no-regression checkpoints because host scheduling variance
+is larger than a stable speedup claim; directional edge construction and
+filter-intra still retain their existing scratch path.
 
 The full qmatrix-table checkpoint measured `384.70/381.61 ms` on a subsequent
 11-iteration run; retain the earlier release baseline until repeated runs on a
@@ -570,8 +572,9 @@ is still required before marking the full tool supported.
 - [x] Reuse a fixed 64x64 prediction scratch buffer for DC, palette and
       intra-block-copy reconstruction paths while preserving scalar conformance.
 - [x] Route DC, straight horizontal/vertical, smooth and Paeth intra prediction
-      through caller-owned output buffers while retaining allocating wrappers;
-      directional and filter-intra paths remain explicitly allocation-backed.
+      through caller-owned output buffers while retaining allocating wrappers.
+- [x] Route directional zone 1/2/3 output through caller-owned buffers; retain
+      the existing directional edge construction and filter-intra scratch path.
 - [x] Sort references to retained transform boundaries for each deblock pass
       instead of cloning every boundary record twice.
 - [x] Reuse a caller-owned 8x8 CDEF output buffer during frame filtering while
