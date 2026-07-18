@@ -16,17 +16,32 @@ pub fn add_residual_to_prediction(
     residual: &[i32],
     bit_depth: u8,
 ) -> Result<Vec<u16>, DecoderError> {
+    let mut output = vec![0; prediction.len()];
+    add_residual_to_prediction_into(prediction, residual, bit_depth, &mut output)?;
+    Ok(output)
+}
+
+pub fn add_residual_to_prediction_into(
+    prediction: &[u16],
+    residual: &[i32],
+    bit_depth: u8,
+    output: &mut [u16],
+) -> Result<(), DecoderError> {
     if prediction.len() != residual.len() {
         return Err(DecoderError::InvalidParam(
             "AV1 prediction and residual sizes differ".to_string(),
         ));
     }
+    if output.len() != prediction.len() {
+        return Err(DecoderError::InvalidParam(
+            "AV1 reconstruction output size differs from prediction".to_string(),
+        ));
+    }
     let max_value = (1i32 << bit_depth) - 1;
-    Ok(prediction
-        .iter()
-        .zip(residual)
-        .map(|(pred, res)| (i32::from(*pred) + *res).clamp(0, max_value) as u16)
-        .collect())
+    for ((output, pred), res) in output.iter_mut().zip(prediction).zip(residual) {
+        *output = (i32::from(*pred) + *res).clamp(0, max_value) as u16;
+    }
+    Ok(())
 }
 
 pub fn write_plane_block(
@@ -926,6 +941,18 @@ mod tests {
         let out = add_residual_to_prediction(&[10, 250, 128], &[-20, 20, 0], 8).unwrap();
 
         assert_eq!(out, vec![0, 255, 128]);
+    }
+
+    #[test]
+    fn add_residual_into_matches_allocating_wrapper() {
+        let prediction = [10, 250, 128];
+        let residual = [-20, 20, 0];
+        let expected = add_residual_to_prediction(&prediction, &residual, 8).unwrap();
+        let mut actual = [0; 3];
+
+        add_residual_to_prediction_into(&prediction, &residual, 8, &mut actual).unwrap();
+
+        assert_eq!(actual, expected.as_slice());
     }
 
     #[test]

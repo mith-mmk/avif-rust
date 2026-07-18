@@ -521,6 +521,14 @@ Rectangular inverse-transform row/column intermediates now use a bounded
 transform. A serial seven-iteration recheck measured `314.53/331.84 ms`
 (native/RGBA); host variance makes this a no-regression checkpoint only.
 
+Transform reconstruction now writes the clipped prediction-plus-residual
+block into a TileDecoder-owned 64x64 scratch buffer instead of allocating a
+second output Vec for every transform block. A serial seven-iteration
+recheck measured `300.72/312.80 ms` (native/RGBA); this is recorded as an
+allocation-reduction checkpoint, not a stable speedup claim until a quieter
+host confirms the delta. The allocating compatibility wrapper and exact
+oracle paths remain unchanged.
+
 The full qmatrix-table checkpoint measured `384.70/381.61 ms` on a subsequent
 11-iteration run; retain the earlier release baseline until repeated runs on a
 quiet host are available.

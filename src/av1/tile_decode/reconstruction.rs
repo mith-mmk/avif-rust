@@ -11,8 +11,8 @@ use crate::av1::sequence::SequenceHeader;
 use crate::av1::syntax::{PredictionMode, TxSize, TxType};
 use crate::av1::tile_decode::palette::PALETTE_MAX_SIZE;
 use crate::av1::transform::{
-    plan_transform_blocks_with_tx_size, reconstruct_lossless_transform_block_parts,
-    reconstruct_transform_block_parts,
+    plan_transform_blocks_with_tx_size, reconstruct_lossless_transform_block_parts_into,
+    reconstruct_transform_block_parts_into,
 };
 
 #[expect(
@@ -282,8 +282,9 @@ pub(super) fn decode_plane_block_unit(
         )?;
         let block = decoded_transform.transform;
         let tx_type = decoded_transform.tx_type;
+        let reconstructed = &mut decoder.reconstruction_scratch[..prediction_len];
         if frame.quantization.coded_lossless() {
-            reconstruct_lossless_transform_block_parts(
+            reconstruct_lossless_transform_block_parts_into(
                 plane,
                 block,
                 tx_type,
@@ -291,6 +292,7 @@ pub(super) fn decode_plane_block_unit(
                 quant_state.plane(transform.plane),
                 &prediction,
                 sequence.color_config.bit_depth,
+                reconstructed,
             )?;
         } else {
             let qmatrix_level = frame.quantization.qmatrix_level(transform.plane);
@@ -299,7 +301,7 @@ pub(super) fn decode_plane_block_unit(
                 .using_qmatrix
                 .then_some((qmatrix_level, transform.plane))
                 .filter(|(level, _)| *level < 15);
-            reconstruct_transform_block_parts(
+            reconstruct_transform_block_parts_into(
                 plane,
                 block,
                 tx_type,
@@ -308,6 +310,7 @@ pub(super) fn decode_plane_block_unit(
                 &prediction,
                 sequence.color_config.bit_depth,
                 qmatrix,
+                reconstructed,
             )?;
         }
         decoder.mark_reconstructed_transform(transform)?;

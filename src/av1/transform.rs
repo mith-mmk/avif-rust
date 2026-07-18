@@ -1,6 +1,8 @@
 use super::decode::PlaneBuffer;
 use super::quant::{PlaneQuant, dequantize_coefficients, dequantize_coefficients_with_qmatrix};
-use super::reconstruct::{add_residual_to_prediction, write_plane_block};
+#[cfg(test)]
+use super::reconstruct::add_residual_to_prediction;
+use super::reconstruct::{add_residual_to_prediction_into, write_plane_block};
 use super::syntax::{BlockSize, TxSize, TxType};
 use crate::DecoderError;
 
@@ -320,6 +322,31 @@ pub(crate) fn reconstruct_transform_block_parts(
     bit_depth: u8,
     qmatrix: Option<(u8, usize)>,
 ) -> Result<ReconstructedTransform, DecoderError> {
+    let mut reconstructed = vec![0; block.tx_size.sample_count()];
+    reconstruct_transform_block_parts_into(
+        plane,
+        block,
+        tx_type,
+        coefficients,
+        plane_quant,
+        prediction,
+        bit_depth,
+        qmatrix,
+        &mut reconstructed,
+    )
+}
+
+pub(crate) fn reconstruct_transform_block_parts_into(
+    plane: &mut PlaneBuffer,
+    block: TransformBlock,
+    tx_type: TxType,
+    coefficients: &[i32],
+    plane_quant: PlaneQuant,
+    prediction: &[u16],
+    bit_depth: u8,
+    qmatrix: Option<(u8, usize)>,
+    reconstructed: &mut [u16],
+) -> Result<ReconstructedTransform, DecoderError> {
     let tx_size = block.tx_size;
     if coefficients.len() != tx_size.sample_count() {
         return Err(DecoderError::InvalidParam(
@@ -329,6 +356,11 @@ pub(crate) fn reconstruct_transform_block_parts(
     if prediction.len() != tx_size.sample_count() {
         return Err(DecoderError::InvalidParam(
             "AV1 prediction sample count does not match transform size".to_string(),
+        ));
+    }
+    if reconstructed.len() != tx_size.sample_count() {
+        return Err(DecoderError::InvalidParam(
+            "AV1 reconstruction output count does not match transform size".to_string(),
         ));
     }
 
@@ -352,14 +384,14 @@ pub(crate) fn reconstruct_transform_block_parts(
         },
     );
     let residual = inverse_transform(tx_type, tx_size, &dequant, bit_depth)?;
-    let reconstructed = add_residual_to_prediction(prediction, &residual, bit_depth)?;
+    add_residual_to_prediction_into(prediction, &residual, bit_depth, reconstructed)?;
     write_plane_block(
         plane,
         block.x,
         block.y,
         tx_size.width(),
         tx_size.height(),
-        &reconstructed,
+        reconstructed,
     )?;
     Ok(ReconstructedTransform {
         block,
@@ -395,6 +427,29 @@ pub(crate) fn reconstruct_lossless_transform_block_parts(
     prediction: &[u16],
     bit_depth: u8,
 ) -> Result<ReconstructedTransform, DecoderError> {
+    let mut reconstructed = vec![0; TxSize::Tx4x4.sample_count()];
+    reconstruct_lossless_transform_block_parts_into(
+        plane,
+        block,
+        tx_type,
+        coefficients,
+        plane_quant,
+        prediction,
+        bit_depth,
+        &mut reconstructed,
+    )
+}
+
+pub(crate) fn reconstruct_lossless_transform_block_parts_into(
+    plane: &mut PlaneBuffer,
+    block: TransformBlock,
+    tx_type: TxType,
+    coefficients: &[i32],
+    plane_quant: PlaneQuant,
+    prediction: &[u16],
+    bit_depth: u8,
+    reconstructed: &mut [u16],
+) -> Result<ReconstructedTransform, DecoderError> {
     if block.tx_size != TxSize::Tx4x4 {
         return Err(DecoderError::Unsupported(
             "AV1 lossless transform must be 4x4".to_string(),
@@ -405,6 +460,11 @@ pub(crate) fn reconstruct_lossless_transform_block_parts(
     {
         return Err(DecoderError::InvalidParam(
             "AV1 lossless transform input size does not match 4x4".to_string(),
+        ));
+    }
+    if reconstructed.len() != TxSize::Tx4x4.sample_count() {
+        return Err(DecoderError::InvalidParam(
+            "AV1 lossless reconstruction output count does not match 4x4".to_string(),
         ));
     }
 
@@ -419,8 +479,8 @@ pub(crate) fn reconstruct_lossless_transform_block_parts(
         TxSize::Tx4x4.dq_denom(),
     );
     let residual = inverse_lossless_transform_4x4(&dequant);
-    let reconstructed = add_residual_to_prediction(prediction, &residual, bit_depth)?;
-    write_plane_block(plane, block.x, block.y, 4, 4, &reconstructed)?;
+    add_residual_to_prediction_into(prediction, &residual, bit_depth, reconstructed)?;
+    write_plane_block(plane, block.x, block.y, 4, 4, reconstructed)?;
 
     Ok(ReconstructedTransform {
         block,
