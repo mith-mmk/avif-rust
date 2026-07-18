@@ -294,8 +294,9 @@ and RGBA gates.
 - [x] Keep the limited SDR BT.601/BT.709 colour-conversion core.
 - [ ] Verify the SDR BT.601/BT.709 conversion core with real AVIF plane/RGBA
       fixtures.
-- [ ] Verify 4:4:4 non-identity colour paths with real AVIF plane/RGBA
-      fixtures.
+- [x] Verify 4:4:4 non-identity colour paths with a real AVIF plane/RGBA
+      fixture (`fox.profile1.8bpc.yuv444.avif`); the external oracle reports
+      average RGB error `0.00192` and maximum channel error `5`.
 - [x] Add a generated 8-bit 4:4:4 SMPTE 240M (`matrix_coefficients=7`)
       AVIF sample and compare its RGBA output against FFmpeg.
 - [x] Decode BT.2020 constant-luminance (`matrix_coefficients=10`) with the
@@ -446,6 +447,12 @@ The 8-bit identity-GBR RGBA fast path now bypasses the intermediate RGBA16
 buffer when no ICC profile is present. The same 11-iteration benchmark measured
 `274.15/279.31 ms` (native/RGBA); the improvement is recorded as a checkpoint
 because host scheduling remains variable.
+
+The external FFmpeg conformance suite now includes 4:4:4 non-identity RGBA and
+native-plane checks. The current run passes 35 tests with 2 intentionally
+ignored samples. AV1 intrabc decoding now searches the block-geometry-specific
+neighbor MV candidates; a successful high-complexity external intrabc fixture
+is still required before marking the full tool supported.
 
 - [x] Add malformed/truncated coverage for the currently supported container,
       OBU, entropy and metadata paths.
