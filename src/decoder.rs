@@ -728,17 +728,6 @@ fn apply_native_rotation(
             rotation.angle
         )));
     }
-    if rotation.angle % 2 == 1
-        && frame
-            .buffers
-            .planes
-            .iter()
-            .any(|plane| plane.layout.subsampling_x != plane.layout.subsampling_y)
-    {
-        return Err(DecoderError::Unsupported(
-            "AVIF native-plane quarter-turn would swap chroma subsampling axes".to_string(),
-        ));
-    }
     for _ in 0..rotation.angle {
         for plane in &mut frame.buffers.planes {
             let width = plane.layout.width;
@@ -755,9 +744,19 @@ fn apply_native_rotation(
             }
             plane.layout.width = new_width;
             plane.layout.height = width;
+            if plane.layout.plane != 0 {
+                std::mem::swap(
+                    &mut plane.layout.subsampling_x,
+                    &mut plane.layout.subsampling_y,
+                );
+            }
             plane.layout.sample_count = transformed.len();
             plane.samples = transformed;
         }
+        std::mem::swap(
+            &mut frame.color_config.subsampling_x,
+            &mut frame.color_config.subsampling_y,
+        );
         std::mem::swap(&mut frame.width, &mut frame.height);
         std::mem::swap(&mut frame.render_width, &mut frame.render_height);
         std::mem::swap(&mut frame.buffers.width, &mut frame.buffers.height);
@@ -1014,26 +1013,39 @@ mod grid_composition_tests {
     }
 
     #[test]
-    fn native_grid_rotation_rejects_swapped_422_subsampling_axes() {
-        let mut frame = native_frame(
-            4,
-            2,
-            PlaneBuffer {
-                layout: PlaneLayout {
-                    plane: 0,
-                    width: 4,
-                    height: 2,
-                    subsampling_x: 1,
-                    subsampling_y: 0,
-                    sample_count: 8,
-                },
-                samples: vec![0; 8],
+    fn native_grid_rotation_swaps_422_subsampling_axes() {
+        let mut frame = native_frame(4, 2, native_plane(4, 2, (10..18).collect()));
+        frame.color_config.monochrome = false;
+        frame.color_config.subsampling_x = true;
+        frame.buffers.planes.push(PlaneBuffer {
+            layout: PlaneLayout {
+                plane: 1,
+                width: 2,
+                height: 2,
+                subsampling_x: 1,
+                subsampling_y: 0,
+                sample_count: 4,
             },
+            samples: (0..4).collect(),
+        });
+
+        apply_native_rotation(&mut frame, ImageRotation { angle: 1 }).unwrap();
+
+        assert_eq!((frame.width, frame.height), (2, 4));
+        assert_eq!(
+            (
+                frame.color_config.subsampling_x,
+                frame.color_config.subsampling_y
+            ),
+            (false, true)
         );
-        let error = apply_native_rotation(&mut frame, ImageRotation { angle: 1 }).unwrap_err();
-        assert!(
-            matches!(error, DecoderError::Unsupported(message) if message.contains("subsampling axes"))
+        let chroma = &frame.buffers.planes[1];
+        assert_eq!((chroma.layout.width, chroma.layout.height), (2, 2));
+        assert_eq!(
+            (chroma.layout.subsampling_x, chroma.layout.subsampling_y),
+            (0, 1)
         );
+        assert_eq!(chroma.samples, vec![1, 3, 0, 2]);
     }
 
     #[test]

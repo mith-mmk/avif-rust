@@ -308,8 +308,8 @@ and RGBA gates.
       references and RGBA/native-plane placement; verified with
       `sofa_grid1x5_420.avif`. Native planes also apply aligned `clap`/`imir`/
       `irot` geometry for 4:4:4 and 4:2:0, and alpha grids now compose an
-      optional plane 3; axis-swapping 4:2:2 quarter-turns remain explicit
-      `Unsupported` boundaries.
+      optional plane 3; 4:2:2 quarter-turns swap chroma subsampling axes in
+      the native plane metadata.
 - [x] `clap` clean-aperture crop and `imir` horizontal mirror composition.
 - [x] `irot` rotation composition, including an official 8-bit alpha fixture;
       `kimono.rotate90.avif` now decodes and converts with the expected
@@ -360,6 +360,11 @@ The qmatrix parser checkpoint was remeasured on the same host with
 `361.93/377.38 ms` (native/RGBA, 11 iterations); this is a validation run only,
 not a replacement release baseline because local scheduling variance is larger
 than the change in this checkpoint.
+
+The 4:2:2 native-rotation validation run measured `287.95/289.71 ms`
+(native/RGBA, 7 iterations on 2026-07-18); retain the release baseline above
+because this path does not affect the WML2Viewer hot loop and host scheduling
+variance remains significant.
 
 The full qmatrix-table checkpoint measured `384.70/381.61 ms` on a subsequent
 11-iteration run; retain the earlier release baseline until repeated runs on a
