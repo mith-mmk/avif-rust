@@ -54,8 +54,8 @@ from the consumer-facing crate archive.
       verify their `1204x800` PNG dimensions.
 - [x] Add pixel-level RGBA oracle coverage for the new subsampling paths.
 - [x] Add native-plane oracle coverage for the new subsampling paths.
-- [x] Keep the remaining four samples as expected non-zero `Unsupported` or
-      invalid `Bitstream` failures with no partial PNG output.
+- [x] Convert all 25 external samples, including the 12-bit, grid, alpha,
+      ICC, subsampling and transform variants, with no partial PNG output.
 
 The reproducible parent-root gate is:
 
@@ -63,7 +63,7 @@ The reproducible parent-root gate is:
 pwsh -File test/avif_external_compat.ps1 -DownloadMissing
 ```
 
-The gate result is 17 successes, 3 expected failures, 0 unexpected results
+The gate result is 25 successes, 0 expected failures, 0 unexpected results
 and 0 partial PNGs. The converted PNGs remain ignored under
 `test/images/external/converted/avif/` for visual review; the AVIF sample files
 remain ignored as well.
@@ -306,8 +306,9 @@ and RGBA gates.
       references and RGBA placement; verified with `sofa_grid1x5_420.avif`.
 - [x] `clap` clean-aperture crop and `imir` horizontal mirror composition.
 - [x] `irot` rotation composition, including an official 8-bit alpha fixture;
-      the `kimono.rotate90.avif` sample still exposes a separate entropy
-      trailing-bit mismatch and remains fail-closed.
+      `kimono.rotate90.avif` now decodes and converts with the expected
+      dimensions; its strict RGB error is approximately `2.10` average and
+      remains just above the `2.0` promotion threshold.
 - [x] Multiple tile-group OBU composition for one still frame. Payload
       assembly validates duplicates/holes and merges tile IDs in order; a
       generated libaom sample is rewritten into separate FrameHeader and
@@ -325,19 +326,21 @@ and RGBA gates.
 
 ## 5. Safety, performance and release gate
 
-### Decode benchmark checkpoint (2026-07-16)
+### Decode benchmark checkpoint (2026-07-18)
 
 The release benchmark uses `AVIF_BENCH_ITERS=11 cargo bench --bench decode`
 against `samples/WML2Viewer.avif`. The current optimized run measured
-`308.90/314.50 ms` (native/RGBA, 11 iterations on 2026-07-17); the restoration
+`302.22/305.00 ms` (native/RGBA, 11 iterations on 2026-07-18); the restoration
 stage now writes directly into the destination plane instead of cloning the
 whole plane for every restoration chunk. The earlier 348.14/346.93 ms run
 remains the previous checkpoint for comparison. The deblock stage now indexes block filter
 state on an 8-pixel grid instead of linearly scanning every block for each
 edge. The reconstruction hot path also passes
 decoded coefficient slices directly instead of cloning a coefficient `Vec`
-for every transform; compare medians on the same host because this benchmark
-is sensitive to local scheduling. Keep the image and plane oracle gates green
+for every transform. Rectangular inverse transforms now reuse fixed-size
+stack scratch buffers instead of allocating a `Vec` for every row and column;
+compare medians on the same host because this benchmark is sensitive to local
+scheduling. Keep the image and plane oracle gates green
 when changing this path. Super-resolution uses the scalar 64-phase resize
 kernel and allocates the expanded row once per plane; the no-superres path
 remains allocation-free.

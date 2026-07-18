@@ -535,19 +535,19 @@ fn inverse_transform_rect(
     let rect_log_ratio = width.ilog2().abs_diff(height.ilog2());
     let scale_rectangular_input = rect_log_ratio % 2 == 1;
     let mut intermediate = vec![0i32; width * height];
+    let mut input = [0i32; 64];
+    let mut values = [0i32; 64];
     for row in 0..height {
-        let input = (0..width)
-            .map(|column| {
-                let value = dequant[column * height + row];
-                let value = if scale_rectangular_input {
-                    round_shift_i64(i64::from(value) * NEW_INV_SQRT2, NEW_SQRT2_BITS) as i32
-                } else {
-                    value
-                };
-                clamp_signed(value, bit_depth + 8)
-            })
-            .collect::<Vec<_>>();
-        let values = inverse_staged_dynamic(horizontal, &input, row_range);
+        for column in 0..width {
+            let value = dequant[column * height + row];
+            let value = if scale_rectangular_input {
+                round_shift_i64(i64::from(value) * NEW_INV_SQRT2, NEW_SQRT2_BITS) as i32
+            } else {
+                value
+            };
+            input[column] = clamp_signed(value, bit_depth + 8);
+        }
+        inverse_staged_dynamic_into(horizontal, &input[..width], row_range, &mut values);
         for column in 0..width {
             intermediate[row * width + column] = round2_signed(values[column], row_shift);
         }
@@ -556,10 +556,10 @@ fn inverse_transform_rect(
     let residual_limit = 1i32 << (bit_depth + 7);
     let mut output = vec![0i32; width * height];
     for column in 0..width {
-        let input = (0..height)
-            .map(|row| clamp_signed(intermediate[row * width + column], bit_depth + 8))
-            .collect::<Vec<_>>();
-        let values = inverse_staged_dynamic(vertical, &input, bit_depth + 8);
+        for row in 0..height {
+            input[row] = clamp_signed(intermediate[row * width + column], bit_depth + 8);
+        }
+        inverse_staged_dynamic_into(vertical, &input[..height], bit_depth + 8, &mut values);
         for row in 0..height {
             output[row * width + column] =
                 round2_signed(values[row], 4).clamp(-residual_limit, residual_limit - 1);
@@ -568,17 +568,40 @@ fn inverse_transform_rect(
     output
 }
 
-fn inverse_staged_dynamic(transform: StagedTransform, input: &[i32], range: u8) -> Vec<i32> {
+fn inverse_staged_dynamic_into(
+    transform: StagedTransform,
+    input: &[i32],
+    range: u8,
+    output: &mut [i32; 64],
+) {
     match input.len() {
-        4 => inverse_staged_4(transform, input.try_into().expect("length checked"), range).to_vec(),
-        8 => inverse_staged_8(transform, input.try_into().expect("length checked"), range).to_vec(),
+        4 => output[..4].copy_from_slice(&inverse_staged_4(
+            transform,
+            input.try_into().expect("length checked"),
+            range,
+        )),
+        8 => output[..8].copy_from_slice(&inverse_staged_8(
+            transform,
+            input.try_into().expect("length checked"),
+            range,
+        )),
         16 => {
-            inverse_staged_16(transform, input.try_into().expect("length checked"), range).to_vec()
+            output[..16].copy_from_slice(&inverse_staged_16(
+                transform,
+                input.try_into().expect("length checked"),
+                range,
+            ));
         }
         32 if transform == StagedTransform::Dct => {
-            inverse_dct32(input.try_into().expect("length checked"), range).to_vec()
+            output[..32].copy_from_slice(&inverse_dct32(
+                input.try_into().expect("length checked"),
+                range,
+            ));
         }
-        64 if transform == StagedTransform::Dct => inverse_dct64_1d(input, range),
+        64 if transform == StagedTransform::Dct => output[..64].copy_from_slice(&inverse_dct64(
+            input.try_into().expect("length checked"),
+            range,
+        )),
         _ => unreachable!("rectangular transform stage length is unsupported"),
     }
 }
@@ -837,8 +860,8 @@ fn inverse_dct32(i: [i32; 32], r: u8) -> [i32; 32] {
     })
 }
 
-fn inverse_dct64_1d(input: &[i32], range: u8) -> Vec<i32> {
-    dct64::inverse_dct64(input.try_into().expect("length checked"), range).to_vec()
+fn inverse_dct64(input: [i32; 64], range: u8) -> [i32; 64] {
+    dct64::inverse_dct64(input, range)
 }
 
 fn inverse_transform_32x32_dct(dequant: &[i32], bit_depth: u8) -> Result<Vec<i32>, DecoderError> {
@@ -896,7 +919,7 @@ fn inverse_dct64_staged(dequant: &[i32], bit_depth: u8) -> Vec<i32> {
     for row in 0..SIDE {
         let input =
             std::array::from_fn(|column| clamp_signed(dequant[row * SIDE + column], bit_depth + 8));
-        let transformed = dct64::inverse_dct64(input, row_range);
+        let transformed = inverse_dct64(input, row_range);
         for column in 0..SIDE {
             intermediate[row * SIDE + column] = round2_signed(transformed[column], 2);
         }
@@ -906,7 +929,7 @@ fn inverse_dct64_staged(dequant: &[i32], bit_depth: u8) -> Vec<i32> {
     let mut output = vec![0i32; SIDE * SIDE];
     for column in 0..SIDE {
         let input = std::array::from_fn(|row| clamp_signed(intermediate[row * SIDE + column], 16));
-        let transformed = dct64::inverse_dct64(input, 16);
+        let transformed = inverse_dct64(input, 16);
         for row in 0..SIDE {
             output[row * SIDE + column] =
                 round2_signed(transformed[row], 4).clamp(-residual_limit, residual_limit - 1);
