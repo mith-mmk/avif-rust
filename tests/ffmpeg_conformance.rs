@@ -326,18 +326,33 @@ fn generated_two_tile_sample_matches_ffmpeg_when_encoder_present() {
 
 #[test]
 fn generated_gamma22_transfer_sample_matches_ffmpeg_when_encoder_present() {
-    let root = std::env::temp_dir().join(format!(".test-avif-gamma22-{}", std::process::id()));
+    generated_transfer_sample_matches_ffmpeg(4, "gamma22", "zscale=tin=4:t=13,format=rgba");
+}
+
+#[test]
+fn generated_smpte428_transfer_sample_matches_ffmpeg_when_encoder_present() {
+    generated_transfer_sample_matches_ffmpeg(17, "smpte428", "zscale=tin=17:t=13,format=rgba");
+}
+
+fn generated_transfer_sample_matches_ffmpeg(transfer: u8, label: &str, oracle_filter: &str) {
+    let root = std::env::temp_dir().join(format!(
+        ".test-avif-transfer-{label}-{}",
+        std::process::id()
+    ));
     if let Err(err) = std::fs::create_dir_all(&root) {
         panic!("failed to create temporary AVIF sample directory: {err}");
     }
-    let output_path = root.join("gamma22.avif");
+    let output_path = root.join(format!("{label}.avif"));
+    let setparams = format!(
+        "scale=4:4:flags=neighbor,setparams=colorspace=bt709:color_primaries=bt709:color_trc={transfer},format=yuv444p"
+    );
     let status = Command::new("ffmpeg")
         .args(["-y", "-loglevel", "error"])
         .arg("-i")
         .arg(sample_path("WML2Viewer.png"))
         .args([
             "-vf",
-            "scale=4:4:flags=neighbor,setparams=colorspace=bt709:color_primaries=bt709:color_trc=4,format=yuv444p",
+            &setparams,
             "-frames:v",
             "1",
             "-c:v",
@@ -352,29 +367,27 @@ fn generated_gamma22_transfer_sample_matches_ffmpeg_when_encoder_present() {
         .arg(&output_path)
         .status();
     let Ok(status) = status else {
-        eprintln!("ffmpeg is not available; skipping generated gamma22 sample");
+        eprintln!("ffmpeg is not available; skipping generated {label} sample");
         let _ = std::fs::remove_dir_all(&root);
         return;
     };
     if !status.success() {
-        eprintln!("libaom gamma22 encoder is unavailable; skipping generated sample");
+        eprintln!("libaom {label} encoder is unavailable; skipping generated sample");
         let _ = std::fs::remove_dir_all(&root);
         return;
     }
-    let data = std::fs::read(&output_path).expect("generated gamma22 AVIF should be readable");
-    let actual = avif_rust::image_from_bytes(&data).expect("gamma22 AVIF should decode");
+    let data = std::fs::read(&output_path).expect("generated transfer AVIF should be readable");
+    let actual = avif_rust::image_from_bytes(&data).expect("transfer AVIF should decode");
     assert_eq!((actual.width, actual.height), (4, 4));
-    if let Some(expected) =
-        ffmpeg_decode_rgba_with_filter(&output_path, 4, 4, "zscale=tin=4:t=13,format=rgba")
-    {
+    if let Some(expected) = ffmpeg_decode_rgba_with_filter(&output_path, 4, 4, oracle_filter) {
         let metrics = diff_rgb_dynamic(&actual.rgba, &expected);
         eprintln!(
-            "gamma22 transfer: average RGB absolute error={} max={}",
+            "{label} transfer: average RGB absolute error={} max={}",
             metrics.average_rgb_abs, metrics.max_rgb_abs
         );
         assert!(
             metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 32,
-            "gamma22 FFmpeg RGB error average={} max={}",
+            "{label} FFmpeg RGB error average={} max={}",
             metrics.average_rgb_abs,
             metrics.max_rgb_abs
         );

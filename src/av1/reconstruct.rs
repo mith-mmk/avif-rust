@@ -372,6 +372,7 @@ enum TransferFunction {
     Gamma22,
     Gamma28,
     Linear,
+    Smpte428,
     Pq,
     Hlg,
 }
@@ -385,11 +386,12 @@ fn transfer_characteristics(
     match description.transfer_characteristics {
         // These curves are already display-referred for the existing RGBA
         // API. BT.2020 10/12-bit uses the BT.709 OETF.
-        1 | 6 | 7 | 13 | 14 | 15 => Ok(None),
+        1 | 2 | 6 | 7 | 13 | 14 | 15 => Ok(None),
         4 => Ok(Some(TransferFunction::Gamma22)),
         5 => Ok(Some(TransferFunction::Gamma28)),
         8 => Ok(Some(TransferFunction::Linear)),
         16 => Ok(Some(TransferFunction::Pq)),
+        17 => Ok(Some(TransferFunction::Smpte428)),
         18 => Ok(Some(TransferFunction::Hlg)),
         transfer => Err(DecoderError::Unsupported(format!(
             "AV1 transfer characteristics {transfer} RGBA conversion is not supported yet"
@@ -411,6 +413,7 @@ fn transfer_to_sdr(sample: u16, transfer: TransferFunction) -> u16 {
         TransferFunction::Gamma22 => linear_to_srgb(encoded.powf(2.2)),
         TransferFunction::Gamma28 => linear_to_srgb(encoded.powf(2.8)),
         TransferFunction::Linear => linear_to_srgb(encoded),
+        TransferFunction::Smpte428 => linear_to_srgb(smpte428_to_linear(encoded)),
         TransferFunction::Pq | TransferFunction::Hlg => hdr_to_sdr(encoded, transfer),
     }
 }
@@ -424,7 +427,10 @@ fn hdr_to_sdr(encoded: f64, transfer: TransferFunction) -> u16 {
     let linear = match transfer {
         TransferFunction::Pq => pq_to_linear(encoded) * 100.0,
         TransferFunction::Hlg => hlg_to_linear(encoded),
-        TransferFunction::Gamma22 | TransferFunction::Gamma28 | TransferFunction::Linear => {
+        TransferFunction::Gamma22
+        | TransferFunction::Gamma28
+        | TransferFunction::Linear
+        | TransferFunction::Smpte428 => {
             unreachable!("SDR transfer functions are handled before HDR tone mapping")
         }
     };
@@ -459,6 +465,11 @@ fn hlg_to_linear(encoded: f64) -> f64 {
         let relative = (((encoded - 0.55991073) / 0.17883277).exp() + BETA) / 12.0;
         relative.powf(GAMMA).min(1.0)
     }
+}
+
+fn smpte428_to_linear(encoded: f64) -> f64 {
+    // H.273 / SMPTE ST 428-1: V = (48 * L_o / 52.37)^(1 / 2.6).
+    (52.37 / 48.0) * encoded.clamp(0.0, 1.0).powf(2.6)
 }
 
 fn linear_to_srgb(linear: f64) -> u16 {
@@ -1007,6 +1018,7 @@ mod tests {
         let gamma22 = transfer_to_sdr(midpoint, TransferFunction::Gamma22);
         let gamma28 = transfer_to_sdr(midpoint, TransferFunction::Gamma28);
         let linear = transfer_to_sdr(midpoint, TransferFunction::Linear);
+        let smpte428 = transfer_to_sdr(midpoint, TransferFunction::Smpte428);
 
         assert_eq!(transfer_to_sdr(0, TransferFunction::Linear), 0);
         assert_eq!(
@@ -1015,7 +1027,31 @@ mod tests {
         );
         assert!(gamma28 < gamma22);
         assert!(gamma22 < linear);
+        assert!(smpte428 < linear);
         assert!(linear < u16::MAX);
+        assert!((smpte428_to_linear(1.0) - 52.37 / 48.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn unspecified_cicp_transfer_keeps_existing_rgba_encoding() {
+        let color_config = ColorConfig {
+            high_bitdepth: false,
+            twelve_bit: false,
+            bit_depth: 8,
+            monochrome: false,
+            color_description: Some(super::super::sequence::ColorDescription {
+                color_primaries: 2,
+                transfer_characteristics: 2,
+                matrix_coefficients: 2,
+            }),
+            color_range: super::super::sequence::ColorRange::Full,
+            subsampling_x: false,
+            subsampling_y: false,
+            chroma_sample_position: None,
+            separate_uv_delta_q: false,
+        };
+
+        assert_eq!(transfer_characteristics(&color_config), Ok(None));
     }
 
     fn assert_rgb_close(actual: &[u8], expected: &[u8], tolerance: u8) {

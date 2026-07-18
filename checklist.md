@@ -331,6 +331,9 @@ and RGBA gates.
 - [x] Decode CICP gamma 2.2/2.8 (transfer 4/5) and linear (transfer 8) curves
       into the existing sRGB RGBA8/16 output API; generated gamma 2.2 AVIF is
       checked against FFmpeg after an explicit zscale transfer conversion.
+- [x] Decode CICP SMPTE ST 428-1 (transfer 17) into the existing sRGB
+      RGBA8/16 output API; a generated sample is checked against FFmpeg with
+      the same explicit transfer conversion.
 - [x] Apply ICC matrix-shaper profiles with identity/gamma and lookup-table
       (`curv`) tone curves, with bounded table sizes and interpolation checks.
 - [x] Apply ICC matrix-shaper parametric (`para`) tone curves for function
@@ -380,6 +383,10 @@ The SDR transfer-curve validation run measured `306.92/313.03 ms` (native/RGBA,
 11 iterations on 2026-07-18); the WML2Viewer sample uses transfer 13, so the
 new gamma/linear conversion loop is not entered. Retain the release baseline
 because this host remains scheduling-sensitive.
+
+The subsequent transfer metadata validation run measured `292.67/297.65 ms`
+(native/RGBA, 11 iterations on 2026-07-18); this is a validation checkpoint,
+not a claimed speedup because adjacent host runs vary materially.
 
 The full qmatrix-table checkpoint measured `384.70/381.61 ms` on a subsequent
 11-iteration run; retain the earlier release baseline until repeated runs on a
