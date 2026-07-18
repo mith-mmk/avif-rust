@@ -231,20 +231,21 @@ pub fn frame_buffers_to_rgba_16(
         })?;
         let max_source = (1u32 << color_config.bit_depth) - 1;
         let mut rgba = vec![0u16; buffers.width * buffers.height * 4];
-        for index in 0..buffers.width * buffers.height {
-            let x = index % buffers.width;
-            let y = index / buffers.width;
-            let source_x = (x >> usize::from(luma.layout.subsampling_x))
-                .min(luma.layout.width.saturating_sub(1));
-            let source_y = (y >> usize::from(luma.layout.subsampling_y))
-                .min(luma.layout.height.saturating_sub(1));
-            let value = scale_sample_to_u16(
-                luma.samples[source_y * luma.layout.width + source_x],
-                max_source,
-            );
-            let out = index * 4;
-            rgba[out..out + 3].fill(value);
-            rgba[out + 3] = alpha_sample(buffers.planes.get(3), x, y, max_source);
+        for y in 0..buffers.height {
+            for x in 0..buffers.width {
+                let index = y * buffers.width + x;
+                let source_x = (x >> usize::from(luma.layout.subsampling_x))
+                    .min(luma.layout.width.saturating_sub(1));
+                let source_y = (y >> usize::from(luma.layout.subsampling_y))
+                    .min(luma.layout.height.saturating_sub(1));
+                let value = scale_sample_to_u16(
+                    luma.samples[source_y * luma.layout.width + source_x],
+                    max_source,
+                );
+                let out = index * 4;
+                rgba[out..out + 3].fill(value);
+                rgba[out + 3] = alpha_sample(buffers.planes.get(3), x, y, max_source);
+            }
         }
         if let Some(transfer) = hdr_transfer {
             apply_transfer_function(&mut rgba, transfer);
@@ -266,14 +267,24 @@ pub fn frame_buffers_to_rgba_16(
         let plane_g = &buffers.planes[0].samples;
         let plane_b = &buffers.planes[1].samples;
         let plane_r = &buffers.planes[2].samples;
-        for index in 0..buffers.width * buffers.height {
-            let x = index % buffers.width;
-            let y = index / buffers.width;
-            let out = index * 4;
-            rgba[out] = scale_sample_to_u16(plane_r[index], max_source);
-            rgba[out + 1] = scale_sample_to_u16(plane_g[index], max_source);
-            rgba[out + 2] = scale_sample_to_u16(plane_b[index], max_source);
-            rgba[out + 3] = alpha_sample(buffers.planes.get(3), x, y, max_source);
+        if buffers.planes.get(3).is_none() {
+            for (index, pixel) in rgba.chunks_exact_mut(4).enumerate() {
+                pixel[0] = scale_sample_to_u16(plane_r[index], max_source);
+                pixel[1] = scale_sample_to_u16(plane_g[index], max_source);
+                pixel[2] = scale_sample_to_u16(plane_b[index], max_source);
+                pixel[3] = u16::MAX;
+            }
+        } else {
+            for y in 0..buffers.height {
+                for x in 0..buffers.width {
+                    let index = y * buffers.width + x;
+                    let out = index * 4;
+                    rgba[out] = scale_sample_to_u16(plane_r[index], max_source);
+                    rgba[out + 1] = scale_sample_to_u16(plane_g[index], max_source);
+                    rgba[out + 2] = scale_sample_to_u16(plane_b[index], max_source);
+                    rgba[out + 3] = alpha_sample(buffers.planes.get(3), x, y, max_source);
+                }
+            }
         }
     } else {
         let matrix = MatrixCoefficients::from_av1(matrix_coefficients)?;
@@ -283,25 +294,26 @@ pub fn frame_buffers_to_rgba_16(
         let plane_v = buffers.planes.get(2);
         let chroma_mid = 1u16 << color_config.bit_depth.saturating_sub(1);
         let alpha_max_source = (1u32 << color_config.bit_depth) - 1;
-        for index in 0..buffers.width * buffers.height {
-            let x = index % buffers.width;
-            let y = index / buffers.width;
-            let rgb = yuv_to_rgb_u16(
-                sample_plane(plane_y, x, y),
-                plane_u
-                    .map(|plane| sample_chroma_plane(plane, x, y))
-                    .unwrap_or(chroma_mid),
-                plane_v
-                    .map(|plane| sample_chroma_plane(plane, x, y))
-                    .unwrap_or(chroma_mid),
-                range,
-                matrix,
-            );
-            let out = index * 4;
-            rgba[out] = rgb[0];
-            rgba[out + 1] = rgb[1];
-            rgba[out + 2] = rgb[2];
-            rgba[out + 3] = alpha_sample(buffers.planes.get(3), x, y, alpha_max_source);
+        for y in 0..buffers.height {
+            for x in 0..buffers.width {
+                let index = y * buffers.width + x;
+                let rgb = yuv_to_rgb_u16(
+                    sample_plane(plane_y, x, y),
+                    plane_u
+                        .map(|plane| sample_chroma_plane(plane, x, y))
+                        .unwrap_or(chroma_mid),
+                    plane_v
+                        .map(|plane| sample_chroma_plane(plane, x, y))
+                        .unwrap_or(chroma_mid),
+                    range,
+                    matrix,
+                );
+                let out = index * 4;
+                rgba[out] = rgb[0];
+                rgba[out + 1] = rgb[1];
+                rgba[out + 2] = rgb[2];
+                rgba[out + 3] = alpha_sample(buffers.planes.get(3), x, y, alpha_max_source);
+            }
         }
     }
 
@@ -485,6 +497,7 @@ fn linear_to_srgb(linear: f64) -> u16 {
 enum MatrixCoefficients {
     Yuv { kr: f64, kb: f64 },
     Bt2020ConstantLuminance { kr: f64, kb: f64 },
+    Smpte2085,
     YcGco,
 }
 
@@ -517,6 +530,7 @@ impl MatrixCoefficients {
                 kr: 0.2627,
                 kb: 0.0593,
             }),
+            11 => Ok(Self::Smpte2085),
             _ => Err(DecoderError::Unsupported(format!(
                 "AV1 matrix coefficients {matrix_coefficients} RGBA conversion is not supported yet"
             ))),
@@ -591,6 +605,14 @@ fn yuv_to_rgb_u16(
                 2.0 * kb * cb
             };
             let g = (y - kr * r - kb * b) / (1.0 - kr - kb);
+            (r, g, b)
+        }
+        MatrixCoefficients::Smpte2085 => {
+            // SMPTE ST 2085 / H.273 equations 76--78 encode Y'DzDx.
+            // The chroma samples are centered at zero and scaled by two.
+            let g = y;
+            let b = (2.0 * cb + y) / 0.986566;
+            let r = 2.0 * cr + 0.991902 * y;
             (r, g, b)
         }
         MatrixCoefficients::YcGco => {
@@ -904,6 +926,59 @@ mod tests {
         assert!(image.rgba[0] > 8_000 && image.rgba[0] < 10_000);
         assert!(image.rgba[1] > 38_000 && image.rgba[1] < 44_000);
         assert!(image.rgba[2] > 33_000 && image.rgba[2] < 36_000);
+        assert_eq!(image.rgba[3], u16::MAX);
+    }
+
+    #[test]
+    fn rgba_conversion_supports_smpte2085_matrix() {
+        let layout = PlaneLayout {
+            plane: 0,
+            width: 1,
+            height: 1,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 1,
+        };
+        let buffers = FrameBuffers {
+            width: 1,
+            height: 1,
+            planes: vec![
+                PlaneBuffer {
+                    layout,
+                    samples: vec![128], // Y' ~= 0.5
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout { plane: 1, ..layout },
+                    samples: vec![154], // D'z ~= 0.1
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout { plane: 2, ..layout },
+                    samples: vec![77], // D'x ~= -0.2
+                },
+            ],
+        };
+        let color_config = ColorConfig {
+            high_bitdepth: false,
+            twelve_bit: false,
+            bit_depth: 8,
+            monochrome: false,
+            color_description: Some(super::super::sequence::ColorDescription {
+                color_primaries: 9,
+                transfer_characteristics: 13,
+                matrix_coefficients: 11,
+            }),
+            color_range: super::super::sequence::ColorRange::Full,
+            subsampling_x: false,
+            subsampling_y: false,
+            chroma_sample_position: None,
+            separate_uv_delta_q: false,
+        };
+
+        let image = frame_buffers_to_rgba_16(&buffers, &color_config).unwrap();
+
+        assert!(image.rgba[0] > 5_000 && image.rgba[0] < 8_000);
+        assert!(image.rgba[1] > 31_000 && image.rgba[1] < 34_000);
+        assert!(image.rgba[2] > 45_000 && image.rgba[2] < 49_000);
         assert_eq!(image.rgba[3], u16::MAX);
     }
 

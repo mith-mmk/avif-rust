@@ -119,6 +119,29 @@ fn ffmpeg_decode_rgba_with_filter(
     Some(output.stdout)
 }
 
+fn imagemagick_decode_rgba(path: &Path, width: usize, height: usize) -> Option<Vec<u8>> {
+    let output = match Command::new("magick")
+        .arg(path)
+        .args(["-depth", "8", "rgba:-"])
+        .output()
+    {
+        Ok(output) => output,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            eprintln!("ImageMagick is not available; skipping AVIF oracle comparison");
+            return None;
+        }
+        Err(err) => panic!("failed to execute ImageMagick: {err}"),
+    };
+    assert!(
+        output.status.success(),
+        "ImageMagick failed for {}: {}",
+        path.display(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout.len(), width * height * 4);
+    Some(output.stdout)
+}
+
 fn ffmpeg_decode_raw(path: &Path, pixel_format: &str) -> Option<Vec<u8>> {
     let executable = std::env::var_os("AVIF_FFMPEG")
         .map(std::path::PathBuf::from)
@@ -759,6 +782,11 @@ fn generated_bt2020_constant_luminance_matrix_sample_matches_ffmpeg_when_encoder
     generated_matrix_sample_matches_ffmpeg("bt2020c", "BT.2020 constant-luminance");
 }
 
+#[test]
+fn generated_smpte2085_matrix_sample_decodes_when_encoder_present() {
+    generated_matrix_sample_matches_ffmpeg("smpte2085", "SMPTE ST 2085");
+}
+
 fn generated_matrix_sample_matches_ffmpeg(colorspace: &str, label: &str) {
     let root = std::env::temp_dir().join(format!(
         ".test-avif-matrix-{colorspace}-{}",
@@ -773,10 +801,12 @@ fn generated_matrix_sample_matches_ffmpeg(colorspace: &str, label: &str) {
         .args(["-y", "-loglevel", "error"])
         .arg("-i")
         .arg(sample_path("WML2Viewer.png"));
-    if colorspace == "bt2020c" {
-        // libaom cannot infer the constant-luminance conversion directly
+    if matches!(colorspace, "bt2020c" | "smpte2085") {
+        // libaom cannot infer these non-default matrix conversions directly
         // from RGB input; mark the already formatted YUV frame instead.
-        command.args(["-vf", "format=yuv444p,setparams=colorspace=bt2020c"]);
+        command
+            .arg("-vf")
+            .arg(format!("format=yuv444p,setparams=colorspace={colorspace}"));
     }
     let status = command
         .args([
@@ -818,16 +848,29 @@ fn generated_matrix_sample_matches_ffmpeg(colorspace: &str, label: &str) {
     assert_eq!((actual.width, actual.height), (SAMPLE_WIDTH, SAMPLE_HEIGHT));
     if colorspace == "bt2020c" {
         // This FFmpeg build can encode matrix 10 but cannot convert its
-        // decoded frames to RGBA in the generic output path.  The decoder's
-        // matrix-10 arithmetic is covered by the focused unit vector above.
-    } else if let Some(expected) = ffmpeg_decode_rgba(&output_path) {
-        let metrics = diff_rgb(&actual.rgba, &expected);
-        assert!(
-            metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 32,
-            "{label} FFmpeg RGB error average={} max={}",
-            metrics.average_rgb_abs,
-            metrics.max_rgb_abs
-        );
+        // decoded frames to RGBA in the generic output path. ImageMagick's
+        // AVIF decoder provides an independent pixel oracle here.
+        if let Some(expected) = imagemagick_decode_rgba(&output_path, SAMPLE_WIDTH, SAMPLE_HEIGHT) {
+            let metrics = diff_rgb(&actual.rgba, &expected);
+            assert!(
+                // ImageMagick and this decoder apply slightly different
+                // gamut handling around the BT.2020 CL branch points.
+                metrics.average_rgb_abs <= 6.0 && metrics.max_rgb_abs <= 128,
+                "{label} ImageMagick RGB error average={} max={}",
+                metrics.average_rgb_abs,
+                metrics.max_rgb_abs
+            );
+        }
+    } else if colorspace != "smpte2085" {
+        if let Some(expected) = ffmpeg_decode_rgba(&output_path) {
+            let metrics = diff_rgb(&actual.rgba, &expected);
+            assert!(
+                metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 32,
+                "{label} FFmpeg RGB error average={} max={}",
+                metrics.average_rgb_abs,
+                metrics.max_rgb_abs
+            );
+        }
     }
     let _ = std::fs::remove_dir_all(&root);
 }

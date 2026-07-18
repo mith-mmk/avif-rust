@@ -303,6 +303,11 @@ and RGBA gates.
       branches, and a generated libaom sample exercises AVIF metadata parsing;
       this FFmpeg build can encode matrix 10 but cannot convert it to RGBA for
       an independent pixel oracle.
+- [x] Decode SMPTE ST 2085 Y'DzDx (`matrix_coefficients=11`) with the
+      H.273 76--78 inverse equations. A focused vector covers the centered
+      chroma scaling and a generated libaom sample exercises metadata parsing;
+      the available external decoders do not expose a stable RGBA oracle for
+      this matrix.
 - [x] 10-bit quantisation/reconstruction with dedicated AOM quantizer tables;
       12-bit parsing/output is covered, while film grain is applied for the
       non-overlap still-image path.
@@ -397,6 +402,12 @@ The deblock plane-lookup optimization validation runs measured `295.23/298.45`
 and `294.26/299.74 ms` (native/RGBA, 11 iterations on 2026-07-18). It removes
 the per-boundary scan over unrelated planes while preserving the release
 baseline until a quieter host produces a stable delta.
+
+The RGBA conversion hot path now iterates row-major and has a no-alpha identity
+plane fast path, avoiding per-pixel quotient/remainder and optional alpha work.
+Validation runs measured `317.06/315.91` and `310.73/315.96 ms` (native/RGBA,
+11 iterations on 2026-07-18); keep this as a verified optimization checkpoint,
+not a stable speedup claim, because the host remains scheduling-sensitive.
 
 The full qmatrix-table checkpoint measured `384.70/381.61 ms` on a subsequent
 11-iteration run; retain the earlier release baseline until repeated runs on a
