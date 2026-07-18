@@ -19,13 +19,13 @@
 公開デコーダは、8-bit／10-bit／12-bitのsource plane、monochrome、4:2:0、
 4:2:2、alpha/grid composition、`clap`／`irot`／`imir`を含む検証済みの単一
 frame AVIF profileに対応します。1 frameの`avis` primary itemも静止画として
-公開します。外部12-bit fox sampleはdecodeできますが、FFmpegとの最終RGB差分は
-平均約41.77で、strict oracle未達の診断差分が残ります。
+公開します。外部12-bit fox sampleはFFmpegのRGB oracleを通過し、最終RGB差分は
+平均約0.075、最大6です。
 
 | 機能 | 状態 |
 | --- | --- |
 | 1個のAV1静止frameを含むAVIF primary item | 対応 |
-| 8-bit／10-bit／12-bit source plane | 対応（12-bit RGB差分は診断扱い） |
+| 8-bit／10-bit／12-bit source plane | 対応（12-bit RGB oracle通過） |
 | native decoded plane、RGBA8、RGBA16 | 対応 |
 | 対応streamで使用するdeblock、CDEF、loop restoration | 対応 |
 | monochrome、4:2:0、4:2:2 | 対応 |

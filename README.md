@@ -19,13 +19,12 @@ The public decoder currently accepts tested single-frame AVIF profiles with
 8-bit, 10-bit, and 12-bit source planes, including monochrome, 4:2:0, 4:2:2,
 alpha/grid composition, and `clap`/`irot`/`imir` properties. A one-frame `avis`
 primary item is also exposed as a still image. The external 12-bit fox sample
-decodes successfully; its final RGB difference against FFmpeg remains a
-diagnostic (non-strict) gap of about 41.77 average absolute error.
+passes the FFmpeg RGB oracle (average absolute error about 0.075, maximum 6).
 
 | Capability | Status |
 | --- | --- |
 | AVIF primary item containing one AV1 still frame | Supported |
-| 8-bit, 10-bit, and 12-bit source planes | Supported (12-bit RGB gap is diagnostic) |
+| 8-bit, 10-bit, and 12-bit source planes | Supported (12-bit RGB oracle passes) |
 | Native decoded planes, RGBA8, and RGBA16 | Supported |
 | Deblock, CDEF, and loop restoration used by supported streams | Supported |
 | Monochrome, 4:2:0, and 4:2:2 | Supported |

@@ -2452,7 +2452,7 @@ mod prefilter_diagnostic_tests {
         let info = parse_avif(&data).unwrap();
         let headers = parse_av1_headers(&info).unwrap();
         eprintln!(
-            "12-bit headers: bit_depth={}, monochrome={}, subsampling=({}, {}), matrix={:?}, range={:?}, quant={:?}",
+            "12-bit headers: bit_depth={}, monochrome={}, subsampling=({}, {}), matrix={:?}, range={:?}, quant={:?}, film_grain={}",
             headers.sequence.color_config.bit_depth,
             headers.sequence.color_config.monochrome,
             headers.sequence.color_config.subsampling_x,
@@ -2463,7 +2463,8 @@ mod prefilter_diagnostic_tests {
                 .color_description
                 .map(|description| description.matrix_coefficients),
             headers.sequence.color_config.color_range,
-            headers.frame.quantization
+            headers.frame.quantization,
+            headers.frame.film_grain.is_some()
         );
         let DecodedStillFrame {
             frame,

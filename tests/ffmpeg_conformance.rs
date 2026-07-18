@@ -1096,7 +1096,7 @@ fn public_12bit_sample_matches_ffmpeg_when_present() {
         metrics.average_rgb_abs, metrics.max_rgb_abs
     );
     assert!(
-        metrics.average_rgb_abs <= 100.0 && metrics.max_rgb_abs <= 128,
+        metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 32,
         "12-bit FFmpeg RGB error average={} max={}",
         metrics.average_rgb_abs,
         metrics.max_rgb_abs
@@ -1353,7 +1353,6 @@ fn public_transform_samples_cover_crop_mirror_and_rotate() {
     for (name, expected_width, expected_height) in [
         ("kimono.crop.avif", 385, 330),
         ("kimono.mirror-horizontal.avif", 722, 1024),
-        ("kimono.rotate90.avif", 722, 1024),
         ("kimono.rotate270.avif", 722, 1024),
         ("kimono.mirror-vertical.rotate270.avif", 722, 1024),
     ] {
@@ -1382,6 +1381,7 @@ fn public_rotate_transform_samples_match_ffmpeg_when_present() {
         .parent()
         .expect("workspace root should exist");
     for (name, width, height) in [
+        ("kimono.rotate90.avif", 722, 1024),
         ("kimono.rotate270.avif", 722, 1024),
         ("kimono.mirror-vertical.rotate270.avif", 722, 1024),
     ] {

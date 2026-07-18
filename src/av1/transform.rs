@@ -557,9 +557,9 @@ fn inverse_transform_rect(
     let mut output = vec![0i32; width * height];
     for column in 0..width {
         let input = (0..height)
-            .map(|row| clamp_signed(intermediate[row * width + column], 16))
+            .map(|row| clamp_signed(intermediate[row * width + column], bit_depth + 8))
             .collect::<Vec<_>>();
-        let values = inverse_staged_dynamic(vertical, &input, 16);
+        let values = inverse_staged_dynamic(vertical, &input, bit_depth + 8);
         for row in 0..height {
             output[row * width + column] =
                 round2_signed(values[row], 4).clamp(-residual_limit, residual_limit - 1);
@@ -953,8 +953,9 @@ fn inverse_transform_4x4(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> Vec
     let residual_limit = 1i32 << (bit_depth + 7);
     let mut output = vec![0i32; 16];
     for column in 0..4 {
-        let input = std::array::from_fn(|row| clamp_signed(intermediate[row * 4 + column], 16));
-        let transformed = inverse_staged_4(vertical, input, 16);
+        let input =
+            std::array::from_fn(|row| clamp_signed(intermediate[row * 4 + column], bit_depth + 8));
+        let transformed = inverse_staged_4(vertical, input, bit_depth + 8);
         for row in 0..4 {
             output[row * 4 + column] =
                 round2_signed(transformed[row], 4).clamp(-residual_limit, residual_limit - 1);
@@ -989,8 +990,9 @@ fn inverse_transform_8x8(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> Vec
     let residual_limit = 1i32 << (bit_depth + 7);
     let mut output = vec![0i32; 64];
     for column in 0..8 {
-        let input = std::array::from_fn(|row| clamp_signed(intermediate[row * 8 + column], 16));
-        let transformed = inverse_staged_8(vertical, input, 16);
+        let input =
+            std::array::from_fn(|row| clamp_signed(intermediate[row * 8 + column], bit_depth + 8));
+        let transformed = inverse_staged_8(vertical, input, bit_depth + 8);
         for row in 0..8 {
             output[row * 8 + column] =
                 round2_signed(transformed[row], 4).clamp(-residual_limit, residual_limit - 1);
@@ -1137,7 +1139,7 @@ fn inverse_transform_16x16(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> V
     let mut temp = vec![0i32; 256];
     for row in 0..16 {
         let input = std::array::from_fn(|x| clamp_signed(dequant[row * 16 + x], bit_depth + 8));
-        let values = inverse_staged_16(horizontal, input, 16);
+        let values = inverse_staged_16(horizontal, input, bit_depth + 8);
         for x in 0..16 {
             temp[row * 16 + x] = round2_signed(values[x], 2);
         }
@@ -1145,8 +1147,8 @@ fn inverse_transform_16x16(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> V
     let limit = 1i32 << (bit_depth + 7);
     let mut out = vec![0i32; 256];
     for x in 0..16 {
-        let input = std::array::from_fn(|y| clamp_signed(temp[y * 16 + x], 16));
-        let values = inverse_staged_16(vertical, input, 16);
+        let input = std::array::from_fn(|y| clamp_signed(temp[y * 16 + x], bit_depth + 8));
+        let values = inverse_staged_16(vertical, input, bit_depth + 8);
         for y in 0..16 {
             out[y * 16 + x] = round2_signed(values[y], 4).clamp(-limit, limit - 1);
         }
@@ -2402,7 +2404,7 @@ mod tests {
         let mut temp = vec![0i32; 256];
         for row in 0..16 {
             let input = std::array::from_fn(|x| clamp_signed(dequant[row * 16 + x], bit_depth + 8));
-            let values = inverse_staged_16(horizontal, input, 16);
+            let values = inverse_staged_16(horizontal, input, bit_depth + 8);
             for x in 0..16 {
                 temp[row * 16 + x] = round2_signed(values[x], 2);
             }
@@ -2411,8 +2413,8 @@ mod tests {
         let limit = 1i32 << (bit_depth + 7);
         let mut out = vec![0i32; 256];
         for x in 0..16 {
-            let input = std::array::from_fn(|y| clamp_signed(temp[y * 16 + x], 16));
-            let values = inverse_staged_16(vertical, input, 16);
+            let input = std::array::from_fn(|y| clamp_signed(temp[y * 16 + x], bit_depth + 8));
+            let values = inverse_staged_16(vertical, input, bit_depth + 8);
             for y in 0..16 {
                 out[y * 16 + x] = round2_signed(values[y], 4).clamp(-limit, limit - 1);
             }
