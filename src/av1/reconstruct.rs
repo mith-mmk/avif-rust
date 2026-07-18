@@ -224,7 +224,7 @@ pub fn frame_buffers_to_rgba_16(
     color_config: &ColorConfig,
 ) -> Result<Rgba16ImageBuffer, DecoderError> {
     validate_rgba_conversion(buffers)?;
-    validate_sdr_transfer(color_config)?;
+    let hdr_transfer = transfer_characteristics(color_config)?;
     if color_config.monochrome {
         let luma = buffers.planes.first().ok_or_else(|| {
             DecoderError::Bitstream("AV1 monochrome luma plane is missing".to_string())
@@ -245,6 +245,9 @@ pub fn frame_buffers_to_rgba_16(
             let out = index * 4;
             rgba[out..out + 3].fill(value);
             rgba[out + 3] = alpha_sample(buffers.planes.get(3), x, y, max_source);
+        }
+        if let Some(transfer) = hdr_transfer {
+            apply_hdr_tone_map(&mut rgba, transfer);
         }
         return Ok(Rgba16ImageBuffer {
             width: buffers.width,
@@ -300,6 +303,10 @@ pub fn frame_buffers_to_rgba_16(
             rgba[out + 2] = rgb[2];
             rgba[out + 3] = alpha_sample(buffers.planes.get(3), x, y, alpha_max_source);
         }
+    }
+
+    if let Some(transfer) = hdr_transfer {
+        apply_hdr_tone_map(&mut rgba, transfer);
     }
 
     Ok(Rgba16ImageBuffer {
@@ -360,20 +367,87 @@ fn validate_rgba_conversion(buffers: &FrameBuffers) -> Result<(), DecoderError> 
     Ok(())
 }
 
-fn validate_sdr_transfer(color_config: &ColorConfig) -> Result<(), DecoderError> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HdrTransfer {
+    Pq,
+    Hlg,
+}
+
+fn transfer_characteristics(
+    color_config: &ColorConfig,
+) -> Result<Option<HdrTransfer>, DecoderError> {
     let Some(description) = color_config.color_description else {
-        return Ok(());
+        return Ok(None);
     };
     match description.transfer_characteristics {
-        1 | 6 | 13 => Ok(()),
-        16 | 18 => Err(DecoderError::Unsupported(format!(
-            "AV1 transfer characteristics {} require unimplemented HDR colour management",
-            description.transfer_characteristics
-        ))),
+        1 | 6 | 13 => Ok(None),
+        16 => Ok(Some(HdrTransfer::Pq)),
+        18 => Ok(Some(HdrTransfer::Hlg)),
         transfer => Err(DecoderError::Unsupported(format!(
             "AV1 transfer characteristics {transfer} RGBA conversion is not supported yet"
         ))),
     }
+}
+
+fn apply_hdr_tone_map(rgba: &mut [u16], transfer: HdrTransfer) {
+    for pixel in rgba.chunks_exact_mut(4) {
+        pixel[0] = hdr_to_sdr(pixel[0], transfer);
+        pixel[1] = hdr_to_sdr(pixel[1], transfer);
+        pixel[2] = hdr_to_sdr(pixel[2], transfer);
+    }
+}
+
+fn hdr_to_sdr(sample: u16, transfer: HdrTransfer) -> u16 {
+    // Convert PQ to a 100-nit SDR reference and HLG to its relative scene
+    // value, then use a bounded Reinhard-style shoulder before sRGB encoding.
+    // This keeps the existing RGBA8/16 API display-safe without pretending to
+    // perform display-specific HDR gamut or tone calibration.
+    const HDR_REFERENCE_WHITE: f64 = 4.0;
+    let encoded = f64::from(sample) / f64::from(u16::MAX);
+    let linear = match transfer {
+        HdrTransfer::Pq => pq_to_linear(encoded) * 100.0,
+        HdrTransfer::Hlg => hlg_to_linear(encoded),
+    };
+    let mapped = (linear / (1.0 + linear)) * ((HDR_REFERENCE_WHITE + 1.0) / HDR_REFERENCE_WHITE);
+    linear_to_srgb(mapped.clamp(0.0, 1.0))
+}
+
+fn pq_to_linear(encoded: f64) -> f64 {
+    const M1: f64 = 0.1593017578125;
+    const M2: f64 = 78.84375;
+    const C1: f64 = 0.8359375;
+    const C2: f64 = 18.8515625;
+    const C3: f64 = 18.6875;
+    if encoded <= 0.0 {
+        return 0.0;
+    }
+    let powered = encoded.powf(1.0 / M2);
+    let numerator = (powered - C1).max(0.0);
+    let denominator = (C2 - C3 * powered).max(f64::MIN_POSITIVE);
+    (numerator / denominator).powf(1.0 / M1)
+}
+
+fn hlg_to_linear(encoded: f64) -> f64 {
+    const BETA: f64 = 0.28466892;
+    const GAMMA: f64 = 1.2;
+    if encoded <= 0.0 {
+        return 0.0;
+    }
+    if encoded <= 0.5 {
+        ((encoded * encoded) / 3.0).powf(GAMMA)
+    } else {
+        let relative = (((encoded - 0.55991073) / 0.17883277).exp() + BETA) / 12.0;
+        relative.powf(GAMMA).min(1.0)
+    }
+}
+
+fn linear_to_srgb(linear: f64) -> u16 {
+    let encoded = if linear <= 0.0031308 {
+        linear * 12.92
+    } else {
+        1.055 * linear.powf(1.0 / 2.4) - 0.055
+    };
+    (encoded.clamp(0.0, 1.0) * f64::from(u16::MAX)).round() as u16
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -778,7 +852,59 @@ mod tests {
     }
 
     #[test]
-    fn rgba_conversion_rejects_hdr_transfer_characteristics() {
+    fn rgba_conversion_tone_maps_pq_transfer() {
+        let layout = PlaneLayout {
+            plane: 0,
+            width: 2,
+            height: 1,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 2,
+        };
+        let buffers = FrameBuffers {
+            width: 2,
+            height: 1,
+            planes: vec![
+                PlaneBuffer {
+                    layout,
+                    samples: vec![0, 512],
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout { plane: 1, ..layout },
+                    samples: vec![512, 512],
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout { plane: 2, ..layout },
+                    samples: vec![512, 512],
+                },
+            ],
+        };
+        let color_config = ColorConfig {
+            high_bitdepth: true,
+            twelve_bit: false,
+            bit_depth: 10,
+            monochrome: false,
+            color_description: Some(super::super::sequence::ColorDescription {
+                color_primaries: 9,
+                transfer_characteristics: 16,
+                matrix_coefficients: 9,
+            }),
+            color_range: super::super::sequence::ColorRange::Full,
+            subsampling_x: false,
+            subsampling_y: false,
+            chroma_sample_position: None,
+            separate_uv_delta_q: false,
+        };
+
+        let image = frame_buffers_to_rgba_16(&buffers, &color_config).unwrap();
+
+        assert_eq!(&image.rgba[..4], &[0, 0, 0, u16::MAX]);
+        assert!(image.rgba[4] > 0);
+        assert_eq!(image.rgba[7], u16::MAX);
+    }
+
+    #[test]
+    fn rgba_conversion_tone_maps_hlg_transfer() {
         let layout = PlaneLayout {
             plane: 0,
             width: 1,
@@ -793,38 +919,66 @@ mod tests {
             planes: vec![
                 PlaneBuffer {
                     layout,
-                    samples: vec![64],
+                    samples: vec![255],
                 },
                 PlaneBuffer {
                     layout: PlaneLayout { plane: 1, ..layout },
-                    samples: vec![512],
+                    samples: vec![128],
                 },
                 PlaneBuffer {
                     layout: PlaneLayout { plane: 2, ..layout },
-                    samples: vec![512],
+                    samples: vec![128],
                 },
             ],
         };
         let color_config = ColorConfig {
-            high_bitdepth: true,
+            high_bitdepth: false,
             twelve_bit: false,
-            bit_depth: 10,
+            bit_depth: 8,
             monochrome: false,
             color_description: Some(super::super::sequence::ColorDescription {
                 color_primaries: 9,
-                transfer_characteristics: 16,
+                transfer_characteristics: 18,
                 matrix_coefficients: 9,
             }),
-            color_range: super::super::sequence::ColorRange::Studio,
+            color_range: super::super::sequence::ColorRange::Full,
             subsampling_x: false,
             subsampling_y: false,
             chroma_sample_position: None,
             separate_uv_delta_q: false,
         };
 
-        let err = frame_buffers_to_rgba_16(&buffers, &color_config).unwrap_err();
+        let image = frame_buffers_to_rgba_16(&buffers, &color_config).unwrap();
 
-        assert!(matches!(err, DecoderError::Unsupported(message) if message.contains("HDR")));
+        assert!(image.rgba[0] > 0);
+        assert!(image.rgba[0] <= u16::MAX);
+        assert_eq!(image.rgba[3], u16::MAX);
+    }
+
+    #[test]
+    fn hdr_transfer_curves_are_bounded_and_monotonic() {
+        assert_eq!(pq_to_linear(0.0), 0.0);
+        assert!((pq_to_linear(1.0) - 1.0).abs() < 1e-6);
+        assert_eq!(hlg_to_linear(0.0), 0.0);
+
+        let samples = [0.0, 0.25, 0.5, 0.75, 1.0];
+        let mut previous_pq = 0.0;
+        let mut previous_hlg = 0.0;
+        for sample in samples {
+            let pq = pq_to_linear(sample);
+            let hlg = hlg_to_linear(sample);
+            assert!(pq.is_finite() && (0.0..=1.0).contains(&pq));
+            assert!(hlg.is_finite() && (0.0..=1.0).contains(&hlg));
+            assert!(pq >= previous_pq);
+            assert!(hlg >= previous_hlg);
+            previous_pq = pq;
+            previous_hlg = hlg;
+        }
+
+        let mut rgba = [u16::MAX, u16::MAX / 2, 0, 1234];
+        apply_hdr_tone_map(&mut rgba, HdrTransfer::Pq);
+        assert_eq!(rgba[3], 1234);
+        assert!(rgba[..3].iter().all(|sample| *sample <= u16::MAX));
     }
 
     fn assert_rgb_close(actual: &[u8], expected: &[u8], tolerance: u8) {

@@ -326,14 +326,14 @@ and RGBA gates.
       normative Gaussian sequence, AR synthesis and chroma scaling paths.
 - [x] Film grain overlap blending (`overlap_flag == 1`) for luma and
       subsampled chroma planes.
-- [x] Keep HDR transfer characteristics and unsupported ICC profile forms
-      explicitly `Unsupported` until implemented.
+- [x] Decode CICP PQ (transfer 16) and HLG (transfer 18) through a bounded
+      SDR tone map for the existing RGBA8/16 output API.
 - [x] Apply ICC matrix-shaper profiles with identity/gamma and lookup-table
       (`curv`) tone curves, with bounded table sizes and interpolation checks.
 - [x] Apply ICC matrix-shaper parametric (`para`) tone curves for function
       types 0 through 4, including malformed-coefficient checks.
-- [ ] Implement HDR tone mapping and the remaining ICC display-conversion
-      profile forms (multi-dimensional CLUT/LUT profiles).
+- [ ] Add display-specific HDR gamut/tone calibration and the remaining ICC
+      display-conversion profile forms (multi-dimensional CLUT/LUT profiles).
 
 ## 5. Safety, performance and release gate
 
@@ -367,6 +367,11 @@ The 4:2:2 native-rotation validation run measured `287.95/289.71 ms`
 (native/RGBA, 7 iterations on 2026-07-18); retain the release baseline above
 because this path does not affect the WML2Viewer hot loop and host scheduling
 variance remains significant.
+
+The HDR transfer-map validation run measured `298.35/300.26 ms` (native/RGBA,
+11 iterations on 2026-07-18); retain the release baseline above because the
+PQ/HLG branch is not exercised by `samples/WML2Viewer.avif` and the host has
+shown scheduling variance across adjacent runs.
 
 The full qmatrix-table checkpoint measured `384.70/381.61 ms` on a subsequent
 11-iteration run; retain the earlier release baseline until repeated runs on a
