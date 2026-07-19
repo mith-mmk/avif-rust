@@ -240,10 +240,10 @@ pub fn frame_buffers_to_rgba_8(
     buffers: &FrameBuffers,
     color_config: &ColorConfig,
 ) -> Result<ImageBuffer, DecoderError> {
-    if color_config.bit_depth == 8
-        && !color_config.monochrome
-        && transfer_characteristics(color_config)?.is_none()
-    {
+    if color_config.bit_depth == 8 && transfer_characteristics(color_config)?.is_none() {
+        if color_config.monochrome {
+            return frame_buffers_to_rgba_8_monochrome_sdr(buffers);
+        }
         return frame_buffers_to_rgba_8_sdr(buffers, color_config);
     }
     if color_config.bit_depth == 8
@@ -374,6 +374,37 @@ fn frame_buffers_to_rgba_8_sdr(
             rgba[out + 1] = u16_to_u8(rgb[1]);
             rgba[out + 2] = u16_to_u8(rgb[2]);
             rgba[out + 3] = u16_to_u8(alpha_sample(buffers.planes.get(3), x, y, 255));
+        }
+    }
+    Ok(ImageBuffer {
+        width: buffers.width,
+        height: buffers.height,
+        rgba,
+    })
+}
+
+fn frame_buffers_to_rgba_8_monochrome_sdr(
+    buffers: &FrameBuffers,
+) -> Result<ImageBuffer, DecoderError> {
+    validate_rgba_conversion(buffers)?;
+    let luma = buffers.planes.first().ok_or_else(|| {
+        DecoderError::Bitstream("AV1 monochrome luma plane is missing".to_string())
+    })?;
+    let mut rgba = vec![0u8; buffers.width * buffers.height * 4];
+    for y in 0..buffers.height {
+        for x in 0..buffers.width {
+            let index = y * buffers.width + x;
+            let value = u16_to_u8(scale_sample_to_u16(sample_plane(luma, x, y), 255));
+            let alpha = buffers
+                .planes
+                .get(3)
+                .map(|plane| u16_to_u8(scale_sample_to_u16(sample_plane(plane, x, y), 255)))
+                .unwrap_or(u8::MAX);
+            let out = index * 4;
+            rgba[out] = value;
+            rgba[out + 1] = value;
+            rgba[out + 2] = value;
+            rgba[out + 3] = alpha;
         }
     }
     Ok(ImageBuffer {
@@ -1377,6 +1408,66 @@ mod tests {
             subsampling_x: true,
             subsampling_y: true,
             chroma_sample_position: Some(ChromaSamplePosition::Vertical),
+            separate_uv_delta_q: false,
+        };
+
+        let expected = frame_buffers_to_rgba_16(&buffers, &color_config)
+            .unwrap()
+            .rgba
+            .into_iter()
+            .map(u16_to_u8)
+            .collect::<Vec<_>>();
+        let actual = frame_buffers_to_rgba_8(&buffers, &color_config).unwrap();
+
+        assert_eq!(actual.rgba, expected);
+    }
+
+    #[test]
+    fn rgba8_monochrome_sdr_path_matches_rgba16_conversion() {
+        let luma_layout = PlaneLayout {
+            plane: 0,
+            width: 2,
+            height: 1,
+            subsampling_x: 1,
+            subsampling_y: 1,
+            sample_count: 2,
+        };
+        let alpha_layout = PlaneLayout {
+            plane: 3,
+            width: 3,
+            height: 2,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 6,
+        };
+        let buffers = FrameBuffers {
+            width: 3,
+            height: 2,
+            planes: vec![
+                PlaneBuffer {
+                    layout: luma_layout,
+                    samples: vec![32, 224],
+                },
+                PlaneBuffer {
+                    layout: alpha_layout,
+                    samples: vec![0, 64, 128, 160, 192, 255],
+                },
+            ],
+        };
+        let color_config = ColorConfig {
+            high_bitdepth: false,
+            twelve_bit: false,
+            bit_depth: 8,
+            monochrome: true,
+            color_description: Some(super::super::sequence::ColorDescription {
+                color_primaries: 1,
+                transfer_characteristics: 13,
+                matrix_coefficients: 0,
+            }),
+            color_range: super::super::sequence::ColorRange::Full,
+            subsampling_x: true,
+            subsampling_y: true,
+            chroma_sample_position: None,
             separate_uv_delta_q: false,
         };
 

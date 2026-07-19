@@ -115,7 +115,6 @@ pub struct DecodedFrame {
 impl DecodedFrame {
     pub fn to_rgba8(&self) -> Result<ImageBuffer, DecoderError> {
         if self.bit_depth == 8
-            && !self.color_config.monochrome
             && self
                 .color_information
                 .as_ref()
