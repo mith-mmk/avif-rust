@@ -45,6 +45,7 @@ impl<'a> TileDecoder<'a> {
             .reader
             .read_symbol(self.cdf.skip_cdf_mut(skip_context))?;
         let skip = skip_symbol != 0;
+        let segment_id = self.read_segmentation_id(frame, block_size, x, y, skip)?;
         let cdef_idx = self.read_cdef_index(sequence, frame, skip, x, y)?;
         let qindex = self.read_delta_qindex(sequence, frame, block_size, skip, x, y)?;
         let delta_lf = self.read_delta_lf(sequence, frame, block_size, skip, x, y)?;
@@ -166,6 +167,7 @@ impl<'a> TileDecoder<'a> {
         Ok(BlockModeProbe {
             tile_id: tile.tile_id,
             block_size,
+            segment_id,
             qindex,
             delta_lf,
             skip_context,

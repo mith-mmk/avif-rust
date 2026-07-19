@@ -101,11 +101,76 @@ fn segmentation_alt_q_adjusts_initial_tile_qindex() {
         update_map: true,
         temporal_update: false,
         delta_q: 5,
+        segment_delta_q: [5, 0, 0, 0, 0, 0, 0, 0],
+        last_active_segment: 0,
     };
     let decoder = TileDecoder::new(&[0, 0], &frame).unwrap();
     assert_eq!(
         decoder.current_qindex,
         frame.segmentation.effective_qindex(frame.base_q_idx)
+    );
+}
+
+#[test]
+fn segmentation_id_prediction_uses_normative_negative_deinterleave() {
+    assert_eq!(neg_deinterleave(0, 0, 3), 0);
+    assert_eq!(neg_deinterleave(1, 0, 3), 1);
+    assert_eq!(neg_deinterleave(0, 1, 3), 1);
+    assert_eq!(neg_deinterleave(1, 1, 3), 2);
+    assert_eq!(neg_deinterleave(2, 1, 3), 0);
+}
+
+#[test]
+fn segmentation_map_records_every_mi_in_a_decoded_block() {
+    let data = read_sample_avif();
+    let info = parse_avif(&data).unwrap();
+    let sequence_payload = find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
+        .unwrap()
+        .expect("sequence header OBU should exist");
+    let sequence = parse_sequence_header(sequence_payload).unwrap();
+    let frame_payload = find_obu_payload(&info.primary_item_payload, ObuType::Frame)
+        .unwrap()
+        .expect("frame OBU should exist");
+    let frame = parse_frame_header(frame_payload, &sequence).unwrap();
+    let mut decoder = TileDecoder::new(&[0, 0], &frame).unwrap();
+    decoder.set_segmentation_id(BlockSize::Block8x8, 0, 0, 1);
+    assert_eq!(&decoder.segmentation_map[..2], &[1, 1]);
+    assert_eq!(
+        &decoder.segmentation_map[decoder.mi_cols..decoder.mi_cols + 2],
+        &[1, 1]
+    );
+}
+
+#[test]
+fn segmentation_id_entropy_updates_qindex_for_selected_segment() {
+    let data = read_sample_avif();
+    let info = parse_avif(&data).unwrap();
+    let sequence_payload = find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
+        .unwrap()
+        .expect("sequence header OBU should exist");
+    let sequence = parse_sequence_header(sequence_payload).unwrap();
+    let frame_payload = find_obu_payload(&info.primary_item_payload, ObuType::Frame)
+        .unwrap()
+        .expect("frame OBU should exist");
+    let mut frame = parse_frame_header(frame_payload, &sequence).unwrap();
+    frame.segmentation = SegmentationParams {
+        enabled: true,
+        update_map: true,
+        temporal_update: false,
+        delta_q: 0,
+        segment_delta_q: [0, 5, 0, 0, 0, 0, 0, 0],
+        last_active_segment: 1,
+    };
+    let mut decoder = TileDecoder::new(&[0; 128], &frame).unwrap();
+    let segment_id = decoder
+        .read_segmentation_id(&frame, BlockSize::Block8x8, 0, 0, false)
+        .unwrap();
+    assert!(segment_id <= 1);
+    assert_eq!(
+        decoder.current_qindex,
+        frame
+            .segmentation
+            .effective_qindex_for_segment(frame.base_q_idx, segment_id)
     );
 }
 

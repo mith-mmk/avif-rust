@@ -136,6 +136,7 @@ pub struct TileDecoder<'a> {
     y_smooth_grid: Vec<Option<bool>>,
     uv_smooth_grid: Vec<Option<bool>>,
     skip_grid: Vec<Option<bool>>,
+    segmentation_map: Vec<u8>,
     above_partition_context: Vec<u8>,
     left_partition_context: Vec<u8>,
     cdef_transmitted: [bool; 4],
@@ -210,6 +211,7 @@ impl<'a> TileDecoder<'a> {
             y_smooth_grid: vec![None; mi_count],
             uv_smooth_grid: vec![None; mi_count],
             skip_grid: vec![None; mi_count],
+            segmentation_map: vec![0; mi_count],
             above_partition_context: vec![0; mi_cols],
             left_partition_context: vec![0; mi_rows],
             cdef_transmitted: [false; 4],
@@ -249,6 +251,78 @@ impl<'a> TileDecoder<'a> {
         self.tile_mi_row_start = tile.mi_row_start as usize;
     }
 
+    pub(super) fn read_segmentation_id(
+        &mut self,
+        frame: &FrameHeader,
+        block_size: BlockSize,
+        x: usize,
+        y: usize,
+        skip: bool,
+    ) -> Result<u8, DecoderError> {
+        let max_segment = frame.segmentation.last_active_segment;
+        if !frame.segmentation.enabled || !frame.segmentation.update_map || max_segment == 0 {
+            return Ok(0);
+        }
+        let mi_x = x / 4;
+        let mi_y = y / 4;
+        let have_left = mi_x > self.tile_mi_col_start;
+        let have_top = mi_y > self.tile_mi_row_start;
+        let left = have_left.then(|| self.segmentation_map[mi_y * self.mi_cols + mi_x - 1]);
+        let top = have_top.then(|| self.segmentation_map[(mi_y - 1) * self.mi_cols + mi_x]);
+        let above_left = (have_left && have_top)
+            .then(|| self.segmentation_map[(mi_y - 1) * self.mi_cols + mi_x - 1]);
+        let (predicted, context) = match (left, top, above_left) {
+            (Some(left), Some(top), Some(above_left)) => {
+                let context = if left == top && top == above_left {
+                    2
+                } else if left == top || top == above_left || left == above_left {
+                    1
+                } else {
+                    0
+                };
+                (if top == above_left { top } else { left }, context)
+            }
+            (Some(left), _, _) => (left, 0),
+            (_, Some(top), _) => (top, 0),
+            _ => (0, 0),
+        };
+        let max_count = usize::from(max_segment) + 1;
+        let segment_id = if skip {
+            predicted
+        } else {
+            let cdf = self.cdf.seg_id_cdf_mut(context);
+            let mut limited_cdf = [0u16; crate::av1::cdf::SEGMENT_IDS + 1];
+            limited_cdf[..max_count - 1].copy_from_slice(&cdf[..max_count - 1]);
+            limited_cdf[max_count - 1] = 1 << 15;
+            limited_cdf[max_count] = cdf[crate::av1::cdf::SEGMENT_IDS];
+            let diff = self.reader.read_symbol(&mut limited_cdf[..=max_count])? as u8;
+            cdf[..max_count - 1].copy_from_slice(&limited_cdf[..max_count - 1]);
+            cdf[crate::av1::cdf::SEGMENT_IDS] = limited_cdf[max_count];
+            neg_deinterleave(diff, predicted, max_count as u8)
+        };
+        let segment_id = if usize::from(segment_id) < max_count {
+            segment_id
+        } else {
+            0
+        };
+        self.set_segmentation_id(block_size, x, y, segment_id);
+        self.current_qindex = frame
+            .segmentation
+            .effective_qindex_for_segment(frame.base_q_idx, segment_id);
+        Ok(segment_id)
+    }
+
+    fn set_segmentation_id(&mut self, block_size: BlockSize, x: usize, y: usize, segment_id: u8) {
+        let start_x = x / 4;
+        let start_y = y / 4;
+        let end_x = (start_x + block_size.width() / 4).min(self.mi_cols);
+        let end_y = (start_y + block_size.height() / 4).min(self.mi_rows);
+        for row in start_y..end_y {
+            let start = row * self.mi_cols + start_x;
+            self.segmentation_map[start..row * self.mi_cols + end_x].fill(segment_id);
+        }
+    }
+
     pub(super) fn txb_context(
         &self,
         block_size: BlockSize,
@@ -282,6 +356,32 @@ impl<'a> TileDecoder<'a> {
 
     pub(super) fn finish_entropy(&mut self) -> Result<usize, DecoderError> {
         self.reader.exit()
+    }
+}
+
+fn neg_deinterleave(diff: u8, predicted: u8, max: u8) -> u8 {
+    if predicted == 0 {
+        diff
+    } else if predicted + 1 >= max {
+        max.wrapping_sub(diff + 1)
+    } else if 2 * predicted < max {
+        if diff <= 2 * predicted {
+            if diff & 1 != 0 {
+                predicted + (diff + 1) / 2
+            } else {
+                predicted - diff / 2
+            }
+        } else {
+            diff
+        }
+    } else if diff <= 2 * (max - predicted - 1) {
+        if diff & 1 != 0 {
+            predicted + (diff + 1) / 2
+        } else {
+            predicted - diff / 2
+        }
+    } else {
+        max.wrapping_sub(diff + 1)
     }
 }
 

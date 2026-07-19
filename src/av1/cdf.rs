@@ -7,6 +7,8 @@ use super::coeff_cdfs::{
 
 pub const PARTITION_CONTEXTS: usize = 4;
 pub const SKIP_CONTEXTS: usize = 3;
+pub const SEGMENT_ID_CONTEXTS: usize = 3;
+pub const SEGMENT_IDS: usize = 8;
 pub const INTRA_MODES: usize = 13;
 pub const INTRA_MODE_CONTEXTS: usize = 5;
 pub const BLOCK_SIZE_GROUPS: usize = 4;
@@ -30,6 +32,12 @@ pub const MV_JOINTS: usize = 4;
 pub const MV_CLASSES: usize = 11;
 pub const MV_CLASS_BITS: usize = 10;
 pub const DEFAULT_INTRABC_CDF: [u16; 3] = [30531, 32768, 0];
+
+const DEFAULT_SEG_ID_CDF: [[u16; SEGMENT_IDS + 1]; SEGMENT_ID_CONTEXTS] = [
+    [5622, 7893, 16093, 18233, 27809, 28373, 32533, 32768, 0],
+    [14274, 18230, 22557, 24935, 29980, 30851, 32344, 32768, 0],
+    [27527, 28487, 28723, 28890, 32397, 32647, 32679, 32768, 0],
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IntrabcMvCdf {
@@ -1749,6 +1757,7 @@ pub struct CdfContext {
     pub partition_w64: [[u16; 11]; PARTITION_CONTEXTS],
     pub partition_w128: [[u16; 9]; PARTITION_CONTEXTS],
     pub skip: [[u16; 3]; SKIP_CONTEXTS],
+    pub seg_id: [[u16; SEGMENT_IDS + 1]; SEGMENT_ID_CONTEXTS],
     pub delta_q: [u16; 5],
     pub delta_lf: [u16; 5],
     pub delta_lf_multi: [[u16; 5]; 4],
@@ -1812,6 +1821,7 @@ impl CdfContext {
             partition_w64: DEFAULT_PARTITION_W64_CDF,
             partition_w128: DEFAULT_PARTITION_W128_CDF,
             skip: DEFAULT_SKIP_CDF,
+            seg_id: DEFAULT_SEG_ID_CDF,
             delta_q: DEFAULT_DELTA_Q_CDF,
             delta_lf: DEFAULT_DELTA_LF_CDF,
             delta_lf_multi: DEFAULT_DELTA_LF_MULTI_CDF,
@@ -1884,6 +1894,10 @@ impl CdfContext {
 
     pub fn skip_cdf_mut(&mut self, context: usize) -> &mut [u16] {
         &mut self.skip[context]
+    }
+
+    pub fn seg_id_cdf_mut(&mut self, context: usize) -> &mut [u16] {
+        &mut self.seg_id[context]
     }
 
     pub fn switchable_restore_cdf_mut(&mut self) -> &mut [u16] {

@@ -557,7 +557,7 @@ buffer when no ICC profile is present. The same 11-iteration benchmark measured
 because host scheduling remains variable.
 
 The external FFmpeg conformance suite now includes 4:4:4 non-identity RGBA and
-native-plane checks. The current run passes 35 tests with 2 intentionally
+native-plane checks. The current run passes 47 tests with 2 intentionally
 ignored samples. AV1 intrabc decoding now searches the block-geometry-specific
 neighbor MV candidates; a successful high-complexity external intrabc fixture
 is still required before marking the full tool supported.
@@ -572,13 +572,12 @@ branches were reviewed against the frame/tile parser and grouped as follows:
 - `show_existing_frame`, inter-frame reference tools and inherited inter-frame
   film grain still require reference-frame storage and are intentionally
   rejected before reconstruction.
-- No-op segmentation signalling and the still-image single-segment `ALT_Q`
-  feature are parsed and applied to the initial block qindex; segmentation
-  map/CDF, later-segment features, loop-filter deltas, reference and skip
-  state remain fail-closed.
-- Frame syntax tests cover positive, negative and zero-valued segment-0
-  `ALT_Q` (including its signed-value alignment), plus rejection of later
-  segment and non-quantizer features.
+- No-op segmentation signalling and still-image `ALT_Q` deltas are parsed;
+  multi-segment map/CDF state is decoded for `ALT_Q`-only frames. Loop-filter
+  deltas, reference and skip/globalmv features remain fail-closed.
+- Frame syntax tests cover positive, negative and zero-valued `ALT_Q` deltas
+  (including signed-value alignment), multi-segment values, and rejection of
+  non-quantizer features.
 - `iloc` construction methods beyond 0/1, malformed partial tile groups and
   invalid rectangular-transform combinations remain fail-closed container or
   syntax errors rather than partial images.
