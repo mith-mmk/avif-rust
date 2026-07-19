@@ -236,7 +236,7 @@ pub fn decode_first_luma_transform(
         .planes
         .get_mut(0)
         .ok_or_else(|| DecoderError::Bitstream("AV1 luma plane is missing".to_string()))?;
-    if frame.quantization.coded_lossless() {
+    if frame.coded_lossless() {
         reconstruct_lossless_transform_block(
             luma,
             &quantized,

@@ -81,7 +81,7 @@ fn chroma_intra_tx_type(
     block_mode: &BlockModeProbe,
     tx_size: TxSize,
 ) -> TxType {
-    if frame.base_q_idx == 0 || tx_size.width() >= 32 || tx_size.height() >= 32 {
+    if frame.coded_lossless() || tx_size.width() >= 32 || tx_size.height() >= 32 {
         return TxType::DctDct;
     }
     let mode = match block_mode.uv_mode {
@@ -105,7 +105,7 @@ fn chroma_intra_tx_type(
 }
 
 pub(super) fn fixed_tx_type(frame: &FrameHeader, transform: TransformBlock) -> Option<TxType> {
-    if frame.base_q_idx == 0
+    if frame.coded_lossless()
         || transform.plane != 0
         || transform.tx_size.width() >= 32
         || transform.tx_size.height() >= 32

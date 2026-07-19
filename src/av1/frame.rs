@@ -62,14 +62,30 @@ pub struct FrameHeader {
     pub payload_after_header_offset: usize,
 }
 
-/// Frame-level segmentation signalling. The decoder accepts the valid
-/// no-op form where every segment feature is disabled; active per-segment
-/// quantizer/filter/reference features remain fail-closed.
+impl FrameHeader {
+    pub(crate) fn coded_lossless(&self) -> bool {
+        self.quantization.coded_lossless()
+            && (!self.segmentation.enabled || self.segmentation.delta_q == 0)
+    }
+}
+
+/// Frame-level segmentation signalling. The still-image decoder accepts the
+/// no-op form and the single-segment `ALT_Q` form; features that require a
+/// segmentation map or reference-frame state remain fail-closed.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SegmentationParams {
     pub enabled: bool,
     pub update_map: bool,
     pub temporal_update: bool,
+    /// Segment 0's `SEG_LVL_ALT_Q` delta. It is the only active segmentation
+    /// feature currently applied by the still-image decoder.
+    pub delta_q: i16,
+}
+
+impl SegmentationParams {
+    pub(crate) fn effective_qindex(self, base_q_idx: u8) -> u8 {
+        (i16::from(base_q_idx) + self.delta_q).clamp(0, 255) as u8
+    }
 }
 
 pub fn parse_frame_header(
@@ -533,7 +549,8 @@ fn parse_frame_header_trailing_params(
     let segmentation = parse_segmentation_params(reader, primary_ref_frame)?;
     let delta_q = parse_delta_q_params(reader, quantization.base_q_idx)?;
     let delta_lf = parse_delta_lf_params(reader, delta_q.present, allow_intrabc)?;
-    let coded_lossless = quantization.coded_lossless();
+    let coded_lossless =
+        quantization.coded_lossless() && (!segmentation.enabled || segmentation.delta_q == 0);
     let loop_filter = parse_loop_filter_params(reader, sequence, coded_lossless, allow_intrabc)?;
     let cdef = parse_cdef_params(reader, sequence, coded_lossless, allow_intrabc)?;
     let restoration = parse_lr_params(reader, sequence, coded_lossless, allow_intrabc)?;
@@ -714,31 +731,42 @@ fn parse_segmentation_params(
             enabled: true,
             update_map,
             temporal_update,
+            delta_q: 0,
         });
     }
 
     const FEATURE_BITS: [usize; 8] = [8, 6, 6, 6, 6, 3, 0, 0];
     const FEATURE_SIGNED: [bool; 8] = [true, true, true, true, true, false, false, false];
-    let mut active_feature = None;
+    let mut unsupported_feature = None;
+    let mut segment_zero_delta_q = 0;
     for segment in 0..8 {
         for feature in 0..8 {
             let enabled = reader.read_bool("segmentation_feature_enabled")?;
             if !enabled {
                 continue;
             }
-            if active_feature.is_none() {
-                active_feature = Some((segment, feature));
-            }
             let bits = FEATURE_BITS[feature];
             if bits != 0 {
                 let value = reader.read_bits(bits, "segmentation_feature_value")?;
-                if FEATURE_SIGNED[feature] && value != 0 {
-                    let _negative = reader.read_bool("segmentation_feature_sign")?;
+                if FEATURE_SIGNED[feature] {
+                    let negative = reader.read_bool("segmentation_feature_sign")?;
+                    if segment == 0 && feature == 0 {
+                        segment_zero_delta_q = if negative {
+                            -(value as i16)
+                        } else {
+                            value as i16
+                        };
+                    }
+                }
+            }
+            if !(segment == 0 && feature == 0) {
+                if unsupported_feature.is_none() {
+                    unsupported_feature = Some((segment, feature));
                 }
             }
         }
     }
-    if let Some((segment, feature)) = active_feature {
+    if let Some((segment, feature)) = unsupported_feature {
         return Err(DecoderError::Unsupported(format!(
             "AV1 segmentation feature {feature} on segment {segment} is not supported yet"
         )));
@@ -747,6 +775,7 @@ fn parse_segmentation_params(
         enabled: true,
         update_map,
         temporal_update,
+        delta_q: segment_zero_delta_q,
     })
 }
 
@@ -1036,18 +1065,47 @@ mod tests {
                 enabled: true,
                 update_map: true,
                 temporal_update: false,
+                delta_q: 0,
             }
         );
     }
 
     #[test]
-    fn rejects_active_segmentation_feature() {
-        let mut reader = BitReader::new(&[0xC0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    fn parses_segment_zero_alt_q_segmentation_feature() {
+        let mut reader = BitReader::new(&[0xC1, 0x40, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let params = parse_segmentation_params(&mut reader, 7).unwrap();
+        assert_eq!(params.delta_q, 5);
+        assert_eq!(params.effective_qindex(100), 105);
+
+        let mut reader = BitReader::new(&[0xC0, 0x20, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let params = parse_segmentation_params(&mut reader, 7).unwrap();
+        assert_eq!(params.delta_q, 0);
+
+        let mut reader = BitReader::new(&[0xC1, 0x60, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let params = parse_segmentation_params(&mut reader, 7).unwrap();
+        assert_eq!(params.delta_q, -5);
+        assert_eq!(params.effective_qindex(3), 0);
+    }
+
+    #[test]
+    fn rejects_active_non_alt_q_segmentation_feature() {
+        let mut reader = BitReader::new(&[0xA0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         let error = parse_segmentation_params(&mut reader, 7).unwrap_err();
         assert!(matches!(
             error,
             crate::DecoderError::Unsupported(message)
-                if message.contains("segmentation feature 0")
+                if message.contains("segmentation feature 1 on segment 0")
+        ));
+    }
+
+    #[test]
+    fn rejects_alt_q_on_later_segment() {
+        let mut reader = BitReader::new(&[0x80, 0x40, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let error = parse_segmentation_params(&mut reader, 7).unwrap_err();
+        assert!(matches!(
+            error,
+            crate::DecoderError::Unsupported(message)
+                if message.contains("segmentation feature 0 on segment 1")
         ));
     }
 }

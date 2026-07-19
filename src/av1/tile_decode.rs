@@ -239,7 +239,7 @@ impl<'a> TileDecoder<'a> {
             prediction_scratch: [0; 64 * 64],
             reconstruction_scratch: [0; 64 * 64],
             coefficient_scan_cache: CoefficientScanCache::new(),
-            current_qindex: frame.base_q_idx,
+            current_qindex: frame.segmentation.effective_qindex(frame.base_q_idx),
             current_delta_lf: [0; 4],
         })
     }

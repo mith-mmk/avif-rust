@@ -71,7 +71,7 @@ pub(super) fn decode_plane_block_unit(
         })?;
         (Some(luma), plane)
     };
-    let tx_size = if plane_index > 0 && !frame.quantization.coded_lossless() {
+    let tx_size = if plane_index > 0 && !frame.coded_lossless() {
         // Chroma uses the largest rectangular transform for its scaled plane
         // block. Scaling the luma transform independently would turn, for
         // example, a 16x8 luma block into a 4x4 chroma transform, while AV1
@@ -284,7 +284,7 @@ pub(super) fn decode_plane_block_unit(
         let tx_type = decoded_transform.tx_type;
         let dequant = &mut decoder.dequant_scratch[..prediction_len];
         let reconstructed = &mut decoder.reconstruction_scratch[..prediction_len];
-        if frame.quantization.coded_lossless() {
+        if frame.coded_lossless() {
             reconstruct_lossless_transform_block_parts_into(
                 plane,
                 block,

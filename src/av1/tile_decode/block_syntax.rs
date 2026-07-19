@@ -95,7 +95,7 @@ impl<'a> TileDecoder<'a> {
                 )
             } else {
                 let cfl_allowed = cfl_is_allowed(
-                    frame.quantization.coded_lossless(),
+                    frame.coded_lossless(),
                     block_size,
                     sequence.color_config.subsampling_x,
                     sequence.color_config.subsampling_y,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::av1::frame::SegmentationParams;
 use crate::av1::tile_decode::block_syntax::{cfl_is_allowed, cfl_signs, use_angle_delta};
 use crate::av1::transform::plan_transform_blocks_with_tx_size;
 use crate::av1::{
@@ -81,6 +82,31 @@ fn reads_sample_root_partition_symbol() {
     assert_eq!(probe.symbol, 3);
     assert_eq!(probe.partition, Partition::Split);
     assert!(probe.bit_position_after >= 15);
+}
+
+#[test]
+fn segmentation_alt_q_adjusts_initial_tile_qindex() {
+    let data = read_sample_avif();
+    let info = parse_avif(&data).unwrap();
+    let sequence_payload = find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
+        .unwrap()
+        .expect("sequence header OBU should exist");
+    let sequence = parse_sequence_header(sequence_payload).unwrap();
+    let frame_payload = find_obu_payload(&info.primary_item_payload, ObuType::Frame)
+        .unwrap()
+        .expect("frame OBU should exist");
+    let mut frame = parse_frame_header(frame_payload, &sequence).unwrap();
+    frame.segmentation = SegmentationParams {
+        enabled: true,
+        update_map: true,
+        temporal_update: false,
+        delta_q: 5,
+    };
+    let decoder = TileDecoder::new(&[0, 0], &frame).unwrap();
+    assert_eq!(
+        decoder.current_qindex,
+        frame.segmentation.effective_qindex(frame.base_q_idx)
+    );
 }
 
 #[test]

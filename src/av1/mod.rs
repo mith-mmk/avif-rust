@@ -29,7 +29,8 @@ pub(crate) use decode::{
 pub use entropy::EntropyDecoder;
 pub(crate) use film_grain::apply as apply_film_grain;
 pub use frame::{
-    CdefStrength, FilmGrainParams, FrameHeader, FrameType, TxMode, parse_frame_header,
+    CdefStrength, FilmGrainParams, FrameHeader, FrameType, SegmentationParams, TxMode,
+    parse_frame_header,
 };
 pub use predict::{IntraEdges, predict_intra};
 pub use quant::{PlaneQuant, QuantState, dequantize_coefficients};
