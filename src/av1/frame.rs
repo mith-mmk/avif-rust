@@ -49,6 +49,7 @@ pub struct FrameHeader {
     pub tile_info: TileInfo,
     pub base_q_idx: u8,
     pub quantization: QuantizationParams,
+    pub segmentation: SegmentationParams,
     pub delta_q: DeltaQParams,
     pub delta_lf: DeltaLfParams,
     pub loop_filter: LoopFilterParams,
@@ -59,6 +60,16 @@ pub struct FrameHeader {
     pub film_grain: Option<FilmGrainParams>,
     pub uncompressed_header_bits: usize,
     pub payload_after_header_offset: usize,
+}
+
+/// Frame-level segmentation signalling. The decoder accepts the valid
+/// no-op form where every segment feature is disabled; active per-segment
+/// quantizer/filter/reference features remain fail-closed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SegmentationParams {
+    pub enabled: bool,
+    pub update_map: bool,
+    pub temporal_update: bool,
 }
 
 pub fn parse_frame_header(
@@ -114,6 +125,7 @@ pub fn parse_frame_header(
             tile_info,
             base_q_idx: trailing.quantization.base_q_idx,
             quantization: trailing.quantization,
+            segmentation: trailing.segmentation,
             delta_q: trailing.delta_q,
             delta_lf: trailing.delta_lf,
             loop_filter: trailing.loop_filter,
@@ -225,6 +237,7 @@ pub fn parse_frame_header(
         tile_info,
         base_q_idx: trailing.quantization.base_q_idx,
         quantization: trailing.quantization,
+        segmentation: trailing.segmentation,
         delta_q: trailing.delta_q,
         delta_lf: trailing.delta_lf,
         loop_filter: trailing.loop_filter,
@@ -517,7 +530,7 @@ fn parse_frame_header_trailing_params(
     primary_ref_frame: u8,
 ) -> Result<FrameHeaderTrailingParams, DecoderError> {
     let quantization = parse_quantization_params(reader, sequence)?;
-    parse_segmentation_params(reader, primary_ref_frame)?;
+    let segmentation = parse_segmentation_params(reader, primary_ref_frame)?;
     let delta_q = parse_delta_q_params(reader, quantization.base_q_idx)?;
     let delta_lf = parse_delta_lf_params(reader, delta_q.present, allow_intrabc)?;
     let coded_lossless = quantization.coded_lossless();
@@ -533,6 +546,7 @@ fn parse_frame_header_trailing_params(
     }
     Ok(FrameHeaderTrailingParams {
         quantization,
+        segmentation,
         delta_q,
         delta_lf,
         loop_filter,
@@ -546,6 +560,7 @@ fn parse_frame_header_trailing_params(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrameHeaderTrailingParams {
     pub quantization: QuantizationParams,
+    pub segmentation: SegmentationParams,
     pub delta_q: DeltaQParams,
     pub delta_lf: DeltaLfParams,
     pub loop_filter: LoopFilterParams,
@@ -669,9 +684,9 @@ fn read_delta_q(reader: &mut BitReader<'_>, name: &str) -> Result<i8, DecoderErr
 fn parse_segmentation_params(
     reader: &mut BitReader<'_>,
     primary_ref_frame: u8,
-) -> Result<(), DecoderError> {
+) -> Result<SegmentationParams, DecoderError> {
     if !reader.read_bool("segmentation_enabled")? {
-        return Ok(());
+        return Ok(SegmentationParams::default());
     }
 
     // Still-image AV1 uses primary_ref_frame == PRIMARY_REF_NONE, so these
@@ -684,16 +699,22 @@ fn parse_segmentation_params(
     } else {
         reader.read_bool("segmentation_update_map")?
     };
-    if update_map && !primary_ref_none {
-        let _temporal_update = reader.read_bool("segmentation_temporal_update")?;
-    }
+    let temporal_update = if update_map && !primary_ref_none {
+        reader.read_bool("segmentation_temporal_update")?
+    } else {
+        false
+    };
     let update_data = if primary_ref_none {
         true
     } else {
         reader.read_bool("segmentation_update_data")?
     };
     if !update_data {
-        return Ok(());
+        return Ok(SegmentationParams {
+            enabled: true,
+            update_map,
+            temporal_update,
+        });
     }
 
     const FEATURE_BITS: [usize; 8] = [8, 6, 6, 6, 6, 3, 0, 0];
@@ -722,7 +743,11 @@ fn parse_segmentation_params(
             "AV1 segmentation feature {feature} on segment {segment} is not supported yet"
         )));
     }
-    Ok(())
+    Ok(SegmentationParams {
+        enabled: true,
+        update_map,
+        temporal_update,
+    })
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -979,7 +1004,9 @@ fn frame_type_is_intra(frame_type: FrameType) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{LoopFilterParams, read_signed_delta};
+    use super::{
+        LoopFilterParams, SegmentationParams, parse_segmentation_params, read_signed_delta,
+    };
     use crate::av1::bitstream::BitReader;
 
     #[test]
@@ -997,5 +1024,30 @@ mod tests {
 
         let mut negative = BitReader::new(&[0b0001_0110]);
         assert_eq!(read_signed_delta(&mut negative, "delta").unwrap(), -5);
+    }
+
+    #[test]
+    fn parses_noop_segmentation_params() {
+        let mut reader = BitReader::new(&[0x80, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let params = parse_segmentation_params(&mut reader, 7).unwrap();
+        assert_eq!(
+            params,
+            SegmentationParams {
+                enabled: true,
+                update_map: true,
+                temporal_update: false,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_active_segmentation_feature() {
+        let mut reader = BitReader::new(&[0xC0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let error = parse_segmentation_params(&mut reader, 7).unwrap_err();
+        assert!(matches!(
+            error,
+            crate::DecoderError::Unsupported(message)
+                if message.contains("segmentation feature 0")
+        ));
     }
 }

@@ -572,9 +572,10 @@ branches were reviewed against the frame/tile parser and grouped as follows:
 - `show_existing_frame`, inter-frame reference tools and inherited inter-frame
   film grain still require reference-frame storage and are intentionally
   rejected before reconstruction.
-- Active segmentation features are parsed completely but rejected because the
-  tile decoder does not yet carry a segmentation map/CDF or apply per-segment
-  quantizer, loop-filter, reference and skip state.
+- No-op segmentation signalling (enabled with every segment feature disabled)
+  is parsed and accepted; active segmentation features are still rejected
+  because the tile decoder does not yet carry a segmentation map/CDF or apply
+  per-segment quantizer, loop-filter, reference and skip state.
 - `iloc` construction methods beyond 0/1, malformed partial tile groups and
   invalid rectangular-transform combinations remain fail-closed container or
   syntax errors rather than partial images.

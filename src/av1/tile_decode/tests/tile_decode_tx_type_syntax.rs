@@ -3,7 +3,7 @@ use super::tx_type_syntax::{
 };
 use crate::av1::frame::{
     CdefParams, DeltaLfParams, DeltaQParams, FrameHeader, FrameType, LoopFilterParams,
-    QuantizationParams, RestorationParams, TxMode,
+    QuantizationParams, RestorationParams, SegmentationParams, TxMode,
 };
 use crate::av1::syntax::{TxSize, TxType};
 use crate::av1::tile::TileInfo;
@@ -133,6 +133,7 @@ fn sample_frame(base_q_idx: u8) -> FrameHeader {
             qm_u: 15,
             qm_v: 15,
         },
+        segmentation: SegmentationParams::default(),
         delta_q: DeltaQParams {
             present: false,
             res: 0,
