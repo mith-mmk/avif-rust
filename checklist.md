@@ -615,9 +615,12 @@ branches were reviewed against the frame/tile parser and grouped as follows:
 - Frame syntax tests cover positive, negative and zero-valued `ALT_Q` deltas
   (including signed-value alignment), multi-segment values, pre-skip `SKIP`,
   and rejection of reference/global-motion features.
-- `iloc` construction methods beyond 0/1, malformed partial tile groups and
-  invalid rectangular-transform combinations remain fail-closed container or
-  syntax errors rather than partial images.
+- `iloc` construction method 2 (`item_offset`) now resolves the first `iloc`
+  item reference, including recursive-cycle and extent-boundary checks;
+  explicit extent indexes remain fail-closed until their index mapping is
+  implemented. Malformed partial tile groups and invalid rectangular-transform
+  combinations remain fail-closed container or syntax errors rather than
+  partial images.
 - Axis-swapping 4:2:2 geometry is covered for native single-frame rotation;
   grid cases still require a sample with chroma-aligned cell boundaries before
   they can be promoted.

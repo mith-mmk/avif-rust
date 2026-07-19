@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::DecoderError;
 
 const BRAND_AVIF: &[u8; 4] = b"avif";
@@ -584,10 +586,15 @@ fn parse_iloc_with_methods(
         let construction_method = if version == 1 || version == 2 {
             let construction_method = read_u16(payload, cursor)? & 0x000f;
             cursor += 2;
-            if construction_method > 1 {
+            if construction_method > 2 {
                 return Err(DecoderError::Unsupported(format!(
                     "iloc construction_method {construction_method} is not supported"
                 )));
+            }
+            if construction_method == 2 && index_size != 0 {
+                return Err(DecoderError::Unsupported(
+                    "iloc item_offset with explicit extent indexes is not supported".to_string(),
+                ));
             }
             construction_method
         } else {
@@ -1272,6 +1279,21 @@ fn parse_grid_payload(payload: &[u8]) -> Result<ParsedGridPayload, DecoderError>
 }
 
 fn item_payload(data: &[u8], state: &MetaState, item_id: u32) -> Result<Vec<u8>, DecoderError> {
+    item_payload_with_stack(data, state, item_id, &mut Vec::new())
+}
+
+fn item_payload_with_stack(
+    data: &[u8],
+    state: &MetaState,
+    item_id: u32,
+    stack: &mut Vec<u32>,
+) -> Result<Vec<u8>, DecoderError> {
+    if stack.contains(&item_id) {
+        return Err(DecoderError::Bitstream(format!(
+            "iloc item reference cycle includes item {item_id}"
+        )));
+    }
+    stack.push(item_id);
     let location = state
         .item_locations
         .iter()
@@ -1282,18 +1304,6 @@ fn item_payload(data: &[u8], state: &MetaState, item_id: u32) -> Result<Vec<u8>,
         .iter()
         .find_map(|(id, method)| (*id == item_id).then_some(*method))
         .unwrap_or(0);
-    let source = match construction_method {
-        0 => data,
-        1 => state.idat_payload.as_deref().ok_or_else(|| {
-            DecoderError::Bitstream(format!("item {item_id} references missing idat box"))
-        })?,
-        method => {
-            return Err(DecoderError::Unsupported(format!(
-                "iloc construction_method {method} is not supported"
-            )));
-        }
-    };
-
     let payload_len = location.extents.iter().try_fold(0usize, |sum, extent| {
         let length = usize::try_from(extent.length)
             .map_err(|_| DecoderError::Bitstream("item extent length is too large".to_string()))?;
@@ -1301,25 +1311,33 @@ fn item_payload(data: &[u8], state: &MetaState, item_id: u32) -> Result<Vec<u8>,
             DecoderError::Bitstream("item extent payload length overflow".to_string())
         })
     })?;
-    for extent in &location.extents {
-        let start = location
-            .base_offset
-            .checked_add(extent.offset)
-            .ok_or_else(|| DecoderError::Bitstream("item extent offset overflow".to_string()))?;
-        let end = start
-            .checked_add(extent.length)
-            .ok_or_else(|| DecoderError::Bitstream("item extent length overflow".to_string()))?;
-        let start = usize::try_from(start)
-            .map_err(|_| DecoderError::Bitstream("item extent start is too large".to_string()))?;
-        let end = usize::try_from(end)
-            .map_err(|_| DecoderError::Bitstream("item extent end is too large".to_string()))?;
-        if end > source.len() || start > end {
-            return Err(DecoderError::NotEnoughData(
-                "item extent points outside the file".to_string(),
-            ));
+    let source: Cow<'_, [u8]> = match construction_method {
+        0 => Cow::Borrowed(data),
+        1 => Cow::Borrowed(state.idat_payload.as_deref().ok_or_else(|| {
+            DecoderError::Bitstream(format!("item {item_id} references missing idat box"))
+        })?),
+        2 => {
+            let target = state
+                .item_references
+                .iter()
+                .find(|reference| {
+                    reference.reference_type == *b"iloc" && reference.from_item_id == item_id
+                })
+                .and_then(|reference| reference.to_item_ids.first().copied())
+                .ok_or_else(|| {
+                    DecoderError::Bitstream(format!(
+                        "item {item_id} item_offset reference is missing"
+                    ))
+                })?;
+            Cow::Owned(item_payload_with_stack(data, state, target, stack)?)
         }
-    }
-    if payload_len > source.len() {
+        method => {
+            return Err(DecoderError::Unsupported(format!(
+                "iloc construction_method {method} is not supported"
+            )));
+        }
+    };
+    if construction_method != 2 && payload_len > source.len() {
         return Err(DecoderError::Bitstream(
             "item extent payload length exceeds file size".to_string(),
         ));
@@ -1344,6 +1362,7 @@ fn item_payload(data: &[u8], state: &MetaState, item_id: u32) -> Result<Vec<u8>,
         }
         payload.extend_from_slice(&source[start..end]);
     }
+    stack.pop();
     Ok(payload)
 }
 
@@ -1675,6 +1694,24 @@ mod tests {
     }
 
     #[test]
+    fn parses_item_offset_construction_method() {
+        let (_, methods) = parse_iloc_with_methods(&[
+            1, 0, 0, 0, // version and flags
+            0x44, 0, // four-byte offsets and lengths, no base/index
+            0, 1, // item count
+            0, 1, // item id
+            0, 2, // item-offset construction method
+            0, 0, // data reference index
+            0, 1, // extent count
+            0, 0, 0, 1, // item offset
+            0, 0, 0, 2, // extent length
+        ])
+        .unwrap();
+
+        assert_eq!(methods, vec![(1, 2)]);
+    }
+
+    #[test]
     fn resolves_item_payload_from_idat() {
         let state = MetaState {
             primary_item_id: Some(1),
@@ -1692,6 +1729,84 @@ mod tests {
         };
 
         assert_eq!(primary_item_payload(b"unused", &state).unwrap(), b"yz1");
+    }
+
+    #[test]
+    fn resolves_item_payload_from_item_offset_reference() {
+        let state = MetaState {
+            primary_item_id: Some(1),
+            item_locations: vec![
+                ItemLocation {
+                    item_id: 1,
+                    base_offset: 0,
+                    extents: vec![ItemExtent {
+                        offset: 1,
+                        length: 2,
+                    }],
+                },
+                ItemLocation {
+                    item_id: 2,
+                    base_offset: 0,
+                    extents: vec![ItemExtent {
+                        offset: 0,
+                        length: 5,
+                    }],
+                },
+            ],
+            item_construction_methods: vec![(1, 2), (2, 0)],
+            item_references: vec![ItemReference {
+                reference_type: *b"iloc",
+                from_item_id: 1,
+                to_item_ids: vec![2],
+            }],
+            ..MetaState::default()
+        };
+
+        assert_eq!(primary_item_payload(b"abcde", &state).unwrap(), b"bc");
+    }
+
+    #[test]
+    fn rejects_item_offset_reference_cycles() {
+        let state = MetaState {
+            primary_item_id: Some(1),
+            item_locations: vec![
+                ItemLocation {
+                    item_id: 1,
+                    base_offset: 0,
+                    extents: vec![ItemExtent {
+                        offset: 0,
+                        length: 1,
+                    }],
+                },
+                ItemLocation {
+                    item_id: 2,
+                    base_offset: 0,
+                    extents: vec![ItemExtent {
+                        offset: 0,
+                        length: 1,
+                    }],
+                },
+            ],
+            item_construction_methods: vec![(1, 2), (2, 2)],
+            item_references: vec![
+                ItemReference {
+                    reference_type: *b"iloc",
+                    from_item_id: 1,
+                    to_item_ids: vec![2],
+                },
+                ItemReference {
+                    reference_type: *b"iloc",
+                    from_item_id: 2,
+                    to_item_ids: vec![1],
+                },
+            ],
+            ..MetaState::default()
+        };
+
+        let error = primary_item_payload(b"unused", &state).unwrap_err();
+        assert!(
+            matches!(error, DecoderError::Bitstream(message) if message.contains("reference cycle"))
+        );
     }
 
     #[test]
