@@ -593,7 +593,7 @@ is larger than the observed delta, so this is recorded as an allocation-
 reduction/no-regression checkpoint rather than a stable speedup claim.
 
 The external FFmpeg conformance suite now includes 4:4:4 non-identity RGBA and
-native-plane checks. The current run passes 47 tests with 2 intentionally
+native-plane checks. The current run passes 48 tests with 2 intentionally
 ignored samples. AV1 intrabc decoding now searches the block-geometry-specific
 neighbor MV candidates; a successful high-complexity external intrabc fixture
 is still required before marking the full tool supported.
