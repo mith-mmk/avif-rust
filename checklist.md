@@ -66,6 +66,9 @@ The reproducible parent-root gate is:
 pwsh -File test/avif_external_compat.ps1 -DownloadMissing
 ```
 
+OneDrive の作業領域で一時フォルダを作れない場合は、`.test*` の作業ルートを
+明示できる（例: `-WorkRoot C:\temp\pycache\.test-avif-script`）。
+
 The gate result is 30 successes, 0 expected failures, 0 unexpected results
 and 0 partial PNGs. The converted PNGs remain ignored under
 `test/images/external/converted/avif/` for visual review; the AVIF sample files
