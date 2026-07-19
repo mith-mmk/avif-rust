@@ -656,8 +656,9 @@ signalled tool.
       library with `cargo test -p wml2 --lib --no-default-features`.
 - [x] Gate the remaining parent `wml2` integration targets by their own
       features so `cargo test -p wml2 --no-default-features --no-run`
-      compiles. The feature-off runtime gate now passes; codec-specific
-      doctests remain intentionally tied to the default feature set.
+      compiles and `cargo test -p wml2 --lib --no-default-features` passes.
+      Codec-specific doctests remain intentionally tied to the default feature
+      set.
 - [x] Keep container, OBU, frame-header and entropy fuzz targets.
 - [x] Optimise a per-transform coefficient allocation after exact-plane
       conformance passes; retain the public allocating wrapper for compatibility.
