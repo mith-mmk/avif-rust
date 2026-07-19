@@ -56,8 +56,9 @@ from the consumer-facing crate archive.
 - [x] Add a reproducible libaom adaptive-quantization still-image sample and
       compare its decoded dimensions and RGBA output with FFmpeg.
 - [x] Add native-plane oracle coverage for the new subsampling paths.
-- [x] Convert all 25 external samples, including the 12-bit, grid, alpha,
-      ICC, subsampling and transform variants, with no partial PNG output.
+- [x] Convert all 30 external samples, including the 12-bit, grid, alpha,
+      ICC, subsampling, transform and five libavif official variants, with no
+      partial PNG output.
 
 The reproducible parent-root gate is:
 
@@ -65,7 +66,7 @@ The reproducible parent-root gate is:
 pwsh -File test/avif_external_compat.ps1 -DownloadMissing
 ```
 
-The gate result is 25 successes, 0 expected failures, 0 unexpected results
+The gate result is 30 successes, 0 expected failures, 0 unexpected results
 and 0 partial PNGs. The converted PNGs remain ignored under
 `test/images/external/converted/avif/` for visual review; the AVIF sample files
 remain ignored as well.
@@ -601,9 +602,10 @@ is still required before marking the full tool supported.
 ### Unsupported-syntax audit checkpoint (2026-07-19)
 
 The external compatibility manifest now exercises the formerly labelled
-`unsupported/` 8-bit YUV420, monochrome and YUV422 samples as successful
-decodes (25 successes, no partial PNGs). The remaining AV1 `Unsupported`
-branches were reviewed against the frame/tile parser and grouped as follows:
+`unsupported/` 8-bit YUV420, monochrome and YUV422 samples plus five libavif
+official samples as successful decodes (30 successes, no partial PNGs). The
+remaining AV1 `Unsupported` branches were reviewed against the frame/tile
+parser and grouped as follows:
 
 - `show_existing_frame`, inter-frame reference tools and inherited inter-frame
   film grain still require reference-frame storage and are intentionally
