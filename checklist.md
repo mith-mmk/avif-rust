@@ -556,6 +556,12 @@ buffer when no ICC profile is present. The same 11-iteration benchmark measured
 `274.15/279.31 ms` (native/RGBA); the improvement is recorded as a checkpoint
 because host scheduling remains variable.
 
+The reconstruction path now appends decoded luma transforms directly into the
+block result, removing one intermediate `Vec` allocation per residual unit.
+Two 11-iteration WML2Viewer checks measured `290.64/300.47 ms` and
+`299.49/302.78 ms` (native/RGBA); retain this as an allocation-reduction
+checkpoint until a quieter host confirms a stable speedup.
+
 The external FFmpeg conformance suite now includes 4:4:4 non-identity RGBA and
 native-plane checks. The current run passes 47 tests with 2 intentionally
 ignored samples. AV1 intrabc decoding now searches the block-geometry-specific
@@ -572,12 +578,13 @@ branches were reviewed against the frame/tile parser and grouped as follows:
 - `show_existing_frame`, inter-frame reference tools and inherited inter-frame
   film grain still require reference-frame storage and are intentionally
   rejected before reconstruction.
-- No-op segmentation signalling and still-image `ALT_Q` deltas are parsed;
-  multi-segment map/CDF state is decoded for `ALT_Q`-only frames. Loop-filter
-  deltas, reference and skip/globalmv features remain fail-closed.
+- No-op segmentation signalling, still-image `ALT_Q` deltas and the
+  pre-skip `SKIP` feature are parsed; multi-segment map/CDF state is decoded
+  for these still-image-safe features. Segmentation loop-filter deltas,
+  reference and `GLOBALMV` features remain fail-closed.
 - Frame syntax tests cover positive, negative and zero-valued `ALT_Q` deltas
-  (including signed-value alignment), multi-segment values, and rejection of
-  non-quantizer features.
+  (including signed-value alignment), multi-segment values, pre-skip `SKIP`,
+  and rejection of reference/global-motion features.
 - `iloc` construction methods beyond 0/1, malformed partial tile groups and
   invalid rectangular-transform combinations remain fail-closed container or
   syntax errors rather than partial images.

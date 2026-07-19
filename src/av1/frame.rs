@@ -66,22 +66,30 @@ impl FrameHeader {
     pub(crate) fn coded_lossless(&self) -> bool {
         self.quantization.coded_lossless()
             && (!self.segmentation.enabled
-                || (self.segmentation.last_active_segment == 0 && self.segmentation.delta_q == 0))
+                || (self.segmentation.delta_q == 0
+                    && self
+                        .segmentation
+                        .segment_delta_q
+                        .iter()
+                        .all(|delta| *delta == 0)))
     }
 }
 
 /// Frame-level segmentation signalling. The still-image decoder accepts the
-/// no-op form and `ALT_Q` deltas on the current segmentation map; features
-/// that require reference-frame state remain fail-closed.
+/// no-op form, `ALT_Q` deltas and the still-image-safe `SKIP` feature on the
+/// current segmentation map; features that require reference-frame state
+/// remain fail-closed.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SegmentationParams {
     pub enabled: bool,
     pub update_map: bool,
     pub temporal_update: bool,
+    pub preskip: bool,
     /// Segment 0's `SEG_LVL_ALT_Q` delta, kept as a compatibility alias for
     /// callers that only need the first segment.
     pub delta_q: i16,
     pub segment_delta_q: [i16; 8],
+    pub segment_skip: [bool; 8],
     pub last_active_segment: u8,
 }
 
@@ -563,7 +571,8 @@ fn parse_frame_header_trailing_params(
     let delta_lf = parse_delta_lf_params(reader, delta_q.present, allow_intrabc)?;
     let coded_lossless = quantization.coded_lossless()
         && (!segmentation.enabled
-            || (segmentation.last_active_segment == 0 && segmentation.delta_q == 0));
+            || (segmentation.delta_q == 0
+                && segmentation.segment_delta_q.iter().all(|delta| *delta == 0)));
     let loop_filter = parse_loop_filter_params(reader, sequence, coded_lossless, allow_intrabc)?;
     let cdef = parse_cdef_params(reader, sequence, coded_lossless, allow_intrabc)?;
     let restoration = parse_lr_params(reader, sequence, coded_lossless, allow_intrabc)?;
@@ -744,8 +753,10 @@ fn parse_segmentation_params(
             enabled: true,
             update_map,
             temporal_update,
+            preskip: false,
             delta_q: 0,
             segment_delta_q: [0; 8],
+            segment_skip: [false; 8],
             last_active_segment: 0,
         });
     }
@@ -754,6 +765,8 @@ fn parse_segmentation_params(
     const FEATURE_SIGNED: [bool; 8] = [true, true, true, true, true, false, false, false];
     let mut unsupported_feature = None;
     let mut segment_delta_q = [0i16; 8];
+    let mut segment_skip = [false; 8];
+    let mut preskip = false;
     let mut last_active_segment = 0u8;
     for segment in 0..8 {
         for feature in 0..8 {
@@ -777,8 +790,17 @@ fn parse_segmentation_params(
             }
             if feature == 0 {
                 last_active_segment = segment as u8;
+            } else if feature == 6 {
+                segment_skip[segment] = true;
+                preskip = true;
+                last_active_segment = segment as u8;
             }
-            if feature != 0 {
+            if feature == 5 || feature == 7 {
+                preskip = true;
+                if unsupported_feature.is_none() {
+                    unsupported_feature = Some((segment, feature));
+                }
+            } else if feature != 0 && feature != 6 {
                 if unsupported_feature.is_none() {
                     unsupported_feature = Some((segment, feature));
                 }
@@ -794,8 +816,10 @@ fn parse_segmentation_params(
         enabled: true,
         update_map,
         temporal_update,
+        preskip,
         delta_q: segment_delta_q[0],
         segment_delta_q,
+        segment_skip,
         last_active_segment,
     })
 }
@@ -1086,8 +1110,10 @@ mod tests {
                 enabled: true,
                 update_map: true,
                 temporal_update: false,
+                preskip: false,
                 delta_q: 0,
                 segment_delta_q: [0; 8],
+                segment_skip: [false; 8],
                 last_active_segment: 0,
             }
         );
@@ -1155,5 +1181,56 @@ mod tests {
         assert_eq!(params.segment_delta_q, [5, -3, 0, 0, 0, 0, 0, 0]);
         assert_eq!(params.last_active_segment, 1);
         assert_eq!(params.effective_qindex_for_segment(10, 1), 7);
+    }
+
+    #[test]
+    fn accepts_segment_skip_as_a_pre_skip_feature() {
+        let mut bits = vec![true];
+        for segment in 0..8 {
+            for feature in 0..8 {
+                let enabled = segment == 1 && feature == 6;
+                bits.push(enabled);
+            }
+        }
+        let mut data = vec![0u8; bits.len().div_ceil(8)];
+        for (index, bit) in bits.into_iter().enumerate() {
+            if bit {
+                data[index / 8] |= 1 << (7 - index % 8);
+            }
+        }
+
+        let mut reader = BitReader::new(&data);
+        let params = parse_segmentation_params(&mut reader, 7).unwrap();
+        assert!(params.preskip);
+        assert!(params.segment_skip[1]);
+        assert_eq!(params.last_active_segment, 1);
+    }
+
+    #[test]
+    fn rejects_reference_and_globalmv_segmentation_features() {
+        for feature in [5, 7] {
+            let mut bits = vec![true];
+            for segment in 0..8 {
+                for current_feature in 0..8 {
+                    bits.push(segment == 0 && current_feature == feature);
+                    if segment == 0 && current_feature == feature && current_feature == 5 {
+                        bits.extend([false, false, false]);
+                    }
+                }
+            }
+            let mut data = vec![0u8; bits.len().div_ceil(8)];
+            for (index, bit) in bits.into_iter().enumerate() {
+                if bit {
+                    data[index / 8] |= 1 << (7 - index % 8);
+                }
+            }
+            let mut reader = BitReader::new(&data);
+            let error = parse_segmentation_params(&mut reader, 7).unwrap_err();
+            assert!(matches!(
+                error,
+                crate::DecoderError::Unsupported(message)
+                    if message.contains(&format!("segmentation feature {feature}"))
+            ));
+        }
     }
 }

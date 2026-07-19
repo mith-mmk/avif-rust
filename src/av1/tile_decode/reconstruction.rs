@@ -39,7 +39,8 @@ pub(super) fn decode_plane_block_unit(
     unit_width: usize,
     unit_height: usize,
     quant_state: QuantState,
-) -> Result<Vec<DecodedTransform>, DecoderError> {
+    decoded_luma: &mut Vec<DecodedTransform>,
+) -> Result<(), DecoderError> {
     let layout = plan.planes.get(plane_index).ok_or_else(|| {
         DecoderError::Bitstream(format!("AV1 plane {plane_index} decode plan is missing"))
     })?;
@@ -176,10 +177,9 @@ pub(super) fn decode_plane_block_unit(
             )?;
             decoder.mark_reconstructed_transform(*transform)?;
         }
-        return Ok(Vec::new());
+        return Ok(());
     }
 
-    let mut decoded = Vec::with_capacity(transforms.len());
     for transform in transforms
         .into_iter()
         .filter(|transform| transform_in_unit(transform))
@@ -317,10 +317,12 @@ pub(super) fn decode_plane_block_unit(
             )?;
         }
         decoder.mark_reconstructed_transform(transform)?;
-        decoded.push(decoded_transform);
+        if plane_index == 0 {
+            decoded_luma.push(decoded_transform);
+        }
     }
 
-    Ok(decoded)
+    Ok(())
 }
 
 #[expect(

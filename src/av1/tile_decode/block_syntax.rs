@@ -41,11 +41,24 @@ impl<'a> TileDecoder<'a> {
         self.current_cfl = None;
 
         let skip_context = self.skip_context(x, y);
-        let skip_symbol = self
-            .reader
-            .read_symbol(self.cdf.skip_cdf_mut(skip_context))?;
+        let (skip_symbol, segment_id) = if frame.segmentation.preskip {
+            let segment_id = self.read_segmentation_id(frame, block_size, x, y, false)?;
+            let skip_symbol = if frame.segmentation.segment_skip[usize::from(segment_id)] {
+                1usize
+            } else {
+                self.reader
+                    .read_symbol(self.cdf.skip_cdf_mut(skip_context))?
+            };
+            (skip_symbol, segment_id)
+        } else {
+            let skip_symbol = self
+                .reader
+                .read_symbol(self.cdf.skip_cdf_mut(skip_context))?;
+            let skip = skip_symbol != 0;
+            let segment_id = self.read_segmentation_id(frame, block_size, x, y, skip)?;
+            (skip_symbol, segment_id)
+        };
         let skip = skip_symbol != 0;
-        let segment_id = self.read_segmentation_id(frame, block_size, x, y, skip)?;
         let cdef_idx = self.read_cdef_index(sequence, frame, skip, x, y)?;
         let qindex = self.read_delta_qindex(sequence, frame, block_size, skip, x, y)?;
         let delta_lf = self.read_delta_lf(sequence, frame, block_size, skip, x, y)?;

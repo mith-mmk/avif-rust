@@ -100,8 +100,10 @@ fn segmentation_alt_q_adjusts_initial_tile_qindex() {
         enabled: true,
         update_map: true,
         temporal_update: false,
+        preskip: false,
         delta_q: 5,
         segment_delta_q: [5, 0, 0, 0, 0, 0, 0, 0],
+        segment_skip: [false; 8],
         last_active_segment: 0,
     };
     let decoder = TileDecoder::new(&[0, 0], &frame).unwrap();
@@ -157,8 +159,10 @@ fn segmentation_id_entropy_updates_qindex_for_selected_segment() {
         enabled: true,
         update_map: true,
         temporal_update: false,
+        preskip: false,
         delta_q: 0,
         segment_delta_q: [0, 5, 0, 0, 0, 0, 0, 0],
+        segment_skip: [false; 8],
         last_active_segment: 1,
     };
     let mut decoder = TileDecoder::new(&[0; 128], &frame).unwrap();
@@ -172,6 +176,51 @@ fn segmentation_id_entropy_updates_qindex_for_selected_segment() {
             .segmentation
             .effective_qindex_for_segment(frame.base_q_idx, segment_id)
     );
+}
+
+#[test]
+fn segmentation_skip_forces_skip_before_the_skip_symbol() {
+    let data = read_sample_avif();
+    let info = parse_avif(&data).unwrap();
+    let sequence_payload = find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
+        .unwrap()
+        .expect("sequence header OBU should exist");
+    let sequence = parse_sequence_header(sequence_payload).unwrap();
+    let frame_payload = find_obu_payload(&info.primary_item_payload, ObuType::Frame)
+        .unwrap()
+        .expect("frame OBU should exist");
+    let mut frame = parse_frame_header(frame_payload, &sequence).unwrap();
+    let tile_group = parse_tile_group(
+        frame_payload,
+        frame.uncompressed_header_bits,
+        &frame.tile_info,
+    )
+    .unwrap();
+    let plan = build_still_decode_plan(&sequence, &frame, &tile_group).unwrap();
+    frame.segmentation = SegmentationParams {
+        enabled: true,
+        update_map: true,
+        temporal_update: false,
+        preskip: true,
+        delta_q: 0,
+        segment_delta_q: [0; 8],
+        segment_skip: [true, false, false, false, false, false, false, false],
+        last_active_segment: 0,
+    };
+    let mut decoder = TileDecoder::new(&[0; 128], &frame).unwrap();
+    let probe = decoder
+        .read_intra_frame_block_mode_with_chroma_reference(
+            &sequence,
+            &frame,
+            &plan.tiles[0],
+            BlockSize::Block4x4,
+            0,
+            0,
+            true,
+        )
+        .unwrap();
+    assert!(probe.skip);
+    assert_eq!(probe.segment_id, 0);
 }
 
 #[test]

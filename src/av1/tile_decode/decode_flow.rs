@@ -143,7 +143,7 @@ pub(super) fn decode_luma_leaf_block(
                 }
                 _ => unreachable!("AV1 has at most three image planes"),
             };
-        let unit_decoded = decode_plane_block_unit(
+        decode_plane_block_unit(
             decoder,
             sequence,
             frame,
@@ -163,10 +163,8 @@ pub(super) fn decode_luma_leaf_block(
             unit.width,
             unit.height,
             quant_state,
+            &mut decoded,
         )?;
-        if unit.plane_index == 0 {
-            decoded.extend(unit_decoded);
-        }
     }
 
     Ok(DecodedLumaBlock {
