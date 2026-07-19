@@ -166,6 +166,7 @@ fn sample_frame(base_q_idx: u8) -> FrameHeader {
             uses_lr: false,
             lr_type: [0; 3],
             unit_shift: 0,
+            uv_unit_shift: 0,
         },
         film_grain: None,
         tx_mode: TxMode::Only4x4,

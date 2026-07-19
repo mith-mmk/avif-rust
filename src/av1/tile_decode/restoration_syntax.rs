@@ -35,7 +35,8 @@ impl<'a> TileDecoder<'a> {
             let plane_y = y >> subsampling_y;
             let plane_sb_width = superblock_size >> subsampling_x;
             let plane_sb_height = superblock_size >> subsampling_y;
-            let plane_unit_size = unit_size;
+            let plane_unit_size =
+                restoration_unit_size(unit_size, plane, self.restoration.uv_unit_shift);
             let Some((cols, rows)) = restoration_unit_ranges(
                 plane_x,
                 plane_y,
@@ -213,9 +214,24 @@ fn restoration_unit_ranges(
     (col_start < col_end && row_start < row_end).then_some((col_start..col_end, row_start..row_end))
 }
 
+fn restoration_unit_size(luma_unit_size: usize, plane: usize, uv_unit_shift: u8) -> usize {
+    if plane > 0 {
+        luma_unit_size >> uv_unit_shift
+    } else {
+        luma_unit_size
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::restoration_unit_ranges;
+    use super::{restoration_unit_ranges, restoration_unit_size};
+
+    #[test]
+    fn chroma_restoration_unit_size_honours_uv_shift() {
+        assert_eq!(restoration_unit_size(64, 0, 1), 64);
+        assert_eq!(restoration_unit_size(64, 1, 0), 64);
+        assert_eq!(restoration_unit_size(64, 1, 1), 32);
+    }
 
     #[test]
     fn restoration_units_merge_a_small_right_edge_remainder() {

@@ -63,7 +63,12 @@ pub fn decode<B: BinaryReader>(
         return Ok(());
     }
     let mut headers = parse_av1_headers(&info)?;
-    populate_diagnostic_probes(&mut headers);
+    // The probes replay entropy traversal and are only consumed by the
+    // diagnostic metadata below. Keep the normal draw path to one decode;
+    // callers that request debug output explicitly still receive the probes.
+    if option.debug_flag > 0 {
+        populate_diagnostic_probes(&mut headers);
+    }
     emit_metadata(&info, Some(&headers), option)?;
     let image = decode_still_image(&headers, Some(&info))?;
 

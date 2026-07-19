@@ -1030,6 +1030,8 @@ pub struct RestorationParams {
     pub uses_lr: bool,
     pub lr_type: [u8; 3],
     pub unit_shift: u8,
+    /// Additional chroma unit-size shift signalled for subsampled planes.
+    pub uv_unit_shift: u8,
 }
 
 fn parse_lr_params(
@@ -1065,10 +1067,19 @@ fn parse_lr_params(
             unit_shift += reader.read_bool("lr_unit_extra_shift")? as u8;
         }
     }
+    let subsampling =
+        usize::from(sequence.color_config.subsampling_x && sequence.color_config.subsampling_y);
+    let chroma_uses_lr = planes > 1 && (lr_type[1] != 0 || lr_type[2] != 0);
+    let uv_unit_shift = if subsampling != 0 && chroma_uses_lr {
+        reader.read_bool("lr_uv_shift")? as u8
+    } else {
+        0
+    };
     Ok(RestorationParams {
         uses_lr,
         lr_type,
         unit_shift,
+        uv_unit_shift,
     })
 }
 
