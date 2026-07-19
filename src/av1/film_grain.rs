@@ -138,7 +138,6 @@ pub(crate) fn apply(buffers: &mut FrameBuffers, color: &ColorConfig, params: &Fi
         return;
     }
     let bit_depth = color.bit_depth;
-    let luma_source = buffers.planes[0].samples.clone();
     let luma_width = buffers.planes[0].layout.width;
     let luma_height = buffers.planes[0].layout.height;
     let y_lut = generate_luma_lut(params, bit_depth);
@@ -146,75 +145,85 @@ pub(crate) fn apply(buffers: &mut FrameBuffers, color: &ColorConfig, params: &Fi
         &params.scaling_points_y[..usize::from(params.num_y_points)],
         bit_depth,
     );
-    apply_luma_plane(
-        &mut buffers.planes[0].samples,
-        luma_width,
-        luma_height,
-        &y_scaling,
-        &y_lut,
-        params,
-        bit_depth,
-    );
-
-    if color.monochrome || buffers.planes.len() < 3 {
-        return;
-    }
-    let sub_x = color.subsampling_x;
-    let sub_y = color.subsampling_y;
-    let is_identity = color
-        .color_description
-        .is_some_and(|description| matches!(description.matrix_coefficients, 0 | 3));
-    for (plane_index, points, coeffs, mult, luma_mult, offset) in [
-        (
-            1usize,
-            &params.scaling_points_cb,
-            &params.ar_coeffs_cb,
-            params.cb_mult,
-            params.cb_luma_mult,
-            params.cb_offset,
-        ),
-        (
-            2usize,
-            &params.scaling_points_cr,
-            &params.ar_coeffs_cr,
-            params.cr_mult,
-            params.cr_luma_mult,
-            params.cr_offset,
-        ),
-    ] {
-        let point_count = if plane_index == 1 {
-            params.num_cb_points
-        } else {
-            params.num_cr_points
-        };
-        if point_count == 0 && !params.chroma_scaling_from_luma {
-            continue;
-        }
-        let lut = generate_chroma_lut(
-            params,
-            coeffs,
-            bit_depth,
-            plane_index == 2,
-            sub_x,
-            sub_y,
-            &y_lut,
-        );
-        let scaling = if params.chroma_scaling_from_luma {
-            &y_scaling
-        } else {
-            // Keep the owned vector alive for the duration of this iteration.
-            // The branch is split below so the borrow does not escape.
-            let scaling = generate_scaling(&points[..usize::from(point_count)], bit_depth);
-            let plane_width = buffers.planes[plane_index].layout.width;
-            let plane_height = buffers.planes[plane_index].layout.height;
+    if !color.monochrome && buffers.planes.len() >= 3 {
+        let sub_x = color.subsampling_x;
+        let sub_y = color.subsampling_y;
+        let is_identity = color
+            .color_description
+            .is_some_and(|description| matches!(description.matrix_coefficients, 0 | 3));
+        let (luma_planes, chroma_planes) = buffers.planes.split_at_mut(1);
+        let luma_source = &luma_planes[0].samples;
+        for (plane_index, points, coeffs, mult, luma_mult, offset) in [
+            (
+                1usize,
+                &params.scaling_points_cb,
+                &params.ar_coeffs_cb,
+                params.cb_mult,
+                params.cb_luma_mult,
+                params.cb_offset,
+            ),
+            (
+                2usize,
+                &params.scaling_points_cr,
+                &params.ar_coeffs_cr,
+                params.cr_mult,
+                params.cr_luma_mult,
+                params.cr_offset,
+            ),
+        ] {
+            let point_count = if plane_index == 1 {
+                params.num_cb_points
+            } else {
+                params.num_cr_points
+            };
+            if point_count == 0 && !params.chroma_scaling_from_luma {
+                continue;
+            }
+            let lut = generate_chroma_lut(
+                params,
+                coeffs,
+                bit_depth,
+                plane_index == 2,
+                sub_x,
+                sub_y,
+                &y_lut,
+            );
+            let scaling = if params.chroma_scaling_from_luma {
+                &y_scaling
+            } else {
+                // Keep the owned vector alive for the duration of this iteration.
+                // The branch is split below so the borrow does not escape.
+                let scaling = generate_scaling(&points[..usize::from(point_count)], bit_depth);
+                let plane = &mut chroma_planes[plane_index - 1];
+                apply_chroma_plane(
+                    &mut plane.samples,
+                    plane.layout.width,
+                    plane.layout.height,
+                    luma_source,
+                    luma_width,
+                    luma_height,
+                    &scaling,
+                    &lut,
+                    params,
+                    bit_depth,
+                    sub_x,
+                    sub_y,
+                    is_identity,
+                    mult,
+                    luma_mult,
+                    offset,
+                );
+                continue;
+            };
+            let plane = &mut chroma_planes[plane_index - 1];
             apply_chroma_plane(
-                &mut buffers.planes[plane_index].samples,
-                plane_width,
-                plane_height,
-                &luma_source,
+                &mut plane.samples,
+                plane.layout.width,
+                plane.layout.height,
+                luma_source,
                 luma_width,
                 luma_height,
-                &scaling,
+                scaling,
                 &lut,
                 params,
                 bit_depth,
@@ -225,29 +234,19 @@ pub(crate) fn apply(buffers: &mut FrameBuffers, color: &ColorConfig, params: &Fi
                 luma_mult,
                 offset,
             );
-            continue;
-        };
-        let plane_width = buffers.planes[plane_index].layout.width;
-        let plane_height = buffers.planes[plane_index].layout.height;
-        apply_chroma_plane(
-            &mut buffers.planes[plane_index].samples,
-            plane_width,
-            plane_height,
-            &luma_source,
-            luma_width,
-            luma_height,
-            scaling,
-            &lut,
-            params,
-            bit_depth,
-            sub_x,
-            sub_y,
-            is_identity,
-            mult,
-            luma_mult,
-            offset,
-        );
+        }
     }
+    // Chroma grain uses the unmodified luma source; apply luma after the
+    // chroma planes so the full-frame source clone is unnecessary.
+    apply_luma_plane(
+        &mut buffers.planes[0].samples,
+        luma_width,
+        luma_height,
+        &y_scaling,
+        &y_lut,
+        params,
+        bit_depth,
+    );
 }
 
 fn generate_scaling(points: &[[u8; 2]], bit_depth: u8) -> Vec<i32> {

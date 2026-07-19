@@ -368,6 +368,9 @@ and RGBA gates.
       normative Gaussian sequence, AR synthesis and chroma scaling paths.
 - [x] Film grain overlap blending (`overlap_flag == 1`) for luma and
       subsampled chroma planes.
+- [x] Keep the original luma source available to chroma film-grain synthesis
+      without cloning the full luma plane; generated libaom film-grain output
+      is covered against FFmpeg RGBA output.
 - [x] Decode CICP PQ (transfer 16) and HLG (transfer 18) through a bounded
       SDR tone map for the existing RGBA8/16 output API.
 - [x] Decode CICP gamma 2.2/2.8 (transfer 4/5) and linear (transfer 8) curves
@@ -561,6 +564,12 @@ block result, removing one intermediate `Vec` allocation per residual unit.
 Two 11-iteration WML2Viewer checks measured `290.64/300.47 ms` and
 `299.49/302.78 ms` (native/RGBA); retain this as an allocation-reduction
 checkpoint until a quieter host confirms a stable speedup.
+
+For the generated 900x900 YUV420 film-grain sample, two 11-iteration checks
+after removing the full-luma source clone measured `122.78/138.12 ms` and
+`123.03/141.19 ms` (native/RGBA). This is a film-grain-path validation
+checkpoint; no stable percentage improvement is claimed without a pre-change
+same-host run.
 
 After carrying segment IDs into the post-filter state for segmentation ALT_LF,
 two further 11-iteration checks measured `276.25/281.12 ms` and
