@@ -2084,6 +2084,29 @@ fn public_alpha_sample_exposes_native_alpha_plane_when_present() {
 }
 
 #[test]
+fn public_alpha_noispe_sample_remains_fail_closed_until_restoration_parity() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("test/images/external/avif/unsupported/alpha_noispe.avif");
+    if !path.is_file() {
+        eprintln!("external alpha_noispe sample is unavailable; skipping boundary check");
+        return;
+    }
+    let data = std::fs::read(&path).expect("alpha_noispe AVIF should be readable");
+    let error = avif_rust::image_from_bytes(&data)
+        .expect_err("alpha_noispe must not produce a partial image");
+    assert!(
+        matches!(
+            &error,
+            avif_rust::DecoderError::Bitstream(message)
+                if message.contains("too many padding bits")
+        ),
+        "alpha_noispe boundary changed unexpectedly: {error:?}"
+    );
+}
+
+#[test]
 fn decoded_frame_rejects_unsupported_icc_profile() {
     let layout = avif_rust::av1::PlaneLayout {
         plane: 0,

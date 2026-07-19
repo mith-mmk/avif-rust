@@ -7,21 +7,8 @@ fn median(values: &mut [Duration]) -> Duration {
     values[values.len() / 2]
 }
 
-fn main() {
-    let sample = std::env::var_os("AVIF_BENCH_SAMPLE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("..")
-                .join("samples")
-                .join("WML2Viewer.avif")
-        });
-    let iterations = std::env::var("AVIF_BENCH_ITERS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|&value| value >= 3)
-        .unwrap_or(10);
-    let data = std::fs::read(&sample)
+fn benchmark_sample(sample: &PathBuf, iterations: usize) {
+    let data = std::fs::read(sample)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", sample.display()));
     for _ in 0..2 {
         black_box(avif_rust::decode_frame_bytes(&data).unwrap());
@@ -47,4 +34,38 @@ fn main() {
         decode_median.as_secs_f64() * 1000.0,
         rgba_median.as_secs_f64() * 1000.0
     );
+}
+
+fn main() {
+    let default_sample = || {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("samples")
+            .join("WML2Viewer.avif")
+    };
+    let samples = std::env::var("AVIF_BENCH_SAMPLES")
+        .ok()
+        .map(|value| {
+            value
+                .split(';')
+                .filter(|sample| !sample.trim().is_empty())
+                .map(|sample| PathBuf::from(sample.trim()))
+                .collect::<Vec<_>>()
+        })
+        .filter(|samples| !samples.is_empty())
+        .unwrap_or_else(|| {
+            vec![
+                std::env::var_os("AVIF_BENCH_SAMPLE")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(default_sample),
+            ]
+        });
+    let iterations = std::env::var("AVIF_BENCH_ITERS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&value| value >= 3)
+        .unwrap_or(10);
+    for sample in samples {
+        benchmark_sample(&sample, iterations);
+    }
 }
