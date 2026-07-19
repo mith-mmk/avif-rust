@@ -199,12 +199,9 @@ const BR_LEVEL_CAP: usize = COEFF_BASE_RANGE + NUM_BASE_LEVELS + 1;
 pub(super) const COEFFICIENT_LEVEL_MASK: usize = (1 << 20) - 1;
 
 fn coeff_context_coords(tx_size: TxSize, position: usize) -> (usize, usize) {
-    let (width, height) = if tx_size == TxSize::Tx64x64 {
-        (32, 32)
-    } else {
-        (tx_size.width(), tx_size.height())
-    };
-    if matches!(tx_size, TxSize::Tx64x64 | TxSize::Tx32x64) {
+    let width = tx_size.width();
+    let height = tx_size.height();
+    if tx_size == TxSize::Tx32x64 {
         // Tx32x64 uses the adjusted 32x32 coefficient scan before the
         // decoded levels are remapped into the rectangular transform buffer.
         return (position % 32, position / 32);
@@ -246,9 +243,7 @@ fn coeff_context_position(tx_size: TxSize, row: usize, col: usize) -> usize {
     if tx_size == TxSize::Tx32x64 {
         return col * 32 + row;
     }
-    if tx_size == TxSize::Tx64x64 {
-        row * 32 + col
-    } else if tx_size.width() == tx_size.height() {
+    if tx_size.width() == tx_size.height() {
         row * tx_size.width() + col
     } else {
         col * tx_size.height() + row
@@ -277,11 +272,8 @@ pub(super) fn coeff_base_context_2d(
         ));
     }
 
-    let (width, height) = if tx_size == TxSize::Tx64x64 {
-        (32, 32)
-    } else {
-        (tx_size.width(), tx_size.height())
-    };
+    let width = tx_size.width();
+    let height = tx_size.height();
     let (row, col) = coeff_context_coords(tx_size, position);
     let mut magnitude = 0usize;
     for (row_offset, col_offset) in SIG_REF_DIFF_OFFSET_2D {
@@ -383,11 +375,8 @@ pub(super) fn coeff_br_context_2d(
         ));
     }
 
-    let (width, height) = if tx_size == TxSize::Tx64x64 {
-        (32, 32)
-    } else {
-        (tx_size.width(), tx_size.height())
-    };
+    let width = tx_size.width();
+    let height = tx_size.height();
     let (row, col) = coeff_context_coords(tx_size, position);
     let mut magnitude = 0usize;
     for (row_offset, col_offset) in MAG_REF_OFFSET_WITH_TX_CLASS_2D {

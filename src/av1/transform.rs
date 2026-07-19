@@ -82,11 +82,11 @@ pub fn zig_zag_scan(tx_size: TxSize) -> Vec<usize> {
     let full_width = tx_size.width();
     let scan_width = full_width.min(32);
     let scan_height = tx_size.height().min(32);
-    if matches!(tx_size, TxSize::Tx64x64 | TxSize::Tx64x32 | TxSize::Tx32x64) {
-        // AV1 uses the 32x32 default scan for 64-wide transforms because the
+    if matches!(tx_size, TxSize::Tx64x32 | TxSize::Tx32x64) {
+        // AV1 uses the 32x32 default scan for these transforms because the
         // coded coefficient region is limited to the lower-dimensional
         // 32x32 area.  The inverse-storage remap expands that scan into the
-        // transform buffer layout used by the inverse transform.
+        // rectangular column-major layout used by the transform kernel.
         return zig_zag_scan(TxSize::Tx32x32);
     }
     if tx_size.is_rectangular() {
@@ -145,11 +145,6 @@ pub fn zig_zag_scan(tx_size: TxSize) -> Vec<usize> {
 }
 
 pub fn coefficient_scan(tx_size: TxSize, tx_type: TxType) -> Vec<usize> {
-    if matches!(tx_size, TxSize::Tx64x64 | TxSize::Tx64x32 | TxSize::Tx32x64) {
-        // The entropy-coded levels buffer is adjusted to 32x32 for all
-        // transforms whose coded dimensions include 64 (AV1 txb_bhl rule).
-        return coefficient_scan(TxSize::Tx32x32, tx_type);
-    }
     let width = tx_size.width();
     let scan_width = width.min(32);
     let scan_height = tx_size.height().min(32);
@@ -234,19 +229,6 @@ pub(crate) fn remap_coefficients_for_inverse_storage(
     coded_lossless: bool,
     coefficients: &mut [i32],
 ) {
-    if tx_size == TxSize::Tx64x64 && coefficients.len() == tx_size.sample_count() {
-        // Entropy coding uses a contiguous 32x32 adjusted levels buffer for
-        // Tx64x64. Expand it into the 64-wide inverse-transform stride before
-        // applying the usual square-storage transpose below.
-        let source = coefficients.to_vec();
-        coefficients.fill(0);
-        for row in 0..32 {
-            let source_row = row * 32;
-            let target_row = row * 64;
-            coefficients[target_row..target_row + 32]
-                .copy_from_slice(&source[source_row..source_row + 32]);
-        }
-    }
     if tx_type == TxType::DctDct
         && !coded_lossless
         && matches!(tx_size, TxSize::Tx64x32 | TxSize::Tx32x64)
@@ -1667,13 +1649,18 @@ mod tests {
         let scan = zig_zag_scan(TxSize::Tx64x64);
 
         assert_eq!(scan.len(), TxSize::Tx32x32.sample_count());
-        assert_eq!(&scan[..6], &[0, 32, 1, 2, 33, 64]);
-        assert_eq!(scan.last().copied(), Some(31 * 32 + 31));
+        assert_eq!(&scan[..6], &[0, 64, 1, 2, 65, 128]);
+        assert_eq!(
+            scan.last().copied(),
+            Some(31 * TxSize::Tx64x64.width() + 31)
+        );
         assert!(
             scan.iter()
-                .all(|position| position / 32 < 32 && position % 32 < 32)
+                .all(|position| position / TxSize::Tx64x64.width() < 32
+                    && position % TxSize::Tx64x64.width() < 32)
         );
-        assert!(!scan.contains(&(32 * 32)));
+        assert!(!scan.contains(&(32 * TxSize::Tx64x64.width())));
+        assert!(!scan.contains(&32));
     }
 
     #[test]
@@ -1702,9 +1689,9 @@ mod tests {
                 .count(),
             coded_count
         );
-        assert_eq!(coefficients[31 * 32 + 31], 1);
-        assert_eq!(coefficients[32 * 32], 0);
-        assert_eq!(coefficients[32], 1);
+        assert_eq!(coefficients[31 * TxSize::Tx64x64.width() + 31], 1);
+        assert_eq!(coefficients[32 * TxSize::Tx64x64.width()], 0);
+        assert_eq!(coefficients[32], 0);
 
         let too_many_coefficients = vec![1; coded_count + 1];
         assert!(matches!(
@@ -1817,29 +1804,15 @@ mod tests {
         for tx_size in [TxSize::Tx16x16, TxSize::Tx32x32, TxSize::Tx64x64] {
             let side = tx_size.width();
             let mut coefficients = vec![0; tx_size.sample_count()];
-            let source_position = if tx_size == TxSize::Tx64x64 {
-                zig_zag_scan(tx_size)[1]
-            } else {
-                side
-            };
-            coefficients[source_position] = -1;
+            coefficients[side] = -1;
             remap_coefficients_for_inverse_storage(
                 tx_size,
                 TxType::DctDct,
                 false,
                 &mut coefficients,
             );
-            let expected_position = 1;
-            assert_eq!(coefficients[expected_position], -1, "{tx_size:?}");
-            assert_eq!(
-                coefficients[source_position],
-                if expected_position == source_position {
-                    -1
-                } else {
-                    0
-                },
-                "{tx_size:?}"
-            );
+            assert_eq!(coefficients[1], -1, "{tx_size:?}");
+            assert_eq!(coefficients[side], 0, "{tx_size:?}");
         }
 
         for tx_size in [TxSize::Tx64x32, TxSize::Tx32x64] {
