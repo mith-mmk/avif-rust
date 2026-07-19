@@ -242,6 +242,12 @@ pub fn frame_buffers_to_rgba_8(
 ) -> Result<ImageBuffer, DecoderError> {
     if color_config.bit_depth == 8
         && !color_config.monochrome
+        && transfer_characteristics(color_config)?.is_none()
+    {
+        return frame_buffers_to_rgba_8_sdr(buffers, color_config);
+    }
+    if color_config.bit_depth == 8
+        && !color_config.monochrome
         && !color_config.subsampling_x
         && !color_config.subsampling_y
         && color_config
@@ -268,6 +274,118 @@ pub fn frame_buffers_to_rgba_8(
         height: rgba16.height,
         rgba,
     })
+}
+
+fn frame_buffers_to_rgba_8_sdr(
+    buffers: &FrameBuffers,
+    color_config: &ColorConfig,
+) -> Result<ImageBuffer, DecoderError> {
+    validate_rgba_conversion(buffers)?;
+    let matrix_coefficients = color_config
+        .color_description
+        .map(|description| description.matrix_coefficients)
+        .unwrap_or(2);
+    if matches!(matrix_coefficients, 0 | 3)
+        && buffers
+            .planes
+            .iter()
+            .all(|plane| plane.layout.subsampling_x == 0 && plane.layout.subsampling_y == 0)
+    {
+        return frame_buffers_to_identity_rgba_8_fast(buffers);
+    }
+
+    let color_primaries = color_config
+        .color_description
+        .map(|description| description.color_primaries)
+        .unwrap_or(2);
+    let matrix = MatrixCoefficients::from_av1(matrix_coefficients, color_primaries)?;
+    let range = SampleRange::new(8, color_config.color_range)?;
+    let plane_y = buffers
+        .planes
+        .first()
+        .ok_or_else(|| DecoderError::Bitstream("AV1 luma plane is missing".to_string()))?;
+    let plane_u = buffers.planes.get(1);
+    let plane_v = buffers.planes.get(2);
+    let direct_yuv444 = matches!(matrix, MatrixCoefficients::Yuv { .. })
+        && buffers.planes.get(3).is_none()
+        && plane_y.layout.subsampling_x == 0
+        && plane_y.layout.subsampling_y == 0
+        && plane_y.layout.width == buffers.width
+        && plane_y.layout.height == buffers.height
+        && plane_u.is_some_and(|plane| {
+            plane.layout.subsampling_x == 0
+                && plane.layout.subsampling_y == 0
+                && plane.layout.width == buffers.width
+                && plane.layout.height == buffers.height
+        })
+        && plane_v.is_some_and(|plane| {
+            plane.layout.subsampling_x == 0
+                && plane.layout.subsampling_y == 0
+                && plane.layout.width == buffers.width
+                && plane.layout.height == buffers.height
+        });
+    let mut rgba = vec![0u8; buffers.width * buffers.height * 4];
+    if direct_yuv444 {
+        let plane_u = plane_u.expect("direct YUV444 path requires U plane");
+        let plane_v = plane_v.expect("direct YUV444 path requires V plane");
+        let MatrixCoefficients::Yuv { kr, kb } = matrix else {
+            unreachable!("direct YUV444 path requires a YUV matrix");
+        };
+        for (index, pixel) in rgba.chunks_exact_mut(4).enumerate() {
+            let rgb = yuv_to_rgb_u16_fast(
+                plane_y.samples[index],
+                plane_u.samples[index],
+                plane_v.samples[index],
+                range,
+                kr as f32,
+                kb as f32,
+            );
+            pixel[0] = u16_to_u8(rgb[0]);
+            pixel[1] = u16_to_u8(rgb[1]);
+            pixel[2] = u16_to_u8(rgb[2]);
+            pixel[3] = u8::MAX;
+        }
+        return Ok(ImageBuffer {
+            width: buffers.width,
+            height: buffers.height,
+            rgba,
+        });
+    }
+    for y in 0..buffers.height {
+        for x in 0..buffers.width {
+            let index = y * buffers.width + x;
+            let rgb = yuv_to_rgb_u16(
+                sample_plane(plane_y, x, y),
+                plane_u
+                    .map(|plane| {
+                        sample_chroma_plane(plane, x, y, color_config.chroma_sample_position)
+                    })
+                    .unwrap_or(128),
+                plane_v
+                    .map(|plane| {
+                        sample_chroma_plane(plane, x, y, color_config.chroma_sample_position)
+                    })
+                    .unwrap_or(128),
+                range,
+                matrix,
+            );
+            let out = index * 4;
+            rgba[out] = u16_to_u8(rgb[0]);
+            rgba[out + 1] = u16_to_u8(rgb[1]);
+            rgba[out + 2] = u16_to_u8(rgb[2]);
+            rgba[out + 3] = u16_to_u8(alpha_sample(buffers.planes.get(3), x, y, 255));
+        }
+    }
+    Ok(ImageBuffer {
+        width: buffers.width,
+        height: buffers.height,
+        rgba,
+    })
+}
+
+#[inline]
+fn u16_to_u8(sample: u16) -> u8 {
+    ((u32::from(sample) * 255 + 32_767) / 65_535) as u8
 }
 
 pub fn frame_buffers_to_rgba_16(
@@ -1204,6 +1322,73 @@ mod tests {
         let image = frame_buffers_to_rgba_8(&buffers, &color_config).unwrap();
 
         assert_eq!(image.rgba, vec![0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn rgba8_sdr_subsampled_path_matches_rgba16_conversion() {
+        let luma_layout = PlaneLayout {
+            plane: 0,
+            width: 3,
+            height: 3,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 9,
+        };
+        let chroma_layout = PlaneLayout {
+            plane: 1,
+            width: 2,
+            height: 2,
+            subsampling_x: 1,
+            subsampling_y: 1,
+            sample_count: 4,
+        };
+        let buffers = FrameBuffers {
+            width: 3,
+            height: 3,
+            planes: vec![
+                PlaneBuffer {
+                    layout: luma_layout,
+                    samples: vec![16, 64, 128, 32, 96, 160, 48, 112, 208],
+                },
+                PlaneBuffer {
+                    layout: chroma_layout,
+                    samples: vec![90, 128, 170, 210],
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout {
+                        plane: 2,
+                        ..chroma_layout
+                    },
+                    samples: vec![200, 160, 120, 80],
+                },
+            ],
+        };
+        let color_config = ColorConfig {
+            high_bitdepth: false,
+            twelve_bit: false,
+            bit_depth: 8,
+            monochrome: false,
+            color_description: Some(super::super::sequence::ColorDescription {
+                color_primaries: 1,
+                transfer_characteristics: 13,
+                matrix_coefficients: 1,
+            }),
+            color_range: super::super::sequence::ColorRange::Studio,
+            subsampling_x: true,
+            subsampling_y: true,
+            chroma_sample_position: Some(ChromaSamplePosition::Vertical),
+            separate_uv_delta_q: false,
+        };
+
+        let expected = frame_buffers_to_rgba_16(&buffers, &color_config)
+            .unwrap()
+            .rgba
+            .into_iter()
+            .map(u16_to_u8)
+            .collect::<Vec<_>>();
+        let actual = frame_buffers_to_rgba_8(&buffers, &color_config).unwrap();
+
+        assert_eq!(actual.rgba, expected);
     }
 
     #[test]

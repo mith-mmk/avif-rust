@@ -696,6 +696,13 @@ signalled tool.
       FFmpeg, including a truncated-input regression.
 - [x] Correct the nested crate repository URL to the independently maintained
       `avif-rust` repository and verify it from a fresh clone.
+- [x] Add a direct 8-bit SDR YUV-to-RGBA8 path for 4:2:0, 4:2:2 and 4:4:4
+      images, avoiding the intermediate RGBA16 allocation while preserving
+      the existing high-precision, HDR and ICC paths. The 3x3 subsampled
+      conversion is regression-tested byte-for-byte against the RGBA16 path;
+      two 7-iteration FFmpeg-sample checks measured `371.92/414.43 ms` and
+      `422.41/451.56 ms` (native/RGBA), so this remains an allocation-
+      reduction/no-regression checkpoint under host scheduling variance.
 - [ ] Add SIMD/parallel paths only with scalar equivalence and Wasm fallback
       tests.
 

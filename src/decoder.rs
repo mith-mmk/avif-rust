@@ -116,15 +116,6 @@ impl DecodedFrame {
     pub fn to_rgba8(&self) -> Result<ImageBuffer, DecoderError> {
         if self.bit_depth == 8
             && !self.color_config.monochrome
-            && !self.color_config.subsampling_x
-            && !self.color_config.subsampling_y
-            && self
-                .color_config
-                .color_description
-                .is_some_and(|description| {
-                    matches!(description.matrix_coefficients, 0 | 3)
-                        && description.transfer_characteristics == 13
-                })
             && self
                 .color_information
                 .as_ref()
