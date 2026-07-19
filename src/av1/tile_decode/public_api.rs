@@ -284,6 +284,7 @@ pub fn decode_first_luma_block(
         buffers,
         tile_plan.pixel_x,
         tile_plan.pixel_y,
+        true,
     )?;
     Ok(block.transforms)
 }
@@ -324,6 +325,7 @@ pub fn decode_luma_root_block_prefix(
     }
     let mut blocks = Vec::new();
     let mut block_budget = max_blocks;
+    let mut decoded_block_count = 0;
     for (tile_index, tile_payload) in tile_group.tiles.iter().enumerate() {
         let payload = tile_payload_bytes(data, tile_payload)?;
         let tile_plan = plan.tiles.get(tile_index).ok_or_else(|| {
@@ -343,7 +345,7 @@ pub fn decode_luma_root_block_prefix(
                 let x = (sb_col as usize * plan.superblock_size).min(plan.width);
                 let y = (sb_row as usize * plan.superblock_size).min(plan.height);
                 decoder.read_restoration_units(sequence, x, y)?;
-                let block_start = blocks.len();
+                let block_start = decoded_block_count;
                 let result = decode_luma_block_tree(
                     &mut decoder,
                     sequence,
@@ -356,10 +358,14 @@ pub fn decode_luma_root_block_prefix(
                     y,
                     &mut block_budget,
                     &mut blocks,
+                    &mut decoded_block_count,
+                    true,
                 );
                 match result {
                     Ok(()) => {}
-                    Err(err @ DecoderError::Unsupported(_)) if blocks.len() > block_start => {
+                    Err(err @ DecoderError::Unsupported(_))
+                        if decoded_block_count > block_start =>
+                    {
                         return Ok(DecodedBlockPrefix {
                             blocks,
                             next_unsupported: Some(err),
@@ -380,6 +386,7 @@ pub fn decode_luma_root_block_prefix(
     clippy::too_many_arguments,
     reason = "internal prefix decode exposes each independently testable pipeline input"
 )]
+#[cfg(test)]
 pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy(
     data: &[u8],
     tile_group: &TileGroup,
@@ -390,6 +397,34 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy(
     max_blocks: usize,
     validate_entropy: bool,
 ) -> Result<(DecodedBlockPrefix, PostFilterState), DecoderError> {
+    decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options(
+        data,
+        tile_group,
+        sequence,
+        frame,
+        plan,
+        buffers,
+        max_blocks,
+        validate_entropy,
+        true,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "internal prefix decode exposes each independently testable pipeline input"
+)]
+pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options(
+    data: &[u8],
+    tile_group: &TileGroup,
+    sequence: &SequenceHeader,
+    frame: &FrameHeader,
+    plan: &FrameDecodePlan,
+    buffers: &mut FrameBuffers,
+    max_blocks: usize,
+    validate_entropy: bool,
+    collect_diagnostics: bool,
+) -> Result<(DecodedBlockPrefix, PostFilterState), DecoderError> {
     if tile_group.tiles.is_empty() {
         return Err(DecoderError::Bitstream(
             "AV1 tile group has no tile payloads".to_string(),
@@ -397,6 +432,7 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy(
     }
     let mut blocks = Vec::new();
     let mut block_budget = max_blocks;
+    let mut decoded_block_count = 0;
     let mut post_filter_state = PostFilterState::default();
 
     for (tile_index, tile_payload) in tile_group.tiles.iter().enumerate() {
@@ -422,7 +458,7 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy(
                 let x = (sb_col as usize * plan.superblock_size).min(plan.width);
                 let y = (sb_row as usize * plan.superblock_size).min(plan.height);
                 decoder.read_restoration_units(sequence, x, y)?;
-                let block_start = blocks.len();
+                let block_start = decoded_block_count;
                 let result = decode_luma_block_tree(
                     &mut decoder,
                     sequence,
@@ -435,10 +471,14 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy(
                     y,
                     &mut block_budget,
                     &mut blocks,
+                    &mut decoded_block_count,
+                    collect_diagnostics,
                 );
                 match result {
                     Ok(()) => {}
-                    Err(err @ DecoderError::Unsupported(_)) if blocks.len() > block_start => {
+                    Err(err @ DecoderError::Unsupported(_))
+                        if decoded_block_count > block_start =>
+                    {
                         post_filter_state.merge(decoder.take_post_filter_state());
                         return Ok((
                             DecodedBlockPrefix {
@@ -450,7 +490,9 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy(
                     }
                     Err(err) => return Err(err),
                 }
-                post_filter_state.record_luma_blocks(&blocks[block_start..]);
+                if collect_diagnostics {
+                    post_filter_state.record_luma_blocks(&blocks[block_start..]);
+                }
             }
         }
         if validate_entropy {

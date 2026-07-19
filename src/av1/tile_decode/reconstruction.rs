@@ -39,7 +39,7 @@ pub(super) fn decode_plane_block_unit(
     unit_width: usize,
     unit_height: usize,
     quant_state: QuantState,
-    decoded_luma: &mut Vec<DecodedTransform>,
+    mut decoded_luma: Option<&mut Vec<DecodedTransform>>,
 ) -> Result<(), DecoderError> {
     let layout = plan.planes.get(plane_index).ok_or_else(|| {
         DecoderError::Bitstream(format!("AV1 plane {plane_index} decode plan is missing"))
@@ -318,7 +318,9 @@ pub(super) fn decode_plane_block_unit(
         }
         decoder.mark_reconstructed_transform(transform)?;
         if plane_index == 0 {
-            decoded_luma.push(decoded_transform);
+            if let Some(decoded_luma) = decoded_luma.as_deref_mut() {
+                decoded_luma.push(decoded_transform);
+            }
         }
     }
 

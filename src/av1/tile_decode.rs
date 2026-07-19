@@ -45,7 +45,9 @@ pub use diagnostic::{
     ResidualProbe, TileEntropyState,
 };
 use diagnostic::{CoeffBaseProbe, CoeffBaseRead, CoeffBrProbe, CoeffSignRead};
+#[cfg(test)]
 pub(crate) use public_api::decode_luma_root_block_prefix_with_post_filter_state_and_entropy;
+pub(crate) use public_api::decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options;
 pub use public_api::{
     decode_first_luma_block, decode_first_luma_transform, decode_luma_root_block_prefix,
     decode_luma_root_blocks, prepare_tile_entropy, probe_first_block_residuals,

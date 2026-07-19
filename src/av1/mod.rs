@@ -49,7 +49,9 @@ pub use tile::TileInfo;
 pub(crate) use tile_decode::PostFilterState;
 #[cfg(test)]
 pub(crate) use tile_decode::RestorationUnit;
+#[cfg(test)]
 pub(crate) use tile_decode::decode_luma_root_block_prefix_with_post_filter_state_and_entropy;
+pub(crate) use tile_decode::decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options;
 #[cfg(test)]
 pub(crate) use tile_decode::wiener_filter_unit;
 pub use tile_decode::{

@@ -29,6 +29,7 @@ pub(super) fn decode_luma_root_block(
     buffers: &mut FrameBuffers,
     x: usize,
     y: usize,
+    collect_diagnostics: bool,
 ) -> Result<DecodedLumaBlock, DecoderError> {
     let partition = decoder.read_first_leaf_partition(tile_plan, sequence)?;
 
@@ -42,7 +43,9 @@ pub(super) fn decode_luma_root_block(
         partition.block_size,
         x,
         y,
-    )
+        collect_diagnostics,
+    )?
+    .ok_or_else(|| DecoderError::Bitstream("diagnostic luma block was not collected".to_string()))
 }
 
 #[expect(
@@ -59,7 +62,8 @@ pub(super) fn decode_luma_leaf_block(
     block_size: BlockSize,
     x: usize,
     y: usize,
-) -> Result<DecodedLumaBlock, DecoderError> {
+    collect_diagnostics: bool,
+) -> Result<Option<DecodedLumaBlock>, DecoderError> {
     let chroma_reference = is_chroma_reference(sequence, block_size, x, y);
     let block_mode = decoder.read_intra_frame_block_mode_with_chroma_reference(
         sequence,
@@ -111,7 +115,8 @@ pub(super) fn decode_luma_leaf_block(
         .block_size
         .height()
         .div_ceil(block_mode.tx_size.height());
-    let mut decoded = Vec::with_capacity(transform_columns * transform_rows);
+    let mut decoded =
+        collect_diagnostics.then(|| Vec::with_capacity(transform_columns * transform_rows));
     for unit in residual_unit_order(block_mode.block_size, x, y, plane_count) {
         let (prediction_mode, angle_delta, filter_intra_mode, smooth_neighbour, cfl_alpha_q3) =
             match unit.plane_index {
@@ -164,17 +169,17 @@ pub(super) fn decode_luma_leaf_block(
             unit.width,
             unit.height,
             quant_state,
-            &mut decoded,
+            decoded.as_mut(),
         )?;
     }
 
-    Ok(DecodedLumaBlock {
+    Ok(decoded.map(|transforms| DecodedLumaBlock {
         x,
         y,
         block_size: block_mode.block_size,
         palette: block_mode.palette,
-        transforms: decoded,
-    })
+        transforms,
+    }))
 }
 
 fn residual_unit_order(
@@ -313,6 +318,8 @@ pub(super) fn decode_luma_block_tree(
     y: usize,
     block_budget: &mut usize,
     blocks: &mut Vec<DecodedLumaBlock>,
+    decoded_block_count: &mut usize,
+    collect_diagnostics: bool,
 ) -> Result<(), DecoderError> {
     let coded_width = decoder.mi_cols << 2;
     let coded_height = decoder.mi_rows << 2;
@@ -323,10 +330,22 @@ pub(super) fn decode_luma_block_tree(
     // implicit leaves even when one dimension is 4 pixels.
     if block_size.width() < 8 || block_size.height() < 8 {
         let block = decode_luma_leaf_block(
-            decoder, sequence, frame, tile_plan, plan, buffers, block_size, x, y,
+            decoder,
+            sequence,
+            frame,
+            tile_plan,
+            plan,
+            buffers,
+            block_size,
+            x,
+            y,
+            collect_diagnostics,
         )?;
         *block_budget -= 1;
-        blocks.push(block);
+        *decoded_block_count += 1;
+        if let Some(block) = block {
+            blocks.push(block);
+        }
         return Ok(());
     }
     let partition = decoder
@@ -335,10 +354,22 @@ pub(super) fn decode_luma_block_tree(
     match partition {
         Partition::None => {
             let block = decode_luma_leaf_block(
-                decoder, sequence, frame, tile_plan, plan, buffers, block_size, x, y,
+                decoder,
+                sequence,
+                frame,
+                tile_plan,
+                plan,
+                buffers,
+                block_size,
+                x,
+                y,
+                collect_diagnostics,
             )?;
             *block_budget -= 1;
-            blocks.push(block);
+            *decoded_block_count += 1;
+            if let Some(block) = block {
+                blocks.push(block);
+            }
             Ok(())
         }
         Partition::Horizontal => {
@@ -357,6 +388,8 @@ pub(super) fn decode_luma_block_tree(
                 &[(subsize, x, y), (subsize, x, y + subsize.height())],
                 block_budget,
                 blocks,
+                decoded_block_count,
+                collect_diagnostics,
             )
         }
         Partition::Vertical => {
@@ -375,6 +408,8 @@ pub(super) fn decode_luma_block_tree(
                 &[(subsize, x, y), (subsize, x + subsize.width(), y)],
                 block_budget,
                 blocks,
+                decoded_block_count,
+                collect_diagnostics,
             )
         }
         Partition::Split => {
@@ -399,6 +434,8 @@ pub(super) fn decode_luma_block_tree(
                 ],
                 block_budget,
                 blocks,
+                decoded_block_count,
+                collect_diagnostics,
             )
         }
         Partition::HorizontalA => {
@@ -426,6 +463,8 @@ pub(super) fn decode_luma_block_tree(
                 ],
                 block_budget,
                 blocks,
+                decoded_block_count,
+                collect_diagnostics,
             )
         }
         Partition::HorizontalB => {
@@ -457,6 +496,8 @@ pub(super) fn decode_luma_block_tree(
                 ],
                 block_budget,
                 blocks,
+                decoded_block_count,
+                collect_diagnostics,
             )
         }
         Partition::VerticalA => {
@@ -484,6 +525,8 @@ pub(super) fn decode_luma_block_tree(
                 ],
                 block_budget,
                 blocks,
+                decoded_block_count,
+                collect_diagnostics,
             )
         }
         Partition::VerticalB => {
@@ -515,6 +558,8 @@ pub(super) fn decode_luma_block_tree(
                 ],
                 block_budget,
                 blocks,
+                decoded_block_count,
+                collect_diagnostics,
             )
         }
         Partition::Horizontal4 => {
@@ -538,6 +583,8 @@ pub(super) fn decode_luma_block_tree(
                 ],
                 block_budget,
                 blocks,
+                decoded_block_count,
+                collect_diagnostics,
             )
         }
         Partition::Vertical4 => {
@@ -561,6 +608,8 @@ pub(super) fn decode_luma_block_tree(
                 ],
                 block_budget,
                 blocks,
+                decoded_block_count,
+                collect_diagnostics,
             )
         }
     }?;
@@ -583,6 +632,8 @@ fn decode_luma_partition_children(
     children: &[(usize, usize)],
     block_budget: &mut usize,
     blocks: &mut Vec<DecodedLumaBlock>,
+    decoded_block_count: &mut usize,
+    collect_diagnostics: bool,
 ) -> Result<(), DecoderError> {
     for &(sub_x, sub_y) in children {
         if *block_budget == 0 {
@@ -600,6 +651,8 @@ fn decode_luma_partition_children(
             sub_y,
             block_budget,
             blocks,
+            decoded_block_count,
+            collect_diagnostics,
         )?;
     }
     Ok(())
@@ -619,6 +672,8 @@ fn decode_luma_partition_runs(
     children: &[(BlockSize, usize, usize)],
     block_budget: &mut usize,
     blocks: &mut Vec<DecodedLumaBlock>,
+    decoded_block_count: &mut usize,
+    collect_diagnostics: bool,
 ) -> Result<(), DecoderError> {
     for &(subsize, sub_x, sub_y) in children {
         if *block_budget == 0 {
@@ -628,10 +683,22 @@ fn decode_luma_partition_runs(
             continue;
         }
         let decoded = decode_luma_leaf_block(
-            decoder, sequence, frame, tile_plan, plan, buffers, subsize, sub_x, sub_y,
+            decoder,
+            sequence,
+            frame,
+            tile_plan,
+            plan,
+            buffers,
+            subsize,
+            sub_x,
+            sub_y,
+            collect_diagnostics,
         )?;
         *block_budget -= 1;
-        blocks.push(decoded);
+        *decoded_block_count += 1;
+        if let Some(decoded) = decoded {
+            blocks.push(decoded);
+        }
     }
     Ok(())
 }

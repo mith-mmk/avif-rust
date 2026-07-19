@@ -180,6 +180,51 @@ fn decodes_sample_luma_root_block_prefix_with_split_children() {
 }
 
 #[test]
+fn normal_prefix_decode_skips_diagnostic_block_retention() {
+    let data = read_sample_avif();
+    let info = parse_avif(&data).unwrap();
+    let sequence_payload = find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
+        .unwrap()
+        .expect("sequence header OBU should exist");
+    let sequence = parse_sequence_header(sequence_payload).unwrap();
+    let frame_payload = find_obu_payload(&info.primary_item_payload, ObuType::Frame)
+        .unwrap()
+        .expect("frame OBU should exist");
+    let frame = parse_frame_header(frame_payload, &sequence).unwrap();
+    let tile_group = parse_tile_group(
+        frame_payload,
+        frame.uncompressed_header_bits,
+        &frame.tile_info,
+    )
+    .unwrap();
+    let plan = build_still_decode_plan(&sequence, &frame, &tile_group).unwrap();
+    let mut buffers = alloc_frame_buffers(&plan).unwrap();
+
+    let (prefix, _) =
+        crate::av1::decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options(
+            frame_payload,
+            &tile_group,
+            &sequence,
+            &frame,
+            &plan,
+            &mut buffers,
+            8,
+            false,
+            false,
+        )
+        .unwrap();
+
+    assert!(prefix.blocks.is_empty());
+    assert_eq!(prefix.next_unsupported, None);
+    assert!(
+        buffers
+            .planes
+            .iter()
+            .all(|plane| { plane.samples.iter().any(|sample| *sample != 0) })
+    );
+}
+
+#[test]
 fn decodes_sample_prefix_through_palette_blocks() {
     let data = read_sample_avif();
     let info = parse_avif(&data).unwrap();

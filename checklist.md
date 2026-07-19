@@ -568,6 +568,14 @@ two further 11-iteration checks measured `276.25/281.12 ms` and
 segmentation ALT_LF, so these remain hot-path validation checkpoints rather
 than an ALT_LF speedup claim.
 
+Normal still-image decoding now skips retaining diagnostic luma-block and
+transform vectors; the public prefix/diagnostic APIs continue to collect them.
+The no-diagnostics path has a regression test asserting empty diagnostic output
+while reconstructed planes are populated. Two 11-iteration WML2Viewer checks
+measured `318.76/331.27 ms` and `324.77/310.12 ms` (native/RGBA); host variance
+is larger than the observed delta, so this is recorded as an allocation-
+reduction/no-regression checkpoint rather than a stable speedup claim.
+
 The external FFmpeg conformance suite now includes 4:4:4 non-identity RGBA and
 native-plane checks. The current run passes 47 tests with 2 intentionally
 ignored samples. AV1 intrabc decoding now searches the block-geometry-specific
@@ -657,6 +665,9 @@ signalled tool.
       sensitive checkpoint until a quieter host confirms the delta.
 - [x] Reserve luma decoded-transform storage from block/transform geometry to
       avoid growth reallocations in the reconstruction loop.
+- [x] Skip diagnostic luma-block/transform retention in normal still-image
+      decoding while preserving the public diagnostic prefix APIs and regression
+      coverage for both paths.
 - [x] Parse AV1 superblock delta-q syntax, carry the tile-local `CurrentQIndex`
       into block quantization and verify a libaom-generated delta-q AVIF sample
       against FFmpeg.
