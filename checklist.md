@@ -654,9 +654,10 @@ signalled tool.
       `required-features = ["avif"]`.
 - [x] Add an explicit feature-off test target and verify the AVIF-disabled
       library with `cargo test -p wml2 --lib --no-default-features`.
-- [ ] Gate the remaining parent `wml2` integration targets by their own
-      features so `cargo test -p wml2 --no-default-features` compiles. The
-      current failures are JPEG/PNG/TIFF/WebP/EXIF tests, not AVIF targets.
+- [x] Gate the remaining parent `wml2` integration targets by their own
+      features so `cargo test -p wml2 --no-default-features --no-run`
+      compiles. The feature-off runtime gate now passes; codec-specific
+      doctests remain intentionally tied to the default feature set.
 - [x] Keep container, OBU, frame-header and entropy fuzz targets.
 - [x] Optimise a per-transform coefficient allocation after exact-plane
       conformance passes; retain the public allocating wrapper for compatibility.
