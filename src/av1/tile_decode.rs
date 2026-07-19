@@ -292,14 +292,11 @@ impl<'a> TileDecoder<'a> {
         let segment_id = if skip {
             predicted
         } else {
-            let cdf = self.cdf.seg_id_cdf_mut(context);
-            let mut limited_cdf = [0u16; crate::av1::cdf::SEGMENT_IDS + 1];
-            limited_cdf[..max_count - 1].copy_from_slice(&cdf[..max_count - 1]);
-            limited_cdf[max_count - 1] = 1 << 15;
-            limited_cdf[max_count] = cdf[crate::av1::cdf::SEGMENT_IDS];
-            let diff = self.reader.read_symbol(&mut limited_cdf[..=max_count])? as u8;
-            cdf[..max_count - 1].copy_from_slice(&limited_cdf[..max_count - 1]);
-            cdf[crate::av1::cdf::SEGMENT_IDS] = limited_cdf[max_count];
+            // The syntax always codes the segment ID with the full
+            // MAX_SEGMENTS CDF. `last_active_segment` limits the valid result
+            // after inverse deinterleaving; it does not shorten the entropy
+            // alphabet or move the terminal CDF boundary.
+            let diff = self.reader.read_symbol(self.cdf.seg_id_cdf_mut(context))? as u8;
             neg_deinterleave(diff, predicted, max_count as u8)
         };
         let segment_id = if usize::from(segment_id) < max_count {
