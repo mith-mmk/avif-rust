@@ -242,6 +242,7 @@ struct MetaState {
     primary_item_id: Option<u32>,
     item_locations: Vec<ItemLocation>,
     item_construction_methods: Vec<(u32, u16)>,
+    item_extent_indexes: Vec<(u32, Vec<u64>)>,
     idat_payload: Option<Vec<u8>>,
     item_infos: Vec<ItemInfo>,
     item_references: Vec<ItemReference>,
@@ -368,9 +369,11 @@ fn parse_meta_children(
             b"pitm" => state.primary_item_id = parse_pitm(child_payload)?,
             b"iinf" => state.item_infos = parse_iinf(child_payload)?,
             b"iloc" => {
-                let (locations, construction_methods) = parse_iloc_with_methods(child_payload)?;
+                let (locations, construction_methods, extent_indexes) =
+                    parse_iloc_with_indexes(child_payload)?;
                 state.item_locations = locations;
                 state.item_construction_methods = construction_methods;
+                state.item_extent_indexes = extent_indexes;
             }
             b"idat" => state.idat_payload = Some(child_payload.to_vec()),
             b"iref" => state.item_references = parse_iref(child_payload)?,
@@ -519,9 +522,16 @@ fn parse_iloc(payload: &[u8]) -> Result<Vec<ItemLocation>, DecoderError> {
     parse_iloc_with_methods(payload).map(|(locations, _)| locations)
 }
 
+#[cfg(test)]
 fn parse_iloc_with_methods(
     payload: &[u8],
 ) -> Result<(Vec<ItemLocation>, Vec<(u32, u16)>), DecoderError> {
+    parse_iloc_with_indexes(payload).map(|(locations, methods, _)| (locations, methods))
+}
+
+fn parse_iloc_with_indexes(
+    payload: &[u8],
+) -> Result<(Vec<ItemLocation>, Vec<(u32, u16)>, Vec<(u32, Vec<u64>)>), DecoderError> {
     if payload.len() < 8 {
         return Err(DecoderError::NotEnoughData(
             "iloc payload is too short".to_string(),
@@ -572,6 +582,7 @@ fn parse_iloc_with_methods(
 
     let mut locations = Vec::with_capacity(item_count);
     let mut construction_methods = Vec::with_capacity(item_count);
+    let mut all_extent_indexes = Vec::with_capacity(item_count);
     for _ in 0..item_count {
         let item_id = if version < 2 {
             let value = read_u16(payload, cursor)? as u32;
@@ -590,11 +601,6 @@ fn parse_iloc_with_methods(
                 return Err(DecoderError::Unsupported(format!(
                     "iloc construction_method {construction_method} is not supported"
                 )));
-            }
-            if construction_method == 2 && index_size != 0 {
-                return Err(DecoderError::Unsupported(
-                    "iloc item_offset with explicit extent indexes is not supported".to_string(),
-                ));
             }
             construction_method
         } else {
@@ -626,12 +632,22 @@ fn parse_iloc_with_methods(
             )?;
         }
         let mut extents = Vec::with_capacity(extent_count);
+        let mut extent_indexes = Vec::with_capacity(extent_count);
         for _ in 0..extent_count {
-            if version == 1 || version == 2 {
-                let _extent_index = read_sized_int(payload, &mut cursor, index_size)?;
-            }
+            let extent_index = if version == 1 || version == 2 {
+                let value = read_sized_int(payload, &mut cursor, index_size)?;
+                if construction_method == 2 && index_size != 0 && value == 0 {
+                    return Err(DecoderError::Bitstream(
+                        "iloc item_offset extent index is zero".to_string(),
+                    ));
+                }
+                if index_size == 0 { 1 } else { value }
+            } else {
+                1
+            };
             let offset = read_sized_int(payload, &mut cursor, offset_size)?;
             let length = read_sized_int(payload, &mut cursor, length_size)?;
+            extent_indexes.push(extent_index);
             extents.push(ItemExtent { offset, length });
         }
         locations.push(ItemLocation {
@@ -639,9 +655,10 @@ fn parse_iloc_with_methods(
             base_offset,
             extents,
         });
+        all_extent_indexes.push((item_id, extent_indexes));
     }
 
-    Ok((locations, construction_methods))
+    Ok((locations, construction_methods, all_extent_indexes))
 }
 
 fn parse_iref(payload: &[u8]) -> Result<Vec<ItemReference>, DecoderError> {
@@ -1311,59 +1328,87 @@ fn item_payload_with_stack(
             DecoderError::Bitstream("item extent payload length overflow".to_string())
         })
     })?;
-    let source: Cow<'_, [u8]> = match construction_method {
-        0 => Cow::Borrowed(data),
-        1 => Cow::Borrowed(state.idat_payload.as_deref().ok_or_else(|| {
-            DecoderError::Bitstream(format!("item {item_id} references missing idat box"))
-        })?),
+    let mut payload = Vec::with_capacity(payload_len);
+    match construction_method {
+        0 | 1 => {
+            let source: Cow<'_, [u8]> = if construction_method == 0 {
+                Cow::Borrowed(data)
+            } else {
+                Cow::Borrowed(state.idat_payload.as_deref().ok_or_else(|| {
+                    DecoderError::Bitstream(format!("item {item_id} references missing idat box"))
+                })?)
+            };
+            if payload_len > source.len() {
+                return Err(DecoderError::Bitstream(
+                    "item extent payload length exceeds file size".to_string(),
+                ));
+            }
+            for extent in &location.extents {
+                append_item_extent(&mut payload, location, extent, &source)?;
+            }
+        }
         2 => {
-            let target = state
-                .item_references
-                .iter()
-                .find(|reference| {
-                    reference.reference_type == *b"iloc" && reference.from_item_id == item_id
-                })
-                .and_then(|reference| reference.to_item_ids.first().copied())
-                .ok_or_else(|| {
-                    DecoderError::Bitstream(format!(
-                        "item {item_id} item_offset reference is missing"
-                    ))
-                })?;
-            Cow::Owned(item_payload_with_stack(data, state, target, stack)?)
+            for (extent_position, extent) in location.extents.iter().enumerate() {
+                let extent_index = state
+                    .item_extent_indexes
+                    .iter()
+                    .find(|(id, _)| *id == item_id)
+                    .and_then(|(_, indexes)| indexes.get(extent_position).copied())
+                    .unwrap_or(1);
+                let target = state
+                    .item_references
+                    .iter()
+                    .find(|reference| {
+                        reference.reference_type == *b"iloc" && reference.from_item_id == item_id
+                    })
+                    .and_then(|reference| {
+                        usize::try_from(extent_index.saturating_sub(1))
+                            .ok()
+                            .and_then(|index| reference.to_item_ids.get(index).copied())
+                    })
+                    .ok_or_else(|| {
+                        DecoderError::Bitstream(format!(
+                            "item {item_id} item_offset reference index {extent_index} is missing"
+                        ))
+                    })?;
+                let source = item_payload_with_stack(data, state, target, stack)?;
+                append_item_extent(&mut payload, location, extent, &source)?;
+            }
         }
         method => {
             return Err(DecoderError::Unsupported(format!(
                 "iloc construction_method {method} is not supported"
             )));
         }
-    };
-    if construction_method != 2 && payload_len > source.len() {
-        return Err(DecoderError::Bitstream(
-            "item extent payload length exceeds file size".to_string(),
-        ));
-    }
-    let mut payload = Vec::with_capacity(payload_len);
-    for extent in &location.extents {
-        let start = location
-            .base_offset
-            .checked_add(extent.offset)
-            .ok_or_else(|| DecoderError::Bitstream("item extent offset overflow".to_string()))?;
-        let end = start
-            .checked_add(extent.length)
-            .ok_or_else(|| DecoderError::Bitstream("item extent length overflow".to_string()))?;
-        let start = usize::try_from(start)
-            .map_err(|_| DecoderError::Bitstream("item extent start is too large".to_string()))?;
-        let end = usize::try_from(end)
-            .map_err(|_| DecoderError::Bitstream("item extent end is too large".to_string()))?;
-        if end > source.len() || start > end {
-            return Err(DecoderError::NotEnoughData(
-                "item extent points outside the file".to_string(),
-            ));
-        }
-        payload.extend_from_slice(&source[start..end]);
     }
     stack.pop();
     Ok(payload)
+}
+
+fn append_item_extent(
+    payload: &mut Vec<u8>,
+    location: &ItemLocation,
+    extent: &ItemExtent,
+    source: &[u8],
+) -> Result<(), DecoderError> {
+    let start = location
+        .base_offset
+        .checked_add(extent.offset)
+        .ok_or_else(|| DecoderError::Bitstream("item extent offset overflow".to_string()))?;
+    let end = start
+        .checked_add(extent.length)
+        .ok_or_else(|| DecoderError::Bitstream("item extent length overflow".to_string()))?;
+    let start = usize::try_from(start)
+        .map_err(|_| DecoderError::Bitstream("item extent start is too large".to_string()))?;
+    let end = usize::try_from(end)
+        .map_err(|_| DecoderError::Bitstream("item extent end is too large".to_string()))?;
+    if end > source.len() || start > end {
+        return Err(DecoderError::NotEnoughData(
+            "item extent points outside the file".to_string(),
+        ));
+    }
+    payload.extend_from_slice(&source[start..end]);
+    Ok(())
 }
 
 fn read_box_header(data: &[u8], offset: usize, limit: usize) -> Result<BoxHeader, DecoderError> {
@@ -1712,6 +1757,50 @@ mod tests {
     }
 
     #[test]
+    fn parses_explicit_item_offset_extent_indexes() {
+        let (_, methods, indexes) = parse_iloc_with_indexes(&[
+            1, 0, 0, 0, // version and flags
+            0x44, 0x04, // four-byte offsets, lengths and extent indexes
+            0, 1, // item count
+            0, 1, // item id
+            0, 2, // item-offset construction method
+            0, 0, // data reference index
+            0, 2, // extent count
+            0, 0, 0, 2, // extent index 2
+            0, 0, 0, 1, // item offset
+            0, 0, 0, 2, // extent length
+            0, 0, 0, 1, // extent index 1
+            0, 0, 0, 0, // item offset
+            0, 0, 0, 2, // extent length
+        ])
+        .unwrap();
+
+        assert_eq!(methods, vec![(1, 2)]);
+        assert_eq!(indexes, vec![(1, vec![2, 1])]);
+    }
+
+    #[test]
+    fn rejects_zero_item_offset_extent_index() {
+        let error = parse_iloc_with_indexes(&[
+            1, 0, 0, 0, // version and flags
+            0x44, 0x04, // four-byte offsets, lengths and extent indexes
+            0, 1, // item count
+            0, 1, // item id
+            0, 2, // item-offset construction method
+            0, 0, // data reference index
+            0, 1, // extent count
+            0, 0, 0, 0, // reserved zero extent index
+            0, 0, 0, 0, // item offset
+            0, 0, 0, 1, // extent length
+        ])
+        .unwrap_err();
+
+        assert!(
+            matches!(error, DecoderError::Bitstream(message) if message.contains("extent index is zero"))
+        );
+    }
+
+    #[test]
     fn resolves_item_payload_from_idat() {
         let state = MetaState {
             primary_item_id: Some(1),
@@ -1763,6 +1852,58 @@ mod tests {
         };
 
         assert_eq!(primary_item_payload(b"abcde", &state).unwrap(), b"bc");
+    }
+
+    #[test]
+    fn resolves_item_payload_from_explicit_item_offset_indexes() {
+        let state = MetaState {
+            primary_item_id: Some(1),
+            item_locations: vec![
+                ItemLocation {
+                    item_id: 1,
+                    base_offset: 0,
+                    extents: vec![
+                        ItemExtent {
+                            offset: 1,
+                            length: 2,
+                        },
+                        ItemExtent {
+                            offset: 2,
+                            length: 2,
+                        },
+                    ],
+                },
+                ItemLocation {
+                    item_id: 2,
+                    base_offset: 0,
+                    extents: vec![ItemExtent {
+                        offset: 0,
+                        length: 5,
+                    }],
+                },
+                ItemLocation {
+                    item_id: 3,
+                    base_offset: 5,
+                    extents: vec![ItemExtent {
+                        offset: 0,
+                        length: 5,
+                    }],
+                },
+            ],
+            item_construction_methods: vec![(1, 2), (2, 0), (3, 0)],
+            item_extent_indexes: vec![(1, vec![2, 1])],
+            item_references: vec![ItemReference {
+                reference_type: *b"iloc",
+                from_item_id: 1,
+                to_item_ids: vec![2, 3],
+            }],
+            ..MetaState::default()
+        };
+
+        assert_eq!(
+            primary_item_payload(b"abcdefghij", &state).unwrap(),
+            b"ghcd"
+        );
     }
 
     #[test]
