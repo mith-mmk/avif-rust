@@ -1,8 +1,16 @@
-use super::{DecodedFrame, apply_loop_restoration_stage};
+use super::{DecodedFrame, apply_loop_filter_deltas, apply_loop_restoration_stage};
 use crate::av1::{
     ColorConfig, ColorRange, FrameBuffers, PlaneBuffer, PlaneLayout, PostFilterState,
     RestorationUnit, wiener_filter_unit,
 };
+
+#[test]
+fn segmentation_loop_filter_delta_is_applied_before_other_deltas() {
+    assert_eq!(apply_loop_filter_deltas(10, false, 7, 9, 2, 5), 17);
+    assert_eq!(apply_loop_filter_deltas(10, true, 1, 2, 2, 5), 20);
+    assert_eq!(apply_loop_filter_deltas(2, false, 0, 0, 0, -9), 0);
+    assert_eq!(apply_loop_filter_deltas(60, true, 0, 0, 0, 9), 63);
+}
 
 #[test]
 fn restoration_units_share_the_same_cdef_source_snapshot() {

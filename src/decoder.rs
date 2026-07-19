@@ -1743,12 +1743,22 @@ fn apply_deblock_stage(
                 let block_delta = filter_state
                     .map(|state| state.delta_lf[delta_lf_index])
                     .unwrap_or(0);
+                let segment_delta = filter_state
+                    .and_then(|state| {
+                        frame_header
+                            .segmentation
+                            .segment_delta_lf
+                            .get(usize::from(state.segment_id))
+                    })
+                    .map(|deltas| deltas[delta_lf_index])
+                    .unwrap_or(0);
                 let level = apply_loop_filter_deltas(
                     base_level,
                     frame_header.loop_filter.delta_enabled,
                     frame_header.loop_filter.ref_deltas[0],
                     0,
                     block_delta,
+                    segment_delta,
                 );
                 let dimension = if plane_index == 0 {
                     if vertical {
@@ -1850,12 +1860,17 @@ fn apply_loop_filter_deltas(
     ref_delta: i8,
     mode_delta: i8,
     block_delta: i8,
+    segment_delta: i8,
 ) -> u8 {
     if !enabled {
-        return (i16::from(level) + i16::from(block_delta)).clamp(0, 63) as u8;
+        return (i16::from(level) + i16::from(segment_delta) + i16::from(block_delta)).clamp(0, 63)
+            as u8;
     }
-    let adjusted =
-        i16::from(level) + i16::from(ref_delta) + i16::from(mode_delta) + i16::from(block_delta);
+    let adjusted = i16::from(level)
+        + i16::from(segment_delta)
+        + i16::from(ref_delta)
+        + i16::from(mode_delta)
+        + i16::from(block_delta);
     adjusted.clamp(0, 63) as u8
 }
 

@@ -562,6 +562,12 @@ Two 11-iteration WML2Viewer checks measured `290.64/300.47 ms` and
 `299.49/302.78 ms` (native/RGBA); retain this as an allocation-reduction
 checkpoint until a quieter host confirms a stable speedup.
 
+After carrying segment IDs into the post-filter state for segmentation ALT_LF,
+two further 11-iteration checks measured `276.25/281.12 ms` and
+`269.85/275.31 ms` (native/RGBA). The WML2Viewer sample does not signal
+segmentation ALT_LF, so these remain hot-path validation checkpoints rather
+than an ALT_LF speedup claim.
+
 The external FFmpeg conformance suite now includes 4:4:4 non-identity RGBA and
 native-plane checks. The current run passes 47 tests with 2 intentionally
 ignored samples. AV1 intrabc decoding now searches the block-geometry-specific
@@ -580,8 +586,8 @@ branches were reviewed against the frame/tile parser and grouped as follows:
   rejected before reconstruction.
 - No-op segmentation signalling, still-image `ALT_Q` deltas and the
   pre-skip `SKIP` feature are parsed; multi-segment map/CDF state is decoded
-  for these still-image-safe features. Segmentation loop-filter deltas,
-  reference and `GLOBALMV` features remain fail-closed.
+  for these still-image-safe features, including segment-level loop-filter
+  deltas. Segmentation reference and `GLOBALMV` features remain fail-closed.
 - Frame syntax tests cover positive, negative and zero-valued `ALT_Q` deltas
   (including signed-value alignment), multi-segment values, pre-skip `SKIP`,
   and rejection of reference/global-motion features.

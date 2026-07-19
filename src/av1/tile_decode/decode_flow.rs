@@ -74,6 +74,7 @@ pub(super) fn decode_luma_leaf_block(
         x,
         y,
         block_mode.block_size,
+        block_mode.segment_id,
         block_mode.skip,
         block_mode.y_mode,
         block_mode.uv_mode,

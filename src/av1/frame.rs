@@ -76,9 +76,9 @@ impl FrameHeader {
 }
 
 /// Frame-level segmentation signalling. The still-image decoder accepts the
-/// no-op form, `ALT_Q` deltas and the still-image-safe `SKIP` feature on the
-/// current segmentation map; features that require reference-frame state
-/// remain fail-closed.
+/// no-op form, `ALT_Q`/`ALT_LF` deltas and the still-image-safe `SKIP` feature
+/// on the current segmentation map; features that require reference-frame
+/// state remain fail-closed.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SegmentationParams {
     pub enabled: bool,
@@ -89,6 +89,9 @@ pub struct SegmentationParams {
     /// callers that only need the first segment.
     pub delta_q: i16,
     pub segment_delta_q: [i16; 8],
+    /// Segment-level `SEG_LVL_ALT_LF_*` deltas in Y-vertical, Y-horizontal,
+    /// U and V order.
+    pub segment_delta_lf: [[i8; 4]; 8],
     pub segment_skip: [bool; 8],
     pub last_active_segment: u8,
 }
@@ -756,6 +759,7 @@ fn parse_segmentation_params(
             preskip: false,
             delta_q: 0,
             segment_delta_q: [0; 8],
+            segment_delta_lf: [[0; 4]; 8],
             segment_skip: [false; 8],
             last_active_segment: 0,
         });
@@ -765,6 +769,7 @@ fn parse_segmentation_params(
     const FEATURE_SIGNED: [bool; 8] = [true, true, true, true, true, false, false, false];
     let mut unsupported_feature = None;
     let mut segment_delta_q = [0i16; 8];
+    let mut segment_delta_lf = [[0i8; 4]; 8];
     let mut segment_skip = [false; 8];
     let mut preskip = false;
     let mut last_active_segment = 0u8;
@@ -779,28 +784,31 @@ fn parse_segmentation_params(
                 let value = reader.read_bits(bits, "segmentation_feature_value")?;
                 if FEATURE_SIGNED[feature] {
                     let negative = reader.read_bool("segmentation_feature_sign")?;
-                    if feature == 0 {
-                        segment_delta_q[segment] = if negative {
-                            -(value as i16)
-                        } else {
-                            value as i16
-                        };
+                    let signed_value = if negative {
+                        -(value as i16)
+                    } else {
+                        value as i16
+                    };
+                    match feature {
+                        0 => segment_delta_q[segment] = signed_value,
+                        1..=4 => segment_delta_lf[segment][feature - 1] = signed_value as i8,
+                        _ => {}
                     }
                 }
             }
-            if feature == 0 {
-                last_active_segment = segment as u8;
-            } else if feature == 6 {
-                segment_skip[segment] = true;
-                preskip = true;
-                last_active_segment = segment as u8;
+            match feature {
+                0..=4 => last_active_segment = segment as u8,
+                5 => preskip = true,
+                6 => {
+                    segment_skip[segment] = true;
+                    preskip = true;
+                    last_active_segment = segment as u8;
+                }
+                7 => preskip = true,
+                _ => unreachable!("segmentation feature index is bounded to 0..8"),
             }
             if feature == 5 || feature == 7 {
                 preskip = true;
-                if unsupported_feature.is_none() {
-                    unsupported_feature = Some((segment, feature));
-                }
-            } else if feature != 0 && feature != 6 {
                 if unsupported_feature.is_none() {
                     unsupported_feature = Some((segment, feature));
                 }
@@ -819,6 +827,7 @@ fn parse_segmentation_params(
         preskip,
         delta_q: segment_delta_q[0],
         segment_delta_q,
+        segment_delta_lf,
         segment_skip,
         last_active_segment,
     })
@@ -1113,6 +1122,7 @@ mod tests {
                 preskip: false,
                 delta_q: 0,
                 segment_delta_q: [0; 8],
+                segment_delta_lf: [[0; 4]; 8],
                 segment_skip: [false; 8],
                 last_active_segment: 0,
             }
@@ -1137,14 +1147,30 @@ mod tests {
     }
 
     #[test]
-    fn rejects_active_non_alt_q_segmentation_feature() {
-        let mut reader = BitReader::new(&[0xA0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        let error = parse_segmentation_params(&mut reader, 7).unwrap_err();
-        assert!(matches!(
-            error,
-            crate::DecoderError::Unsupported(message)
-                if message.contains("segmentation feature 1 on segment 0")
-        ));
+    fn parses_segment_loop_filter_feature() {
+        let mut bits = vec![true];
+        for segment in 0..8 {
+            for feature in 0..8 {
+                let enabled = segment == 0 && (1..=4).contains(&feature);
+                bits.push(enabled);
+                if enabled {
+                    let value = [0, 5, 3, 7, 9][feature];
+                    bits.extend((0..6).rev().map(|bit| value & (1 << bit) != 0));
+                    bits.push(matches!(feature, 2 | 4));
+                }
+            }
+        }
+        let mut data = vec![0u8; bits.len().div_ceil(8)];
+        for (index, bit) in bits.into_iter().enumerate() {
+            if bit {
+                data[index / 8] |= 1 << (7 - index % 8);
+            }
+        }
+
+        let mut reader = BitReader::new(&data);
+        let params = parse_segmentation_params(&mut reader, 7).unwrap();
+        assert_eq!(params.segment_delta_lf[0], [5, -3, 7, -9]);
+        assert_eq!(params.last_active_segment, 0);
     }
 
     #[test]
