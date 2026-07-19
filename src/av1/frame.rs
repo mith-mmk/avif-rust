@@ -712,15 +712,28 @@ fn parse_quantization_params(
 
 fn read_delta_q(reader: &mut BitReader<'_>, name: &str) -> Result<i8, DecoderError> {
     if reader.read_bool(name)? {
-        let raw = reader.read_bits(7, name)? as u8;
-        Ok(if raw & 0x40 != 0 {
-            (raw as i16 - 128) as i8
-        } else {
-            raw as i8
-        })
+        Ok(read_inv_signed_literal(reader, 6, name)? as i8)
     } else {
         Ok(0)
     }
+}
+
+/// Reads AV1's inverse-signed literal. The syntax's `bits` value excludes the
+/// sign bit; the encoded value is a two's-complement literal of `bits + 1`
+/// bits, rather than a magnitude followed by a separate sign flag.
+fn read_inv_signed_literal(
+    reader: &mut BitReader<'_>,
+    bits: usize,
+    name: &str,
+) -> Result<i32, DecoderError> {
+    let raw = reader.read_bits(bits + 1, name)? as i32;
+    let sign_bit = 1i32 << bits;
+    let range = sign_bit << 1;
+    Ok(if raw & sign_bit != 0 {
+        raw - range
+    } else {
+        raw
+    })
 }
 
 fn parse_segmentation_params(
@@ -781,19 +794,15 @@ fn parse_segmentation_params(
             }
             let bits = FEATURE_BITS[feature];
             if bits != 0 {
-                let value = reader.read_bits(bits, "segmentation_feature_value")?;
-                if FEATURE_SIGNED[feature] {
-                    let negative = reader.read_bool("segmentation_feature_sign")?;
-                    let signed_value = if negative {
-                        -(value as i16)
-                    } else {
-                        value as i16
-                    };
-                    match feature {
-                        0 => segment_delta_q[segment] = signed_value,
-                        1..=4 => segment_delta_lf[segment][feature - 1] = signed_value as i8,
-                        _ => {}
-                    }
+                let value = if FEATURE_SIGNED[feature] {
+                    read_inv_signed_literal(reader, bits, "segmentation_feature_value")?
+                } else {
+                    reader.read_bits(bits, "segmentation_feature_value")? as i32
+                };
+                match feature {
+                    0 => segment_delta_q[segment] = value as i16,
+                    1..=4 => segment_delta_lf[segment][feature - 1] = value as i8,
+                    _ => {}
                 }
             }
             match feature {
@@ -1088,9 +1097,34 @@ fn frame_type_is_intra(frame_type: FrameType) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        LoopFilterParams, SegmentationParams, parse_segmentation_params, read_signed_delta,
+        LoopFilterParams, SegmentationParams, parse_segmentation_params, read_inv_signed_literal,
+        read_signed_delta,
     };
     use crate::av1::bitstream::BitReader;
+
+    fn bits_to_bytes(bits: &[bool]) -> Vec<u8> {
+        let mut data = vec![0u8; bits.len().div_ceil(8)];
+        for (index, bit) in bits.iter().copied().enumerate() {
+            if bit {
+                data[index / 8] |= 1 << (7 - index % 8);
+            }
+        }
+        data
+    }
+
+    fn push_unsigned(bits: &mut Vec<bool>, value: u32, width: usize) {
+        bits.extend((0..width).rev().map(|bit| value & (1 << bit) != 0));
+    }
+
+    fn push_inv_signed(bits: &mut Vec<bool>, value: i32, width_without_sign: usize) {
+        let width = width_without_sign + 1;
+        let encoded = if value < 0 {
+            (1i32 << width) + value
+        } else {
+            value
+        };
+        push_unsigned(bits, encoded as u32, width);
+    }
 
     #[test]
     fn loop_filter_defaults_use_the_intra_reference_delta() {
@@ -1107,6 +1141,21 @@ mod tests {
 
         let mut negative = BitReader::new(&[0b0001_0110]);
         assert_eq!(read_signed_delta(&mut negative, "delta").unwrap(), -5);
+    }
+
+    #[test]
+    fn inverse_signed_literal_uses_twos_complement() {
+        let mut positive = BitReader::new(&[0x0a]);
+        assert_eq!(
+            read_inv_signed_literal(&mut positive, 6, "delta").unwrap(),
+            5
+        );
+
+        let mut negative = BitReader::new(&[0xf6]);
+        assert_eq!(
+            read_inv_signed_literal(&mut negative, 6, "delta").unwrap(),
+            -5
+        );
     }
 
     #[test]
@@ -1131,16 +1180,27 @@ mod tests {
 
     #[test]
     fn parses_segment_zero_alt_q_segmentation_feature() {
-        let mut reader = BitReader::new(&[0xC1, 0x40, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let mut bits = vec![true, true];
+        push_inv_signed(&mut bits, 5, 8);
+        bits.extend(std::iter::repeat_n(false, 63));
+        let data = bits_to_bytes(&bits);
+        let mut reader = BitReader::new(&data);
         let params = parse_segmentation_params(&mut reader, 7).unwrap();
         assert_eq!(params.delta_q, 5);
         assert_eq!(params.effective_qindex(100), 105);
 
-        let mut reader = BitReader::new(&[0xC0, 0x20, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let mut bits = vec![true];
+        bits.extend(std::iter::repeat_n(false, 64));
+        let data = bits_to_bytes(&bits);
+        let mut reader = BitReader::new(&data);
         let params = parse_segmentation_params(&mut reader, 7).unwrap();
         assert_eq!(params.delta_q, 0);
 
-        let mut reader = BitReader::new(&[0xC1, 0x60, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let mut bits = vec![true, true];
+        push_inv_signed(&mut bits, -5, 8);
+        bits.extend(std::iter::repeat_n(false, 63));
+        let data = bits_to_bytes(&bits);
+        let mut reader = BitReader::new(&data);
         let params = parse_segmentation_params(&mut reader, 7).unwrap();
         assert_eq!(params.delta_q, -5);
         assert_eq!(params.effective_qindex(3), 0);
@@ -1155,17 +1215,16 @@ mod tests {
                 bits.push(enabled);
                 if enabled {
                     let value = [0, 5, 3, 7, 9][feature];
-                    bits.extend((0..6).rev().map(|bit| value & (1 << bit) != 0));
-                    bits.push(matches!(feature, 2 | 4));
+                    let signed = if matches!(feature, 2 | 4) {
+                        -(value as i32)
+                    } else {
+                        value as i32
+                    };
+                    push_inv_signed(&mut bits, signed, 6);
                 }
             }
         }
-        let mut data = vec![0u8; bits.len().div_ceil(8)];
-        for (index, bit) in bits.into_iter().enumerate() {
-            if bit {
-                data[index / 8] |= 1 << (7 - index % 8);
-            }
-        }
+        let data = bits_to_bytes(&bits);
 
         let mut reader = BitReader::new(&data);
         let params = parse_segmentation_params(&mut reader, 7).unwrap();
@@ -1190,17 +1249,16 @@ mod tests {
                 bits.push(enabled);
                 if enabled {
                     let value = if segment == 0 { 5u8 } else { 3u8 };
-                    bits.extend((0..8).rev().map(|bit| value & (1 << bit) != 0));
-                    bits.push(segment == 1);
+                    let signed = if segment == 1 {
+                        -(value as i32)
+                    } else {
+                        value as i32
+                    };
+                    push_inv_signed(&mut bits, signed, 8);
                 }
             }
         }
-        let mut data = vec![0u8; bits.len().div_ceil(8)];
-        for (index, bit) in bits.into_iter().enumerate() {
-            if bit {
-                data[index / 8] |= 1 << (7 - index % 8);
-            }
-        }
+        let data = bits_to_bytes(&bits);
 
         let mut reader = BitReader::new(&data);
         let params = parse_segmentation_params(&mut reader, 7).unwrap();

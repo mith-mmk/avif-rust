@@ -602,8 +602,8 @@ is still required before marking the full tool supported.
 ### Unsupported-syntax audit checkpoint (2026-07-19)
 
 The external compatibility manifest now exercises the formerly labelled
-`unsupported/` 8-bit YUV420, monochrome and YUV422 samples plus five libavif
-official samples as successful decodes (30 successes, no partial PNGs). The
+`unsupported/` 8-bit YUV420, monochrome and YUV422 samples plus nine libavif
+official samples as successful decodes (34 successes, no partial PNGs). The
 remaining AV1 `Unsupported` branches were reviewed against the frame/tile
 parser and grouped as follows:
 
@@ -617,6 +617,10 @@ parser and grouped as follows:
 - Frame syntax tests cover positive, negative and zero-valued `ALT_Q` deltas
   (including signed-value alignment), multi-segment values, pre-skip `SKIP`,
   and rejection of reference/global-motion features.
+- AV1 inverse-signed literals now use the normative two's-complement
+  `bits + 1` representation for frame delta-q and signed segmentation data;
+  `alpha_noispe.avif` remains a reproducible reduced-still CDEF/SGRPROJ
+  boundary because its entropy payload still needs restoration-state parity.
 - `iloc` construction method 2 (`item_offset`) now resolves the indexed
   `iloc` item reference, including explicit extent indexes, recursive-cycle
   and extent-boundary checks. Malformed partial tile groups and invalid
