@@ -577,6 +577,13 @@ two further 11-iteration checks measured `276.25/281.12 ms` and
 segmentation ALT_LF, so these remain hot-path validation checkpoints rather
 than an ALT_LF speedup claim.
 
+CDEF now reuses the retained luma source for the luma plane instead of cloning
+that plane a second time; chroma planes still receive independent source
+snapshots because each filter writes in place. Two 11-iteration WML2Viewer
+checks measured `325.44/338.17 ms` and `313.36/314.13 ms` (native/RGBA), so
+this remains an allocation-reduction/no-regression checkpoint under the
+host's scheduling variance.
+
 Normal still-image decoding now skips retaining diagnostic luma-block and
 transform vectors; the public prefix/diagnostic APIs continue to collect them.
 The no-diagnostics path has a regression test asserting empty diagnostic output

@@ -25,6 +25,7 @@ use crate::container::{
 use crate::obu::{ObuType, find_obu_payloads, parse_obu_stream};
 use crate::{DecoderError, ImageBuffer, Rgba16ImageBuffer};
 use bin_rs::reader::BinaryReader;
+use std::borrow::Cow;
 use std::io::SeekFrom;
 
 type Error = Box<dyn std::error::Error>;
@@ -1960,7 +1961,11 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
         let subsampling_y = usize::from(plane_index > 0 && frame.color_config.subsampling_y);
         let scale_x = 1usize << subsampling_x;
         let scale_y = 1usize << subsampling_y;
-        let source = plane.samples.clone();
+        let source = if plane_index == 0 {
+            Cow::Borrowed(luma_source.as_slice())
+        } else {
+            Cow::Owned(plane.samples.clone())
+        };
         let mut filtered = vec![0u16; 64];
         for &(x, y, index, detected_direction, variance) in &cdef_blocks {
             let plane_x = x / scale_x;
