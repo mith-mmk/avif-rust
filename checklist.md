@@ -626,6 +626,13 @@ This audit keeps the unsupported boundary explicit while the next expansion
 targets segmentation/reference-frame state instead of silently ignoring a
 signalled tool.
 
+The `Tx64x64` entropy path now follows AV1's adjusted 32x32 scan and padded
+levels stride, including inverse-storage expansion and coefficient-context
+coordinates. Dedicated transform/context tests cover the mapping. The official
+`colors_hdr_rec2020.avif` sample reaches the decode path but still fails the
+strict entropy/FFmpeg oracle gate, so it remains an unpromoted investigation
+fixture until the remaining large-transform state mismatch is resolved.
+
 - [x] Add malformed/truncated coverage for the currently supported container,
       OBU, entropy and metadata paths.
 - [ ] Add malformed/truncated cases for each future syntax path as it becomes

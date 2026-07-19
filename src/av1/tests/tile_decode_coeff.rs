@@ -188,6 +188,19 @@ fn coeff_base_context_2d_uses_adjusted_tx32x64_raster_coordinates() {
 }
 
 #[test]
+fn coeff_base_context_2d_uses_adjusted_tx64x64_raster_coordinates() {
+    let mut quant = vec![0; TxSize::Tx64x64.sample_count()];
+    // Tx64x64 uses the 32x32 entropy levels stride. Position 1 is row 1,
+    // column 0, so its first right neighbour is the contiguous slot 33.
+    quant[33] = 3;
+
+    assert_eq!(
+        coeff_base_context_2d(TxSize::Tx64x64, 1, &quant).unwrap(),
+        (3, 3)
+    );
+}
+
+#[test]
 fn txb_context_uses_neighbor_levels_and_dc_signs() {
     let transform = TransformBlock {
         plane: 0,
