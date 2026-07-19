@@ -228,4 +228,15 @@ mod tests {
             None
         );
     }
+
+    #[test]
+    fn restoration_units_cover_each_64_pixel_superblock_of_an_80_pixel_frame() {
+        assert_eq!(
+            restoration_unit_ranges(0, 0, 64, 64, 64, 80, 80),
+            Some((0..1, 0..1))
+        );
+        assert_eq!(restoration_unit_ranges(64, 0, 64, 64, 64, 80, 80), None);
+        assert_eq!(restoration_unit_ranges(0, 64, 64, 64, 64, 80, 80), None);
+        assert_eq!(restoration_unit_ranges(64, 64, 64, 64, 64, 80, 80), None);
+    }
 }
