@@ -1237,15 +1237,21 @@ fn generated_intrabc_sample_matches_ffmpeg(
     pixel_format: &str,
     expected_format: &str,
     plane_lengths: [usize; 3],
+    enable_cdef: bool,
 ) {
     let root = std::env::temp_dir().join(format!(
-        ".test-avif-intrabc-{}-{pixel_format}",
-        std::process::id()
+        ".test-avif-intrabc-{}-{pixel_format}-cdef{}",
+        std::process::id(),
+        u8::from(enable_cdef)
     ));
     if let Err(err) = std::fs::create_dir_all(&root) {
         panic!("failed to create temporary IntrABC sample directory: {err}");
     }
     let output_path = root.join("intrabc.avif");
+    let aom_params = format!(
+        "sb-size=128:enable-intrabc=1:enable-cdef={}:enable-restoration=0",
+        u8::from(enable_cdef)
+    );
     let status = Command::new("ffmpeg")
         .args(["-y", "-loglevel", "error"])
         .args(["-f", "lavfi", "-i", "testsrc2=size=128x128:rate=1"])
@@ -1263,10 +1269,9 @@ fn generated_intrabc_sample_matches_ffmpeg(
             "-pix_fmt",
             pixel_format,
             "-aom-params",
-            "sb-size=128:enable-intrabc=1:enable-cdef=0:enable-restoration=0",
-            "-f",
-            "avif",
         ])
+        .arg(&aom_params)
+        .args(["-f", "avif"])
         .arg(&output_path)
         .status();
     let Ok(status) = status else {
@@ -1320,17 +1325,32 @@ fn generated_intrabc_sample_matches_ffmpeg(
 
 #[test]
 fn generated_intrabc_yuv444_sample_matches_ffmpeg_when_encoder_present() {
-    generated_intrabc_sample_matches_ffmpeg("yuv444p", "yuv444p", [128 * 128; 3]);
+    generated_intrabc_sample_matches_ffmpeg("yuv444p", "yuv444p", [128 * 128; 3], false);
 }
 
 #[test]
 fn generated_intrabc_yuv420_sample_matches_ffmpeg_when_encoder_present() {
-    generated_intrabc_sample_matches_ffmpeg("yuv420p", "yuv420p", [128 * 128, 64 * 64, 64 * 64]);
+    generated_intrabc_sample_matches_ffmpeg(
+        "yuv420p",
+        "yuv420p",
+        [128 * 128, 64 * 64, 64 * 64],
+        false,
+    );
 }
 
 #[test]
 fn generated_intrabc_yuv422_sample_matches_ffmpeg_when_encoder_present() {
-    generated_intrabc_sample_matches_ffmpeg("yuv422p", "yuv422p", [128 * 128, 64 * 128, 64 * 128]);
+    generated_intrabc_sample_matches_ffmpeg(
+        "yuv422p",
+        "yuv422p",
+        [128 * 128, 64 * 128, 64 * 128],
+        false,
+    );
+}
+
+#[test]
+fn generated_intrabc_with_cdef_when_encoder_present() {
+    generated_intrabc_sample_matches_ffmpeg("yuv444p", "yuv444p", [128 * 128; 3], true);
 }
 
 #[test]

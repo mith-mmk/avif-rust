@@ -700,6 +700,10 @@ subsampled chroma planes remain within maximum error 2 against FFmpeg, closing
 the three supported chroma layouts for the current low-complexity IntrABC
 path.
 
+The generated IntrABC fixture now also enables CDEF while keeping restoration
+disabled. The 4:4:4 native planes remain exact against FFmpeg, confirming that
+the CDEF signalling path does not regress the supported IntrABC decode boundary.
+
 On 2026-07-20, coefficient decoding began returning its owned level buffer to
 the decoder scratch after reconstruction; only the public diagnostic luma
 capture retains it. The scratch-transfer regression test confirms that two
