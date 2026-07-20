@@ -2126,9 +2126,9 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
         return;
     }
     let unit_mask = (1usize << frame_header.cdef.bits) - 1;
-    let luma_source = frame.buffers.planes[0].samples.clone();
     let luma_width = frame.buffers.planes[0].layout.width;
     let luma_height = frame.buffers.planes[0].layout.height;
+    let mut source_scratch = Vec::new();
     let cdef_coeff_shift = frame.bit_depth.saturating_sub(8);
     let cdef_units_width = luma_width.div_ceil(64);
     let cdef_units_height = luma_height.div_ceil(64);
@@ -2176,7 +2176,7 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
             let unit_y = y & !63;
             let index = cdef_indices[(unit_y / 64) * cdef_units_width + unit_x / 64].unwrap_or(0);
             let (detected_direction, variance) = cdef_find_direction_with_variance(
-                &luma_source,
+                &frame.buffers.planes[0].samples,
                 luma_width,
                 luma_height,
                 x,
@@ -2187,29 +2187,20 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
             cdef_blocks.push((x, y, index, detected_direction, variance));
         }
     }
-    let max_plane_samples = frame
-        .buffers
-        .planes
-        .iter()
-        .skip(1)
-        .map(|plane| plane.samples.len())
-        .max()
-        .unwrap_or(0);
-    let mut cdef_source_scratch = Vec::with_capacity(max_plane_samples);
     for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
+        // Swap the source out before writing the filtered result. The previous
+        // output vector becomes the next iteration's reusable source storage,
+        // avoiding a full-frame clone for luma and chroma alike.
+        std::mem::swap(&mut plane.samples, &mut source_scratch);
+        let source = source_scratch.as_slice();
+        plane.samples.resize(source.len(), 0);
+        plane.samples.copy_from_slice(source);
         let width = plane.layout.width;
         let height = plane.layout.height;
         let subsampling_x = usize::from(plane_index > 0 && frame.color_config.subsampling_x);
         let subsampling_y = usize::from(plane_index > 0 && frame.color_config.subsampling_y);
         let scale_x = 1usize << subsampling_x;
         let scale_y = 1usize << subsampling_y;
-        let source: &[u16] = if plane_index == 0 {
-            luma_source.as_slice()
-        } else {
-            cdef_source_scratch.clear();
-            cdef_source_scratch.extend_from_slice(&plane.samples);
-            cdef_source_scratch.as_slice()
-        };
         let mut filtered = vec![0u16; 64];
         for &(x, y, index, detected_direction, variance) in &cdef_blocks {
             let plane_x = x / scale_x;

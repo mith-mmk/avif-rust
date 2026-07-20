@@ -706,6 +706,14 @@ three iterations: `WML2Viewer.avif` measured `306.37/305.48 ms` (native/RGBA)
 and the 128x128 alpha sample measured `2.93/3.23 ms`. The short run is kept as
 a fresh reference point only; it is not treated as a stable speedup claim.
 
+On 2026-07-20, CDEF source handling now swaps each plane's decoded samples into
+caller-owned scratch storage and reuses the previous output allocation for the
+next plane. This removes the per-plane source `clone` while preserving the
+unfiltered samples before writing filtered blocks. A five-iteration optimized
+`WML2Viewer.avif` recheck measured `317.32/331.61 ms` (native/RGBA); host noise
+still makes this an allocation-reduction/no-regression checkpoint rather than a
+stable speedup claim.
+
 The generated conformance set now also covers a two-stream 10-bit AVIF with a
 10-bit grayscale alpha item. Native Y/U/V/alpha planes are compared against
 FFmpeg's 10-bit outputs, and the public RGBA path checks the down-converted
