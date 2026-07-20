@@ -833,6 +833,13 @@ the scalar RGBA16 conversion with a maximum difference of one code value.
 A follow-up five-iteration run measured `407.33/429.17 ms` (10-bit) and
 `399.25/425.33 ms` (12-bit), retained as local no-regression checkpoints.
 
+The 8-bit direct YUV444 conversion now keeps a full-resolution auxiliary alpha
+plane on the same allocation-free loop instead of falling back to per-pixel
+subsampling lookups. A focused RGBA16 equivalence test and the external
+128x128 alpha oracle both pass (`alpha_max=0`). A five-iteration WML2Viewer
+recheck measured `305.51/306.03 ms` (native/RGBA); this remains a local
+no-regression checkpoint because the sample itself has no auxiliary alpha.
+
 The same IntrABC fixture is now generated and checked in 4:2:0 as well as
 4:4:4. The 4:2:0 luma plane is exact and chroma remains within the existing
 oracle tolerance (maximum error 4), covering the subsampled block geometry

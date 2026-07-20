@@ -357,6 +357,57 @@ fn frame_buffers_to_rgba_8_high_bit_sdr(
     let plane_u = buffers.planes.get(1);
     let plane_v = buffers.planes.get(2);
     let chroma_mid = 1u16 << color_config.bit_depth.saturating_sub(1);
+    let direct_yuv444 = plane_y.layout.subsampling_x == 0
+        && plane_y.layout.subsampling_y == 0
+        && plane_y.layout.width == buffers.width
+        && plane_y.layout.height == buffers.height
+        && plane_u.is_some_and(|plane| {
+            plane.layout.subsampling_x == 0
+                && plane.layout.subsampling_y == 0
+                && plane.layout.width == buffers.width
+                && plane.layout.height == buffers.height
+        })
+        && plane_v.is_some_and(|plane| {
+            plane.layout.subsampling_x == 0
+                && plane.layout.subsampling_y == 0
+                && plane.layout.width == buffers.width
+                && plane.layout.height == buffers.height
+        })
+        && buffers.planes.get(3).is_none_or(|plane| {
+            plane.layout.subsampling_x == 0
+                && plane.layout.subsampling_y == 0
+                && plane.layout.width == buffers.width
+                && plane.layout.height == buffers.height
+        });
+    if direct_yuv444 {
+        let plane_u = plane_u.expect("direct YUV444 path requires U plane");
+        let plane_v = plane_v.expect("direct YUV444 path requires V plane");
+        let MatrixCoefficients::Yuv { kr, kb } = matrix else {
+            return Ok(None);
+        };
+        let alpha = buffers.planes.get(3);
+        for (index, pixel) in rgba.chunks_exact_mut(4).enumerate() {
+            let rgb = yuv_to_rgb_u16_fast(
+                plane_y.samples[index],
+                plane_u.samples[index],
+                plane_v.samples[index],
+                fast_range,
+                kr as f32,
+                kb as f32,
+            );
+            pixel[0] = u16_to_u8(rgb[0]);
+            pixel[1] = u16_to_u8(rgb[1]);
+            pixel[2] = u16_to_u8(rgb[2]);
+            pixel[3] = alpha
+                .map(|plane| u16_to_u8(scale_sample_to_u16(plane.samples[index], max_source)))
+                .unwrap_or(u8::MAX);
+        }
+        return Ok(Some(ImageBuffer {
+            width: buffers.width,
+            height: buffers.height,
+            rgba,
+        }));
+    }
     for y in 0..buffers.height {
         for x in 0..buffers.width {
             let index = (y * buffers.width + x) * 4;
@@ -416,7 +467,6 @@ fn frame_buffers_to_rgba_8_sdr(
         _ => None,
     };
     let direct_yuv444 = matches!(matrix, MatrixCoefficients::Yuv { .. })
-        && buffers.planes.get(3).is_none()
         && plane_y.layout.subsampling_x == 0
         && plane_y.layout.subsampling_y == 0
         && plane_y.layout.width == buffers.width
@@ -432,6 +482,12 @@ fn frame_buffers_to_rgba_8_sdr(
                 && plane.layout.subsampling_y == 0
                 && plane.layout.width == buffers.width
                 && plane.layout.height == buffers.height
+        })
+        && buffers.planes.get(3).is_none_or(|plane| {
+            plane.layout.subsampling_x == 0
+                && plane.layout.subsampling_y == 0
+                && plane.layout.width == buffers.width
+                && plane.layout.height == buffers.height
         });
     let mut rgba = vec![0u8; buffers.width * buffers.height * 4];
     if direct_yuv444 {
@@ -440,6 +496,7 @@ fn frame_buffers_to_rgba_8_sdr(
         let MatrixCoefficients::Yuv { kr, kb } = matrix else {
             unreachable!("direct YUV444 path requires a YUV matrix");
         };
+        let alpha = buffers.planes.get(3);
         for (index, pixel) in rgba.chunks_exact_mut(4).enumerate() {
             let rgb = yuv_to_rgb_u16_fast(
                 plane_y.samples[index],
@@ -452,7 +509,9 @@ fn frame_buffers_to_rgba_8_sdr(
             pixel[0] = u16_to_u8(rgb[0]);
             pixel[1] = u16_to_u8(rgb[1]);
             pixel[2] = u16_to_u8(rgb[2]);
-            pixel[3] = u8::MAX;
+            pixel[3] = alpha
+                .map(|plane| u16_to_u8(scale_sample_to_u16(plane.samples[index], 255)))
+                .unwrap_or(u8::MAX);
         }
         return Ok(ImageBuffer {
             width: buffers.width,
@@ -1540,6 +1599,66 @@ mod tests {
             subsampling_x: true,
             subsampling_y: true,
             chroma_sample_position: Some(ChromaSamplePosition::Vertical),
+            separate_uv_delta_q: false,
+        };
+
+        let expected = frame_buffers_to_rgba_16(&buffers, &color_config)
+            .unwrap()
+            .rgba
+            .into_iter()
+            .map(u16_to_u8)
+            .collect::<Vec<_>>();
+        let actual = frame_buffers_to_rgba_8(&buffers, &color_config).unwrap();
+
+        assert_eq!(actual.rgba, expected);
+    }
+
+    #[test]
+    fn rgba8_yuv444_alpha_fast_path_matches_rgba16_conversion() {
+        let layout = PlaneLayout {
+            plane: 0,
+            width: 2,
+            height: 2,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 4,
+        };
+        let buffers = FrameBuffers {
+            width: 2,
+            height: 2,
+            planes: vec![
+                PlaneBuffer {
+                    layout,
+                    samples: vec![16, 64, 128, 220],
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout { plane: 1, ..layout },
+                    samples: vec![90, 128, 170, 210],
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout { plane: 2, ..layout },
+                    samples: vec![200, 160, 120, 80],
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout { plane: 3, ..layout },
+                    samples: vec![0, 64, 160, 255],
+                },
+            ],
+        };
+        let color_config = ColorConfig {
+            high_bitdepth: false,
+            twelve_bit: false,
+            bit_depth: 8,
+            monochrome: false,
+            color_description: Some(super::super::sequence::ColorDescription {
+                color_primaries: 1,
+                transfer_characteristics: 13,
+                matrix_coefficients: 1,
+            }),
+            color_range: super::super::sequence::ColorRange::Studio,
+            subsampling_x: false,
+            subsampling_y: false,
+            chroma_sample_position: None,
             separate_uv_delta_q: false,
         };
 
