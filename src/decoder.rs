@@ -957,7 +957,7 @@ fn decode_grid_frame(info: &AvifInfo) -> Result<DecodedFrame, DecoderError> {
     }
     let mut column_widths = vec![0usize; columns];
     let mut row_heights = vec![0usize; rows];
-    let mut decoded_cells = Vec::with_capacity(cell_count);
+    let decoded_cells = decode_grid_cells(info, &grid.cells)?;
     for (index, cell) in grid.cells.iter().enumerate() {
         let cell_width = usize::try_from(cell.width)
             .map_err(|_| DecoderError::InvalidParam("grid cell width is too large".to_string()))?;
@@ -983,14 +983,15 @@ fn decode_grid_frame(info: &AvifInfo) -> Result<DecodedFrame, DecoderError> {
         }
         column_widths[column] = cell_width;
         row_heights[row] = cell_height;
-        let decoded = decode_grid_cell_frame(info, cell)?;
+        let decoded = decoded_cells.get(index).ok_or_else(|| {
+            DecoderError::Bitstream("grid cell decode result is missing".to_string())
+        })?;
         if decoded.width != cell_width || decoded.height != cell_height {
             return Err(DecoderError::Bitstream(format!(
                 "grid cell {} decoded as {}x{}, metadata declares {}x{}",
                 cell.item_id, decoded.width, decoded.height, cell_width, cell_height
             )));
         }
-        decoded_cells.push(decoded);
     }
     if column_widths.iter().sum::<usize>() != width || row_heights.iter().sum::<usize>() != height {
         return Err(DecoderError::Bitstream(
@@ -1102,6 +1103,45 @@ fn decode_grid_frame(info: &AvifInfo) -> Result<DecodedFrame, DecoderError> {
     }
     apply_native_grid_geometry(&mut frame, info)?;
     Ok(frame)
+}
+
+fn decode_grid_cells(
+    info: &AvifInfo,
+    cells: &[GridCell],
+) -> Result<Vec<DecodedFrame>, DecoderError> {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        let total_pixels = cells.iter().fold(0usize, |total, cell| {
+            total.saturating_add(
+                usize::try_from(cell.width)
+                    .unwrap_or(usize::MAX)
+                    .saturating_mul(usize::try_from(cell.height).unwrap_or(usize::MAX)),
+            )
+        });
+        if cells.len() > 1 && total_pixels >= 256 * 1024 {
+            return std::thread::scope(|scope| {
+                let handles = cells
+                    .iter()
+                    .map(|cell| scope.spawn(|| decode_grid_cell_frame(info, cell)))
+                    .collect::<Vec<_>>();
+                handles
+                    .into_iter()
+                    .map(|handle| {
+                        handle.join().map_err(|_| {
+                            DecoderError::Bitstream(
+                                "AVIF grid cell decoder thread panicked".to_string(),
+                            )
+                        })?
+                    })
+                    .collect()
+            });
+        }
+    }
+
+    cells
+        .iter()
+        .map(|cell| decode_grid_cell_frame(info, cell))
+        .collect()
 }
 
 fn apply_native_grid_geometry(
