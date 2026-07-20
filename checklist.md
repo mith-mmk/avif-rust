@@ -736,6 +736,13 @@ follow-up optimized 10-iteration run measured `305.46/303.99 ms`
 (native/RGBA) for `WML2Viewer.avif`. The result is retained as a local
 checkpoint, not as a cross-machine speedup claim.
 
+Rectangular transform dispatches now also write directly into the reusable
+residual scratch; the equivalence test covers all 19 square and rectangular
+transform sizes. A follow-up optimized 10-iteration run measured
+`311.86/313.61 ms` (native/RGBA) for `WML2Viewer.avif`, so this change is
+recorded as an allocation-reduction/no-regression checkpoint until a quieter
+same-host baseline confirms a stable speedup.
+
 - [x] Add malformed/truncated coverage for the currently supported container,
       OBU, entropy and metadata paths.
 - [ ] Add malformed/truncated cases for each future syntax path as it becomes

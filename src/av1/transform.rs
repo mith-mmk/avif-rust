@@ -725,9 +725,19 @@ pub(crate) fn inverse_transform_into(
         TxSize::Tx32x32 => inverse_transform_32x32_dct_into(dequant, bit_depth, output),
         TxSize::Tx64x64 => inverse_transform_64x64_dct_into(dequant, bit_depth, output),
         _ => {
-            let transformed = inverse_transform(tx_type, tx_size, dequant, bit_depth)?;
-            output.copy_from_slice(&transformed);
-            Ok(())
+            if tx_size.is_rectangular() {
+                if tx_size.width().max(tx_size.height()) > 16 && tx_type != TxType::DctDct {
+                    return Err(DecoderError::Unsupported(format!(
+                        "AV1 {tx_size:?} non-DCT transform is not signaled for intra blocks"
+                    )));
+                }
+                inverse_transform_rect_into(tx_type, tx_size, dequant, bit_depth, output);
+                Ok(())
+            } else {
+                let transformed = inverse_transform(tx_type, tx_size, dequant, bit_depth)?;
+                output.copy_from_slice(&transformed);
+                Ok(())
+            }
         }
     }
 }
@@ -738,6 +748,18 @@ fn inverse_transform_rect(
     dequant: &[i32],
     bit_depth: u8,
 ) -> Vec<i32> {
+    let mut output = vec![0i32; tx_size.sample_count()];
+    inverse_transform_rect_into(tx_type, tx_size, dequant, bit_depth, &mut output);
+    output
+}
+
+fn inverse_transform_rect_into(
+    tx_type: TxType,
+    tx_size: TxSize,
+    dequant: &[i32],
+    bit_depth: u8,
+    output: &mut [i32],
+) {
     let width = tx_size.width();
     let height = tx_size.height();
     let (vertical, horizontal) = staged_transform_pair(tx_type);
@@ -756,6 +778,7 @@ fn inverse_transform_rect(
     const MAX_RECTANGULAR_SAMPLES: usize = 64 * 64;
     let sample_count = width * height;
     debug_assert!(sample_count <= MAX_RECTANGULAR_SAMPLES);
+    debug_assert_eq!(output.len(), sample_count);
     let mut intermediate = [0i32; MAX_RECTANGULAR_SAMPLES];
     let mut input = [0i32; 64];
     let mut values = [0i32; 64];
@@ -776,7 +799,6 @@ fn inverse_transform_rect(
     }
 
     let residual_limit = 1i32 << (bit_depth + 7);
-    let mut output = vec![0i32; sample_count];
     for column in 0..width {
         for row in 0..height {
             input[row] = clamp_signed(intermediate[row * width + column], bit_depth + 8);
@@ -787,7 +809,6 @@ fn inverse_transform_rect(
                 round2_signed(values[row], 4).clamp(-residual_limit, residual_limit - 1);
         }
     }
-    output
 }
 
 fn inverse_staged_dynamic_into(
@@ -2455,10 +2476,24 @@ mod tests {
             (TxSize::Tx16x16, 33),
             (TxSize::Tx32x32, 65),
             (TxSize::Tx64x64, 129),
+            (TxSize::Tx4x8, 1),
+            (TxSize::Tx8x4, 1),
+            (TxSize::Tx8x16, 9),
+            (TxSize::Tx16x8, 9),
+            (TxSize::Tx16x32, 17),
+            (TxSize::Tx32x16, 17),
+            (TxSize::Tx32x64, 33),
+            (TxSize::Tx64x32, 33),
+            (TxSize::Tx4x16, 1),
+            (TxSize::Tx16x4, 1),
+            (TxSize::Tx8x32, 9),
+            (TxSize::Tx32x8, 9),
+            (TxSize::Tx16x64, 17),
+            (TxSize::Tx64x16, 17),
         ] {
             let mut coefficients = vec![0; tx_size.sample_count()];
             coefficients[coefficient_index] = 37;
-            let tx_type = if matches!(tx_size, TxSize::Tx32x32 | TxSize::Tx64x64) {
+            let tx_type = if tx_size.width().max(tx_size.height()) > 16 {
                 TxType::DctDct
             } else {
                 TxType::AdstDct
