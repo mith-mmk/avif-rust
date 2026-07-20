@@ -14,9 +14,9 @@ use crate::av1::{
     deblock_filter_edge_with_visible_bounds,
     decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options,
     frame_buffers_to_rgba_16, parse_av1_config, parse_frame_header, parse_sequence_header,
-    parse_tile_group, plan_transform_blocks_with_tx_size, prepare_tile_entropy,
-    probe_first_block_residuals, probe_tile_block_modes, probe_tile_partitions,
-    sgrproj_filter_unit_into, wiener_filter_unit_into,
+    parse_show_existing_frame_index, parse_tile_group, plan_transform_blocks_with_tx_size,
+    prepare_tile_entropy, probe_first_block_residuals, probe_tile_block_modes,
+    probe_tile_partitions, sgrproj_filter_unit_into, wiener_filter_unit_into,
 };
 use crate::compat::{DataMap, DecodeOptions, InitOptions};
 use crate::container::{
@@ -93,6 +93,13 @@ pub fn decode_bytes(data: &[u8]) -> Result<ImageBuffer, DecoderError> {
     if info.primary_grid.is_some() {
         return decode_grid_image(&info);
     }
+    if let Some(frame) = decode_hidden_key_frame_show_existing(&info)? {
+        let mut image = frame.to_rgba8()?;
+        apply_clean_aperture(&mut image, info.clean_aperture)?;
+        apply_mirror(&mut image, info.mirror)?;
+        apply_rotation(&mut image, info.rotation)?;
+        return Ok(image);
+    }
     let headers = parse_av1_headers(&info)?;
     decode_still_image(&headers, Some(&info))
 }
@@ -161,8 +168,12 @@ pub fn decode_frame_bytes(data: &[u8]) -> Result<DecodedFrame, DecoderError> {
     if info.primary_grid.is_some() {
         return decode_grid_frame(&info);
     }
-    let headers = parse_av1_headers(&info)?;
-    let mut frame = decode_still_frame(&headers, Some(&info))?;
+    let mut frame = if let Some(frame) = decode_hidden_key_frame_show_existing(&info)? {
+        frame
+    } else {
+        let headers = parse_av1_headers(&info)?;
+        decode_still_frame(&headers, Some(&info))?
+    };
     if !info.alpha_auxiliary_items.is_empty() {
         let alpha_frame = decode_alpha_auxiliary_frame(&info)?;
         append_alpha_plane(&mut frame, alpha_frame)?;
@@ -301,6 +312,102 @@ mod reference_frame_tests {
                 if message.contains("show_existing_frame slot 7")
         ));
     }
+
+    #[test]
+    fn rebuilt_reference_probe_obus_roundtrip_through_stream_parser() {
+        let encoded = encode_obu(ObuType::SequenceHeader, &[0x01, 0x02, 0x03]).unwrap();
+        let obus = parse_obu_stream(&encoded).unwrap();
+        assert_eq!(obus.len(), 1);
+        assert_eq!(obus[0].obu_type, ObuType::SequenceHeader);
+        assert_eq!(obus[0].payload, [0x01, 0x02, 0x03]);
+    }
+}
+
+/// Decodes the narrow sequence shape that can be handled without inter-frame
+/// motion compensation: a hidden coded `OBU_FRAME` followed by a
+/// `show_existing_frame` header referring to one of its refreshed slots.
+/// Returning `None` leaves the normal first-frame path unchanged.
+fn decode_hidden_key_frame_show_existing(
+    info: &AvifInfo,
+) -> Result<Option<DecodedFrame>, DecoderError> {
+    if info.major_brand != *b"avis" && !info.compatible_brands.iter().any(|brand| brand == b"avis")
+    {
+        return Ok(None);
+    }
+    let obus = parse_obu_stream(&info.primary_item_payload)?;
+    let sequence = obus
+        .iter()
+        .find(|obu| obu.obu_type == ObuType::SequenceHeader)
+        .map(|obu| obu.payload)
+        .ok_or_else(|| DecoderError::Bitstream("AV1 sequence header OBU is missing".to_string()))?;
+
+    let first_frame = obus.iter().find(|obu| obu.obu_type == ObuType::Frame);
+    let Some(first_frame) = first_frame else {
+        return Ok(None);
+    };
+    let sequence_header = parse_sequence_header(sequence)?;
+    let hidden_header = parse_frame_header(first_frame.payload, &sequence_header)?;
+    if hidden_header.show_frame {
+        return Ok(None);
+    }
+
+    let first_frame_position = obus
+        .iter()
+        .position(|obu| std::ptr::eq(obu, first_frame))
+        .expect("first frame must belong to the parsed OBU list");
+    let show_existing_index = obus
+        .iter()
+        .skip(first_frame_position + 1)
+        .filter(|obu| matches!(obu.obu_type, ObuType::Frame | ObuType::FrameHeader))
+        .find_map(|obu| parse_show_existing_frame_index(obu.payload).transpose())
+        .transpose()?;
+    let Some(show_existing_index) = show_existing_index else {
+        return Ok(None);
+    };
+
+    let sequence_obu = obus
+        .iter()
+        .find(|obu| obu.obu_type == ObuType::SequenceHeader)
+        .expect("sequence payload was found above");
+    let mut hidden_payload = encode_obu(sequence_obu.obu_type, sequence_obu.payload)?;
+    hidden_payload.extend(encode_obu(first_frame.obu_type, first_frame.payload)?);
+    let mut hidden_info = info.clone();
+    hidden_info.primary_item_payload = hidden_payload;
+    let hidden_headers = parse_av1_headers(&hidden_info)?;
+    let hidden_frame = decode_still_frame(&hidden_headers, Some(&hidden_info))?;
+    let mut references = FrameReferenceSlots::default();
+    references.refresh(hidden_headers.frame.refresh_frame_flags, &hidden_frame);
+    references.frame_to_show(show_existing_index).map(Some)
+}
+
+fn encode_obu(obu_type: ObuType, payload: &[u8]) -> Result<Vec<u8>, DecoderError> {
+    let type_bits: u8 = match obu_type {
+        ObuType::SequenceHeader => 1,
+        ObuType::Frame => 6,
+        ObuType::FrameHeader => 3,
+        ObuType::TileGroup => 4,
+        _ => {
+            return Err(DecoderError::Unsupported(format!(
+                "cannot rebuild AV1 {:?} OBU for reference probing",
+                obu_type
+            )));
+        }
+    };
+    let mut encoded = vec![(type_bits << 3) | 0x02];
+    let mut length = payload.len();
+    loop {
+        let mut byte = (length & 0x7f) as u8;
+        length >>= 7;
+        if length != 0 {
+            byte |= 0x80;
+        }
+        encoded.push(byte);
+        if length == 0 {
+            break;
+        }
+    }
+    encoded.extend_from_slice(payload);
+    Ok(encoded)
 }
 
 fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {

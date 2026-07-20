@@ -28,6 +28,7 @@ pub(crate) use decode::{
 };
 pub use entropy::EntropyDecoder;
 pub(crate) use film_grain::apply as apply_film_grain;
+pub(crate) use frame::parse_show_existing_frame_index;
 pub use frame::{
     CdefStrength, FilmGrainParams, FrameHeader, FrameType, SegmentationParams, TxMode,
     parse_frame_header,

@@ -643,8 +643,9 @@ signalled tool.
 The reference-state checkpoint now has explicit eight-slot storage and
 `show_existing_frame` prefix parsing. Refresh flags replace only the selected
 slots, missing slots fail closed, and no public decode path uses the slots yet;
-the next step is wiring decoded Key/IntraOnly frames into this state before
-promoting an actual `show_existing_frame` fixture.
+decoded hidden Key/IntraOnly frames are now wired through the limited public
+sequence probe; promotion still requires an actual `show_existing_frame`
+fixture because inter/MV frames remain fail-closed.
 
 The segmentation map reader now follows the normative symbol consumption even
 when `last_active_segment == 0`: segment 0 is still decoded from the full
