@@ -175,7 +175,7 @@ impl<'a> TileDecoder<'a> {
         let mut palette = palette;
         self.read_palette_tokens(sequence, block_size, x, y, &mut palette)?;
         let (tx_size_context, tx_size_symbol, tx_size) =
-            self.read_intra_tx_size(frame, block_size, skip, x, y)?;
+            self.read_intra_tx_size(frame, block_size, skip, use_intrabc, x, y)?;
 
         Ok(BlockModeProbe {
             tile_id: tile.tile_id,
@@ -354,6 +354,7 @@ impl<'a> TileDecoder<'a> {
         frame: &FrameHeader,
         block_size: BlockSize,
         skip: bool,
+        use_intrabc: bool,
         x: usize,
         y: usize,
     ) -> Result<(Option<usize>, Option<usize>, TxSize), DecoderError> {
@@ -361,9 +362,10 @@ impl<'a> TileDecoder<'a> {
             TxMode::Only4x4 => TxSize::Tx4x4,
             TxMode::Largest => block_size.largest_supported_tx_size(),
             // Intra blocks signal the selected transform size even when
-            // skip_txfm suppresses coefficient payloads. The transmitted size
-            // still updates neighbouring transform contexts.
-            TxMode::Select if block_size.signals_tx_size() => {
+            // skip_txfm suppresses coefficient payloads. IntrABC is parsed as
+            // an inter block by the AV1 syntax, so skipped IntrABC blocks do
+            // not carry this transform-size symbol.
+            TxMode::Select if block_size.signals_tx_size() && !(use_intrabc && skip) => {
                 let context = self.tx_size_context(x, y, block_size);
                 let category = block_size.tx_size_category();
                 let symbol = self
