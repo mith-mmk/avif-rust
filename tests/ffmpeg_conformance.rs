@@ -2450,6 +2450,34 @@ fn public_alpha_noispe_sample_decodes_with_skip_tx_size_signaling() {
 }
 
 #[test]
+fn public_alpha_noispe_sample_matches_ffmpeg_when_present() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("test/images/external/avif/unsupported/alpha_noispe.avif");
+    if !path.is_file() {
+        eprintln!("external alpha_noispe sample is unavailable; skipping pixel oracle");
+        return;
+    }
+    let data = std::fs::read(&path).expect("alpha_noispe AVIF should be readable");
+    let actual = avif_rust::image_from_bytes(&data).expect("alpha_noispe should decode fully");
+    let Some(expected) = ffmpeg_decode_rgba_dynamic(&path, 80, 80) else {
+        return;
+    };
+    let metrics = diff_rgb_dynamic(&actual.rgba, &expected);
+    eprintln!(
+        "alpha_noispe: average RGB absolute error={}, max={}",
+        metrics.average_rgb_abs, metrics.max_rgb_abs
+    );
+    assert!(
+        metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 48,
+        "alpha_noispe FFmpeg RGB error average={} max={}",
+        metrics.average_rgb_abs,
+        metrics.max_rgb_abs
+    );
+}
+
+#[test]
 fn decoded_frame_rejects_unsupported_icc_profile() {
     let layout = avif_rust::av1::PlaneLayout {
         plane: 0,

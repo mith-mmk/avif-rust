@@ -772,30 +772,27 @@ fn sample_chroma_plane(
     }
     let source_x = (x >> subsampling_x).min(plane.layout.width - 1);
     let source_y = (y >> subsampling_y).min(plane.layout.height - 1);
-    let next_x = (source_x + 1).min(plane.layout.width - 1);
-    let next_y = (source_y + 1).min(plane.layout.height - 1);
-    let (fraction_x, fraction_y) = if subsampling_x == 1 && subsampling_y == 1 {
-        match position.unwrap_or(ChromaSamplePosition::Unknown) {
-            // Horizontally co-located and halfway between vertical samples.
-            ChromaSamplePosition::Vertical => (0, (y & 1) as u32),
-            // Co-located with the top-left luma sample of each 2x2 block.
-            ChromaSamplePosition::Colocated => (0, 0),
-            // Unknown is kept on the historical vertical path.  AV1 leaves
-            // the source-side placement to the container/application when it
-            // is unknown; this is also the fallback used by FFmpeg/libaom.
-            ChromaSamplePosition::Unknown | ChromaSamplePosition::Reserved => (0, (y & 1) as u32),
+    if subsampling_x == 1 && subsampling_y == 1 {
+        let top = plane.samples[source_y * plane.layout.width + source_x];
+        if matches!(
+            position.unwrap_or(ChromaSamplePosition::Unknown),
+            ChromaSamplePosition::Vertical
+                | ChromaSamplePosition::Unknown
+                | ChromaSamplePosition::Reserved
+        ) && (y & 1) != 0
+        {
+            let next_y = (source_y + 1).min(plane.layout.height - 1);
+            let bottom = plane.samples[next_y * plane.layout.width + source_x];
+            return ((u32::from(top) + u32::from(bottom) + 1) / 2) as u16;
         }
-    } else {
-        // AV1 4:2:2 uses horizontally co-located chroma in this path.
-        (0, 0)
-    };
-    let top_left = u32::from(plane.samples[source_y * plane.layout.width + source_x]);
-    let top_right = u32::from(plane.samples[source_y * plane.layout.width + next_x]);
-    let bottom_left = u32::from(plane.samples[next_y * plane.layout.width + source_x]);
-    let bottom_right = u32::from(plane.samples[next_y * plane.layout.width + next_x]);
-    let top = top_left * (2 - fraction_x) + top_right * fraction_x;
-    let bottom = bottom_left * (2 - fraction_x) + bottom_right * fraction_x;
-    ((top * (2 - fraction_y) + bottom * fraction_y + 2) / 4) as u16
+        return top;
+    }
+    // The current AV1 sample positions use only integer source coordinates:
+    // 4:2:2/4:4:0 are co-located and 4:2:0 optionally averages the two
+    // vertically adjacent samples. Keep this path to avoid the former
+    // four-load blend.
+    debug_assert!(subsampling_x != 0 || subsampling_y != 0);
+    plane.samples[source_y * plane.layout.width + source_x]
 }
 
 fn yuv_to_rgb_u16_fast(
@@ -1494,6 +1491,50 @@ mod tests {
             sample_chroma_plane(&plane, 1, 1, Some(ChromaSamplePosition::Unknown)),
             20
         );
+        assert_eq!(
+            sample_chroma_plane(&plane, 1, 1, Some(ChromaSamplePosition::Reserved)),
+            20
+        );
+
+        for y in 0..4 {
+            for x in 0..4 {
+                let source_x = (x / 2).min(1);
+                let source_y = (y / 2).min(1);
+                let vertical_expected = if (y & 1) == 0 {
+                    plane.samples[source_y * 2 + source_x]
+                } else {
+                    let next_y = (source_y + 1).min(1);
+                    ((u32::from(plane.samples[source_y * 2 + source_x])
+                        + u32::from(plane.samples[next_y * 2 + source_x])
+                        + 1)
+                        / 2) as u16
+                };
+                assert_eq!(
+                    sample_chroma_plane(&plane, x, y, Some(ChromaSamplePosition::Vertical)),
+                    vertical_expected
+                );
+                assert_eq!(
+                    sample_chroma_plane(&plane, x, y, Some(ChromaSamplePosition::Colocated)),
+                    plane.samples[(y / 2).min(1) * 2 + source_x]
+                );
+            }
+        }
+
+        let yuv422 = PlaneBuffer {
+            layout: PlaneLayout {
+                plane: 1,
+                width: 2,
+                height: 1,
+                subsampling_x: 1,
+                subsampling_y: 0,
+                sample_count: 2,
+            },
+            samples: vec![7, 19],
+        };
+        assert_eq!(sample_chroma_plane(&yuv422, 0, 0, None), 7);
+        assert_eq!(sample_chroma_plane(&yuv422, 1, 0, None), 7);
+        assert_eq!(sample_chroma_plane(&yuv422, 2, 0, None), 19);
+        assert_eq!(sample_chroma_plane(&yuv422, 3, 0, None), 19);
     }
 
     #[test]

@@ -1132,3 +1132,12 @@ The remaining release work is the reproducible integrated filter-order oracle
 and broader format coverage. The public WML2Viewer image/callback gate now
 passes for the supported 8-bit 4:4:4 path; no diagnostic generation may change
 the strict manifest.
+
+On 2026-07-20, `alpha_noispe.avif` gained a permanent FFmpeg pixel oracle:
+the 80x80 RGB comparison reports average absolute error `0.0016` and maximum
+error `2`. Chroma reconstruction also avoids the former four-sample blend for
+the integer-position 4:2:0/4:2:2/4:4:0 cases while preserving the normative
+4:2:0 vertical half-sample rounding; focused tests cover all edge coordinates
+and the 4:2:2 mapping. A five-iteration YUV420 release recheck measured
+`353.13/339.75 ms` (native/RGBA), so this is recorded as an allocation/load
+reduction and no-regression checkpoint rather than a stable speedup claim.
