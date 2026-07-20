@@ -181,6 +181,39 @@ fn segmentation_id_entropy_updates_qindex_for_selected_segment() {
 }
 
 #[test]
+fn segmentation_id_segment_zero_still_consumes_entropy_symbol() {
+    let data = read_sample_avif();
+    let info = parse_avif(&data).unwrap();
+    let sequence_payload = find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
+        .unwrap()
+        .expect("sequence header OBU should exist");
+    let sequence = parse_sequence_header(sequence_payload).unwrap();
+    let frame_payload = find_obu_payload(&info.primary_item_payload, ObuType::Frame)
+        .unwrap()
+        .expect("frame OBU should exist");
+    let mut frame = parse_frame_header(frame_payload, &sequence).unwrap();
+    frame.segmentation = SegmentationParams {
+        enabled: true,
+        update_map: true,
+        temporal_update: false,
+        preskip: false,
+        delta_q: 0,
+        segment_delta_q: [0; 8],
+        segment_delta_lf: [[0; 4]; 8],
+        segment_skip: [false; 8],
+        last_active_segment: 0,
+    };
+    let mut decoder = TileDecoder::new(&[0; 128], &frame).unwrap();
+    let initial_position = decoder.reader.bit_position();
+    let segment_id = decoder
+        .read_segmentation_id(&frame, BlockSize::Block8x8, 0, 0, false)
+        .unwrap();
+
+    assert_eq!(segment_id, 0);
+    assert!(decoder.reader.bit_position() > initial_position);
+}
+
+#[test]
 fn segmentation_skip_forces_skip_before_the_skip_symbol() {
     let data = read_sample_avif();
     let info = parse_avif(&data).unwrap();

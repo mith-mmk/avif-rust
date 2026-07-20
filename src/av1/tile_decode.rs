@@ -262,7 +262,7 @@ impl<'a> TileDecoder<'a> {
         skip: bool,
     ) -> Result<u8, DecoderError> {
         let max_segment = frame.segmentation.last_active_segment;
-        if !frame.segmentation.enabled || !frame.segmentation.update_map || max_segment == 0 {
+        if !frame.segmentation.enabled || !frame.segmentation.update_map {
             return Ok(0);
         }
         let mi_x = x / 4;
