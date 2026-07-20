@@ -745,6 +745,11 @@ optimized `WML2Viewer.avif` recheck measured `302.50/306.33 ms` (native/RGBA),
 which is retained as an allocation-reduction/no-regression measurement rather
 than a stable speedup claim.
 
+A seven-iteration two-sample optimized recheck measured
+`304.41/294.45 ms` (native/RGBA) for the workspace `samples/WML2Viewer.avif`
+and `299.80/299.15 ms` for the nested `test_data` copy. These remain host-
+specific reference points, not a stable cross-run speedup claim.
+
 The same IntrABC fixture is now generated and checked in 4:2:0 as well as
 4:4:4. The 4:2:0 luma plane is exact and chroma remains within the existing
 oracle tolerance (maximum error 4), covering the subsampled block geometry
