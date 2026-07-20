@@ -722,6 +722,8 @@ pub(crate) fn inverse_transform_into(
             inverse_transform_16x16_into(tx_type, dequant, bit_depth, output);
             Ok(())
         }
+        TxSize::Tx32x32 => inverse_transform_32x32_dct_into(dequant, bit_depth, output),
+        TxSize::Tx64x64 => inverse_transform_64x64_dct_into(dequant, bit_depth, output),
         _ => {
             let transformed = inverse_transform(tx_type, tx_size, dequant, bit_depth)?;
             output.copy_from_slice(&transformed);
@@ -1085,14 +1087,29 @@ fn inverse_dct64(input: [i32; 64], range: u8) -> [i32; 64] {
 }
 
 fn inverse_transform_32x32_dct(dequant: &[i32], bit_depth: u8) -> Result<Vec<i32>, DecoderError> {
+    let mut output = vec![0i32; TxSize::Tx32x32.sample_count()];
+    inverse_transform_32x32_dct_into(dequant, bit_depth, &mut output)?;
+    Ok(output)
+}
+
+fn inverse_transform_32x32_dct_into(
+    dequant: &[i32],
+    bit_depth: u8,
+    output: &mut [i32],
+) -> Result<(), DecoderError> {
     if dequant.len() != TxSize::Tx32x32.sample_count() {
         return Err(DecoderError::InvalidParam(
             "AV1 32x32 DCT coefficient count does not match transform size".to_string(),
         ));
     }
+    if output.len() != TxSize::Tx32x32.sample_count() {
+        return Err(DecoderError::InvalidParam(
+            "AV1 32x32 DCT output count does not match transform size".to_string(),
+        ));
+    }
     const SIDE: usize = 32;
     let row_range = bit_depth + 8;
-    let mut intermediate = vec![0i32; SIDE * SIDE];
+    let mut intermediate = [0i32; SIDE * SIDE];
     for row in 0..SIDE {
         let input =
             std::array::from_fn(|column| clamp_signed(dequant[row * SIDE + column], bit_depth + 8));
@@ -1103,7 +1120,6 @@ fn inverse_transform_32x32_dct(dequant: &[i32], bit_depth: u8) -> Result<Vec<i32
     }
 
     let residual_limit = 1i32 << (bit_depth + 7);
-    let mut output = vec![0i32; SIDE * SIDE];
     for column in 0..SIDE {
         let input = std::array::from_fn(|row| clamp_signed(intermediate[row * SIDE + column], 16));
         let transformed = inverse_dct32(input, 16);
@@ -1112,10 +1128,20 @@ fn inverse_transform_32x32_dct(dequant: &[i32], bit_depth: u8) -> Result<Vec<i32
                 round2_signed(transformed[row], 4).clamp(-residual_limit, residual_limit - 1);
         }
     }
-    Ok(output)
+    Ok(())
 }
 
 fn inverse_transform_64x64_dct(dequant: &[i32], bit_depth: u8) -> Result<Vec<i32>, DecoderError> {
+    let mut output = vec![0i32; TxSize::Tx64x64.sample_count()];
+    inverse_transform_64x64_dct_into(dequant, bit_depth, &mut output)?;
+    Ok(output)
+}
+
+fn inverse_transform_64x64_dct_into(
+    dequant: &[i32],
+    bit_depth: u8,
+    output: &mut [i32],
+) -> Result<(), DecoderError> {
     if has_non_zero_outside_tx64_coded_top_left(dequant) {
         return Err(DecoderError::InvalidParam(
             "AV1 64x64 DCT coefficients outside the coded top-left 32x32 area must be zero"
@@ -1127,15 +1153,28 @@ fn inverse_transform_64x64_dct(dequant: &[i32], bit_depth: u8) -> Result<Vec<i32
             "AV1 64x64 DCT coefficient count does not match transform size".to_string(),
         ));
     }
-    Ok(inverse_dct64_staged(dequant, bit_depth))
+    if output.len() != TxSize::Tx64x64.sample_count() {
+        return Err(DecoderError::InvalidParam(
+            "AV1 64x64 DCT output count does not match transform size".to_string(),
+        ));
+    }
+    inverse_dct64_staged_into(dequant, bit_depth, output);
+    Ok(())
 }
 
+#[cfg(test)]
 fn inverse_dct64_staged(dequant: &[i32], bit_depth: u8) -> Vec<i32> {
+    let mut output = vec![0i32; TxSize::Tx64x64.sample_count()];
+    inverse_dct64_staged_into(dequant, bit_depth, &mut output);
+    output
+}
+
+fn inverse_dct64_staged_into(dequant: &[i32], bit_depth: u8, output: &mut [i32]) {
     const SIDE: usize = 64;
     debug_assert_eq!(dequant.len(), SIDE * SIDE);
 
     let row_range = bit_depth + 8;
-    let mut intermediate = vec![0i32; SIDE * SIDE];
+    let mut intermediate = [0i32; SIDE * SIDE];
     for row in 0..SIDE {
         let input =
             std::array::from_fn(|column| clamp_signed(dequant[row * SIDE + column], bit_depth + 8));
@@ -1146,7 +1185,6 @@ fn inverse_dct64_staged(dequant: &[i32], bit_depth: u8) -> Vec<i32> {
     }
 
     let residual_limit = 1i32 << (bit_depth + 7);
-    let mut output = vec![0i32; SIDE * SIDE];
     for column in 0..SIDE {
         let input = std::array::from_fn(|row| clamp_signed(intermediate[row * SIDE + column], 16));
         let transformed = inverse_dct64(input, 16);
@@ -1155,7 +1193,6 @@ fn inverse_dct64_staged(dequant: &[i32], bit_depth: u8) -> Vec<i32> {
                 round2_signed(transformed[row], 4).clamp(-residual_limit, residual_limit - 1);
         }
     }
-    output
 }
 
 fn validate_transform_bit_depth(bit_depth: u8) -> Result<(), DecoderError> {
@@ -2416,13 +2453,19 @@ mod tests {
             (TxSize::Tx4x4, 1),
             (TxSize::Tx8x8, 9),
             (TxSize::Tx16x16, 33),
+            (TxSize::Tx32x32, 65),
+            (TxSize::Tx64x64, 129),
         ] {
             let mut coefficients = vec![0; tx_size.sample_count()];
             coefficients[coefficient_index] = 37;
-            let expected = inverse_transform(TxType::AdstDct, tx_size, &coefficients, 8).unwrap();
+            let tx_type = if matches!(tx_size, TxSize::Tx32x32 | TxSize::Tx64x64) {
+                TxType::DctDct
+            } else {
+                TxType::AdstDct
+            };
+            let expected = inverse_transform(tx_type, tx_size, &coefficients, 8).unwrap();
             let mut actual = vec![0; tx_size.sample_count()];
-            inverse_transform_into(TxType::AdstDct, tx_size, &coefficients, 8, &mut actual)
-                .unwrap();
+            inverse_transform_into(tx_type, tx_size, &coefficients, 8, &mut actual).unwrap();
             assert_eq!(actual, expected, "{tx_size:?}");
         }
     }

@@ -730,6 +730,12 @@ the same allocating-vs-scratch equivalence test. A follow-up optimized
 `WML2Viewer.avif`; this remains a local checkpoint under host scheduling
 variance.
 
+The reusable residual path now also covers the staged 32x32 and 64x64 DCT
+dispatches; sparse 32/64 output is checked against the allocating path. A
+follow-up optimized 10-iteration run measured `305.46/303.99 ms`
+(native/RGBA) for `WML2Viewer.avif`. The result is retained as a local
+checkpoint, not as a cross-machine speedup claim.
+
 - [x] Add malformed/truncated coverage for the currently supported container,
       OBU, entropy and metadata paths.
 - [ ] Add malformed/truncated cases for each future syntax path as it becomes
