@@ -147,6 +147,69 @@ fn avis_container_exposes_track_samples_without_concatenating_obus() {
 }
 
 #[test]
+fn generated_avis_exposes_inter_and_show_existing_reference_samples() {
+    let root =
+        std::env::temp_dir().join(format!(".test-avif-avis-reference-{}", std::process::id()));
+    std::fs::create_dir_all(&root).expect("temporary AVIS reference directory should be creatable");
+    let output = root.join("reference-sequence.avif");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .args(["-f", "lavfi", "-i", "testsrc2=size=64x64:rate=30"])
+        .args(["-frames:v", "60", "-c:v", "libaom-av1"])
+        .args([
+            "-still-picture",
+            "0",
+            "-g",
+            "60",
+            "-lag-in-frames",
+            "25",
+            "-auto-alt-ref",
+            "1",
+            "-f",
+            "avif",
+        ])
+        .arg(&output)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated AVIS reference sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom AVIS encoder is unavailable; skipping reference sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let data = std::fs::read(&output).expect("generated AVIS reference sample should be readable");
+    let info = parse_avif(&data).expect("generated AVIS reference metadata should parse");
+    assert_eq!(&info.major_brand, b"avis");
+    assert_eq!(info.sequence_sample_payloads.len(), 60);
+    let kinds: Vec<_> = info
+        .sequence_sample_payloads
+        .iter()
+        .map(|payload| classify_av1_sequence_sample(payload).unwrap())
+        .collect();
+    assert!(matches!(
+        kinds.first(),
+        Some(Some(AvifSequenceSampleKind::Key))
+    ));
+    assert!(
+        kinds
+            .iter()
+            .any(|kind| matches!(kind, Some(AvifSequenceSampleKind::Inter)))
+    );
+    assert!(
+        kinds
+            .iter()
+            .any(|kind| { matches!(kind, Some(AvifSequenceSampleKind::ShowExisting { .. })) })
+    );
+    let frame = avif_rust::decode_frame_bytes(&data)
+        .expect("primary AVIS reference sample should still decode");
+    assert_eq!((frame.width, frame.height), (64, 64));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn external_avis_sequence_exposes_all_track_samples_when_present() {
     let path = sample_path("star-8bpc.avifs");
     if !path.is_file() {

@@ -734,6 +734,11 @@ payloads as opaque. Reference slots now share one decoded frame through `Arc`
 when multiple refresh flags target the same frame, avoiding up to eight full
 frame clones while reference-backed reconstruction is being expanded.
 
+The generated AVIS audit now includes a 64x64, 60-frame libaom sequence with
+lagged alternate references. Its 60 track samples include both Inter frame
+OBUs and `show_existing_frame` headers, and the test asserts those kinds while
+still decoding the primary Key sample through the public still-image API.
+
 Loop restoration now also swaps a reusable output buffer across enabled planes
 instead of allocating a fresh `source.clone()` for each plane. A seven-iteration
 optimized `WML2Viewer.avif` recheck measured `302.50/306.33 ms` (native/RGBA),
