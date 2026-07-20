@@ -678,6 +678,12 @@ three iterations: `WML2Viewer.avif` measured `306.37/305.48 ms` (native/RGBA)
 and the 128x128 alpha sample measured `2.93/3.23 ms`. The short run is kept as
 a fresh reference point only; it is not treated as a stable speedup claim.
 
+The generated conformance set now also covers a two-stream 10-bit AVIF with a
+10-bit grayscale alpha item. Native Y/U/V/alpha planes are compared against
+FFmpeg's 10-bit outputs, and the public RGBA path checks the down-converted
+alpha channel. This closes a previously unexercised high-bit-depth auxiliary
+item combination while keeping the existing external alpha fixtures intact.
+
 On 2026-07-20, coefficient decoding began returning its owned level buffer to
 the decoder scratch after reconstruction; only the public diagnostic luma
 capture retains it. The scratch-transfer regression test confirms that two

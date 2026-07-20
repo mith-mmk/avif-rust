@@ -143,6 +143,14 @@ fn imagemagick_decode_rgba(path: &Path, width: usize, height: usize) -> Option<V
 }
 
 fn ffmpeg_decode_raw(path: &Path, pixel_format: &str) -> Option<Vec<u8>> {
+    ffmpeg_decode_raw_stream(path, 0, pixel_format)
+}
+
+fn ffmpeg_decode_raw_stream(
+    path: &Path,
+    stream_index: usize,
+    pixel_format: &str,
+) -> Option<Vec<u8>> {
     let executable = std::env::var_os("AVIF_FFMPEG")
         .map(std::path::PathBuf::from)
         .filter(|path| path.is_file())
@@ -159,6 +167,8 @@ fn ffmpeg_decode_raw(path: &Path, pixel_format: &str) -> Option<Vec<u8>> {
         .arg("-i")
         .arg(path)
         .args([
+            "-map",
+            &format!("0:{stream_index}"),
             "-frames:v",
             "1",
             "-f",
@@ -1103,6 +1113,119 @@ fn generated_12bit_sample_decodes_without_post_filter_overflow() {
             "12-bit FFmpeg RGB error average={} max={}",
             metrics.average_rgb_abs,
             metrics.max_rgb_abs
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn generated_10bit_alpha_sample_decodes_native_and_rgba_when_encoder_present() {
+    let root = std::env::temp_dir().join(format!(".test-avif-alpha10-{}", std::process::id()));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary AVIF alpha directory: {err}");
+    }
+    let output_path = root.join("generated-alpha10.avif");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .args(["-f", "lavfi", "-i", "testsrc2=size=128x128:rate=1"])
+        .args(["-f", "lavfi", "-i", "color=gray:size=128x128:rate=1"])
+        .args([
+            "-filter_complex",
+            "[0:v]format=yuv444p10le[color];[1:v]format=gray10le[alpha]",
+            "-map",
+            "[color]",
+            "-map",
+            "[alpha]",
+            "-frames:v",
+            "1",
+            "-c:v",
+            "libaom-av1",
+            "-still-picture",
+            "1",
+            "-crf",
+            "0",
+            "-b:v",
+            "0",
+            "-pix_fmt:v:0",
+            "yuv444p10le",
+            "-pix_fmt:v:1",
+            "gray10le",
+            "-f",
+            "avif",
+        ])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated 10-bit alpha sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom 10-bit alpha encoder is unavailable; skipping generated sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let data = std::fs::read(&output_path).expect("generated 10-bit alpha AVIF should be readable");
+    let frame = avif_rust::decode_frame_bytes(&data).expect("10-bit alpha frame should decode");
+    assert_eq!((frame.width, frame.height), (128, 128));
+    assert_eq!(frame.bit_depth, 10);
+    assert_eq!(frame.buffers.planes.len(), 4);
+    assert_eq!(frame.buffers.planes[3].layout.plane, 3);
+    assert_eq!(frame.buffers.planes[3].samples.len(), 128 * 128);
+    let image =
+        avif_rust::image_from_bytes(&data).expect("10-bit alpha public decode should succeed");
+    assert_eq!((image.width, image.height), (128, 128));
+    if let Some(expected_planes) = ffmpeg_decode_raw_stream(&output_path, 0, "yuv444p10le") {
+        let expected: Vec<u16> = expected_planes
+            .chunks_exact(2)
+            .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]) & 0x03ff)
+            .collect();
+        let plane_len = 128 * 128;
+        for plane_index in 0..3 {
+            let max_error = frame.buffers.planes[plane_index]
+                .samples
+                .iter()
+                .zip(&expected[plane_index * plane_len..(plane_index + 1) * plane_len])
+                .map(|(actual, expected)| actual.abs_diff(*expected))
+                .max()
+                .unwrap_or(0);
+            assert!(
+                max_error <= 16,
+                "10-bit alpha color plane {plane_index} max error was {max_error}"
+            );
+        }
+    }
+    if let Some(expected_alpha_bytes) = ffmpeg_decode_raw_stream(&output_path, 1, "gray10le") {
+        let expected_alpha: Vec<u16> = expected_alpha_bytes
+            .chunks_exact(2)
+            .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]) & 0x03ff)
+            .collect();
+        let max_native_error = frame.buffers.planes[3]
+            .samples
+            .iter()
+            .zip(&expected_alpha)
+            .map(|(actual, expected)| actual.abs_diff(*expected))
+            .max()
+            .unwrap_or(0);
+        assert!(
+            max_native_error <= 16,
+            "10-bit alpha native max error was {max_native_error}"
+        );
+        let expected_alpha8 = expected_alpha
+            .iter()
+            .map(|sample| u8::try_from((*sample + 2) >> 2).unwrap())
+            .collect::<Vec<_>>();
+        let max_error = image
+            .rgba
+            .chunks_exact(4)
+            .map(|rgba| rgba[3])
+            .zip(expected_alpha8)
+            .map(|(actual, expected)| actual.abs_diff(expected))
+            .max()
+            .unwrap_or(0);
+        assert!(
+            max_error <= 1,
+            "10-bit alpha public max error was {max_error}"
         );
     }
     let _ = std::fs::remove_dir_all(&root);
