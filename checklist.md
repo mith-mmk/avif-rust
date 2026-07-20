@@ -645,6 +645,10 @@ post-parse budget was 855 bits beyond the 650-byte primary tile payload).
 The conformance test requires this exact bitstream error and rejects
 returning a partial image. This keeps the sample available for the next
 restoration/CDF parity fix without weakening the strict oracle.
+An instrumented validation-bypass probe also produced a PNG whose raw RGB
+comparison differed from FFmpeg (average absolute error about `15.67`, maximum
+channel error `253`), so treating the failure as padding-only would be
+incorrect.
 
 The decode benchmark now accepts `AVIF_BENCH_SAMPLES` as a semicolon-separated
 list while retaining `AVIF_BENCH_SAMPLE` for one-off runs. Each sample is
