@@ -1234,6 +1234,82 @@ fn generated_10bit_alpha_sample_decodes_native_and_rgba_when_encoder_present() {
 }
 
 #[test]
+fn generated_intrabc_sample_matches_ffmpeg_when_encoder_present() {
+    let root = std::env::temp_dir().join(format!(".test-avif-intrabc-{}", std::process::id()));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary IntrABC sample directory: {err}");
+    }
+    let output_path = root.join("intrabc.avif");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .args(["-f", "lavfi", "-i", "testsrc2=size=128x128:rate=1"])
+        .args([
+            "-frames:v",
+            "1",
+            "-c:v",
+            "libaom-av1",
+            "-still-picture",
+            "1",
+            "-crf",
+            "18",
+            "-cpu-used",
+            "8",
+            "-pix_fmt",
+            "yuv444p",
+            "-aom-params",
+            "sb-size=128:enable-intrabc=1:enable-cdef=0:enable-restoration=0",
+            "-f",
+            "avif",
+        ])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated IntrABC sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom IntrABC encoder is unavailable; skipping generated sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let data = std::fs::read(&output_path).expect("generated IntrABC AVIF should be readable");
+    let frame = avif_rust::decode_frame_bytes(&data).expect("IntrABC AVIF should decode");
+    assert_eq!((frame.width, frame.height), (128, 128));
+    let image = avif_rust::image_from_bytes(&data).expect("IntrABC public decode should succeed");
+    assert_eq!((image.width, image.height), (128, 128));
+    if let Some(expected) = ffmpeg_decode_raw(&output_path, "yuv444p") {
+        assert_eq!(expected.len(), 128 * 128 * 3);
+        for (plane_index, actual_plane) in frame.buffers.planes.iter().take(3).enumerate() {
+            let start = plane_index * 128 * 128;
+            let expected_plane = &expected[start..start + 128 * 128];
+            let max_error = actual_plane
+                .samples
+                .iter()
+                .zip(expected_plane)
+                .map(|(actual, expected)| u8::try_from(*actual).unwrap().abs_diff(*expected))
+                .max()
+                .unwrap_or(0);
+            let average_error = actual_plane
+                .samples
+                .iter()
+                .zip(expected_plane)
+                .map(|(actual, expected)| {
+                    f64::from(u8::try_from(*actual).unwrap().abs_diff(*expected))
+                })
+                .sum::<f64>()
+                / (128 * 128) as f64;
+            eprintln!("IntrABC plane {plane_index}: average={average_error} max={max_error}");
+            assert!(
+                average_error <= 2.0 && max_error <= 32,
+                "IntrABC plane {plane_index}: average={average_error} max={max_error}"
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn generated_12bit_rect_partition_sample_matches_ffmpeg_when_encoder_present() {
     let root = std::env::temp_dir().join(format!(".test-avif-12bit-rect-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {

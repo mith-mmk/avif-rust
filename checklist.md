@@ -684,6 +684,12 @@ FFmpeg's 10-bit outputs, and the public RGBA path checks the down-converted
 alpha channel. This closes a previously unexercised high-bit-depth auxiliary
 item combination while keeping the existing external alpha fixtures intact.
 
+The generated conformance set now includes a 128x128 libaom AV1 IntrABC
+sample with CDEF and restoration disabled. Native Y/U/V planes match FFmpeg's
+`yuv444p` output exactly, and the public RGBA path completes successfully.
+This proves the currently supported low-complexity IntrABC syntax path while
+the high-complexity reference/transform cases remain an explicit follow-up.
+
 On 2026-07-20, coefficient decoding began returning its owned level buffer to
 the decoder scratch after reconstruction; only the public diagnostic luma
 capture retains it. The scratch-transfer regression test confirms that two
