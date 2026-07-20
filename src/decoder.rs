@@ -367,12 +367,22 @@ fn decode_sequence_samples_from_info(
         .iter()
         .find(|obu| obu.obu_type == ObuType::SequenceHeader)
         .ok_or_else(|| DecoderError::Bitstream("AV1 sequence header OBU is missing".to_string()))?;
+    // Classify the requested range before decoding any frame. Besides making
+    // the unsupported boundary deterministic, this avoids doing full Key/
+    // IntraOnly reconstruction only to discover a later Inter/Switch sample.
+    let kinds: Vec<_> = samples
+        .iter()
+        .enumerate()
+        .take(stop_index + 1)
+        .map(|(index, sample)| {
+            classify_av1_sequence_sample(sample)?.ok_or_else(|| {
+                DecoderError::Bitstream(format!("AVIS sample {index} has no coded frame OBU"))
+            })
+        })
+        .collect::<Result<_, _>>()?;
     let mut references = FrameReferenceSlots::default();
     let mut frames = Vec::new();
-    for (index, sample) in samples.iter().enumerate().take(stop_index + 1) {
-        let kind = classify_av1_sequence_sample(sample)?.ok_or_else(|| {
-            DecoderError::Bitstream(format!("AVIS sample {index} has no coded frame OBU"))
-        })?;
+    for ((index, sample), kind) in samples.iter().enumerate().take(stop_index + 1).zip(kinds) {
         match kind {
             AvifSequenceSampleKind::Key | AvifSequenceSampleKind::IntraOnly => {
                 let payload = sample_payload_with_sequence_header(sequence_obu, sample)?;

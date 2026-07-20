@@ -760,6 +760,12 @@ Inter/Switch sequences still fail before callback initialization, so callers
 cannot observe a partial animation. The generated four-frame fixture records
 the callback dimensions, animation flag, frame count and identical RGBA bytes.
 
+AVIS batch/index decoding now classifies the requested sample range before
+reconstructing any frame. A later Inter/Switch sample therefore exits without
+spending decode work on earlier Key/IntraOnly samples, while indexed requests
+still stop at their requested frame. The existing external fail-closed test
+continues to assert that no partial output is returned.
+
 The progressive `draw_points_idat_progressive.avif` sample now has a pixel
 oracle as well: FFmpeg rejects its progressive `idat` layout, so the test uses
 ImageMagick's AVIF decoder and records average RGB error `0.2222`, maximum `1`.
@@ -812,8 +818,9 @@ the scalar conversion. Five-iteration release checkpoints measured
 `368.54/402.55 ms` for the external 10-bit YUV444 sample and
 `409.36/412.21 ms` for the 12-bit YUV444 sample; these are host-specific
 no-regression references, not a stable speedup claim.
-A generated 64x64 10-bit YUV420 AVIF now exercises the subsampled high-bit
-path against FFmpeg as well (average RGB error `1.4538`, maximum `38`).
+A generated 64x64 10-bit YUV420 and YUV422 AVIF now exercise the subsampled
+high-bit path against FFmpeg as well: YUV420 average/max RGB error `1.4538/38`,
+YUV422 `1.1789/10`.
 
 The same IntrABC fixture is now generated and checked in 4:2:0 as well as
 4:4:4. The 4:2:0 luma plane is exact and chroma remains within the existing
