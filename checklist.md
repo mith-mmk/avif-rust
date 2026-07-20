@@ -999,8 +999,15 @@ same-host baseline confirms a stable speedup.
       an allocation-reduction/no-regression checkpoint under host scheduling
       variance. A monochrome 7-iteration check measured `74.56/78.10 ms`
       (native/RGBA) on the same host.
-- [ ] Add SIMD/parallel paths only with scalar equivalence and Wasm fallback
-      tests.
+- [x] Add a native scoped-thread row path for large RGBA8/RGBA16 and identity
+      conversions, retaining the sequential path below the 256K-pixel
+      threshold and on Wasm. The 640x512 row-partition test compares the
+      parallel-capable path with a scalar reference; a generated 10-bit 4:2:0
+      sample now exercises the high-bit subsampled conversion after the change.
+      The 2026-07-20 11-iteration release check measured `321.29/308.04 ms`
+      (native/RGBA) for `WML2Viewer.avif` and `342.29/366.87 ms` for the
+      external YUV420 sample; retain these as host-specific no-regression
+      checkpoints, not stable speedup claims.
 
 Required validation after every implementation step:
 

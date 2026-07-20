@@ -920,6 +920,102 @@ fn generated_log_sqrt_transfer_sample_matches_ffmpeg_when_encoder_present() {
 }
 
 #[test]
+fn generated_10bit_yuv420_sample_matches_ffmpeg_when_encoder_present() {
+    let root = std::env::temp_dir().join(format!(".test-avif-10bit420-{}", std::process::id()));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary 10-bit AVIF sample directory: {err}");
+    }
+    let output_path = root.join("yuv420-10bit.avif");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .arg("-i")
+        .arg(sample_path("WML2Viewer.png"))
+        .args([
+            "-vf",
+            "scale=96:80:flags=neighbor,format=yuv420p10le",
+            "-frames:v",
+            "1",
+            "-c:v",
+            "libaom-av1",
+            "-still-picture",
+            "1",
+            "-crf",
+            "0",
+            "-cpu-used",
+            "8",
+            "-pix_fmt",
+            "yuv420p10le",
+            "-colorspace",
+            "bt709",
+            "-color_primaries",
+            "bt709",
+            "-color_trc",
+            "bt709",
+            "-color_range",
+            "tv",
+            "-f",
+            "avif",
+        ])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated 10-bit 4:2:0 sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom 10-bit 4:2:0 encoder is unavailable; skipping generated sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+
+    let data = std::fs::read(&output_path).expect("generated 10-bit 4:2:0 AVIF should be readable");
+    let frame =
+        avif_rust::decode_frame_bytes(&data).expect("generated 10-bit 4:2:0 frame should decode");
+    assert_eq!((frame.width, frame.height), (96, 80));
+    assert_eq!(frame.bit_depth, 10);
+    assert_eq!(frame.buffers.planes.len(), 3);
+    assert_eq!(
+        frame.buffers.planes[0].samples.len(),
+        96 * 80,
+        "10-bit 4:2:0 luma plane"
+    );
+    assert_eq!(
+        frame.buffers.planes[1].samples.len(),
+        48 * 40,
+        "10-bit 4:2:0 U plane"
+    );
+    assert_eq!(
+        frame.buffers.planes[2].samples.len(),
+        48 * 40,
+        "10-bit 4:2:0 V plane"
+    );
+    let actual = frame
+        .to_rgba8()
+        .expect("generated 10-bit 4:2:0 RGBA conversion should succeed");
+    assert_eq!((actual.width, actual.height), (96, 80));
+    if let Some(expected) = ffmpeg_decode_rgba_with_filter(
+        &output_path,
+        96,
+        80,
+        "zscale=matrixin=709:transferin=709:primariesin=709:rangein=limited:matrix=709:transfer=709:primaries=709:range=full,format=rgba",
+    ) {
+        let metrics = diff_rgb_dynamic(&actual.rgba, &expected);
+        eprintln!(
+            "generated 10-bit 4:2:0: average RGB absolute error={} max={}",
+            metrics.average_rgb_abs, metrics.max_rgb_abs
+        );
+        assert!(
+            metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 48,
+            "generated 10-bit 4:2:0 FFmpeg RGB error average={} max={}",
+            metrics.average_rgb_abs,
+            metrics.max_rgb_abs
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn generated_chroma_sample_positions_match_ffmpeg_when_encoder_present() {
     let root =
         std::env::temp_dir().join(format!(".test-avif-chroma-position-{}", std::process::id()));

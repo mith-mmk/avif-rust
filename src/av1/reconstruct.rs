@@ -199,6 +199,51 @@ pub fn frame_buffers_to_identity_rgba_8(
     frame_buffers_to_identity_rgba_8_fast(buffers)
 }
 
+#[cfg(not(target_family = "wasm"))]
+const PARALLEL_RGBA_MIN_PIXELS: usize = 256 * 1024;
+#[cfg(not(target_family = "wasm"))]
+const MAX_RGBA_WORKERS: usize = 8;
+
+fn for_each_rgba_row_chunk<T, F>(rgba: &mut [T], width: usize, height: usize, function: F)
+where
+    T: Send,
+    F: Fn(usize, &mut [T]) + Sync,
+{
+    if width == 0 || height == 0 {
+        return;
+    }
+    #[cfg(not(target_family = "wasm"))]
+    let workers = if width.saturating_mul(height) < PARALLEL_RGBA_MIN_PIXELS {
+        1
+    } else {
+        std::thread::available_parallelism()
+            .map_or(1, std::num::NonZeroUsize::get)
+            .min(MAX_RGBA_WORKERS)
+            .min(height)
+    };
+    #[cfg(target_family = "wasm")]
+    let workers = 1;
+    if workers <= 1 {
+        function(0, rgba);
+        return;
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    let rows_per_worker = height.div_ceil(workers);
+    #[cfg(not(target_family = "wasm"))]
+    let samples_per_chunk = rows_per_worker.saturating_mul(width).saturating_mul(4);
+    #[cfg(not(target_family = "wasm"))]
+    std::thread::scope(|scope| {
+        for (chunk_index, chunk) in rgba.chunks_mut(samples_per_chunk).enumerate() {
+            let first_row = chunk_index * rows_per_worker;
+            let function = &function;
+            scope.spawn(move || function(first_row, chunk));
+        }
+    });
+    #[cfg(target_family = "wasm")]
+    unreachable!("Wasm uses the sequential RGBA row path");
+}
+
 fn frame_buffers_to_identity_rgba_8_fast(
     buffers: &FrameBuffers,
 ) -> Result<ImageBuffer, DecoderError> {
@@ -216,19 +261,23 @@ fn frame_buffers_to_identity_rgba_8_fast(
     let plane_b = &buffers.planes[1].samples;
     let plane_r = &buffers.planes[2].samples;
     let mut rgba = vec![0u8; buffers.width * buffers.height * 4];
-    for (index, pixel) in rgba.chunks_exact_mut(4).enumerate() {
-        pixel[0] = plane_r[index] as u8;
-        pixel[1] = plane_g[index] as u8;
-        pixel[2] = plane_b[index] as u8;
-        pixel[3] = u8::try_from(
-            buffers
-                .planes
-                .get(3)
-                .map(|plane| plane.samples[index])
-                .unwrap_or(u16::MAX),
-        )
-        .unwrap_or(u8::MAX);
-    }
+    let alpha = buffers.planes.get(3).map(|plane| plane.samples.as_slice());
+    for_each_rgba_row_chunk(
+        &mut rgba,
+        buffers.width,
+        buffers.height,
+        |first_row, chunk| {
+            for (local_index, pixel) in chunk.chunks_exact_mut(4).enumerate() {
+                let index = first_row * buffers.width + local_index;
+                pixel[0] = plane_r[index] as u8;
+                pixel[1] = plane_g[index] as u8;
+                pixel[2] = plane_b[index] as u8;
+                pixel[3] = alpha
+                    .and_then(|samples| samples.get(index).copied())
+                    .map_or(u8::MAX, |sample| u8::try_from(sample).unwrap_or(u8::MAX));
+            }
+        },
+    );
     Ok(ImageBuffer {
         width: buffers.width,
         height: buffers.height,
@@ -386,22 +435,32 @@ fn frame_buffers_to_rgba_8_high_bit_sdr(
             return Ok(None);
         };
         let alpha = buffers.planes.get(3);
-        for (index, pixel) in rgba.chunks_exact_mut(4).enumerate() {
-            let rgb = yuv_to_rgb_u16_fast(
-                plane_y.samples[index],
-                plane_u.samples[index],
-                plane_v.samples[index],
-                fast_range,
-                kr as f32,
-                kb as f32,
-            );
-            pixel[0] = u16_to_u8(rgb[0]);
-            pixel[1] = u16_to_u8(rgb[1]);
-            pixel[2] = u16_to_u8(rgb[2]);
-            pixel[3] = alpha
-                .map(|plane| u16_to_u8(scale_sample_to_u16(plane.samples[index], max_source)))
-                .unwrap_or(u8::MAX);
-        }
+        for_each_rgba_row_chunk(
+            &mut rgba,
+            buffers.width,
+            buffers.height,
+            |first_row, chunk| {
+                for (local_index, pixel) in chunk.chunks_exact_mut(4).enumerate() {
+                    let index = first_row * buffers.width + local_index;
+                    let rgb = yuv_to_rgb_u16_fast(
+                        plane_y.samples[index],
+                        plane_u.samples[index],
+                        plane_v.samples[index],
+                        fast_range,
+                        kr as f32,
+                        kb as f32,
+                    );
+                    pixel[0] = u16_to_u8(rgb[0]);
+                    pixel[1] = u16_to_u8(rgb[1]);
+                    pixel[2] = u16_to_u8(rgb[2]);
+                    pixel[3] = alpha
+                        .map(|plane| {
+                            u16_to_u8(scale_sample_to_u16(plane.samples[index], max_source))
+                        })
+                        .unwrap_or(u8::MAX);
+                }
+            },
+        );
         return Ok(Some(ImageBuffer {
             width: buffers.width,
             height: buffers.height,
@@ -498,22 +557,30 @@ fn frame_buffers_to_rgba_8_sdr(
             unreachable!("direct YUV444 path requires a YUV matrix");
         };
         let alpha = buffers.planes.get(3);
-        for (index, pixel) in rgba.chunks_exact_mut(4).enumerate() {
-            let rgb = yuv_to_rgb_u16_fast(
-                plane_y.samples[index],
-                plane_u.samples[index],
-                plane_v.samples[index],
-                fast_range,
-                kr as f32,
-                kb as f32,
-            );
-            pixel[0] = u16_to_u8(rgb[0]);
-            pixel[1] = u16_to_u8(rgb[1]);
-            pixel[2] = u16_to_u8(rgb[2]);
-            pixel[3] = alpha
-                .map(|plane| u16_to_u8(scale_sample_to_u16(plane.samples[index], 255)))
-                .unwrap_or(u8::MAX);
-        }
+        for_each_rgba_row_chunk(
+            &mut rgba,
+            buffers.width,
+            buffers.height,
+            |first_row, chunk| {
+                for (local_index, pixel) in chunk.chunks_exact_mut(4).enumerate() {
+                    let index = first_row * buffers.width + local_index;
+                    let rgb = yuv_to_rgb_u16_fast(
+                        plane_y.samples[index],
+                        plane_u.samples[index],
+                        plane_v.samples[index],
+                        fast_range,
+                        kr as f32,
+                        kb as f32,
+                    );
+                    pixel[0] = u16_to_u8(rgb[0]);
+                    pixel[1] = u16_to_u8(rgb[1]);
+                    pixel[2] = u16_to_u8(rgb[2]);
+                    pixel[3] = alpha
+                        .map(|plane| u16_to_u8(scale_sample_to_u16(plane.samples[index], 255)))
+                        .unwrap_or(u8::MAX);
+                }
+            },
+        );
         return Ok(ImageBuffer {
             width: buffers.width,
             height: buffers.height,
@@ -693,18 +760,26 @@ pub fn frame_buffers_to_rgba_16(
             let plane_u = plane_u.expect("direct YUV444 path requires U plane");
             let plane_v = plane_v.expect("direct YUV444 path requires V plane");
             let (kr, kb) = fast_yuv_coefficients.expect("YUV matrix was checked above");
-            for (index, pixel) in rgba.chunks_exact_mut(4).enumerate() {
-                let rgb = yuv_to_rgb_u16_fast(
-                    plane_y.samples[index],
-                    plane_u.samples[index],
-                    plane_v.samples[index],
-                    fast_range,
-                    kr,
-                    kb,
-                );
-                pixel[..3].copy_from_slice(&rgb);
-                pixel[3] = u16::MAX;
-            }
+            for_each_rgba_row_chunk(
+                &mut rgba,
+                buffers.width,
+                buffers.height,
+                |first_row, chunk| {
+                    for (local_index, pixel) in chunk.chunks_exact_mut(4).enumerate() {
+                        let index = first_row * buffers.width + local_index;
+                        let rgb = yuv_to_rgb_u16_fast(
+                            plane_y.samples[index],
+                            plane_u.samples[index],
+                            plane_v.samples[index],
+                            fast_range,
+                            kr,
+                            kb,
+                        );
+                        pixel[..3].copy_from_slice(&rgb);
+                        pixel[3] = u16::MAX;
+                    }
+                },
+            );
         } else {
             for y in 0..buffers.height {
                 for x in 0..buffers.width {
@@ -1313,6 +1388,31 @@ mod tests {
         add_residual_to_prediction_into(&prediction, &residual, 8, &mut actual).unwrap();
 
         assert_eq!(actual, expected.as_slice());
+    }
+
+    #[test]
+    fn parallel_rgba_row_chunks_match_sequential_layout() {
+        let width = 640;
+        let height = 512;
+        let mut actual = vec![0u16; width * height * 4];
+        for_each_rgba_row_chunk(&mut actual, width, height, |first_row, chunk| {
+            for (local_index, pixel) in chunk.chunks_exact_mut(4).enumerate() {
+                let index = first_row * width + local_index;
+                pixel[0] = (index & 0xffff) as u16;
+                pixel[1] = (index >> 4) as u16;
+                pixel[2] = (index >> 8) as u16;
+                pixel[3] = u16::MAX;
+            }
+        });
+
+        let mut expected = vec![0u16; width * height * 4];
+        for (index, pixel) in expected.chunks_exact_mut(4).enumerate() {
+            pixel[0] = (index & 0xffff) as u16;
+            pixel[1] = (index >> 4) as u16;
+            pixel[2] = (index >> 8) as u16;
+            pixel[3] = u16::MAX;
+        }
+        assert_eq!(actual, expected);
     }
 
     #[test]
