@@ -66,9 +66,8 @@ impl<'a> TileDecoder<'a> {
             }
             let source = self
                 .cdf
-                .partition_cdf_mut(block_size.width_mi_log2(), context)
-                .to_vec();
-            let mut cdf = restricted_partition_cdf(&source, has_rows, block_size);
+                .partition_cdf_mut(block_size.width_mi_log2(), context);
+            let mut cdf = restricted_partition_cdf(source, has_rows, block_size);
             let symbol = self.reader.read_symbol(&mut cdf)?;
             let partition = if symbol == 0 {
                 if has_rows {

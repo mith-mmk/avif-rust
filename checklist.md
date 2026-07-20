@@ -652,6 +652,20 @@ still-image API continues to select the primary item. The next fixture must
 exercise reference state across those samples rather than another single-item
 still sample.
 
+The AVIS sample-table path is now covered by both a generated eight-frame
+sequence and the external `star-8bpc.avifs` five-sample sequence. Each track
+sample is parsed as an independent OBU stream, while the public still-image
+API continues to decode only the primary item; later inter/MV samples remain
+an explicit fail-closed boundary until reference-backed reconstruction lands.
+
+On 2026-07-20, edge-partition CDF restriction stopped cloning a heap `Vec` for
+each boundary partition and deblock edge de-duplication now uses sorted
+adjacent keys instead of a per-frame `HashSet`. CDEF chroma source storage and
+palette cache merging also reuse stack/caller-owned storage. The optimized
+decode benchmark remained host-noisy (roughly 300--325 ms native and
+295--322 ms RGBA in seven-iteration runs), so this checkpoint is recorded as
+allocation reduction/no-regression rather than a stable speedup claim.
+
 The segmentation map reader now follows the normative symbol consumption even
 when `last_active_segment == 0`: segment 0 is still decoded from the full
 8-symbol CDF before negative deinterleaving. A focused regression test pins the

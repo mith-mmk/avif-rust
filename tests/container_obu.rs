@@ -130,6 +130,27 @@ fn avis_container_exposes_track_samples_without_concatenating_obus() {
 }
 
 #[test]
+fn external_avis_sequence_exposes_all_track_samples_when_present() {
+    let path = sample_path("star-8bpc.avifs");
+    if !path.is_file() {
+        eprintln!("external AVIS sequence sample is unavailable; skipping track audit");
+        return;
+    }
+    let data = std::fs::read(&path).expect("external AVIS sequence should be readable");
+    let info = parse_avif(&data).expect("external AVIS metadata should parse");
+    assert_eq!(&info.major_brand, b"avis");
+    assert_eq!(info.sequence_sample_payloads.len(), 5);
+    assert_eq!(info.sequence_sample_payloads[0], info.primary_item_payload);
+    for payload in &info.sequence_sample_payloads {
+        assert!(
+            !parse_obu_stream(payload)
+                .expect("external AVIS sample should be independently framed")
+                .is_empty()
+        );
+    }
+}
+
+#[test]
 fn public_parsers_reject_truncated_and_malformed_headers() {
     let err = parse_avif(&[0, 0, 0]).unwrap_err();
     assert!(matches!(err, DecoderError::NotEnoughData(message) if message.contains("box header")));

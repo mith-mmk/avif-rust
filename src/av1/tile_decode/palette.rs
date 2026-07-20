@@ -103,8 +103,34 @@ pub(super) fn palette_colors_at_mi(
     grid[mi_row * mi_cols + mi_col].as_deref()
 }
 
-pub(super) fn merge_palette_cache(above: Option<&[u16]>, left: Option<&[u16]>) -> Vec<u16> {
-    let mut cache = Vec::with_capacity(PALETTE_MAX_SIZE * 2);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct PaletteCache {
+    values: [u16; PALETTE_MAX_SIZE * 2],
+    len: usize,
+}
+
+impl PaletteCache {
+    fn new() -> Self {
+        Self {
+            values: [0; PALETTE_MAX_SIZE * 2],
+            len: 0,
+        }
+    }
+
+    fn as_slice(&self) -> &[u16] {
+        &self.values[..self.len]
+    }
+
+    fn push_unique(&mut self, color: u16) {
+        if self.as_slice().last().copied() != Some(color) && self.len < self.values.len() {
+            self.values[self.len] = color;
+            self.len += 1;
+        }
+    }
+}
+
+pub(super) fn merge_palette_cache(above: Option<&[u16]>, left: Option<&[u16]>) -> PaletteCache {
+    let mut cache = PaletteCache::new();
     let mut above_index = 0usize;
     let mut left_index = 0usize;
     let above = above.unwrap_or(&[]);
@@ -113,10 +139,10 @@ pub(super) fn merge_palette_cache(above: Option<&[u16]>, left: Option<&[u16]>) -
         let above_color = above[above_index];
         let left_color = left[left_index];
         if left_color < above_color {
-            push_unique_palette_cache(&mut cache, left_color);
+            cache.push_unique(left_color);
             left_index += 1;
         } else {
-            push_unique_palette_cache(&mut cache, above_color);
+            cache.push_unique(above_color);
             above_index += 1;
             if left_color == above_color {
                 left_index += 1;
@@ -124,20 +150,14 @@ pub(super) fn merge_palette_cache(above: Option<&[u16]>, left: Option<&[u16]>) -
         }
     }
     while above_index < above.len() {
-        push_unique_palette_cache(&mut cache, above[above_index]);
+        cache.push_unique(above[above_index]);
         above_index += 1;
     }
     while left_index < left.len() {
-        push_unique_palette_cache(&mut cache, left[left_index]);
+        cache.push_unique(left[left_index]);
         left_index += 1;
     }
     cache
-}
-
-fn push_unique_palette_cache(cache: &mut Vec<u16>, color: u16) {
-    if cache.last().copied() != Some(color) {
-        cache.push(color);
-    }
 }
 
 pub(super) fn merge_cached_palette_colors(
@@ -222,7 +242,7 @@ impl<'a> TileDecoder<'a> {
                 let colors = self.read_palette_colors_y(
                     sequence.color_config.bit_depth,
                     y_size,
-                    &color_cache,
+                    color_cache.as_slice(),
                 )?;
                 palette.y = Some(PalettePlaneInfo {
                     colors,
@@ -247,7 +267,7 @@ impl<'a> TileDecoder<'a> {
                 let colors = self.read_palette_colors_uv(
                     sequence.color_config.bit_depth,
                     uv_size,
-                    &color_cache,
+                    color_cache.as_slice(),
                 )?;
                 palette.uv = Some(PalettePlaneInfo {
                     colors,
@@ -380,7 +400,7 @@ impl<'a> TileDecoder<'a> {
         Ok(u_colors)
     }
 
-    fn palette_color_cache(&self, x: usize, y: usize, plane: usize) -> Vec<u16> {
+    fn palette_color_cache(&self, x: usize, y: usize, plane: usize) -> PaletteCache {
         let grid = if plane == 0 {
             &self.y_palette_colors_grid
         } else {
@@ -626,7 +646,7 @@ mod tests {
     #[test]
     fn palette_cache_merges_above_left_and_transmitted_colors() {
         assert_eq!(
-            merge_palette_cache(Some(&[10, 30, 50]), Some(&[20, 30, 40])),
+            merge_palette_cache(Some(&[10, 30, 50]), Some(&[20, 30, 40])).as_slice(),
             vec![10, 20, 30, 40, 50]
         );
         assert_eq!(

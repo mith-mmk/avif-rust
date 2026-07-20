@@ -25,7 +25,6 @@ use crate::container::{
 use crate::obu::{ObuType, find_obu_payloads, parse_obu_stream};
 use crate::{DecoderError, ImageBuffer, Rgba16ImageBuffer};
 use bin_rs::reader::BinaryReader;
-use std::borrow::Cow;
 use std::io::SeekFrom;
 
 type Error = Box<dyn std::error::Error>;
@@ -1895,7 +1894,6 @@ fn apply_deblock_stage(
             .copied()
             .flatten()
     };
-    let mut applied_edges = std::collections::HashSet::new();
     let mut previous_vertical =
         std::collections::HashMap::<(usize, usize), Vec<(usize, usize, usize)>>::new();
     let mut previous_horizontal =
@@ -1913,10 +1911,13 @@ fn apply_deblock_stage(
     }
     let mut boundaries = state.transform_boundaries.iter().collect::<Vec<_>>();
     for vertical in [true, false] {
+        let mut previous_edge = None;
         if vertical {
-            boundaries.sort_by_key(|boundary| (boundary.block.y, boundary.block.x));
+            boundaries
+                .sort_by_key(|boundary| (boundary.block.plane, boundary.block.y, boundary.block.x));
         } else {
-            boundaries.sort_by_key(|boundary| (boundary.block.x, boundary.block.y));
+            boundaries
+                .sort_by_key(|boundary| (boundary.block.plane, boundary.block.x, boundary.block.y));
         }
         for boundary in &boundaries {
             let block = boundary.block;
@@ -1934,9 +1935,11 @@ fn apply_deblock_stage(
                 frame_header.loop_filter.levels[3]
             };
             let edge = if vertical { block.x } else { block.y };
-            if edge == 0 || !applied_edges.insert((plane_index, block.x, block.y, vertical)) {
+            let edge_key = (plane_index, block.x, block.y);
+            if edge == 0 || previous_edge == Some(edge_key) {
                 continue;
             }
+            previous_edge = Some(edge_key);
             let span = if vertical {
                 block.tx_size.height()
             } else {
@@ -2184,6 +2187,15 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
             cdef_blocks.push((x, y, index, detected_direction, variance));
         }
     }
+    let max_plane_samples = frame
+        .buffers
+        .planes
+        .iter()
+        .skip(1)
+        .map(|plane| plane.samples.len())
+        .max()
+        .unwrap_or(0);
+    let mut cdef_source_scratch = Vec::with_capacity(max_plane_samples);
     for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
         let width = plane.layout.width;
         let height = plane.layout.height;
@@ -2191,10 +2203,12 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
         let subsampling_y = usize::from(plane_index > 0 && frame.color_config.subsampling_y);
         let scale_x = 1usize << subsampling_x;
         let scale_y = 1usize << subsampling_y;
-        let source = if plane_index == 0 {
-            Cow::Borrowed(luma_source.as_slice())
+        let source: &[u16] = if plane_index == 0 {
+            luma_source.as_slice()
         } else {
-            Cow::Owned(plane.samples.clone())
+            cdef_source_scratch.clear();
+            cdef_source_scratch.extend_from_slice(&plane.samples);
+            cdef_source_scratch.as_slice()
         };
         let mut filtered = vec![0u16; 64];
         for &(x, y, index, detected_direction, variance) in &cdef_blocks {
@@ -2235,7 +2249,7 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
             let block_width = (width - plane_x).min(8usize.div_ceil(scale_x));
             let block_height = (height - plane_y).min(8usize.div_ceil(scale_y));
             cdef_filter_block_region_with_edge_mode_into(
-                &source,
+                source,
                 width,
                 height,
                 plane_x,
