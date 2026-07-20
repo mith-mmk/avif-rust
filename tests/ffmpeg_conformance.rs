@@ -143,12 +143,12 @@ fn imagemagick_decode_rgba(path: &Path, width: usize, height: usize) -> Option<V
 }
 
 fn ffmpeg_decode_raw(path: &Path, pixel_format: &str) -> Option<Vec<u8>> {
-    ffmpeg_decode_raw_stream(path, 0, pixel_format)
+    ffmpeg_decode_raw_stream(path, None, pixel_format)
 }
 
 fn ffmpeg_decode_raw_stream(
     path: &Path,
-    stream_index: usize,
+    stream_index: Option<usize>,
     pixel_format: &str,
 ) -> Option<Vec<u8>> {
     let executable = std::env::var_os("AVIF_FFMPEG")
@@ -162,13 +162,14 @@ fn ffmpeg_decode_raw_stream(
             bundled.is_file().then_some(bundled)
         })
         .unwrap_or_else(|| std::path::PathBuf::from("ffmpeg"));
-    let output = match Command::new(executable)
-        .args(["-v", "error", "-nostdin"])
-        .arg("-i")
-        .arg(path)
+    let mut command = Command::new(executable);
+    command.args(["-v", "error", "-nostdin"]);
+    command.arg("-i").arg(path);
+    if let Some(stream_index) = stream_index {
+        command.args(["-map", &format!("0:{stream_index}")]);
+    }
+    let output = match command
         .args([
-            "-map",
-            &format!("0:{stream_index}"),
             "-frames:v",
             "1",
             "-f",
@@ -1175,7 +1176,7 @@ fn generated_10bit_alpha_sample_decodes_native_and_rgba_when_encoder_present() {
     let image =
         avif_rust::image_from_bytes(&data).expect("10-bit alpha public decode should succeed");
     assert_eq!((image.width, image.height), (128, 128));
-    if let Some(expected_planes) = ffmpeg_decode_raw_stream(&output_path, 0, "yuv444p10le") {
+    if let Some(expected_planes) = ffmpeg_decode_raw_stream(&output_path, Some(0), "yuv444p10le") {
         let expected: Vec<u16> = expected_planes
             .chunks_exact(2)
             .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]) & 0x03ff)
@@ -1195,7 +1196,8 @@ fn generated_10bit_alpha_sample_decodes_native_and_rgba_when_encoder_present() {
             );
         }
     }
-    if let Some(expected_alpha_bytes) = ffmpeg_decode_raw_stream(&output_path, 1, "gray10le") {
+    if let Some(expected_alpha_bytes) = ffmpeg_decode_raw_stream(&output_path, Some(1), "gray10le")
+    {
         let expected_alpha: Vec<u16> = expected_alpha_bytes
             .chunks_exact(2)
             .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]) & 0x03ff)
