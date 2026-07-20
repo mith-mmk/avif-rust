@@ -297,6 +297,7 @@ fn frame_buffers_to_rgba_8_sdr(
         .unwrap_or(2);
     let matrix = MatrixCoefficients::from_av1(matrix_coefficients, color_primaries)?;
     let range = SampleRange::new(8, color_config.color_range)?;
+    let fast_range = range.as_fast();
     let plane_y = buffers
         .planes
         .first()
@@ -337,7 +338,7 @@ fn frame_buffers_to_rgba_8_sdr(
                 plane_y.samples[index],
                 plane_u.samples[index],
                 plane_v.samples[index],
-                range,
+                fast_range,
                 kr as f32,
                 kb as f32,
             );
@@ -365,7 +366,7 @@ fn frame_buffers_to_rgba_8_sdr(
             let rgb = if let Some((kr, kb)) = fast_yuv_coefficients {
                 // Sampling remains normative, but the YUV matrix itself can
                 // use the bounded f32 path for subsampled planes too.
-                yuv_to_rgb_u16_fast(y_sample, u_sample, v_sample, range, kr, kb)
+                yuv_to_rgb_u16_fast(y_sample, u_sample, v_sample, fast_range, kr, kb)
             } else {
                 yuv_to_rgb_u16(y_sample, u_sample, v_sample, range, matrix)
             };
@@ -490,6 +491,7 @@ pub fn frame_buffers_to_rgba_16(
             .unwrap_or(2);
         let matrix = MatrixCoefficients::from_av1(matrix_coefficients, color_primaries)?;
         let range = SampleRange::new(color_config.bit_depth, color_config.color_range)?;
+        let fast_range = range.as_fast();
         let plane_y = &buffers.planes[0];
         let plane_u = buffers.planes.get(1);
         let plane_v = buffers.planes.get(2);
@@ -526,7 +528,7 @@ pub fn frame_buffers_to_rgba_16(
                     plane_y.samples[index],
                     plane_u.samples[index],
                     plane_v.samples[index],
-                    range,
+                    fast_range,
                     kr,
                     kb,
                 );
@@ -549,7 +551,7 @@ pub fn frame_buffers_to_rgba_16(
                         })
                         .unwrap_or(chroma_mid);
                     let rgb = if let Some((kr, kb)) = fast_yuv_coefficients {
-                        yuv_to_rgb_u16_fast(y_sample, u_sample, v_sample, range, kr, kb)
+                        yuv_to_rgb_u16_fast(y_sample, u_sample, v_sample, fast_range, kr, kb)
                     } else {
                         yuv_to_rgb_u16(y_sample, u_sample, v_sample, range, matrix)
                     };
@@ -634,13 +636,13 @@ fn yuv_to_rgb_u16_fast(
     y_sample: u16,
     u_sample: u16,
     v_sample: u16,
-    range: SampleRange,
+    range: FastSampleRange,
     kr: f32,
     kb: f32,
 ) -> [u16; 3] {
-    let y = ((f32::from(y_sample) - range.y_offset as f32) / range.y_scale as f32).clamp(0.0, 1.0);
-    let cb = (f32::from(u_sample) - range.chroma_offset as f32) / range.chroma_scale as f32;
-    let cr = (f32::from(v_sample) - range.chroma_offset as f32) / range.chroma_scale as f32;
+    let y = ((f32::from(y_sample) - range.y_offset) / range.y_scale).clamp(0.0, 1.0);
+    let cb = (f32::from(u_sample) - range.chroma_offset) / range.chroma_scale;
+    let cr = (f32::from(v_sample) - range.chroma_offset) / range.chroma_scale;
     let r = y + 2.0 * (1.0 - kr) * cr;
     let b = y + 2.0 * (1.0 - kb) * cb;
     let g = (y - kr * r - kb * b) / (1.0 - kr - kb);
@@ -964,6 +966,26 @@ struct SampleRange {
     y_scale: f64,
     chroma_offset: f64,
     chroma_scale: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FastSampleRange {
+    y_offset: f32,
+    y_scale: f32,
+    chroma_offset: f32,
+    chroma_scale: f32,
+}
+
+impl SampleRange {
+    #[inline]
+    fn as_fast(self) -> FastSampleRange {
+        FastSampleRange {
+            y_offset: self.y_offset as f32,
+            y_scale: self.y_scale as f32,
+            chroma_offset: self.chroma_offset as f32,
+            chroma_scale: self.chroma_scale as f32,
+        }
+    }
 }
 
 impl SampleRange {
@@ -1648,7 +1670,7 @@ mod tests {
             kr: 0.2627,
             kb: 0.0593,
         };
-        let fast = yuv_to_rgb_u16_fast(128, 96, 160, range, 0.2627, 0.0593);
+        let fast = yuv_to_rgb_u16_fast(128, 96, 160, range.as_fast(), 0.2627, 0.0593);
         let scalar = yuv_to_rgb_u16(128, 96, 160, range, matrix);
         assert!(
             fast.iter()
@@ -1757,7 +1779,7 @@ mod tests {
             kb: 0.0722,
         };
         for (y, u, v) in [(64, 512, 960), (512, 448, 576), (900, 128, 384)] {
-            let fast = yuv_to_rgb_u16_fast(y, u, v, range, 0.2126, 0.0722);
+            let fast = yuv_to_rgb_u16_fast(y, u, v, range.as_fast(), 0.2126, 0.0722);
             let scalar = yuv_to_rgb_u16(y, u, v, range, matrix);
             assert!(
                 fast.iter()

@@ -821,6 +821,10 @@ no-regression references, not a stable speedup claim.
 A generated 64x64 10-bit YUV420 and YUV422 AVIF now exercise the subsampled
 high-bit path against FFmpeg as well: YUV420 average/max RGB error `1.4538/38`,
 YUV422 `1.1789/10`.
+The f32 conversion loop now receives precomputed f32 range constants instead
+of converting the f64 range fields for every pixel. A five-iteration recheck
+measured `340.57/358.29 ms` for `WML2Viewer.avif` and `417.75/437.84 ms` for
+the external 10-bit YUV444 sample; these are host-specific checkpoints only.
 
 The same IntrABC fixture is now generated and checked in 4:2:0 as well as
 4:4:4. The 4:2:0 luma plane is exact and chroma remains within the existing
