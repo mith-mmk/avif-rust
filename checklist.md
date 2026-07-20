@@ -617,10 +617,12 @@ parser and grouped as follows:
 - No-op segmentation signalling, still-image `ALT_Q` deltas and the
   pre-skip `SKIP` feature are parsed; multi-segment map/CDF state is decoded
   for these still-image-safe features, including segment-level loop-filter
-  deltas. Segmentation reference and `GLOBALMV` features remain fail-closed.
+  deltas. Still-image headers now also consume segmentation reference-frame
+  and `GLOBALMV` feature values; actual inter-frame reference state remains
+  fail-closed.
 - Frame syntax tests cover positive, negative and zero-valued `ALT_Q` deltas
   (including signed-value alignment), multi-segment values, pre-skip `SKIP`,
-  and rejection of reference/global-motion features.
+  and reference/global-motion feature consumption for still headers.
 - AV1 inverse-signed literals now use the normative two's-complement
   `bits + 1` representation for frame delta-q and signed segmentation data.
   Intra `TX_MODE_SELECT` also consumes the transmitted transform-size symbol
@@ -635,7 +637,7 @@ parser and grouped as follows:
   they can be promoted.
 
 This audit keeps the unsupported boundary explicit while the next expansion
-targets segmentation/reference-frame state instead of silently ignoring a
+targets actual inter-frame reference storage instead of silently ignoring a
 signalled tool.
 
 The segmentation map reader now follows the normative symbol consumption even

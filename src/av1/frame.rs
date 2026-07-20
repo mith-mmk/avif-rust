@@ -77,8 +77,9 @@ impl FrameHeader {
 
 /// Frame-level segmentation signalling. The still-image decoder accepts the
 /// no-op form, `ALT_Q`/`ALT_LF` deltas and the still-image-safe `SKIP` feature
-/// on the current segmentation map; features that require reference-frame
-/// state remain fail-closed.
+/// on the current segmentation map. Reference-frame and GLOBALMV feature
+/// values are also consumed for still-image headers; inter-frame prediction is
+/// rejected before reconstruction, so those values have no effect here.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SegmentationParams {
     pub enabled: bool,
@@ -780,7 +781,6 @@ fn parse_segmentation_params(
 
     const FEATURE_BITS: [usize; 8] = [8, 6, 6, 6, 6, 3, 0, 0];
     const FEATURE_SIGNED: [bool; 8] = [true, true, true, true, true, false, false, false];
-    let mut unsupported_feature = None;
     let mut segment_delta_q = [0i16; 8];
     let mut segment_delta_lf = [[0i8; 4]; 8];
     let mut segment_skip = [false; 8];
@@ -807,27 +807,22 @@ fn parse_segmentation_params(
             }
             match feature {
                 0..=4 => last_active_segment = segment as u8,
-                5 => preskip = true,
+                5 => {
+                    preskip = true;
+                    last_active_segment = segment as u8;
+                }
                 6 => {
                     segment_skip[segment] = true;
                     preskip = true;
                     last_active_segment = segment as u8;
                 }
-                7 => preskip = true,
+                7 => {
+                    preskip = true;
+                    last_active_segment = segment as u8;
+                }
                 _ => unreachable!("segmentation feature index is bounded to 0..8"),
             }
-            if feature == 5 || feature == 7 {
-                preskip = true;
-                if unsupported_feature.is_none() {
-                    unsupported_feature = Some((segment, feature));
-                }
-            }
         }
-    }
-    if let Some((segment, feature)) = unsupported_feature {
-        return Err(DecoderError::Unsupported(format!(
-            "AV1 segmentation feature {feature} on segment {segment} is not supported yet"
-        )));
     }
     Ok(SegmentationParams {
         enabled: true,
@@ -1302,7 +1297,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_reference_and_globalmv_segmentation_features() {
+    fn accepts_reference_and_globalmv_segmentation_features_for_still_headers() {
         for feature in [5, 7] {
             let mut bits = vec![true];
             for segment in 0..8 {
@@ -1320,12 +1315,9 @@ mod tests {
                 }
             }
             let mut reader = BitReader::new(&data);
-            let error = parse_segmentation_params(&mut reader, 7).unwrap_err();
-            assert!(matches!(
-                error,
-                crate::DecoderError::Unsupported(message)
-                    if message.contains(&format!("segmentation feature {feature}"))
-            ));
+            let params = parse_segmentation_params(&mut reader, 7).unwrap();
+            assert!(params.preskip);
+            assert_eq!(params.last_active_segment, 0);
         }
     }
 }
