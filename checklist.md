@@ -1189,3 +1189,8 @@ show-existing and Inter/Switch samples keep the reference-dependent sequential
 path, and Wasm remains sequential. Generated all-key callback and batch tests
 cover the optimized path. Indexed Key/IntraOnly requests now decode only the
 requested sample instead of replaying earlier independent samples.
+
+The official `abc_color_irot_alpha_NOirot.avif` fixture now also compares the
+auxiliary alpha plane after the primary image's quarter-turn transform. This
+keeps alpha orientation coverage separate from the existing RGB and rotated
+alpha checks.

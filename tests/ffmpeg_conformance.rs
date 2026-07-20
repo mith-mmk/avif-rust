@@ -2909,6 +2909,41 @@ fn public_irot_alpha_sample_matches_ffmpeg_when_present() {
 }
 
 #[test]
+fn public_nonrotated_alpha_sample_matches_ffmpeg_when_present() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("test/images/external/avif/unsupported/abc_color_irot_alpha_NOirot.avif");
+    if !path.is_file() {
+        eprintln!("official non-rotated alpha sample is unavailable; skipping oracle");
+        return;
+    }
+    let data = std::fs::read(&path).expect("non-rotated alpha AVIF should be readable");
+    let actual =
+        avif_rust::image_from_bytes(&data).expect("non-rotated alpha sample should decode");
+    assert_eq!((actual.width, actual.height), (256, 512));
+    let Some(expected_alpha) = ffmpeg_decode_alpha_plane(&path, 512, 256) else {
+        return;
+    };
+    let mut rotated_alpha = vec![0; 256 * 512];
+    for y in 0..256 {
+        for x in 0..512 {
+            let destination_x = y;
+            let destination_y = 512 - 1 - x;
+            rotated_alpha[destination_y * 256 + destination_x] = expected_alpha[y * 512 + x];
+        }
+    }
+    let max_alpha = actual
+        .rgba
+        .chunks_exact(4)
+        .zip(rotated_alpha)
+        .map(|(pixel, expected)| pixel[3].abs_diff(expected))
+        .max()
+        .unwrap_or(0);
+    assert!(max_alpha <= 8, "non-rotated alpha error max={max_alpha}");
+}
+
+#[test]
 fn public_additional_official_samples_match_ffmpeg_when_present() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
