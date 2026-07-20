@@ -2648,3 +2648,78 @@ fn public_irot_alpha_sample_matches_ffmpeg_when_present() {
         .unwrap_or(0);
     assert!(max_alpha <= 8, "irot+alpha alpha error max={max_alpha}");
 }
+
+#[test]
+fn public_additional_official_samples_match_ffmpeg_when_present() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("test/images/external/avif/unsupported");
+    let cases = [
+        ("abc_color_irot_alpha_NOirot.avif", 256, 512, true),
+        ("sofa_grid1x5_420_dimg_repeat.avif", 1024, 770, true),
+        ("sofa_grid1x5_420_reversed_dimg_order.avif", 1024, 770, true),
+        ("draw_points_idat.avif", 33, 11, true),
+        ("draw_points_idat_progressive.avif", 33, 11, false),
+        ("draw_points_idat_metasize0.avif", 33, 11, true),
+        ("extended_pixi.avif", 4, 4, true),
+        ("clap_irot_imir_non_essential.avif", 10, 8, true),
+        ("clop_irot_imor.avif", 34, 12, true),
+    ];
+    for (name, width, height, has_ffmpeg_oracle) in cases {
+        let path = root.join(name);
+        if !path.is_file() {
+            eprintln!("additional official sample is unavailable; skipping {name}");
+            return;
+        }
+        let data = std::fs::read(&path).expect("official sample should be readable");
+        let actual = avif_rust::image_from_bytes(&data)
+            .unwrap_or_else(|err| panic!("{name} should decode: {err}"));
+        assert_eq!((actual.width, actual.height), (width, height), "{name}");
+        if name == "extended_pixi.avif" {
+            let frame = avif_rust::decode_frame_bytes(&data).expect("extended pixi frame");
+            let Some(expected) = ffmpeg_decode_raw(&path, "yuv420p") else {
+                return;
+            };
+            let expected_lengths = [16, 4, 4];
+            assert_eq!(expected.len(), expected_lengths.iter().sum());
+            let mut offset = 0;
+            for (plane_index, &plane_length) in expected_lengths.iter().enumerate() {
+                let actual_plane = &frame.buffers.planes[plane_index].samples;
+                assert_eq!(
+                    actual_plane.len(),
+                    plane_length,
+                    "{name} plane {plane_index}"
+                );
+                let expected_plane = &expected[offset..offset + plane_length];
+                assert_eq!(
+                    actual_plane
+                        .iter()
+                        .map(|sample| u8::try_from(*sample).unwrap())
+                        .collect::<Vec<_>>(),
+                    expected_plane,
+                    "{name} plane {plane_index}"
+                );
+                offset += plane_length;
+            }
+            continue;
+        }
+        if !has_ffmpeg_oracle {
+            continue;
+        }
+        let Some(expected) = ffmpeg_decode_rgba_dynamic(&path, width, height) else {
+            return;
+        };
+        let metrics = diff_rgb_dynamic(&actual.rgba, &expected);
+        eprintln!(
+            "{name}: average RGB absolute error={} max={}",
+            metrics.average_rgb_abs, metrics.max_rgb_abs
+        );
+        assert!(
+            metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 48,
+            "{name}: FFmpeg RGB error average={} max={}",
+            metrics.average_rgb_abs,
+            metrics.max_rgb_abs
+        );
+    }
+}

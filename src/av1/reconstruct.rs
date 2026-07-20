@@ -1,5 +1,5 @@
 use super::decode::{FrameBuffers, PlaneBuffer};
-use super::sequence::{ChromaSamplePosition, ColorConfig};
+use super::sequence::{ChromaSamplePosition, ColorConfig, ColorRange};
 use crate::{DecoderError, ImageBuffer, Rgba16ImageBuffer};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -281,10 +281,7 @@ fn frame_buffers_to_rgba_8_sdr(
     color_config: &ColorConfig,
 ) -> Result<ImageBuffer, DecoderError> {
     validate_rgba_conversion(buffers)?;
-    let matrix_coefficients = color_config
-        .color_description
-        .map(|description| description.matrix_coefficients)
-        .unwrap_or(2);
+    let matrix_coefficients = matrix_coefficients_for_conversion(color_config);
     if matches!(matrix_coefficients, 0 | 3)
         && buffers
             .planes
@@ -456,10 +453,7 @@ pub fn frame_buffers_to_rgba_16(
             rgba,
         });
     }
-    let matrix_coefficients = color_config
-        .color_description
-        .map(|description| description.matrix_coefficients)
-        .unwrap_or(2);
+    let matrix_coefficients = matrix_coefficients_for_conversion(color_config);
     let mut rgba = vec![0u16; buffers.width * buffers.height * 4];
 
     if matches!(matrix_coefficients, 0 | 3) {
@@ -815,6 +809,21 @@ enum MatrixCoefficients {
     Smpte2085,
     YcGco,
     Ictcp,
+}
+
+fn matrix_coefficients_for_conversion(color_config: &ColorConfig) -> u8 {
+    color_config
+        .color_description
+        .map(|description| description.matrix_coefficients)
+        .unwrap_or_else(|| {
+            // Full-range AVIFs without CICP are commonly JPEG-style YUV;
+            // preserve the historical BT.709 fallback for studio-range AV1.
+            if matches!(color_config.color_range, ColorRange::Full) {
+                6
+            } else {
+                2
+            }
+        })
 }
 
 impl MatrixCoefficients {
@@ -1682,6 +1691,33 @@ mod tests {
         assert!(
             matches!(error, DecoderError::Unsupported(message) if message.contains("colour primaries"))
         );
+    }
+
+    #[test]
+    fn unspecified_matrix_coefficients_use_range_fallback() {
+        let studio = ColorConfig {
+            high_bitdepth: false,
+            twelve_bit: false,
+            bit_depth: 8,
+            monochrome: false,
+            color_description: None,
+            color_range: ColorRange::Studio,
+            subsampling_x: true,
+            subsampling_y: true,
+            chroma_sample_position: None,
+            separate_uv_delta_q: false,
+        };
+        let full = ColorConfig {
+            color_range: ColorRange::Full,
+            ..studio
+        };
+        assert_eq!(matrix_coefficients_for_conversion(&studio), 2);
+        assert_eq!(matrix_coefficients_for_conversion(&full), 6);
+        assert!(matches!(
+            MatrixCoefficients::from_av1(matrix_coefficients_for_conversion(&studio), 2),
+            Ok(MatrixCoefficients::Yuv { kr, kb })
+                if (kr - 0.2126).abs() < f64::EPSILON && (kb - 0.0722).abs() < f64::EPSILON
+        ));
     }
 
     #[test]

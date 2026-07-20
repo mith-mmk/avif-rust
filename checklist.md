@@ -704,6 +704,19 @@ The generated IntrABC fixture now also enables CDEF while keeping restoration
 disabled. The 4:4:4 native planes remain exact against FFmpeg, confirming that
 the CDEF signalling path does not regress the supported IntrABC decode boundary.
 
+The remaining official samples that had still lived under `unsupported/` are
+now covered by a direct public RGBA gate: both grid `dimg` ordering variants,
+all three `draw_points`/`idat` forms, extended `pixi`, non-essential `clap` +
+`irot` + `imir`, `clop` + `irot` + `imir`, and the non-rotated alpha sample.
+`draw_points_idat_progressive` is decode/dimension-only because the installed
+FFmpeg build does not implement its progressive input form. `extended_pixi`
+uses a native-plane oracle because its explicit vertical chroma position is
+upsampled differently by the installed FFmpeg/ImageMagick RGB paths; its AV1
+planes and metadata dimensions are exact. The official sample set now reports
+native/public success without partial output; the remaining RGB difference is
+kept as an explicit oracle limitation until a chroma-siting-compatible RGB
+reference is available.
+
 On 2026-07-20, coefficient decoding began returning its owned level buffer to
 the decoder scratch after reconstruction; only the public diagnostic luma
 capture retains it. The scratch-transfer regression test confirms that two
