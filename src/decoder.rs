@@ -2252,7 +2252,10 @@ struct DecodedStillFrame {
 }
 
 fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state: &PostFilterState) {
-    if !frame_header.cdef.enabled || state.cdef_units.is_empty() {
+    if !frame_header.cdef.enabled
+        || state.cdef_units.is_empty()
+        || !cdef_has_active_strengths(&frame_header.cdef)
+    {
         return;
     }
     let unit_mask = (1usize << frame_header.cdef.bits) - 1;
@@ -2404,6 +2407,20 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
 #[inline]
 fn cdef_strengths_disabled(primary_strength: u8, secondary_strength: u8) -> bool {
     primary_strength == 0 && secondary_strength == 0
+}
+
+#[inline]
+fn cdef_has_active_strengths(cdef: &crate::av1::CdefParams) -> bool {
+    let active_count = 1usize << cdef.bits;
+    cdef.strengths
+        .iter()
+        .take(active_count.min(cdef.strengths.len()))
+        .any(|strength| {
+            strength.y_pri != 0
+                || strength.y_sec != 0
+                || strength.uv_pri != 0
+                || strength.uv_sec != 0
+        })
 }
 
 fn apply_loop_restoration_stage(

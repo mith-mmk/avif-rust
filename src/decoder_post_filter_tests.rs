@@ -1,6 +1,8 @@
 use super::{
-    DecodedFrame, apply_loop_filter_deltas, apply_loop_restoration_stage, cdef_strengths_disabled,
+    DecodedFrame, apply_loop_filter_deltas, apply_loop_restoration_stage,
+    cdef_has_active_strengths, cdef_strengths_disabled,
 };
+use crate::av1::CdefParams;
 use crate::av1::{
     ColorConfig, ColorRange, FrameBuffers, PlaneBuffer, PlaneLayout, PostFilterState,
     RestorationUnit, wiener_filter_unit,
@@ -19,6 +21,18 @@ fn zero_cdef_strengths_are_detected_without_filtering() {
     assert!(cdef_strengths_disabled(0, 0));
     assert!(!cdef_strengths_disabled(1, 0));
     assert!(!cdef_strengths_disabled(0, 1));
+}
+
+#[test]
+fn all_zero_cdef_indices_skip_the_whole_stage() {
+    let mut cdef = CdefParams {
+        enabled: true,
+        bits: 2,
+        ..CdefParams::default()
+    };
+    assert!(!cdef_has_active_strengths(&cdef));
+    cdef.strengths[2].uv_sec = 1;
+    assert!(cdef_has_active_strengths(&cdef));
 }
 
 #[test]

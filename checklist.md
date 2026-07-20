@@ -775,6 +775,12 @@ already been copied to the output. A seven-iteration release recheck measured
 `302.06/300.98 ms` (native/RGBA); this remains a host-specific no-regression
 checkpoint rather than a stable speedup claim.
 
+The CDEF fast path now also returns before source-scratch setup when every
+active CDEF index has zero primary and secondary strengths. The follow-up
+seven-iteration release recheck measured `290.11/282.26 ms` (native/RGBA);
+this is recorded as another host-specific measurement, not a stable speedup
+claim.
+
 The same IntrABC fixture is now generated and checked in 4:2:0 as well as
 4:4:4. The 4:2:0 luma plane is exact and chroma remains within the existing
 oracle tolerance (maximum error 4), covering the subsampled block geometry
