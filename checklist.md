@@ -653,10 +653,9 @@ The decode benchmark now accepts `AVIF_BENCH_SAMPLES` as a semicolon-separated
 list while retaining `AVIF_BENCH_SAMPLE` for one-off runs. Each sample is
 warmed twice and reports independent `decode_frame_bytes` and RGBA medians,
 so unsupported-syntax expansion can be measured against more than one image
-without changing the decoder API. A five-iteration WML2Viewer recheck on the
-current host measured `359.35 ms` (native) and `359.65 ms` (RGBA); scheduler
-variance remains larger than this single-run delta, so no stable speedup claim
-is made yet.
+without changing the decoder API. A fresh 10-iteration WML2Viewer recheck on
+the current host measured `327.02 ms` (native) and `347.69 ms` (RGBA); this is
+a reference measurement, not a stable cross-run speedup claim.
 
 The expanded `ffmpeg_conformance` fixture set was rerun on 2026-07-20: 49
 tests passed, 2 diagnostic tests remained ignored, and no test failed. This
