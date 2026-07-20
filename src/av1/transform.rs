@@ -424,6 +424,25 @@ pub(crate) fn reconstruct_transform_block_parts_into(
         .iter()
         .filter(|coefficient| **coefficient != 0)
         .count();
+    if non_zero_coefficients == 0 {
+        // A skipped/zero transform contributes no residual.  Copying the
+        // prediction directly avoids dequantization and a temporary residual
+        // allocation on the overwhelmingly common zero-coefficient path.
+        reconstructed.copy_from_slice(prediction);
+        write_plane_block(
+            plane,
+            block.x,
+            block.y,
+            tx_size.width(),
+            tx_size.height(),
+            reconstructed,
+        )?;
+        return Ok(ReconstructedTransform {
+            block,
+            tx_type,
+            non_zero_coefficients,
+        });
+    }
     if let Some((level, plane)) = qmatrix {
         dequantize_coefficients_with_qmatrix_into(
             coefficients,
@@ -542,6 +561,15 @@ pub(crate) fn reconstruct_lossless_transform_block_parts_into(
         .iter()
         .filter(|coefficient| **coefficient != 0)
         .count();
+    if non_zero_coefficients == 0 {
+        reconstructed.copy_from_slice(prediction);
+        write_plane_block(plane, block.x, block.y, 4, 4, reconstructed)?;
+        return Ok(ReconstructedTransform {
+            block,
+            tx_type,
+            non_zero_coefficients,
+        });
+    }
     dequantize_coefficients_into(
         coefficients,
         plane_quant,

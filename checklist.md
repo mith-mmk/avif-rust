@@ -704,6 +704,13 @@ single-sample benchmark measured `319.37/324.12 ms` (native/RGBA) for
 local checkpoint; cross-run speedup claims still require a quieter repeated
 baseline.
 
+Zero-coefficient transforms now bypass dequantization, inverse-transform
+dispatch, and temporary residual allocation by copying the prediction directly
+into the reconstructed block. The existing zero-transform regression covers
+this path. A fresh optimized 10-iteration run measured `316.69/313.85 ms`
+(native/RGBA) for `WML2Viewer.avif`; this remains a same-host checkpoint rather
+than a cross-run speedup claim.
+
 - [x] Add malformed/truncated coverage for the currently supported container,
       OBU, entropy and metadata paths.
 - [ ] Add malformed/truncated cases for each future syntax path as it becomes
