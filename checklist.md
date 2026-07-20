@@ -690,6 +690,11 @@ sample with CDEF and restoration disabled. Native Y/U/V planes match FFmpeg's
 This proves the currently supported low-complexity IntrABC syntax path while
 the high-complexity reference/transform cases remain an explicit follow-up.
 
+The same IntrABC fixture is now generated and checked in 4:2:0 as well as
+4:4:4. The 4:2:0 luma plane is exact and chroma remains within the existing
+oracle tolerance (maximum error 4), covering the subsampled block geometry
+without widening the unsupported high-complexity boundary.
+
 On 2026-07-20, coefficient decoding began returning its owned level buffer to
 the decoder scratch after reconstruction; only the public diagnostic luma
 capture retains it. The scratch-transfer regression test confirms that two
