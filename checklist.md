@@ -739,6 +739,12 @@ lagged alternate references. Its 60 track samples include both Inter frame
 OBUs and `show_existing_frame` headers, and the test asserts those kinds while
 still decoding the primary Key sample through the public still-image API.
 
+The progressive `draw_points_idat_progressive.avif` sample now has a pixel
+oracle as well: FFmpeg rejects its progressive `idat` layout, so the test uses
+ImageMagick's AVIF decoder and records average RGB error `0.2222`, maximum `1`.
+This closes the previous dimensions-only audit gap without weakening the
+existing FFmpeg gates.
+
 Loop restoration now also swaps a reusable output buffer across enabled planes
 instead of allocating a fresh `source.clone()` for each plane. A seven-iteration
 optimized `WML2Viewer.avif` recheck measured `302.50/306.33 ms` (native/RGBA),

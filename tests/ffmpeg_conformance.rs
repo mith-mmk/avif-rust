@@ -2660,6 +2660,8 @@ fn public_additional_official_samples_match_ffmpeg_when_present() {
         ("sofa_grid1x5_420_dimg_repeat.avif", 1024, 770, true),
         ("sofa_grid1x5_420_reversed_dimg_order.avif", 1024, 770, true),
         ("draw_points_idat.avif", 33, 11, true),
+        // FFmpeg's current AVIF demuxer rejects progressive idat input; the
+        // ImageMagick decoder provides the independent pixel oracle below.
         ("draw_points_idat_progressive.avif", 33, 11, false),
         ("draw_points_idat_metasize0.avif", 33, 11, true),
         ("extended_pixi.avif", 4, 4, true),
@@ -2702,6 +2704,23 @@ fn public_additional_official_samples_match_ffmpeg_when_present() {
                 );
                 offset += plane_length;
             }
+            continue;
+        }
+        if name == "draw_points_idat_progressive.avif" {
+            let Some(expected) = imagemagick_decode_rgba(&path, width, height) else {
+                continue;
+            };
+            let metrics = diff_rgb_dynamic(&actual.rgba, &expected);
+            eprintln!(
+                "{name}: ImageMagick RGB error average={} max={}",
+                metrics.average_rgb_abs, metrics.max_rgb_abs
+            );
+            assert!(
+                metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 48,
+                "{name}: ImageMagick RGB error average={} max={}",
+                metrics.average_rgb_abs,
+                metrics.max_rgb_abs
+            );
             continue;
         }
         if !has_ffmpeg_oracle {
