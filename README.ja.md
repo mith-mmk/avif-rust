@@ -33,8 +33,8 @@ frame AVIF profileに対応します。1 frameの`avis` primary itemも静止画
 | file dataおよびmeta `idat`の`iloc` item payload | 対応（construction method 0／1） |
 | `clap`、`irot`、`imir` composition | 対応 |
 | 1 frameの`avis` primary item | 対応 |
-| AVISのKey/IntraOnly/show-existing frameをindex指定でデコード | 対応（Inter/Switchはfail-closed） |
-| animated AVIFの複数frame callback出力 | 未対応 |
+| AVISのKey/IntraOnly/show-existing frameをindex指定・一括でデコード | 対応（Inter/Switchはfail-closed） |
+| animated AVIFの複数frame callback出力 | 未対応（対応sample向けsource plane一括APIは対応） |
 | HDR tone mapping、matrix-shaper以外のICC表示変換 | 未対応 |
 
 未対応のcompositionやAV1 toolは`DecoderError::Unsupported`を返します。不完全な
@@ -92,8 +92,9 @@ assert_eq!(rgba16.rgba.len(), rgba16.width * rgba16.height * 4);
 ```
 
 AVIS sequenceでは、`decode_sequence_frame_bytes`でKey／IntraOnlyまたは
-`show_existing_frame`のサンプルをindex指定でデコードできます。動き補償が
-実装されるまでは、Inter／Switchサンプルは`DecoderError::Unsupported`を返します。
+`show_existing_frame`のサンプルをindex指定、`decode_sequence_frames_bytes`で
+対応サンプルを一括デコードできます。動き補償が実装されるまでは、
+Inter／Switchサンプルは`DecoderError::Unsupported`を返します。
 
 低水準の`parse_info`と`decode`は`bin-rs::reader::BinaryReader`を受け取ります。
 `decode`は`wml2`互換の`init -> draw -> terminate` callback順序を維持します。

@@ -272,6 +272,10 @@ fn generated_all_key_avis_samples_decode_by_index() {
         assert_eq!((frame.width, frame.height), (64, 64));
         assert_eq!(frame.buffers, first.buffers);
     }
+    let frames = avif_rust::decode_sequence_frames_bytes(&data)
+        .expect("all-key AVIS samples should decode as an animation batch");
+    assert_eq!(frames.len(), 4);
+    assert!(frames.iter().all(|frame| frame.buffers == first.buffers));
     let error = avif_rust::decode_sequence_frame_bytes(&data, 4).unwrap_err();
     assert!(matches!(error, DecoderError::InvalidParam(message) if message.contains("outside")));
     let _ = std::fs::remove_dir_all(&root);
@@ -322,6 +326,12 @@ fn sequence_api_rejects_inter_sample_without_partial_output() {
     }
     let data = std::fs::read(&path).expect("external AVIS sequence should be readable");
     let error = avif_rust::decode_sequence_frame_bytes(&data, 1).unwrap_err();
+    assert!(matches!(
+        error,
+        DecoderError::Unsupported(message)
+            if message.contains("sample 1") && message.contains("Inter")
+    ));
+    let error = avif_rust::decode_sequence_frames_bytes(&data).unwrap_err();
     assert!(matches!(
         error,
         DecoderError::Unsupported(message)

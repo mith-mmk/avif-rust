@@ -23,7 +23,8 @@ pub use container::{
     PixelInformation, classify_av1_sequence_sample,
 };
 pub use decoder::{
-    DecodedFrame, decode, decode_frame_bytes, decode_sequence_frame_bytes, parse_info,
+    DecodedFrame, decode, decode_frame_bytes, decode_sequence_frame_bytes,
+    decode_sequence_frames_bytes, parse_info,
 };
 pub use error::DecoderError;
 pub use image::{ImageBuffer, Rgba16ImageBuffer};

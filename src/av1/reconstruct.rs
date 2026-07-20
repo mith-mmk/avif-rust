@@ -303,6 +303,10 @@ fn frame_buffers_to_rgba_8_sdr(
         .ok_or_else(|| DecoderError::Bitstream("AV1 luma plane is missing".to_string()))?;
     let plane_u = buffers.planes.get(1);
     let plane_v = buffers.planes.get(2);
+    let fast_yuv_coefficients = match matrix {
+        MatrixCoefficients::Yuv { kr, kb } => Some((kr as f32, kb as f32)),
+        _ => None,
+    };
     let direct_yuv444 = matches!(matrix, MatrixCoefficients::Yuv { .. })
         && buffers.planes.get(3).is_none()
         && plane_y.layout.subsampling_x == 0
@@ -351,21 +355,20 @@ fn frame_buffers_to_rgba_8_sdr(
     for y in 0..buffers.height {
         for x in 0..buffers.width {
             let index = y * buffers.width + x;
-            let rgb = yuv_to_rgb_u16(
-                sample_plane(plane_y, x, y),
-                plane_u
-                    .map(|plane| {
-                        sample_chroma_plane(plane, x, y, color_config.chroma_sample_position)
-                    })
-                    .unwrap_or(128),
-                plane_v
-                    .map(|plane| {
-                        sample_chroma_plane(plane, x, y, color_config.chroma_sample_position)
-                    })
-                    .unwrap_or(128),
-                range,
-                matrix,
-            );
+            let y_sample = sample_plane(plane_y, x, y);
+            let u_sample = plane_u
+                .map(|plane| sample_chroma_plane(plane, x, y, color_config.chroma_sample_position))
+                .unwrap_or(128);
+            let v_sample = plane_v
+                .map(|plane| sample_chroma_plane(plane, x, y, color_config.chroma_sample_position))
+                .unwrap_or(128);
+            let rgb = if let Some((kr, kb)) = fast_yuv_coefficients {
+                // Sampling remains normative, but the YUV matrix itself can
+                // use the bounded f32 path for subsampled planes too.
+                yuv_to_rgb_u16_fast(y_sample, u_sample, v_sample, range, kr, kb)
+            } else {
+                yuv_to_rgb_u16(y_sample, u_sample, v_sample, range, matrix)
+            };
             let out = index * 4;
             rgba[out] = u16_to_u8(rgb[0]);
             rgba[out + 1] = u16_to_u8(rgb[1]);
@@ -1661,6 +1664,98 @@ mod tests {
                 .zip(scalar)
                 .all(|(fast, scalar)| fast.abs_diff(scalar) <= 1)
         );
+    }
+
+    #[test]
+    fn fast_subsampled_yuv_conversion_stays_within_one_code_value_of_scalar_path() {
+        let y_layout = PlaneLayout {
+            plane: 0,
+            width: 4,
+            height: 4,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 16,
+        };
+        let uv_layout = PlaneLayout {
+            plane: 1,
+            width: 2,
+            height: 2,
+            subsampling_x: 1,
+            subsampling_y: 1,
+            sample_count: 4,
+        };
+        let buffers = FrameBuffers {
+            width: 4,
+            height: 4,
+            planes: vec![
+                PlaneBuffer {
+                    layout: y_layout,
+                    samples: (0..16).map(|index| 32 + index as u16 * 11).collect(),
+                },
+                PlaneBuffer {
+                    layout: uv_layout,
+                    samples: vec![96, 128, 160, 192],
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout {
+                        plane: 2,
+                        ..uv_layout
+                    },
+                    samples: vec![192, 160, 128, 96],
+                },
+            ],
+        };
+        let color_config = ColorConfig {
+            high_bitdepth: false,
+            twelve_bit: false,
+            bit_depth: 8,
+            monochrome: false,
+            color_description: Some(super::super::sequence::ColorDescription {
+                color_primaries: 1,
+                transfer_characteristics: 13,
+                matrix_coefficients: 1,
+            }),
+            color_range: ColorRange::Studio,
+            subsampling_x: true,
+            subsampling_y: true,
+            chroma_sample_position: Some(ChromaSamplePosition::Unknown),
+            separate_uv_delta_q: false,
+        };
+        let actual = frame_buffers_to_rgba_8(&buffers, &color_config).unwrap();
+        let range = SampleRange::new(8, ColorRange::Studio).unwrap();
+        let matrix = MatrixCoefficients::Yuv {
+            kr: 0.2126,
+            kb: 0.0722,
+        };
+        for y in 0..buffers.height {
+            for x in 0..buffers.width {
+                let index = (y * buffers.width + x) * 4;
+                let expected = yuv_to_rgb_u16(
+                    sample_plane(&buffers.planes[0], x, y),
+                    sample_chroma_plane(
+                        &buffers.planes[1],
+                        x,
+                        y,
+                        color_config.chroma_sample_position,
+                    ),
+                    sample_chroma_plane(
+                        &buffers.planes[2],
+                        x,
+                        y,
+                        color_config.chroma_sample_position,
+                    ),
+                    range,
+                    matrix,
+                );
+                for channel in 0..3 {
+                    assert!(
+                        actual.rgba[index + channel].abs_diff(u16_to_u8(expected[channel])) <= 1,
+                        "pixel ({x},{y}) channel {channel} differs from scalar path"
+                    );
+                }
+                assert_eq!(actual.rgba[index + 3], u8::MAX);
+            }
+        }
     }
 
     #[test]

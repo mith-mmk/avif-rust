@@ -747,6 +747,12 @@ samples. A generated four-frame all-Key AVIS fixture decodes every index and
 checks identical native planes; the external `star-8bpc.avifs` fixture asserts
 the Inter boundary without accepting partial output.
 
+`decode_sequence_frames_bytes` now exposes the same supported AVIS boundary as
+one batch, preserving reference-slot order and rejecting an Inter/Switch sample
+without returning earlier frames. The generated all-Key fixture checks the
+four-frame batch result, and the external Inter fixture pins the fail-closed
+batch behavior.
+
 The progressive `draw_points_idat_progressive.avif` sample now has a pixel
 oracle as well: FFmpeg rejects its progressive `idat` layout, so the test uses
 ImageMagick's AVIF decoder and records average RGB error `0.2222`, maximum `1`.
@@ -780,6 +786,14 @@ active CDEF index has zero primary and secondary strengths. The follow-up
 seven-iteration release recheck measured `290.11/282.26 ms` (native/RGBA);
 this is recorded as another host-specific measurement, not a stable speedup
 claim.
+
+The 8-bit RGBA conversion path now reuses the bounded f32 YUV coefficients
+for subsampled YUV420/YUV422 as well as direct YUV444, while retaining the
+normative chroma sample lookup. A focused 4:2:0 test stays within one 16-bit
+code value of the scalar path. A seven-iteration release recheck measured
+`330.04/346.55 ms` for the external YUV420 sample,
+`367.79/384.69 ms` for YUV422, and `296.36/299.07 ms` for WML2Viewer
+(native/RGBA); host variance prevents a stable end-to-end speedup claim.
 
 The same IntrABC fixture is now generated and checked in 4:2:0 as well as
 4:4:4. The 4:2:0 luma plane is exact and chroma remains within the existing

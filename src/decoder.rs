@@ -203,6 +203,24 @@ pub fn decode_sequence_frame_bytes(
     Ok(frame)
 }
 
+/// Decodes every independently addressable AVIS sample into source planes.
+///
+/// This animation-oriented API accepts Key/IntraOnly and show-existing
+/// samples. Inter and switch samples remain fail-closed until motion-vector
+/// reconstruction is available.
+pub fn decode_sequence_frames_bytes(data: &[u8]) -> Result<Vec<DecodedFrame>, DecoderError> {
+    let info = parse_avif(data)?;
+    validate_public_container_preflight(&info, false)?;
+    let mut frames = decode_sequence_frames_from_info(&info)?;
+    if !info.alpha_auxiliary_items.is_empty() {
+        let alpha_frame = decode_alpha_auxiliary_frame(&info)?;
+        for frame in &mut frames {
+            append_alpha_plane(frame, alpha_frame.clone())?;
+        }
+    }
+    Ok(frames)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Av1Headers {
     config: Option<Av1CodecConfiguration>,
@@ -248,13 +266,54 @@ fn decode_sequence_frame_from_info(
             samples.len()
         )));
     }
+    let stop_index = frame_index;
+    let frames = decode_sequence_samples_from_info(info, stop_index, false)?;
+    frames.into_iter().next().ok_or_else(|| {
+        DecoderError::Bitstream("AVIS sequence sample could not be decoded".to_string())
+    })
+}
+
+fn decode_sequence_frames_from_info(info: &AvifInfo) -> Result<Vec<DecodedFrame>, DecoderError> {
+    if info.primary_grid.is_some() {
+        if info.sequence_sample_payloads.len() > 1 {
+            return Err(DecoderError::Unsupported(
+                "AVIF grid sequences are not supported".to_string(),
+            ));
+        }
+        return decode_grid_frame(info).map(|frame| vec![frame]);
+    }
+    let sample_count = if info.sequence_sample_payloads.is_empty() {
+        1
+    } else {
+        info.sequence_sample_payloads.len()
+    };
+    decode_sequence_samples_from_info(info, sample_count - 1, true)
+}
+
+fn decode_sequence_samples_from_info(
+    info: &AvifInfo,
+    stop_index: usize,
+    collect_all: bool,
+) -> Result<Vec<DecodedFrame>, DecoderError> {
+    let samples = if info.sequence_sample_payloads.is_empty() {
+        std::slice::from_ref(&info.primary_item_payload)
+    } else {
+        info.sequence_sample_payloads.as_slice()
+    };
+    if stop_index >= samples.len() {
+        return Err(DecoderError::InvalidParam(format!(
+            "AVIS frame index {stop_index} is outside the {}-sample sequence",
+            samples.len()
+        )));
+    }
     let primary_obus = parse_obu_stream(&info.primary_item_payload)?;
     let sequence_obu = primary_obus
         .iter()
         .find(|obu| obu.obu_type == ObuType::SequenceHeader)
         .ok_or_else(|| DecoderError::Bitstream("AV1 sequence header OBU is missing".to_string()))?;
     let mut references = FrameReferenceSlots::default();
-    for (index, sample) in samples.iter().enumerate().take(frame_index + 1) {
+    let mut frames = Vec::new();
+    for (index, sample) in samples.iter().enumerate().take(stop_index + 1) {
         let kind = classify_av1_sequence_sample(sample)?.ok_or_else(|| {
             DecoderError::Bitstream(format!("AVIS sample {index} has no coded frame OBU"))
         })?;
@@ -267,15 +326,19 @@ fn decode_sequence_frame_from_info(
                 let headers = parse_av1_headers(&sample_info)?;
                 let decoded = decode_still_frame(&headers, Some(&sample_info))?;
                 references.refresh(headers.frame.refresh_frame_flags, &decoded);
-                if index == frame_index {
-                    return Ok(decoded);
+                if collect_all {
+                    frames.push(decoded);
+                } else if index == stop_index {
+                    return Ok(vec![decoded]);
                 }
             }
             AvifSequenceSampleKind::ShowExisting { .. } => {
                 let shown = first_show_existing_index(sample)?;
                 let decoded = references.frame_to_show(shown)?;
-                if index == frame_index {
-                    return Ok(decoded);
+                if collect_all {
+                    frames.push(decoded);
+                } else if index == stop_index {
+                    return Ok(vec![decoded]);
                 }
             }
             AvifSequenceSampleKind::Inter | AvifSequenceSampleKind::Switch => {
@@ -285,9 +348,7 @@ fn decode_sequence_frame_from_info(
             }
         }
     }
-    Err(DecoderError::Bitstream(
-        "AVIS sequence sample could not be decoded".to_string(),
-    ))
+    Ok(frames)
 }
 
 fn sample_payload_with_sequence_header(
