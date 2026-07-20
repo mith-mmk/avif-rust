@@ -655,6 +655,13 @@ current host measured `359.35 ms` (native) and `359.65 ms` (RGBA); scheduler
 variance remains larger than this single-run delta, so no stable speedup claim
 is made yet.
 
+The expanded `ffmpeg_conformance` fixture set was rerun on 2026-07-20: 49
+tests passed, 2 diagnostic tests remained ignored, and no test failed. This
+includes the 8-bit 4:2:0/4:2:2/4:4:4, monochrome, 10-bit, 12-bit, alpha,
+sequence, grid, transform and colour-management samples. `alpha_noispe` is
+the sole explicit unsupported fixture and still rejects with the recorded
+entropy-padding error without producing a partial image.
+
 On 2026-07-20, normal reconstruction stopped allocating a transform-geometry
 `Vec` for every plane block and now traverses the same clipped geometry through
 an allocation-free iterator; the public diagnostic planning API remains
