@@ -240,6 +240,11 @@ pub fn frame_buffers_to_rgba_8(
     buffers: &FrameBuffers,
     color_config: &ColorConfig,
 ) -> Result<ImageBuffer, DecoderError> {
+    if color_config.bit_depth > 8 && transfer_characteristics(color_config)?.is_none() {
+        if let Some(image) = frame_buffers_to_rgba_8_high_bit_sdr(buffers, color_config)? {
+            return Ok(image);
+        }
+    }
     if color_config.bit_depth == 8 && transfer_characteristics(color_config)?.is_none() {
         if color_config.monochrome {
             return frame_buffers_to_rgba_8_monochrome_sdr(buffers);
@@ -274,6 +279,108 @@ pub fn frame_buffers_to_rgba_8(
         height: rgba16.height,
         rgba,
     })
+}
+
+fn frame_buffers_to_rgba_8_high_bit_sdr(
+    buffers: &FrameBuffers,
+    color_config: &ColorConfig,
+) -> Result<Option<ImageBuffer>, DecoderError> {
+    validate_rgba_conversion(buffers)?;
+    let max_source = (1u32 << color_config.bit_depth) - 1;
+    let mut rgba = vec![0u8; buffers.width * buffers.height * 4];
+
+    if color_config.monochrome {
+        let luma = buffers.planes.first().ok_or_else(|| {
+            DecoderError::Bitstream("AV1 monochrome luma plane is missing".to_string())
+        })?;
+        for y in 0..buffers.height {
+            for x in 0..buffers.width {
+                let index = (y * buffers.width + x) * 4;
+                let value = u16_to_u8(scale_sample_to_u16(sample_plane(luma, x, y), max_source));
+                rgba[index..index + 3].fill(value);
+                rgba[index + 3] = u16_to_u8(alpha_sample(buffers.planes.get(3), x, y, max_source));
+            }
+        }
+        return Ok(Some(ImageBuffer {
+            width: buffers.width,
+            height: buffers.height,
+            rgba,
+        }));
+    }
+
+    let matrix_coefficients = matrix_coefficients_for_conversion(color_config);
+    if matches!(matrix_coefficients, 0 | 3) {
+        if buffers.planes.len() < 3
+            || buffers.planes[..3]
+                .iter()
+                .any(|plane| plane.layout.subsampling_x != 0 || plane.layout.subsampling_y != 0)
+        {
+            return Ok(None);
+        }
+        let plane_g = &buffers.planes[0].samples;
+        let plane_b = &buffers.planes[1].samples;
+        let plane_r = &buffers.planes[2].samples;
+        for (index, pixel) in rgba.chunks_exact_mut(4).enumerate() {
+            pixel[0] = u16_to_u8(scale_sample_to_u16(plane_r[index], max_source));
+            pixel[1] = u16_to_u8(scale_sample_to_u16(plane_g[index], max_source));
+            pixel[2] = u16_to_u8(scale_sample_to_u16(plane_b[index], max_source));
+            pixel[3] = u16_to_u8(scale_sample_to_u16(
+                buffers
+                    .planes
+                    .get(3)
+                    .map(|plane| plane.samples[index])
+                    .unwrap_or(u16::try_from(max_source).unwrap_or(u16::MAX)),
+                max_source,
+            ));
+        }
+        return Ok(Some(ImageBuffer {
+            width: buffers.width,
+            height: buffers.height,
+            rgba,
+        }));
+    }
+
+    let color_primaries = color_config
+        .color_description
+        .map(|description| description.color_primaries)
+        .unwrap_or(2);
+    let matrix = MatrixCoefficients::from_av1(matrix_coefficients, color_primaries)?;
+    let MatrixCoefficients::Yuv { kr, kb } = matrix else {
+        return Ok(None);
+    };
+    let range = SampleRange::new(color_config.bit_depth, color_config.color_range)?;
+    let fast_range = range.as_fast();
+    let plane_y = buffers
+        .planes
+        .first()
+        .ok_or_else(|| DecoderError::Bitstream("AV1 luma plane is missing".to_string()))?;
+    let plane_u = buffers.planes.get(1);
+    let plane_v = buffers.planes.get(2);
+    let chroma_mid = 1u16 << color_config.bit_depth.saturating_sub(1);
+    for y in 0..buffers.height {
+        for x in 0..buffers.width {
+            let index = (y * buffers.width + x) * 4;
+            let y_sample = sample_plane(plane_y, x, y);
+            let u_sample = plane_u
+                .map(|plane| sample_chroma_plane(plane, x, y, color_config.chroma_sample_position))
+                .unwrap_or(chroma_mid);
+            let v_sample = plane_v
+                .map(|plane| sample_chroma_plane(plane, x, y, color_config.chroma_sample_position))
+                .unwrap_or(chroma_mid);
+            let rgb = yuv_to_rgb_u16_fast(
+                y_sample, u_sample, v_sample, fast_range, kr as f32, kb as f32,
+            );
+            rgba[index] = u16_to_u8(rgb[0]);
+            rgba[index + 1] = u16_to_u8(rgb[1]);
+            rgba[index + 2] = u16_to_u8(rgb[2]);
+            rgba[index + 3] = u16_to_u8(alpha_sample(buffers.planes.get(3), x, y, max_source));
+        }
+    }
+    Ok(Some(ImageBuffer {
+        width: buffers.width,
+        height: buffers.height,
+        rgba,
+    }))
 }
 
 fn frame_buffers_to_rgba_8_sdr(

@@ -2173,6 +2173,22 @@ fn public_10bit_sample_matches_ffmpeg_when_present() {
         .to_rgba16()
         .expect("10-bit RGBA16 conversion should succeed");
     assert_eq!(rgba16.rgba.len(), 1204 * 800 * 4);
+    let scalar_rgba: Vec<u8> = rgba16
+        .rgba
+        .iter()
+        .map(|sample| ((u32::from(*sample) * 255 + 32_767) / 65_535) as u8)
+        .collect();
+    let scalar_max_error = actual
+        .rgba
+        .iter()
+        .zip(&scalar_rgba)
+        .map(|(actual, scalar)| actual.abs_diff(*scalar))
+        .max()
+        .unwrap_or(0);
+    assert!(
+        scalar_max_error <= 1,
+        "10-bit direct RGBA8 conversion differs from scalar RGBA16 path: max={scalar_max_error}"
+    );
     let expected = ffmpeg_decode_rgba_dynamic(&path, 1204, 800).unwrap();
     let metrics = diff_rgb_dynamic(&actual.rgba, &expected);
     eprintln!(
@@ -2295,6 +2311,24 @@ fn public_12bit_sample_matches_ffmpeg_when_present() {
     let data = std::fs::read(&path).expect("external 12-bit AVIF should be readable");
     let actual = avif_rust::image_from_bytes(&data).expect("12-bit AVIF should decode");
     assert_eq!((actual.width, actual.height), (1204, 800));
+    let frame = avif_rust::decode_frame_bytes(&data).expect("12-bit frame should decode");
+    let rgba16 = frame.to_rgba16().expect("12-bit RGBA16 should decode");
+    let scalar_rgba: Vec<u8> = rgba16
+        .rgba
+        .iter()
+        .map(|sample| ((u32::from(*sample) * 255 + 32_767) / 65_535) as u8)
+        .collect();
+    let scalar_max_error = actual
+        .rgba
+        .iter()
+        .zip(&scalar_rgba)
+        .map(|(actual, scalar)| actual.abs_diff(*scalar))
+        .max()
+        .unwrap_or(0);
+    assert!(
+        scalar_max_error <= 1,
+        "12-bit direct RGBA8 max error={scalar_max_error}"
+    );
     let Some(expected) = ffmpeg_decode_rgba_dynamic(&path, 1204, 800) else {
         return;
     };

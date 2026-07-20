@@ -183,12 +183,11 @@ pub struct DecodedFrame {
 
 impl DecodedFrame {
     pub fn to_rgba8(&self) -> Result<ImageBuffer, DecoderError> {
-        if self.bit_depth == 8
-            && self
-                .color_information
-                .as_ref()
-                .and_then(ColorInformation::icc_profile)
-                .is_none()
+        if self
+            .color_information
+            .as_ref()
+            .and_then(ColorInformation::icc_profile)
+            .is_none()
         {
             return crate::av1::frame_buffers_to_rgba_8(&self.buffers, &self.color_config);
         }

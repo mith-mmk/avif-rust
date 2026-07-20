@@ -826,6 +826,13 @@ of converting the f64 range fields for every pixel. A five-iteration recheck
 measured `340.57/358.29 ms` for `WML2Viewer.avif` and `417.75/437.84 ms` for
 the external 10-bit YUV444 sample; these are host-specific checkpoints only.
 
+High-bit-depth SDR `to_rgba8` now writes directly to an 8-bit output buffer
+for monochrome, identity GBR and YUV matrices, avoiding the intermediate
+RGBA16 allocation. The 10-bit and 12-bit external tests compare this path to
+the scalar RGBA16 conversion with a maximum difference of one code value.
+A follow-up five-iteration run measured `407.33/429.17 ms` (10-bit) and
+`399.25/425.33 ms` (12-bit), retained as local no-regression checkpoints.
+
 The same IntrABC fixture is now generated and checked in 4:2:0 as well as
 4:4:4. The 4:2:0 luma plane is exact and chroma remains within the existing
 oracle tolerance (maximum error 4), covering the subsampled block geometry
