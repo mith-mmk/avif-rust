@@ -718,6 +718,10 @@ pub(crate) fn inverse_transform_into(
             inverse_transform_8x8_into(tx_type, dequant, bit_depth, output);
             Ok(())
         }
+        TxSize::Tx16x16 => {
+            inverse_transform_16x16_into(tx_type, dequant, bit_depth, output);
+            Ok(())
+        }
         _ => {
             let transformed = inverse_transform(tx_type, tx_size, dequant, bit_depth)?;
             output.copy_from_slice(&transformed);
@@ -1382,8 +1386,19 @@ fn cospi(index: usize) -> i32 {
 }
 
 fn inverse_transform_16x16(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> Vec<i32> {
+    let mut output = vec![0i32; 256];
+    inverse_transform_16x16_into(tx_type, dequant, bit_depth, &mut output);
+    output
+}
+
+fn inverse_transform_16x16_into(
+    tx_type: TxType,
+    dequant: &[i32],
+    bit_depth: u8,
+    output: &mut [i32],
+) {
     let (vertical, horizontal) = staged_transform_pair(tx_type);
-    let mut temp = vec![0i32; 256];
+    let mut temp = [0i32; 256];
     for row in 0..16 {
         let input = std::array::from_fn(|x| clamp_signed(dequant[row * 16 + x], bit_depth + 8));
         let values = inverse_staged_16(horizontal, input, bit_depth + 8);
@@ -1392,15 +1407,13 @@ fn inverse_transform_16x16(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> V
         }
     }
     let limit = 1i32 << (bit_depth + 7);
-    let mut out = vec![0i32; 256];
     for x in 0..16 {
         let input = std::array::from_fn(|y| clamp_signed(temp[y * 16 + x], bit_depth + 8));
         let values = inverse_staged_16(vertical, input, bit_depth + 8);
         for y in 0..16 {
-            out[y * 16 + x] = round2_signed(values[y], 4).clamp(-limit, limit - 1);
+            output[y * 16 + x] = round2_signed(values[y], 4).clamp(-limit, limit - 1);
         }
     }
-    out
 }
 
 fn inverse_staged_16(transform: StagedTransform, input: [i32; 16], range: u8) -> [i32; 16] {
@@ -2399,7 +2412,11 @@ mod tests {
 
     #[test]
     fn inverse_transform_into_matches_allocating_small_transform_path() {
-        for (tx_size, coefficient_index) in [(TxSize::Tx4x4, 1), (TxSize::Tx8x8, 9)] {
+        for (tx_size, coefficient_index) in [
+            (TxSize::Tx4x4, 1),
+            (TxSize::Tx8x8, 9),
+            (TxSize::Tx16x16, 33),
+        ] {
             let mut coefficients = vec![0; tx_size.sample_count()];
             coefficients[coefficient_index] = 37;
             let expected = inverse_transform(TxType::AdstDct, tx_size, &coefficients, 8).unwrap();

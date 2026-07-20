@@ -723,6 +723,13 @@ optimized 10-iteration run measured `308.45/308.11 ms` (native/RGBA) for
 `WML2Viewer.avif`; this is recorded as a local performance checkpoint pending
 another same-host baseline.
 
+The reusable residual path now includes 16x16 transforms, eliminating the
+remaining small-transform temporary buffer. The 16x16 output is covered by
+the same allocating-vs-scratch equivalence test. A follow-up optimized
+10-iteration run measured `306.09/307.88 ms` (native/RGBA) for
+`WML2Viewer.avif`; this remains a local checkpoint under host scheduling
+variance.
+
 - [x] Add malformed/truncated coverage for the currently supported container,
       OBU, entropy and metadata paths.
 - [ ] Add malformed/truncated cases for each future syntax path as it becomes
