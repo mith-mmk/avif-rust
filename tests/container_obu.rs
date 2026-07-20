@@ -1,13 +1,24 @@
 mod support;
 
-use std::{path::PathBuf, process::Command};
+use std::{
+    path::PathBuf,
+    process::Command,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use avif_rust::DecoderError;
+use avif_rust::compat::{
+    CallbackResponse, DataMap, DecodeOptions, DrawCallback, DrawOptions, InitOptions,
+    TerminateOptions, VerboseOptions,
+};
 use avif_rust::container::{
     AvifSequenceSampleKind, classify_av1_sequence_sample, is_avif_file, parse_avif,
 };
 use avif_rust::obu::{ObuType, count_obus, find_obu_payload, find_obu_payloads, parse_obu_stream};
+use bin_rs::reader::BytesReader;
 use support::sample_path;
+
+static NEXT_AVIS_SAMPLE: AtomicUsize = AtomicUsize::new(0);
 
 fn sample_avif() -> Vec<u8> {
     std::fs::read(sample_path("WML2Viewer.avif")).expect("sample AVIF should exist")
@@ -18,6 +29,107 @@ fn external_star_path() -> PathBuf {
         .parent()
         .expect("workspace root should exist")
         .join("test/images/external/avif/unsupported/star-8bpc.avifs")
+}
+
+#[derive(Default)]
+struct RecordingDrawer {
+    init: Option<(usize, usize, InitOptions)>,
+    draw_buffers: Vec<Vec<u8>>,
+    terminated: bool,
+}
+
+impl DrawCallback for RecordingDrawer {
+    fn init(
+        &mut self,
+        width: usize,
+        height: usize,
+        option: Option<InitOptions>,
+    ) -> Result<Option<CallbackResponse>, Box<dyn std::error::Error>> {
+        self.init = Some((
+            width,
+            height,
+            option.expect("AVIS callback should provide init options"),
+        ));
+        Ok(Some(CallbackResponse::cont()))
+    }
+
+    fn draw(
+        &mut self,
+        _start_x: usize,
+        _start_y: usize,
+        _width: usize,
+        _height: usize,
+        data: &[u8],
+        _option: Option<DrawOptions>,
+    ) -> Result<Option<CallbackResponse>, Box<dyn std::error::Error>> {
+        self.draw_buffers.push(data.to_vec());
+        Ok(Some(CallbackResponse::cont()))
+    }
+
+    fn terminate(
+        &mut self,
+        _term: Option<TerminateOptions>,
+    ) -> Result<Option<CallbackResponse>, Box<dyn std::error::Error>> {
+        self.terminated = true;
+        Ok(Some(CallbackResponse::cont()))
+    }
+
+    fn verbose(
+        &mut self,
+        _verbose: &str,
+        _option: Option<VerboseOptions>,
+    ) -> Result<Option<CallbackResponse>, Box<dyn std::error::Error>> {
+        Ok(Some(CallbackResponse::cont()))
+    }
+
+    fn set_metadata(
+        &mut self,
+        _key: &str,
+        _value: DataMap,
+    ) -> Result<Option<CallbackResponse>, Box<dyn std::error::Error>> {
+        Ok(Some(CallbackResponse::cont()))
+    }
+}
+
+fn generated_all_key_avis_sample() -> Option<Vec<u8>> {
+    let root = std::env::temp_dir().join(format!(
+        ".test-avif-avis-sequence-api-{}-{}",
+        std::process::id(),
+        NEXT_AVIS_SAMPLE.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&root).expect("temporary AVIS API directory should be creatable");
+    let output = root.join("all-key.avifs");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .args(["-f", "lavfi", "-i", "color=c=red:size=64x64:rate=1"])
+        .args(["-frames:v", "4", "-c:v", "libaom-av1"])
+        .args([
+            "-still-picture",
+            "0",
+            "-g",
+            "1",
+            "-lag-in-frames",
+            "0",
+            "-auto-alt-ref",
+            "0",
+            "-f",
+            "avif",
+        ])
+        .arg(&output)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping sequence API sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return None;
+    };
+    if !status.success() {
+        eprintln!("libaom AVIS encoder is unavailable; skipping sequence API sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return None;
+    }
+    let data = std::fs::read(&output).expect("all-key AVIS sample should be readable");
+    let _ = std::fs::remove_dir_all(&root);
+    Some(data)
 }
 
 #[test]
@@ -218,42 +330,9 @@ fn generated_avis_exposes_inter_and_show_existing_reference_samples() {
 
 #[test]
 fn generated_all_key_avis_samples_decode_by_index() {
-    let root = std::env::temp_dir().join(format!(
-        ".test-avif-avis-sequence-api-{}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&root).expect("temporary AVIS API directory should be creatable");
-    let output = root.join("all-key.avifs");
-    let status = Command::new("ffmpeg")
-        .args(["-y", "-loglevel", "error"])
-        .args(["-f", "lavfi", "-i", "color=c=red:size=64x64:rate=1"])
-        .args(["-frames:v", "4", "-c:v", "libaom-av1"])
-        .args([
-            "-still-picture",
-            "0",
-            "-g",
-            "1",
-            "-lag-in-frames",
-            "0",
-            "-auto-alt-ref",
-            "0",
-            "-f",
-            "avif",
-        ])
-        .arg(&output)
-        .status();
-    let Ok(status) = status else {
-        eprintln!("ffmpeg is not available; skipping sequence API sample");
-        let _ = std::fs::remove_dir_all(&root);
+    let Some(data) = generated_all_key_avis_sample() else {
         return;
     };
-    if !status.success() {
-        eprintln!("libaom AVIS encoder is unavailable; skipping sequence API sample");
-        let _ = std::fs::remove_dir_all(&root);
-        return;
-    }
-
-    let data = std::fs::read(&output).expect("all-key AVIS sample should be readable");
     let info = parse_avif(&data).expect("all-key AVIS metadata should parse");
     assert_eq!(info.sequence_sample_payloads.len(), 4);
     for payload in &info.sequence_sample_payloads {
@@ -278,7 +357,30 @@ fn generated_all_key_avis_samples_decode_by_index() {
     assert!(frames.iter().all(|frame| frame.buffers == first.buffers));
     let error = avif_rust::decode_sequence_frame_bytes(&data, 4).unwrap_err();
     assert!(matches!(error, DecoderError::InvalidParam(message) if message.contains("outside")));
-    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn generated_all_key_avis_samples_emit_animation_callback_frames() {
+    let Some(data) = generated_all_key_avis_sample() else {
+        return;
+    };
+    let mut drawer = RecordingDrawer::default();
+    let mut options = DecodeOptions::new(&mut drawer);
+    avif_rust::decode(&mut BytesReader::new(&data), &mut options)
+        .expect("supported AVIS sequence should emit callback frames");
+
+    let (width, height, init) = drawer.init.expect("callback should be initialized");
+    assert_eq!((width, height), (64, 64));
+    assert_eq!(init.loop_count, 1);
+    assert!(init.animation);
+    assert_eq!(drawer.draw_buffers.len(), 4);
+    assert!(
+        drawer
+            .draw_buffers
+            .windows(2)
+            .all(|pair| pair[0] == pair[1])
+    );
+    assert!(drawer.terminated);
 }
 
 #[test]
@@ -337,6 +439,23 @@ fn sequence_api_rejects_inter_sample_without_partial_output() {
         DecoderError::Unsupported(message)
             if message.contains("sample 1") && message.contains("Inter")
     ));
+}
+
+#[test]
+fn callback_rejects_inter_sequence_before_initialization() {
+    let path = external_star_path();
+    if !path.is_file() {
+        eprintln!("external AVIS sequence sample is unavailable; skipping callback boundary test");
+        return;
+    }
+    let data = std::fs::read(&path).expect("external AVIS sequence should be readable");
+    let mut drawer = RecordingDrawer::default();
+    let mut options = DecodeOptions::new(&mut drawer);
+    let error = avif_rust::decode(&mut BytesReader::new(&data), &mut options).unwrap_err();
+    assert!(error.to_string().contains("sample 1") && error.to_string().contains("Inter"));
+    assert!(drawer.init.is_none());
+    assert!(drawer.draw_buffers.is_empty());
+    assert!(!drawer.terminated);
 }
 
 #[test]

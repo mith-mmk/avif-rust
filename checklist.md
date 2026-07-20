@@ -753,6 +753,13 @@ without returning earlier frames. The generated all-Key fixture checks the
 four-frame batch result, and the external Inter fixture pins the fail-closed
 batch behavior.
 
+The callback `decode` path now emits supported multi-frame AVIS sequences after
+the complete batch has decoded: `init` reports `animation: true`, followed by
+one `draw` call per Key/IntraOnly/show-existing sample and a final `terminate`.
+Inter/Switch sequences still fail before callback initialization, so callers
+cannot observe a partial animation. The generated four-frame fixture records
+the callback dimensions, animation flag, frame count and identical RGBA bytes.
+
 The progressive `draw_points_idat_progressive.avif` sample now has a pixel
 oracle as well: FFmpeg rejects its progressive `idat` layout, so the test uses
 ImageMagick's AVIF decoder and records average RGB error `0.2222`, maximum `1`.
@@ -794,6 +801,9 @@ code value of the scalar path. A seven-iteration release recheck measured
 `330.04/346.55 ms` for the external YUV420 sample,
 `367.79/384.69 ms` for YUV422, and `296.36/299.07 ms` for WML2Viewer
 (native/RGBA); host variance prevents a stable end-to-end speedup claim.
+A five-iteration release recheck after the AVIS callback work measured
+`302.80/296.62 ms` for `samples/WML2Viewer.avif`; this remains a no-regression
+reference point because the callback branch is inactive for still samples.
 
 The same IntrABC fixture is now generated and checked in 4:2:0 as well as
 4:4:4. The 4:2:0 luma plane is exact and chroma remains within the existing

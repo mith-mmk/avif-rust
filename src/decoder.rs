@@ -63,6 +63,62 @@ pub fn decode<B: BinaryReader>(
         option.drawer.terminate(None)?;
         return Ok(());
     }
+    if info.sequence_sample_payloads.len() > 1 {
+        let mut headers = parse_av1_headers(&info)?;
+        // The probes replay entropy traversal and are only consumed by the
+        // diagnostic metadata below. Keep the normal draw path to one decode;
+        // callers that request debug output explicitly still receive the probes.
+        if option.debug_flag > 0 {
+            populate_diagnostic_probes(&mut headers);
+        }
+        emit_metadata(&info, Some(&headers), option)?;
+
+        // Decode the complete supported sequence before initializing the
+        // callback. Inter/Switch samples therefore fail closed without
+        // exposing a partial animation to the caller.
+        let mut frames = decode_sequence_frames_from_info(&info)?;
+        if !info.alpha_auxiliary_items.is_empty() {
+            let alpha_frame = decode_alpha_auxiliary_frame(&info)?;
+            for frame in &mut frames {
+                append_alpha_plane(frame, alpha_frame.clone())?;
+            }
+        }
+        let mut images = Vec::with_capacity(frames.len());
+        for frame in frames {
+            let mut image = frame.to_rgba8()?;
+            apply_clean_aperture(&mut image, info.clean_aperture)?;
+            apply_mirror(&mut image, info.mirror)?;
+            apply_rotation(&mut image, info.rotation)?;
+            images.push(image);
+        }
+        let first = images.first().ok_or_else(|| {
+            DecoderError::Bitstream("AVIS sequence has no decodable samples".to_string())
+        })?;
+        if images
+            .iter()
+            .any(|image| image.width != first.width || image.height != first.height)
+        {
+            return Err(DecoderError::Unsupported(
+                "AVIS sequence samples have different output dimensions".to_string(),
+            )
+            .into());
+        }
+        option.drawer.init(
+            first.width,
+            first.height,
+            Some(InitOptions {
+                loop_count: 1,
+                animation: true,
+            }),
+        )?;
+        for image in images {
+            option
+                .drawer
+                .draw(0, 0, image.width, image.height, &image.rgba, None)?;
+        }
+        option.drawer.terminate(None)?;
+        return Ok(());
+    }
     let mut headers = parse_av1_headers(&info)?;
     // The probes replay entropy traversal and are only consumed by the
     // diagnostic metadata below. Keep the normal draw path to one decode;

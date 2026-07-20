@@ -34,7 +34,7 @@ frame AVIF profileに対応します。1 frameの`avis` primary itemも静止画
 | `clap`、`irot`、`imir` composition | 対応 |
 | 1 frameの`avis` primary item | 対応 |
 | AVISのKey/IntraOnly/show-existing frameをindex指定・一括でデコード | 対応（Inter/Switchはfail-closed） |
-| animated AVIFの複数frame callback出力 | 未対応（対応sample向けsource plane一括APIは対応） |
+| animated AVIFの複数frame callback出力 | Key／IntraOnly／show-existingに対応（`animation: true`、Inter／Switchはfail-closed） |
 | HDR tone mapping、matrix-shaper以外のICC表示変換 | 未対応 |
 
 未対応のcompositionやAV1 toolは`DecoderError::Unsupported`を返します。不完全な
@@ -97,7 +97,9 @@ AVIS sequenceでは、`decode_sequence_frame_bytes`でKey／IntraOnlyまたは
 Inter／Switchサンプルは`DecoderError::Unsupported`を返します。
 
 低水準の`parse_info`と`decode`は`bin-rs::reader::BinaryReader`を受け取ります。
-`decode`は`wml2`互換の`init -> draw -> terminate` callback順序を維持します。
+`decode`は`wml2`互換の`init -> draw -> terminate` callback順序を維持し、
+対応する複数frame AVISでは`InitOptions { animation: true, .. }`と各frameの
+`draw`を出力します。
 
 ## 検証
 

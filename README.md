@@ -33,7 +33,7 @@ passes the FFmpeg RGB oracle (average absolute error about 0.075, maximum 6).
 | `clap`, `irot`, and `imir` composition | Supported |
 | One-frame `avis` primary item | Supported |
 | AVIS Key/IntraOnly/show-existing sample decode by index or batch | Supported (Inter/Switch remain fail-closed) |
-| Animated AVIF multi-frame callback output | Not yet supported; batch source-frame API is available for supported samples |
+| Animated AVIF multi-frame callback output | Supported for Key/IntraOnly/show-existing samples (`animation: true`); Inter/Switch remain fail-closed |
 | HDR tone mapping and non-matrix ICC display conversion | Not yet supported |
 
 Unsupported composition or AV1 tools return `DecoderError::Unsupported`. The
@@ -100,7 +100,8 @@ motion-vector reconstruction is available.
 
 The lower-level `parse_info` and `decode` functions accept a
 `bin-rs::reader::BinaryReader`. `decode` preserves the `wml2` callback order:
-`init -> draw -> terminate`.
+`init -> draw -> terminate`; supported multi-frame AVIS sequences emit one
+`draw` call per frame with `InitOptions { animation: true, .. }`.
 
 ## Validation
 
