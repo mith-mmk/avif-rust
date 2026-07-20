@@ -645,7 +645,11 @@ The reference-state checkpoint now has explicit eight-slot storage and
 slots, missing slots fail closed, and no public decode path uses the slots yet;
 decoded hidden Key/IntraOnly frames are now wired through the limited public
 sequence probe; promotion still requires an actual `show_existing_frame`
-fixture because inter/MV frames remain fail-closed.
+fixture because inter/MV frames remain fail-closed. The current FFmpeg AVIS
+sample exposes only its primary item payload through the container API (the
+OBU list is `SequenceHeader + Frame`), so a fixture for this path also requires
+sequence-item extraction from AVIF `iref` metadata rather than another
+single-item still sample.
 
 The segmentation map reader now follows the normative symbol consumption even
 when `last_active_segment == 0`: segment 0 is still decoded from the full
