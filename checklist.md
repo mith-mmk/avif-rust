@@ -638,13 +638,13 @@ targets segmentation/reference-frame state instead of silently ignoring a
 signalled tool.
 
 On 2026-07-20, `alpha_noispe.avif` was rechecked as a strict fail-closed
-regression. Its reduced-still 8-bit monochrome stream reaches the
+regression. Its reduced-still 8-bit YUV444 primary stream reaches the
 CDEF/SGRPROJ restoration syntax, but the tile entropy validator reports
 `AV1 entropy decoder exited after too many padding bits` (the observed
-post-parse budget was 609 bits beyond the 285-byte tile payload). The new
-conformance test requires this exact bitstream error and rejects returning a
-partial image. This keeps the sample available for the next restoration/CDF
-parity fix without weakening the strict oracle.
+post-parse budget was 855 bits beyond the 650-byte primary tile payload).
+The conformance test requires this exact bitstream error and rejects
+returning a partial image. This keeps the sample available for the next
+restoration/CDF parity fix without weakening the strict oracle.
 
 The decode benchmark now accepts `AVIF_BENCH_SAMPLES` as a semicolon-separated
 list while retaining `AVIF_BENCH_SAMPLE` for one-off runs. Each sample is
