@@ -20,7 +20,8 @@ use crate::av1::{
 };
 use crate::compat::{DataMap, DecodeOptions, InitOptions};
 use crate::container::{
-    AvifInfo, CleanAperture, ColorInformation, GridCell, ImageMirror, ImageRotation, parse_avif,
+    AvifInfo, AvifSequenceSampleKind, CleanAperture, ColorInformation, GridCell, ImageMirror,
+    ImageRotation, classify_av1_sequence_sample, parse_avif,
 };
 use crate::obu::{ObuType, find_obu_payloads, parse_obu_stream};
 use crate::{DecoderError, ImageBuffer, Rgba16ImageBuffer};
@@ -181,6 +182,27 @@ pub fn decode_frame_bytes(data: &[u8]) -> Result<DecodedFrame, DecoderError> {
     Ok(frame)
 }
 
+/// Decodes one sample from an AVIS sequence into source planes.
+///
+/// Key and intra-only samples are decoded independently while sharing the
+/// sequence header from the primary item. A `show_existing_frame` sample can
+/// reuse a previously decoded reference slot. Inter and switch frames remain
+/// fail-closed until motion-vector reconstruction is implemented; callers get
+/// an explicit [`DecoderError::Unsupported`] instead of a partial image.
+pub fn decode_sequence_frame_bytes(
+    data: &[u8],
+    frame_index: usize,
+) -> Result<DecodedFrame, DecoderError> {
+    let info = parse_avif(data)?;
+    validate_public_container_preflight(&info, false)?;
+    let mut frame = decode_sequence_frame_from_info(&info, frame_index)?;
+    if !info.alpha_auxiliary_items.is_empty() {
+        let alpha_frame = decode_alpha_auxiliary_frame(&info)?;
+        append_alpha_plane(&mut frame, alpha_frame)?;
+    }
+    Ok(frame)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Av1Headers {
     config: Option<Av1CodecConfiguration>,
@@ -201,6 +223,98 @@ struct ParsedTileGroup {
     partition_probes: Vec<PartitionProbe>,
     block_mode_probes: Vec<BlockModeProbe>,
     residual_probes: Vec<ResidualProbe>,
+}
+
+fn decode_sequence_frame_from_info(
+    info: &AvifInfo,
+    frame_index: usize,
+) -> Result<DecodedFrame, DecoderError> {
+    if info.primary_grid.is_some() {
+        if frame_index == 0 {
+            return decode_grid_frame(info);
+        }
+        return Err(DecoderError::Unsupported(
+            "AVIF grid sequences are not supported".to_string(),
+        ));
+    }
+    let samples = if info.sequence_sample_payloads.is_empty() {
+        std::slice::from_ref(&info.primary_item_payload)
+    } else {
+        info.sequence_sample_payloads.as_slice()
+    };
+    if frame_index >= samples.len() {
+        return Err(DecoderError::InvalidParam(format!(
+            "AVIS frame index {frame_index} is outside the {}-sample sequence",
+            samples.len()
+        )));
+    }
+    let primary_obus = parse_obu_stream(&info.primary_item_payload)?;
+    let sequence_obu = primary_obus
+        .iter()
+        .find(|obu| obu.obu_type == ObuType::SequenceHeader)
+        .ok_or_else(|| DecoderError::Bitstream("AV1 sequence header OBU is missing".to_string()))?;
+    let mut references = FrameReferenceSlots::default();
+    for (index, sample) in samples.iter().enumerate().take(frame_index + 1) {
+        let kind = classify_av1_sequence_sample(sample)?.ok_or_else(|| {
+            DecoderError::Bitstream(format!("AVIS sample {index} has no coded frame OBU"))
+        })?;
+        match kind {
+            AvifSequenceSampleKind::Key | AvifSequenceSampleKind::IntraOnly => {
+                let payload = sample_payload_with_sequence_header(sequence_obu, sample)?;
+                let mut sample_info = info.clone();
+                sample_info.primary_item_payload = payload;
+                sample_info.sequence_sample_payloads.clear();
+                let headers = parse_av1_headers(&sample_info)?;
+                let decoded = decode_still_frame(&headers, Some(&sample_info))?;
+                references.refresh(headers.frame.refresh_frame_flags, &decoded);
+                if index == frame_index {
+                    return Ok(decoded);
+                }
+            }
+            AvifSequenceSampleKind::ShowExisting { .. } => {
+                let shown = first_show_existing_index(sample)?;
+                let decoded = references.frame_to_show(shown)?;
+                if index == frame_index {
+                    return Ok(decoded);
+                }
+            }
+            AvifSequenceSampleKind::Inter | AvifSequenceSampleKind::Switch => {
+                return Err(DecoderError::Unsupported(format!(
+                    "AVIS sample {index} uses {kind:?} frame prediction"
+                )));
+            }
+        }
+    }
+    Err(DecoderError::Bitstream(
+        "AVIS sequence sample could not be decoded".to_string(),
+    ))
+}
+
+fn sample_payload_with_sequence_header(
+    sequence_obu: &crate::obu::Obu<'_>,
+    sample: &[u8],
+) -> Result<Vec<u8>, DecoderError> {
+    let sample_obus = parse_obu_stream(sample)?;
+    if sample_obus
+        .iter()
+        .any(|obu| obu.obu_type == ObuType::SequenceHeader)
+    {
+        return Ok(sample.to_vec());
+    }
+    let mut payload = encode_obu(sequence_obu.obu_type, sequence_obu.payload)?;
+    payload.extend_from_slice(sample);
+    Ok(payload)
+}
+
+fn first_show_existing_index(sample: &[u8]) -> Result<u8, DecoderError> {
+    parse_obu_stream(sample)?
+        .iter()
+        .filter(|obu| matches!(obu.obu_type, ObuType::Frame | ObuType::FrameHeader))
+        .find_map(|obu| parse_show_existing_frame_index(obu.payload).transpose())
+        .transpose()?
+        .ok_or_else(|| {
+            DecoderError::Bitstream("show_existing_frame sample header is missing".to_string())
+        })
 }
 
 /// The eight AV1 reference slots used by a sequence.  The current public
@@ -321,6 +435,20 @@ mod reference_frame_tests {
         assert_eq!(obus.len(), 1);
         assert_eq!(obus[0].obu_type, ObuType::SequenceHeader);
         assert_eq!(obus[0].payload, [0x01, 0x02, 0x03]);
+    }
+
+    #[test]
+    fn indexed_show_existing_sample_reuses_decoded_key_frame() {
+        let data = include_bytes!("../test_data/images/WML2Viewer.avif");
+        let mut info = parse_avif(data).unwrap();
+        info.major_brand = *b"avis";
+        info.sequence_sample_payloads = vec![
+            info.primary_item_payload.clone(),
+            encode_obu(ObuType::FrameHeader, &[0x80]).unwrap(),
+        ];
+        let expected = decode_frame_bytes(data).unwrap();
+        let shown = decode_sequence_frame_from_info(&info, 1).unwrap();
+        assert_eq!(shown, expected);
     }
 }
 

@@ -739,6 +739,14 @@ lagged alternate references. Its 60 track samples include both Inter frame
 OBUs and `show_existing_frame` headers, and the test asserts those kinds while
 still decoding the primary Key sample through the public still-image API.
 
+`decode_sequence_frame_bytes` now exposes an indexed AVIS sample path for
+Key/IntraOnly and `show_existing_frame` samples. It prepends the shared
+sequence header when later track samples omit it, refreshes only the signalled
+reference slots, and returns an explicit `Unsupported` for Inter/Switch
+samples. A generated four-frame all-Key AVIS fixture decodes every index and
+checks identical native planes; the external `star-8bpc.avifs` fixture asserts
+the Inter boundary without accepting partial output.
+
 The progressive `draw_points_idat_progressive.avif` sample now has a pixel
 oracle as well: FFmpeg rejects its progressive `idat` layout, so the test uses
 ImageMagick's AVIF decoder and records average RGB error `0.2222`, maximum `1`.
@@ -755,6 +763,11 @@ A seven-iteration two-sample optimized recheck measured
 `304.41/294.45 ms` (native/RGBA) for the workspace `samples/WML2Viewer.avif`
 and `299.80/299.15 ms` for the nested `test_data` copy. These remain host-
 specific reference points, not a stable cross-run speedup claim.
+
+After the indexed AVIS path, a seven-iteration release benchmark on the
+workspace `WML2Viewer.avif` measured `303.14/305.33 ms` (native/RGBA). This is
+within the existing host variance and records a no-regression checkpoint; the
+reference-slot API does not add work to the still-image hot path.
 
 The same IntrABC fixture is now generated and checked in 4:2:0 as well as
 4:4:4. The 4:2:0 luma plane is exact and chroma remains within the existing

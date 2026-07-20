@@ -32,7 +32,8 @@ passes the FFmpeg RGB oracle (average absolute error about 0.075, maximum 6).
 | `iloc` item payloads in file data and meta `idat` | Supported (construction methods 0 and 1) |
 | `clap`, `irot`, and `imir` composition | Supported |
 | One-frame `avis` primary item | Supported |
-| Animated AVIF multi-frame output | Not yet supported |
+| AVIS Key/IntraOnly/show-existing sample decode by index | Supported (Inter/Switch remain fail-closed) |
+| Animated AVIF multi-frame callback output | Not yet supported |
 | HDR tone mapping and non-matrix ICC display conversion | Not yet supported |
 
 Unsupported composition or AV1 tools return `DecoderError::Unsupported`. The
@@ -90,6 +91,11 @@ assert_eq!(frame.bit_depth, 8);
 assert_eq!(rgba16.rgba.len(), rgba16.width * rgba16.height * 4);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
+
+For an AVIS sequence, `decode_sequence_frame_bytes` decodes an individual
+Key/IntraOnly or `show_existing_frame` sample by index. Inter and Switch
+samples return `DecoderError::Unsupported` until motion-vector reconstruction
+is available.
 
 The lower-level `parse_info` and `decode` functions accept a
 `bin-rs::reader::BinaryReader`. `decode` preserves the `wml2` callback order:

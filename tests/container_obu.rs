@@ -1,6 +1,6 @@
 mod support;
 
-use std::process::Command;
+use std::{path::PathBuf, process::Command};
 
 use avif_rust::DecoderError;
 use avif_rust::container::{
@@ -11,6 +11,13 @@ use support::sample_path;
 
 fn sample_avif() -> Vec<u8> {
     std::fs::read(sample_path("WML2Viewer.avif")).expect("sample AVIF should exist")
+}
+
+fn external_star_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("test/images/external/avif/unsupported/star-8bpc.avifs")
 }
 
 #[test]
@@ -210,8 +217,69 @@ fn generated_avis_exposes_inter_and_show_existing_reference_samples() {
 }
 
 #[test]
+fn generated_all_key_avis_samples_decode_by_index() {
+    let root = std::env::temp_dir().join(format!(
+        ".test-avif-avis-sequence-api-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).expect("temporary AVIS API directory should be creatable");
+    let output = root.join("all-key.avifs");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .args(["-f", "lavfi", "-i", "color=c=red:size=64x64:rate=1"])
+        .args(["-frames:v", "4", "-c:v", "libaom-av1"])
+        .args([
+            "-still-picture",
+            "0",
+            "-g",
+            "1",
+            "-lag-in-frames",
+            "0",
+            "-auto-alt-ref",
+            "0",
+            "-f",
+            "avif",
+        ])
+        .arg(&output)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping sequence API sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom AVIS encoder is unavailable; skipping sequence API sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+
+    let data = std::fs::read(&output).expect("all-key AVIS sample should be readable");
+    let info = parse_avif(&data).expect("all-key AVIS metadata should parse");
+    assert_eq!(info.sequence_sample_payloads.len(), 4);
+    for payload in &info.sequence_sample_payloads {
+        assert!(matches!(
+            classify_av1_sequence_sample(payload).unwrap(),
+            Some(AvifSequenceSampleKind::Key | AvifSequenceSampleKind::IntraOnly)
+        ));
+    }
+
+    let first = avif_rust::decode_sequence_frame_bytes(&data, 0)
+        .expect("first all-key AVIS sample should decode");
+    assert_eq!((first.width, first.height), (64, 64));
+    for index in 1..4 {
+        let frame = avif_rust::decode_sequence_frame_bytes(&data, index)
+            .expect("all-key AVIS sample should decode by index");
+        assert_eq!((frame.width, frame.height), (64, 64));
+        assert_eq!(frame.buffers, first.buffers);
+    }
+    let error = avif_rust::decode_sequence_frame_bytes(&data, 4).unwrap_err();
+    assert!(matches!(error, DecoderError::InvalidParam(message) if message.contains("outside")));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn external_avis_sequence_exposes_all_track_samples_when_present() {
-    let path = sample_path("star-8bpc.avifs");
+    let path = external_star_path();
     if !path.is_file() {
         eprintln!("external AVIS sequence sample is unavailable; skipping track audit");
         return;
@@ -243,6 +311,22 @@ fn external_avis_sequence_exposes_all_track_samples_when_present() {
                 .is_empty()
         );
     }
+}
+
+#[test]
+fn sequence_api_rejects_inter_sample_without_partial_output() {
+    let path = external_star_path();
+    if !path.is_file() {
+        eprintln!("external AVIS sequence sample is unavailable; skipping API boundary test");
+        return;
+    }
+    let data = std::fs::read(&path).expect("external AVIS sequence should be readable");
+    let error = avif_rust::decode_sequence_frame_bytes(&data, 1).unwrap_err();
+    assert!(matches!(
+        error,
+        DecoderError::Unsupported(message)
+            if message.contains("sample 1") && message.contains("Inter")
+    ));
 }
 
 #[test]
