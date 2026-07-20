@@ -18,8 +18,9 @@ pub use compat::{
     ResponseCommand, TerminateOptions, VerboseOptions,
 };
 pub use container::{
-    AuxiliaryImage, AvifInfo, CleanAperture, ColorInformation, GridCell, GridImage, ImageMirror,
-    ImageRotation, ImageSpatialExtents, NclxColorInformation, PixelInformation,
+    AuxiliaryImage, AvifInfo, AvifSequenceSampleKind, CleanAperture, ColorInformation, GridCell,
+    GridImage, ImageMirror, ImageRotation, ImageSpatialExtents, NclxColorInformation,
+    PixelInformation, classify_av1_sequence_sample,
 };
 pub use decoder::{DecodedFrame, decode, decode_frame_bytes, parse_info};
 pub use error::DecoderError;

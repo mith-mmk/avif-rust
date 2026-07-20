@@ -3,7 +3,9 @@ mod support;
 use std::process::Command;
 
 use avif_rust::DecoderError;
-use avif_rust::container::{is_avif_file, parse_avif};
+use avif_rust::container::{
+    AvifSequenceSampleKind, classify_av1_sequence_sample, is_avif_file, parse_avif,
+};
 use avif_rust::obu::{ObuType, count_obus, find_obu_payload, find_obu_payloads, parse_obu_stream};
 use support::sample_path;
 
@@ -117,6 +119,21 @@ fn avis_container_exposes_track_samples_without_concatenating_obus() {
     assert_eq!(&info.major_brand, b"avis");
     assert_eq!(info.sequence_sample_payloads.len(), 8);
     assert_eq!(info.sequence_sample_payloads[0], info.primary_item_payload);
+    let kinds: Vec<_> = info
+        .sequence_sample_payloads
+        .iter()
+        .map(|payload| classify_av1_sequence_sample(payload).unwrap())
+        .collect();
+    assert!(matches!(
+        kinds.first(),
+        Some(Some(AvifSequenceSampleKind::Key))
+    ));
+    assert!(
+        kinds
+            .iter()
+            .skip(1)
+            .any(|kind| matches!(kind, Some(AvifSequenceSampleKind::Inter)))
+    );
     let frame = avif_rust::decode_frame_bytes(&data).expect("primary AVIS frame should decode");
     assert_eq!((frame.width, frame.height), (64, 64));
     for payload in &info.sequence_sample_payloads {
@@ -141,6 +158,21 @@ fn external_avis_sequence_exposes_all_track_samples_when_present() {
     assert_eq!(&info.major_brand, b"avis");
     assert_eq!(info.sequence_sample_payloads.len(), 5);
     assert_eq!(info.sequence_sample_payloads[0], info.primary_item_payload);
+    let kinds: Vec<_> = info
+        .sequence_sample_payloads
+        .iter()
+        .map(|payload| classify_av1_sequence_sample(payload).unwrap())
+        .collect();
+    assert!(matches!(
+        kinds.first(),
+        Some(Some(AvifSequenceSampleKind::Key))
+    ));
+    assert!(
+        kinds
+            .iter()
+            .skip(1)
+            .any(|kind| matches!(kind, Some(AvifSequenceSampleKind::Inter)))
+    );
     for payload in &info.sequence_sample_payloads {
         assert!(
             !parse_obu_stream(payload)

@@ -726,6 +726,14 @@ sample with CDEF and restoration disabled. Native Y/U/V planes match FFmpeg's
 This proves the currently supported low-complexity IntrABC syntax path while
 the high-complexity reference/transform cases remain an explicit follow-up.
 
+On 2026-07-20, AVIS samples gained a header-level classifier for Key, Inter,
+IntraOnly, Switch and show-existing frames. The generated and external sequence
+fixtures now assert a Key first sample followed by real Inter samples, keeping
+the unsupported inter/MV boundary observable instead of treating later track
+payloads as opaque. Reference slots now share one decoded frame through `Arc`
+when multiple refresh flags target the same frame, avoiding up to eight full
+frame clones while reference-backed reconstruction is being expanded.
+
 The same IntrABC fixture is now generated and checked in 4:2:0 as well as
 4:4:4. The 4:2:0 luma plane is exact and chroma remains within the existing
 oracle tolerance (maximum error 4), covering the subsampled block geometry

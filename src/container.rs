@@ -1,10 +1,54 @@
 use std::borrow::Cow;
 
 use crate::DecoderError;
+use crate::obu::{ObuType, parse_obu_stream};
 
 const BRAND_AVIF: &[u8; 4] = b"avif";
 const BRAND_AVIS: &[u8; 4] = b"avis";
 const ALPHA_AUX_TYPE: &str = "urn:mpeg:mpegB:cicp:systems:auxiliary:alpha";
+
+/// The coded-frame kind found in one AVIS track sample.
+///
+/// This is intentionally a header-level classification. It does not claim
+/// that the decoder can reconstruct inter frames yet, but lets callers audit
+/// a sequence without treating all non-Key samples as opaque bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AvifSequenceSampleKind {
+    Key,
+    Inter,
+    IntraOnly,
+    Switch,
+    ShowExisting { frame_to_show_map_idx: u8 },
+}
+
+/// Classifies the first coded-frame OBU in one AVIS track sample.
+pub fn classify_av1_sequence_sample(
+    payload: &[u8],
+) -> Result<Option<AvifSequenceSampleKind>, DecoderError> {
+    let obus = parse_obu_stream(payload)?;
+    let Some(frame) = obus
+        .iter()
+        .find(|obu| matches!(obu.obu_type, ObuType::Frame | ObuType::FrameHeader))
+    else {
+        return Ok(None);
+    };
+    let first = *frame
+        .payload
+        .first()
+        .ok_or_else(|| DecoderError::NotEnoughData("AV1 frame header is empty".to_string()))?;
+    if first & 0x80 != 0 {
+        return Ok(Some(AvifSequenceSampleKind::ShowExisting {
+            frame_to_show_map_idx: (first >> 4) & 0x07,
+        }));
+    }
+    Ok(Some(match (first >> 5) & 0x03 {
+        0 => AvifSequenceSampleKind::Key,
+        1 => AvifSequenceSampleKind::Inter,
+        2 => AvifSequenceSampleKind::IntraOnly,
+        3 => AvifSequenceSampleKind::Switch,
+        _ => unreachable!("two-bit AV1 frame type is always in range"),
+    }))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct BoxHeader {
@@ -1851,6 +1895,37 @@ fn validate_collection_count(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn one_frame_obu(obu_type: u8, header_byte: u8) -> Vec<u8> {
+        vec![(obu_type << 3) | 0x02, 1, header_byte]
+    }
+
+    #[test]
+    fn classifies_sequence_sample_frame_header_kinds() {
+        assert_eq!(
+            classify_av1_sequence_sample(&one_frame_obu(6, 0x00)).unwrap(),
+            Some(AvifSequenceSampleKind::Key)
+        );
+        assert_eq!(
+            classify_av1_sequence_sample(&one_frame_obu(6, 0x20)).unwrap(),
+            Some(AvifSequenceSampleKind::Inter)
+        );
+        assert_eq!(
+            classify_av1_sequence_sample(&one_frame_obu(3, 0xa0)).unwrap(),
+            Some(AvifSequenceSampleKind::ShowExisting {
+                frame_to_show_map_idx: 2
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_empty_coded_frame_header_during_sequence_classification() {
+        let error = classify_av1_sequence_sample(&[0x1a, 0]).unwrap_err();
+        assert!(matches!(
+            error,
+            DecoderError::NotEnoughData(message) if message.contains("frame header is empty")
+        ));
+    }
 
     #[test]
     fn rejects_truncated_top_level_box_header() {

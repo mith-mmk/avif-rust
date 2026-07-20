@@ -26,6 +26,7 @@ use crate::obu::{ObuType, find_obu_payloads, parse_obu_stream};
 use crate::{DecoderError, ImageBuffer, Rgba16ImageBuffer};
 use bin_rs::reader::BinaryReader;
 use std::io::SeekFrom;
+use std::sync::Arc;
 
 type Error = Box<dyn std::error::Error>;
 
@@ -208,14 +209,15 @@ struct ParsedTileGroup {
 /// future inter-frame path from smuggling references through tile state.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct FrameReferenceSlots {
-    slots: [Option<DecodedFrame>; 8],
+    slots: [Option<Arc<DecodedFrame>>; 8],
 }
 
 impl FrameReferenceSlots {
     fn refresh(&mut self, refresh_frame_flags: u8, frame: &DecodedFrame) {
+        let shared = Arc::new(frame.clone());
         for (index, slot) in self.slots.iter_mut().enumerate() {
             if refresh_frame_flags & (1 << index) != 0 {
-                *slot = Some(frame.clone());
+                *slot = Some(Arc::clone(&shared));
             }
         }
     }
@@ -224,7 +226,7 @@ impl FrameReferenceSlots {
         self.slots
             .get(usize::from(index))
             .and_then(Option::as_ref)
-            .cloned()
+            .map(|frame| frame.as_ref().clone())
             .ok_or_else(|| {
                 DecoderError::Unsupported(format!(
                     "AV1 show_existing_frame slot {index} has no decoded reference"
