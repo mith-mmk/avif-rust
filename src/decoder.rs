@@ -2281,6 +2281,7 @@ fn apply_loop_restoration_stage(
     {
         return;
     }
+    let mut reusable_output = Vec::new();
     for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
         if !state
             .restoration_units
@@ -2290,7 +2291,9 @@ fn apply_loop_restoration_stage(
             continue;
         }
         let source = std::mem::take(&mut plane.samples);
-        let mut output = source.clone();
+        let mut output = std::mem::take(&mut reusable_output);
+        output.resize(source.len(), 0);
+        output.copy_from_slice(&source);
         for unit in state.restoration_units.iter().filter(|unit| {
             unit.plane == plane_index && enabled_types.contains(&unit.restoration_type)
         }) {
@@ -2373,6 +2376,7 @@ fn apply_loop_restoration_stage(
             }
         }
         plane.samples = output;
+        reusable_output = source;
     }
 }
 

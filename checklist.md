@@ -734,6 +734,12 @@ payloads as opaque. Reference slots now share one decoded frame through `Arc`
 when multiple refresh flags target the same frame, avoiding up to eight full
 frame clones while reference-backed reconstruction is being expanded.
 
+Loop restoration now also swaps a reusable output buffer across enabled planes
+instead of allocating a fresh `source.clone()` for each plane. A seven-iteration
+optimized `WML2Viewer.avif` recheck measured `302.50/306.33 ms` (native/RGBA),
+which is retained as an allocation-reduction/no-regression measurement rather
+than a stable speedup claim.
+
 The same IntrABC fixture is now generated and checked in 4:2:0 as well as
 4:4:4. The 4:2:0 luma plane is exact and chroma remains within the existing
 oracle tolerance (maximum error 4), covering the subsampled block geometry
