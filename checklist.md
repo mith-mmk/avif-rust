@@ -1187,4 +1187,5 @@ AVIS batch decode now parallelizes sequences made entirely of Key/IntraOnly
 samples on native hosts with an eight-worker cap while preserving sample order.
 show-existing and Inter/Switch samples keep the reference-dependent sequential
 path, and Wasm remains sequential. Generated all-key callback and batch tests
-cover the optimized path.
+cover the optimized path. Indexed Key/IntraOnly requests now decode only the
+requested sample instead of replaying earlier independent samples.

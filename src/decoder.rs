@@ -379,15 +379,22 @@ fn decode_sequence_samples_from_info(
             })
         })
         .collect::<Result<_, _>>()?;
-    if collect_all
-        && kinds.iter().all(|kind| {
-            matches!(
-                kind,
-                AvifSequenceSampleKind::Key | AvifSequenceSampleKind::IntraOnly
-            )
-        })
-    {
-        return decode_independent_sequence_samples(info, sequence_obu, &samples[..=stop_index]);
+    let independent_samples = kinds.iter().all(|kind| {
+        matches!(
+            kind,
+            AvifSequenceSampleKind::Key | AvifSequenceSampleKind::IntraOnly
+        )
+    });
+    if independent_samples {
+        if collect_all {
+            return decode_independent_sequence_samples(
+                info,
+                sequence_obu,
+                &samples[..=stop_index],
+            );
+        }
+        let decoded = decode_independent_sequence_sample(info, sequence_obu, &samples[stop_index])?;
+        return Ok(vec![decoded]);
     }
     let mut references = FrameReferenceSlots::default();
     let mut frames = Vec::new();
