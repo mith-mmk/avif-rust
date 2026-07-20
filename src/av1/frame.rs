@@ -291,6 +291,17 @@ pub fn parse_frame_header(
     })
 }
 
+/// Reads the small prefix that identifies an AV1 `show_existing_frame` OBU.
+/// The full coded-frame parser intentionally remains fail-closed for this
+/// sequence feature until reference-backed reconstruction is wired in.
+pub(crate) fn parse_show_existing_frame_index(data: &[u8]) -> Result<Option<u8>, DecoderError> {
+    let mut reader = BitReader::new(data);
+    if !reader.read_bool("show_existing_frame")? {
+        return Ok(None);
+    }
+    Ok(Some(reader.read_bits(3, "frame_to_show_map_idx")? as u8))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FilmGrainParams {
     pub random_seed: u16,
@@ -1103,8 +1114,8 @@ fn frame_type_is_intra(frame_type: FrameType) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        LoopFilterParams, SegmentationParams, parse_segmentation_params, read_inv_signed_literal,
-        read_signed_delta,
+        LoopFilterParams, SegmentationParams, parse_segmentation_params,
+        parse_show_existing_frame_index, read_inv_signed_literal, read_signed_delta,
     };
     use crate::av1::bitstream::BitReader;
 
@@ -1319,5 +1330,17 @@ mod tests {
             assert!(params.preskip);
             assert_eq!(params.last_active_segment, 0);
         }
+    }
+
+    #[test]
+    fn reads_show_existing_frame_slot_prefix() {
+        assert_eq!(
+            parse_show_existing_frame_index(&[0b1001_0000]).unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            parse_show_existing_frame_index(&[0b0100_0000]).unwrap(),
+            None
+        );
     }
 }

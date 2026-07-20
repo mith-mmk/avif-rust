@@ -192,6 +192,117 @@ struct ParsedTileGroup {
     residual_probes: Vec<ResidualProbe>,
 }
 
+/// The eight AV1 reference slots used by a sequence.  The current public
+/// decoder still accepts only intra/key coded frames, but keeping the slot
+/// state separate makes `show_existing_frame` reuse explicit and prevents a
+/// future inter-frame path from smuggling references through tile state.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct FrameReferenceSlots {
+    slots: [Option<DecodedFrame>; 8],
+}
+
+impl FrameReferenceSlots {
+    fn refresh(&mut self, refresh_frame_flags: u8, frame: &DecodedFrame) {
+        for (index, slot) in self.slots.iter_mut().enumerate() {
+            if refresh_frame_flags & (1 << index) != 0 {
+                *slot = Some(frame.clone());
+            }
+        }
+    }
+
+    fn frame_to_show(&self, index: u8) -> Result<DecodedFrame, DecoderError> {
+        self.slots
+            .get(usize::from(index))
+            .and_then(Option::as_ref)
+            .cloned()
+            .ok_or_else(|| {
+                DecoderError::Unsupported(format!(
+                    "AV1 show_existing_frame slot {index} has no decoded reference"
+                ))
+            })
+    }
+}
+
+#[cfg(test)]
+mod reference_frame_tests {
+    use super::*;
+
+    fn frame(value: u16) -> DecodedFrame {
+        DecodedFrame {
+            width: 1,
+            height: 1,
+            render_width: 1,
+            render_height: 1,
+            bit_depth: 8,
+            color_config: ColorConfig {
+                high_bitdepth: false,
+                twelve_bit: false,
+                bit_depth: 8,
+                monochrome: true,
+                color_description: None,
+                color_range: ColorRange::Full,
+                subsampling_x: false,
+                subsampling_y: false,
+                chroma_sample_position: None,
+                separate_uv_delta_q: false,
+            },
+            color_information: None,
+            alpha_premultiplied: false,
+            buffers: FrameBuffers {
+                width: 1,
+                height: 1,
+                planes: vec![PlaneBuffer {
+                    layout: PlaneLayout {
+                        plane: 0,
+                        width: 1,
+                        height: 1,
+                        subsampling_x: 0,
+                        subsampling_y: 0,
+                        sample_count: 1,
+                    },
+                    samples: vec![value],
+                }],
+            },
+        }
+    }
+
+    #[test]
+    fn refresh_flags_store_and_replace_reference_slots() {
+        let mut slots = FrameReferenceSlots::default();
+        slots.refresh(0b0000_0101, &frame(10));
+        assert_eq!(
+            slots.frame_to_show(0).unwrap().buffers.planes[0].samples,
+            [10]
+        );
+        assert_eq!(
+            slots.frame_to_show(2).unwrap().buffers.planes[0].samples,
+            [10]
+        );
+        assert!(slots.frame_to_show(1).is_err());
+
+        slots.refresh(0b0000_0100, &frame(20));
+        assert_eq!(
+            slots.frame_to_show(0).unwrap().buffers.planes[0].samples,
+            [10]
+        );
+        assert_eq!(
+            slots.frame_to_show(2).unwrap().buffers.planes[0].samples,
+            [20]
+        );
+    }
+
+    #[test]
+    fn missing_show_existing_slot_is_rejected_without_partial_frame() {
+        let slots = FrameReferenceSlots::default();
+        let error = slots.frame_to_show(7).unwrap_err();
+        assert!(matches!(
+            error,
+            DecoderError::Unsupported(message)
+                if message.contains("show_existing_frame slot 7")
+        ));
+    }
+}
+
 fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
     let [
         sequence_payload,

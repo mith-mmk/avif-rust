@@ -640,6 +640,12 @@ This audit keeps the unsupported boundary explicit while the next expansion
 targets actual inter-frame reference storage instead of silently ignoring a
 signalled tool.
 
+The reference-state checkpoint now has explicit eight-slot storage and
+`show_existing_frame` prefix parsing. Refresh flags replace only the selected
+slots, missing slots fail closed, and no public decode path uses the slots yet;
+the next step is wiring decoded Key/IntraOnly frames into this state before
+promoting an actual `show_existing_frame` fixture.
+
 The segmentation map reader now follows the normative symbol consumption even
 when `last_active_segment == 0`: segment 0 is still decoded from the full
 8-symbol CDF before negative deinterleaving. A focused regression test pins the
