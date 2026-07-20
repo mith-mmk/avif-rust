@@ -637,6 +637,12 @@ This audit keeps the unsupported boundary explicit while the next expansion
 targets segmentation/reference-frame state instead of silently ignoring a
 signalled tool.
 
+The segmentation map reader now follows the normative symbol consumption even
+when `last_active_segment == 0`: segment 0 is still decoded from the full
+8-symbol CDF before negative deinterleaving. A focused regression test pins the
+entropy position and prevents this single-segment edge from desynchronizing
+following block syntax.
+
 On 2026-07-20, `alpha_noispe.avif` was rechecked as a strict fail-closed
 regression. Its reduced-still 8-bit YUV444 primary stream reaches the
 CDEF/SGRPROJ restoration syntax, but the tile entropy validator reports
@@ -674,6 +680,11 @@ an allocation-free iterator; the public diagnostic planning API remains
 `WML2Viewer.avif` and `4.12/4.38 ms` for the 128x128 alpha sample. These are
 recorded as allocation-reduction/no-regression measurements until a quieter
 same-host baseline confirms a stable speedup.
+
+The post-fix release benchmark was rerun with the multi-sample harness at
+three iterations: `WML2Viewer.avif` measured `306.37/305.48 ms` (native/RGBA)
+and the 128x128 alpha sample measured `2.93/3.23 ms`. The short run is kept as
+a fresh reference point only; it is not treated as a stable speedup claim.
 
 - [x] Add malformed/truncated coverage for the currently supported container,
       OBU, entropy and metadata paths.
