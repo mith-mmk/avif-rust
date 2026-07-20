@@ -1156,3 +1156,9 @@ toolchain, so the test uses an independent native `yuv444p` oracle for all
 three planes. The RGBA8/RGBA16 YCgCo path now uses a bounded f32 lifting
 transform, with a scalar-equivalence unit vector; this removes the previous
 fallback to the slower f64 matrix path while keeping the native plane gate.
+
+AVIS track parsing now accepts repeated, byte-identical `av01` sample
+descriptions in `stsd`/`stsc` instead of rejecting every sample-description
+index other than 1. Differing descriptions remain fail-closed because their
+sequence and colour configuration cannot be inferred safely from the current
+byte-oriented public API; focused container tests cover both outcomes.

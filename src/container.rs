@@ -1147,7 +1147,8 @@ fn parse_sequence_track(
             continue;
         };
         let stsd_payload = box_payload(stbl_payload, stsd)?;
-        if !stsd_has_av01(stsd_payload)? {
+        let sample_descriptions = stsd_av01_descriptions(stsd_payload)?;
+        if sample_descriptions.iter().all(Option::is_none) {
             continue;
         }
         let Some(stsc) = child_box(stbl_payload, b"stsc")? else {
@@ -1170,7 +1171,12 @@ fn parse_sequence_track(
         let chunk_offsets = parse_chunk_offsets(chunk_offset_payload, chunk_offset_width)?;
         let sizes = parse_sample_sizes(box_payload(stbl_payload, stsz)?)?;
         let samples_per_chunk = parse_samples_per_chunk(box_payload(stbl_payload, stsc)?)?;
-        let sample_offsets = build_sample_offsets(&chunk_offsets, &samples_per_chunk, &sizes)?;
+        let sample_offsets = build_sample_offsets(
+            &chunk_offsets,
+            &samples_per_chunk,
+            &sizes,
+            &sample_descriptions,
+        )?;
         let mut samples = Vec::with_capacity(sizes.len());
         for (offset, size) in sample_offsets.into_iter().zip(sizes) {
             let start = usize::try_from(offset).map_err(|_| {
@@ -1208,7 +1214,7 @@ fn child_box(payload: &[u8], box_type: &[u8; 4]) -> Result<Option<BoxHeader>, De
         .find(|header| header.box_type == *box_type))
 }
 
-fn stsd_has_av01(payload: &[u8]) -> Result<bool, DecoderError> {
+fn stsd_av01_descriptions(payload: &[u8]) -> Result<Vec<Option<Vec<u8>>>, DecoderError> {
     if payload.len() < 8 {
         return Err(DecoderError::NotEnoughData(
             "stsd payload is too short".to_string(),
@@ -1216,14 +1222,18 @@ fn stsd_has_av01(payload: &[u8]) -> Result<bool, DecoderError> {
     }
     let entry_count = read_u32(payload, 4)? as usize;
     let mut offset = 8;
+    let mut descriptions = Vec::with_capacity(entry_count);
     for _ in 0..entry_count {
         let header = read_box_header(payload, offset, payload.len())?;
-        if header.box_type == *b"av01" {
-            return Ok(true);
-        }
+        descriptions.push(if header.box_type == *b"av01" {
+            let end = checked_add(header.offset, header.size, "stsd av01 entry end")?;
+            Some(payload[header.offset..end].to_vec())
+        } else {
+            None
+        });
         offset = checked_add(header.offset, header.size, "stsd entry end")?;
     }
-    Ok(false)
+    Ok(descriptions)
 }
 
 fn parse_sample_sizes(payload: &[u8]) -> Result<Vec<usize>, DecoderError> {
@@ -1325,6 +1335,7 @@ fn build_sample_offsets(
     chunk_offsets: &[u64],
     samples_per_chunk: &[(u32, u32, u32)],
     sizes: &[usize],
+    sample_descriptions: &[Option<Vec<u8>>],
 ) -> Result<Vec<u64>, DecoderError> {
     if samples_per_chunk.is_empty() {
         return Err(DecoderError::Bitstream("stsc table is empty".to_string()));
@@ -1339,9 +1350,30 @@ fn build_sample_offsets(
             .rev()
             .find(|(first_chunk, _, _)| *first_chunk <= chunk_number)
             .ok_or_else(|| DecoderError::Bitstream("stsc first_chunk is invalid".to_string()))?;
-        if record.2 != 1 {
+        let description_index = usize::try_from(record.2).map_err(|_| {
+            DecoderError::Bitstream("AVIS sample description index is too large".to_string())
+        })?;
+        if description_index == 0 {
+            return Err(DecoderError::Bitstream(
+                "AVIS sample description index is zero".to_string(),
+            ));
+        }
+        let description = sample_descriptions
+            .get(description_index - 1)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| {
+                DecoderError::Bitstream(format!(
+                    "AVIS sample description index {} is missing an av01 entry",
+                    record.2
+                ))
+            })?;
+        let first_description = sample_descriptions
+            .iter()
+            .find_map(Option::as_ref)
+            .expect("stsd AV1 presence checked by caller");
+        if first_description != description {
             return Err(DecoderError::Unsupported(
-                "AVIS tracks with multiple sample descriptions are not supported".to_string(),
+                "AVIS tracks with differing sample descriptions are not supported".to_string(),
             ));
         }
         let mut offset = chunk_offset;
@@ -3028,5 +3060,29 @@ mod tests {
         assert!(
             matches!(error, DecoderError::Bitstream(message) if message.contains("out of range"))
         );
+    }
+
+    #[test]
+    fn accepts_repeated_identical_avis_sample_descriptions() {
+        let descriptions = vec![
+            Some(vec![b'a', b'v', b'0', b'1']),
+            Some(vec![b'a', b'v', b'0', b'1']),
+        ];
+        let offsets = build_sample_offsets(&[100], &[(1, 2, 2)], &[3, 4], &descriptions).unwrap();
+        assert_eq!(offsets, vec![100, 103]);
+    }
+
+    #[test]
+    fn rejects_differing_avis_sample_descriptions() {
+        let descriptions = vec![
+            Some(vec![b'a', b'v', b'0', b'1']),
+            Some(vec![b'a', b'v', b'0', b'2']),
+        ];
+        let error = build_sample_offsets(&[100], &[(1, 1, 2)], &[3], &descriptions).unwrap_err();
+        assert!(matches!(
+            error,
+            DecoderError::Unsupported(message)
+                if message.contains("differing sample descriptions")
+        ));
     }
 }
