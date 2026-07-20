@@ -233,6 +233,7 @@ pub(super) fn decode_plane_block_unit(
             continue;
         }
 
+        let retain_coefficients = plane_index == 0 && decoded_luma.is_some();
         let decoded_transform =
             decoder.read_decoded_transform(frame, block_mode, transform, txb_context.dc_sign)?;
         decoder.record_transform_boundary(
@@ -314,10 +315,12 @@ pub(super) fn decode_plane_block_unit(
             )?;
         }
         decoder.mark_reconstructed_transform(transform)?;
-        if plane_index == 0 {
+        if retain_coefficients {
             if let Some(decoded_luma) = decoded_luma.as_deref_mut() {
                 decoded_luma.push(decoded_transform);
             }
+        } else {
+            decoder.coefficient_scratch = decoded_transform.coefficients;
         }
     }
 

@@ -606,7 +606,8 @@ is still required before marking the full tool supported.
 
 The external compatibility manifest now exercises the formerly labelled
 `unsupported/` 8-bit YUV420, monochrome and YUV422 samples plus nine libavif
-official samples as successful decodes (34 successes, no partial PNGs). The
+official samples as successful decodes (34 successes at this audit point, no
+partial PNGs). The
 remaining AV1 `Unsupported` branches were reviewed against the frame/tile
 parser and grouped as follows:
 
@@ -677,6 +678,15 @@ three iterations: `WML2Viewer.avif` measured `306.37/305.48 ms` (native/RGBA)
 and the 128x128 alpha sample measured `2.93/3.23 ms`. The short run is kept as
 a fresh reference point only; it is not treated as a stable speedup claim.
 
+On 2026-07-20, coefficient decoding began returning its owned level buffer to
+the decoder scratch after reconstruction; only the public diagnostic luma
+capture retains it. The scratch-transfer regression test confirms that two
+consecutive coefficient decodes reuse the same allocation. A fresh 10-iteration
+single-sample benchmark measured `319.37/324.12 ms` (native/RGBA) for
+`WML2Viewer.avif`, versus the earlier `327.02/347.69 ms` reference. This is a
+local checkpoint; cross-run speedup claims still require a quieter repeated
+baseline.
+
 - [x] Add malformed/truncated coverage for the currently supported container,
       OBU, entropy and metadata paths.
 - [ ] Add malformed/truncated cases for each future syntax path as it becomes
@@ -709,6 +719,9 @@ a fresh reference point only; it is not treated as a stable speedup claim.
 - [x] Keep container, OBU, frame-header and entropy fuzz targets.
 - [x] Optimise a per-transform coefficient allocation after exact-plane
       conformance passes; retain the public allocating wrapper for compatibility.
+- [x] Return decoded coefficient storage to the TileDecoder scratch between
+      ordinary transforms while retaining owned vectors for diagnostic luma
+      capture; cover the transfer with a pointer-reuse regression test.
 - [x] Keep rectangular inverse-transform intermediates in bounded stack scratch;
       retain the allocating public transform wrapper for compatibility.
 - [x] Reuse fixed-size intra-prediction edge scratch in the reconstruction hot

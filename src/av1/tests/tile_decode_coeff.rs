@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use super::coefficient::{
     CoefficientLiteral, CoefficientScanCache, CoefficientSymbol, CoefficientTokenSource,
-    EntropyCoefficientSource, decode_coefficients, read_golomb,
+    EntropyCoefficientSource, decode_coefficients, decode_coefficients_with_scratch, read_golomb,
 };
 use super::coefficient_context::{
     COEFFICIENT_LEVEL_MASK, TxbContext, clamp_coefficient_level, coeff_base_context_1d,
@@ -481,4 +481,43 @@ fn aom_encoded_payload_decodes_to_reference_coefficient_vector() {
         decoded.base.base_levels,
         vec![-1, 2, -1, 0, 0, 0, 0, 0, 20, 0, 0, 0, 0, 0, 0, 0]
     );
+}
+
+#[test]
+fn coefficient_decode_reuses_caller_scratch_storage() {
+    let payload = [27, 150, 246, 92, 224];
+    let mut scratch = Vec::with_capacity(TxSize::Tx4x4.sample_count());
+    let initial_ptr = scratch.as_mut_ptr();
+
+    let mut first_reader = EntropyDecoder::new(&payload, false).unwrap();
+    let mut first_cdf = CdfContext::new(20);
+    let mut first_source = EntropyCoefficientSource::new(&mut first_reader, &mut first_cdf);
+    let first = decode_coefficients_with_scratch(
+        &mut first_source,
+        TxSize::Tx4x4,
+        TxType::DctDct,
+        0,
+        2,
+        &mut scratch,
+    )
+    .unwrap();
+    assert_eq!(first.base.base_levels.as_ptr(), initial_ptr);
+    let expected = first.base.base_levels.clone();
+
+    scratch = first.base.base_levels;
+    let mut second_reader = EntropyDecoder::new(&payload, false).unwrap();
+    let mut second_cdf = CdfContext::new(20);
+    let mut second_source = EntropyCoefficientSource::new(&mut second_reader, &mut second_cdf);
+    let second = decode_coefficients_with_scratch(
+        &mut second_source,
+        TxSize::Tx4x4,
+        TxType::DctDct,
+        0,
+        2,
+        &mut scratch,
+    )
+    .unwrap();
+
+    assert_eq!(second.base.base_levels.as_ptr(), initial_ptr);
+    assert_eq!(second.base.base_levels, expected);
 }

@@ -382,9 +382,10 @@ fn read_regular_coeff_bases<S: CoefficientTokenSource>(
         read_coeff_signs_and_golomb(source, plane_type, dc_sign_context, eob, &scan, &mut quant)?;
     let signed_non_zero_count = coeff_base_non_zero_count(&quant);
     let first_signed_coeff = first_signed_coeff(eob, &scan, &quant)?;
+    let base_levels = std::mem::take(scratch);
     Ok(CoeffBaseRead {
         probe,
-        base_levels: quant.to_vec(),
+        base_levels,
         non_zero_count,
         base_range_count,
         coeff_br_symbol_count,
