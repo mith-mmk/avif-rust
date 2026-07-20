@@ -466,6 +466,7 @@ fn frame_buffers_to_rgba_8_sdr(
         MatrixCoefficients::Yuv { kr, kb } => Some((kr as f32, kb as f32)),
         _ => None,
     };
+    let fast_ycgco = matches!(matrix, MatrixCoefficients::YcGco);
     let direct_yuv444 = matches!(matrix, MatrixCoefficients::Yuv { .. })
         && plane_y.layout.subsampling_x == 0
         && plane_y.layout.subsampling_y == 0
@@ -533,6 +534,8 @@ fn frame_buffers_to_rgba_8_sdr(
                 // Sampling remains normative, but the YUV matrix itself can
                 // use the bounded f32 path for subsampled planes too.
                 yuv_to_rgb_u16_fast(y_sample, u_sample, v_sample, fast_range, kr, kb)
+            } else if fast_ycgco {
+                ycgco_to_rgb_u16_fast(y_sample, u_sample, v_sample, fast_range)
             } else {
                 yuv_to_rgb_u16(y_sample, u_sample, v_sample, range, matrix)
             };
@@ -667,6 +670,7 @@ pub fn frame_buffers_to_rgba_16(
             MatrixCoefficients::Yuv { kr, kb } => Some((kr as f32, kb as f32)),
             _ => None,
         };
+        let fast_ycgco = matches!(matrix, MatrixCoefficients::YcGco);
         let direct_yuv444 = fast_yuv_coefficients.is_some()
             && buffers.planes.get(3).is_none()
             && plane_y.layout.subsampling_x == 0
@@ -718,6 +722,8 @@ pub fn frame_buffers_to_rgba_16(
                         .unwrap_or(chroma_mid);
                     let rgb = if let Some((kr, kb)) = fast_yuv_coefficients {
                         yuv_to_rgb_u16_fast(y_sample, u_sample, v_sample, fast_range, kr, kb)
+                    } else if fast_ycgco {
+                        ycgco_to_rgb_u16_fast(y_sample, u_sample, v_sample, fast_range)
                     } else {
                         yuv_to_rgb_u16(y_sample, u_sample, v_sample, range, matrix)
                     };
@@ -813,6 +819,23 @@ fn yuv_to_rgb_u16_fast(
         normalized_to_u16_fast(r),
         normalized_to_u16_fast(g),
         normalized_to_u16_fast(b),
+    ]
+}
+
+#[inline]
+fn ycgco_to_rgb_u16_fast(
+    y_sample: u16,
+    cg_sample: u16,
+    co_sample: u16,
+    range: FastSampleRange,
+) -> [u16; 3] {
+    let y = ((f32::from(y_sample) - range.y_offset) / range.y_scale).clamp(0.0, 1.0);
+    let cg = (f32::from(cg_sample) - range.chroma_offset) / range.chroma_scale;
+    let co = (f32::from(co_sample) - range.chroma_offset) / range.chroma_scale;
+    [
+        normalized_to_u16_fast(y - cg + co),
+        normalized_to_u16_fast(y + cg),
+        normalized_to_u16_fast(y - cg - co),
     ]
 }
 
@@ -1943,6 +1966,19 @@ mod tests {
             fast.iter()
                 .zip(scalar)
                 .all(|(fast, scalar)| fast.abs_diff(scalar) <= 1)
+        );
+    }
+
+    #[test]
+    fn fast_ycgco_conversion_stays_within_one_code_value_of_scalar_path() {
+        let range = SampleRange::new(8, super::super::sequence::ColorRange::Full).unwrap();
+        let fast = ycgco_to_rgb_u16_fast(128, 128, 192, range.as_fast());
+        let scalar = yuv_to_rgb_u16(128, 128, 192, range, MatrixCoefficients::YcGco);
+        assert!(
+            fast.iter()
+                .zip(scalar)
+                .all(|(fast, scalar)| fast.abs_diff(scalar) <= 1),
+            "fast={fast:?} scalar={scalar:?}"
         );
     }
 

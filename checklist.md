@@ -1149,3 +1149,10 @@ reconstruction suite passed, and an 11-iteration release recheck measured
 `307.32/301.79 ms` (native/RGBA) for `WML2Viewer.avif` and
 `345.94/358.04 ms` for the external YUV420 sample. These are host-specific
 allocation/scan-reduction checkpoints, not a stable speedup claim.
+
+The generated conformance set now includes an 8-bit 4:4:4 YCgCo (`matrix_coefficients=8`)
+sample. FFmpeg's RGBA conversion is unavailable for this matrix in the current
+toolchain, so the test uses an independent native `yuv444p` oracle for all
+three planes. The RGBA8/RGBA16 YCgCo path now uses a bounded f32 lifting
+transform, with a scalar-equivalence unit vector; this removes the previous
+fallback to the slower f64 matrix path while keeping the native plane gate.

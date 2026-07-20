@@ -1746,6 +1746,11 @@ fn generated_smpte2085_matrix_sample_decodes_when_encoder_present() {
 }
 
 #[test]
+fn generated_ycgco_matrix_sample_matches_ffmpeg_when_encoder_present() {
+    generated_matrix_sample_matches_ffmpeg("ycgco", "YCgCo", "bt709");
+}
+
+#[test]
 fn generated_chroma_derived_ncl_matrix_sample_decodes_when_encoder_present() {
     generated_matrix_sample_matches_ffmpeg(
         "chroma-derived-nc",
@@ -1779,7 +1784,7 @@ fn generated_matrix_sample_matches_ffmpeg(colorspace: &str, label: &str, primari
         .arg(sample_path("WML2Viewer.png"));
     if matches!(
         colorspace,
-        "bt2020c" | "smpte2085" | "chroma-derived-nc" | "chroma-derived-c"
+        "bt2020c" | "smpte2085" | "ycgco" | "chroma-derived-nc" | "chroma-derived-c"
     ) {
         // libaom cannot infer these non-default matrix conversions directly
         // from RGB input; mark the already formatted YUV frame instead.
@@ -1825,6 +1830,30 @@ fn generated_matrix_sample_matches_ffmpeg(colorspace: &str, label: &str, primari
     let data = std::fs::read(&output_path).expect("generated matrix AVIF should be readable");
     let actual = avif_rust::image_from_bytes(&data).expect("generated matrix AVIF should decode");
     assert_eq!((actual.width, actual.height), (SAMPLE_WIDTH, SAMPLE_HEIGHT));
+    if colorspace == "ycgco" {
+        if let Some(expected) = ffmpeg_decode_raw(&output_path, "yuv444p") {
+            let frame =
+                avif_rust::decode_frame_bytes(&data).expect("YCgCo native planes should decode");
+            assert_eq!(expected.len(), SAMPLE_PIXELS * 3);
+            for plane_index in 0..3 {
+                let expected_plane =
+                    &expected[plane_index * SAMPLE_PIXELS..(plane_index + 1) * SAMPLE_PIXELS];
+                let max_error = frame.buffers.planes[plane_index]
+                    .samples
+                    .iter()
+                    .zip(expected_plane)
+                    .map(|(actual, expected)| u8::try_from(*actual).unwrap().abs_diff(*expected))
+                    .max()
+                    .unwrap_or(0);
+                assert!(
+                    max_error <= 2,
+                    "YCgCo native plane {plane_index} max error was {max_error}"
+                );
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
     if colorspace == "bt2020c" {
         // This FFmpeg build can encode matrix 10 but cannot convert its
         // decoded frames to RGBA in the generic output path. ImageMagick's
