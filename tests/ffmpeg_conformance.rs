@@ -1120,6 +1120,68 @@ fn generated_12bit_sample_decodes_without_post_filter_overflow() {
 }
 
 #[test]
+fn generated_10bit_yuv420_sample_matches_ffmpeg_when_encoder_is_present() {
+    let root = std::env::temp_dir().join(format!(".test-avif-10bit-yuv420-{}", std::process::id()));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary AVIF sample directory: {err}");
+    }
+    let output_path = root.join("generated-10bit-yuv420.avif");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .arg("-i")
+        .arg(sample_path("WML2Viewer.png"))
+        .args([
+            "-vf",
+            "scale=64:64:flags=neighbor,format=yuv420p10le",
+            "-frames:v",
+            "1",
+            "-c:v",
+            "libaom-av1",
+            "-still-picture",
+            "1",
+            "-cpu-used",
+            "8",
+            "-crf",
+            "0",
+            "-pix_fmt",
+            "yuv420p10le",
+            "-f",
+            "avif",
+        ])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated 10-bit YUV420 sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom 10-bit YUV420 encoder is unavailable; skipping generated sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let data =
+        std::fs::read(&output_path).expect("generated 10-bit YUV420 AVIF should be readable");
+    let actual =
+        avif_rust::image_from_bytes(&data).expect("generated 10-bit YUV420 AVIF should decode");
+    assert_eq!((actual.width, actual.height), (64, 64));
+    if let Some(expected) = ffmpeg_decode_rgba_dynamic(&output_path, 64, 64) {
+        let metrics = diff_rgb_dynamic(&actual.rgba, &expected);
+        eprintln!(
+            "10-bit YUV420: average RGB absolute error={} max={}",
+            metrics.average_rgb_abs, metrics.max_rgb_abs
+        );
+        assert!(
+            metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 48,
+            "10-bit YUV420 FFmpeg RGB error average={} max={}",
+            metrics.average_rgb_abs,
+            metrics.max_rgb_abs
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn generated_10bit_alpha_sample_decodes_native_and_rgba_when_encoder_present() {
     let root = std::env::temp_dir().join(format!(".test-avif-alpha10-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {

@@ -537,31 +537,22 @@ pub fn frame_buffers_to_rgba_16(
             for y in 0..buffers.height {
                 for x in 0..buffers.width {
                     let index = y * buffers.width + x;
-                    let rgb = yuv_to_rgb_u16(
-                        sample_plane(plane_y, x, y),
-                        plane_u
-                            .map(|plane| {
-                                sample_chroma_plane(
-                                    plane,
-                                    x,
-                                    y,
-                                    color_config.chroma_sample_position,
-                                )
-                            })
-                            .unwrap_or(chroma_mid),
-                        plane_v
-                            .map(|plane| {
-                                sample_chroma_plane(
-                                    plane,
-                                    x,
-                                    y,
-                                    color_config.chroma_sample_position,
-                                )
-                            })
-                            .unwrap_or(chroma_mid),
-                        range,
-                        matrix,
-                    );
+                    let y_sample = sample_plane(plane_y, x, y);
+                    let u_sample = plane_u
+                        .map(|plane| {
+                            sample_chroma_plane(plane, x, y, color_config.chroma_sample_position)
+                        })
+                        .unwrap_or(chroma_mid);
+                    let v_sample = plane_v
+                        .map(|plane| {
+                            sample_chroma_plane(plane, x, y, color_config.chroma_sample_position)
+                        })
+                        .unwrap_or(chroma_mid);
+                    let rgb = if let Some((kr, kb)) = fast_yuv_coefficients {
+                        yuv_to_rgb_u16_fast(y_sample, u_sample, v_sample, range, kr, kb)
+                    } else {
+                        yuv_to_rgb_u16(y_sample, u_sample, v_sample, range, matrix)
+                    };
                     let out = index * 4;
                     rgba[out] = rgb[0];
                     rgba[out + 1] = rgb[1];
@@ -1755,6 +1746,25 @@ mod tests {
                 }
                 assert_eq!(actual.rgba[index + 3], u8::MAX);
             }
+        }
+    }
+
+    #[test]
+    fn fast_high_bit_depth_yuv_conversion_stays_within_two_code_values() {
+        let range = SampleRange::new(10, ColorRange::Studio).unwrap();
+        let matrix = MatrixCoefficients::Yuv {
+            kr: 0.2126,
+            kb: 0.0722,
+        };
+        for (y, u, v) in [(64, 512, 960), (512, 448, 576), (900, 128, 384)] {
+            let fast = yuv_to_rgb_u16_fast(y, u, v, range, 0.2126, 0.0722);
+            let scalar = yuv_to_rgb_u16(y, u, v, range, matrix);
+            assert!(
+                fast.iter()
+                    .zip(scalar)
+                    .all(|(fast, scalar)| fast.abs_diff(scalar) <= 2),
+                "fast={fast:?} scalar={scalar:?}"
+            );
         }
     }
 

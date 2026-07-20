@@ -805,6 +805,16 @@ A five-iteration release recheck after the AVIS callback work measured
 `302.80/296.62 ms` for `samples/WML2Viewer.avif`; this remains a no-regression
 reference point because the callback branch is inactive for still samples.
 
+The same bounded f32 YUV coefficients now cover the RGBA16 path for 10/12-bit
+YUV420/YUV422/YUV444 samples, while non-YUV matrices retain the scalar path.
+The high-bit-depth coefficient check stays within two 16-bit code values of
+the scalar conversion. Five-iteration release checkpoints measured
+`368.54/402.55 ms` for the external 10-bit YUV444 sample and
+`409.36/412.21 ms` for the 12-bit YUV444 sample; these are host-specific
+no-regression references, not a stable speedup claim.
+A generated 64x64 10-bit YUV420 AVIF now exercises the subsampled high-bit
+path against FFmpeg as well (average RGB error `1.4538`, maximum `38`).
+
 The same IntrABC fixture is now generated and checked in 4:2:0 as well as
 4:4:4. The 4:2:0 luma plane is exact and chroma remains within the existing
 oracle tolerance (maximum error 4), covering the subsampled block geometry
