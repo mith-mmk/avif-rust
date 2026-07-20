@@ -2084,7 +2084,7 @@ fn public_alpha_sample_exposes_native_alpha_plane_when_present() {
 }
 
 #[test]
-fn public_alpha_noispe_sample_remains_fail_closed_until_restoration_parity() {
+fn public_alpha_noispe_sample_decodes_with_skip_tx_size_signaling() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root should exist")
@@ -2094,16 +2094,8 @@ fn public_alpha_noispe_sample_remains_fail_closed_until_restoration_parity() {
         return;
     }
     let data = std::fs::read(&path).expect("alpha_noispe AVIF should be readable");
-    let error = avif_rust::image_from_bytes(&data)
-        .expect_err("alpha_noispe must not produce a partial image");
-    assert!(
-        matches!(
-            &error,
-            avif_rust::DecoderError::Bitstream(message)
-                if message.contains("too many padding bits")
-        ),
-        "alpha_noispe boundary changed unexpectedly: {error:?}"
-    );
+    let image = avif_rust::image_from_bytes(&data).expect("alpha_noispe should decode fully");
+    assert_eq!((image.width, image.height), (80, 80));
 }
 
 #[test]

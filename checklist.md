@@ -621,9 +621,9 @@ parser and grouped as follows:
   (including signed-value alignment), multi-segment values, pre-skip `SKIP`,
   and rejection of reference/global-motion features.
 - AV1 inverse-signed literals now use the normative two's-complement
-  `bits + 1` representation for frame delta-q and signed segmentation data;
-  `alpha_noispe.avif` remains a reproducible reduced-still CDEF/SGRPROJ
-  boundary because its entropy payload still needs restoration-state parity.
+  `bits + 1` representation for frame delta-q and signed segmentation data.
+  Intra `TX_MODE_SELECT` also consumes the transmitted transform-size symbol
+  for `skip_txfm` blocks, preserving transform-context parity at frame edges.
 - `iloc` construction method 2 (`item_offset`) now resolves the indexed
   `iloc` item reference, including explicit extent indexes, recursive-cycle
   and extent-boundary checks. Malformed partial tile groups and invalid
@@ -643,18 +643,11 @@ when `last_active_segment == 0`: segment 0 is still decoded from the full
 entropy position and prevents this single-segment edge from desynchronizing
 following block syntax.
 
-On 2026-07-20, `alpha_noispe.avif` was rechecked as a strict fail-closed
-regression. Its reduced-still 8-bit YUV444 primary stream reaches the
-CDEF/SGRPROJ restoration syntax, but the tile entropy validator reports
-`AV1 entropy decoder exited after too many padding bits` (the observed
-post-parse budget was 855 bits beyond the 650-byte primary tile payload).
-The conformance test requires this exact bitstream error and rejects
-returning a partial image. This keeps the sample available for the next
-restoration/CDF parity fix without weakening the strict oracle.
-An instrumented validation-bypass probe also produced a PNG whose raw RGB
-comparison differed from FFmpeg (average absolute error about `15.67`, maximum
-channel error `253`), so treating the failure as padding-only would be
-incorrect.
+On 2026-07-20, `alpha_noispe.avif` was promoted from the unsupported boundary
+after fixing intra `TX_MODE_SELECT` symbol consumption for skipped blocks and
+updating the transform context from the transmitted size. The reduced-still
+8-bit YUV444 CDEF/SGRPROJ stream now passes strict entropy validation and
+decodes as an 80x80 image with no partial output.
 
 The decode benchmark now accepts `AVIF_BENCH_SAMPLES` as a semicolon-separated
 list while retaining `AVIF_BENCH_SAMPLE` for one-off runs. Each sample is
@@ -669,8 +662,7 @@ The expanded `ffmpeg_conformance` fixture set was rerun on 2026-07-20: 49
 tests passed, 2 diagnostic tests remained ignored, and no test failed. This
 includes the 8-bit 4:2:0/4:2:2/4:4:4, monochrome, 10-bit, 12-bit, alpha,
 sequence, grid, transform and colour-management samples. `alpha_noispe` is
-the sole explicit unsupported fixture and still rejects with the recorded
-entropy-padding error without producing a partial image.
+now part of the supported external conversion gate.
 
 On 2026-07-20, normal reconstruction stopped allocating a transform-geometry
 `Vec` for every plane block and now traverses the same clipped geometry through

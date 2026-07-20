@@ -360,7 +360,10 @@ impl<'a> TileDecoder<'a> {
         let tx_size = match frame.tx_mode {
             TxMode::Only4x4 => TxSize::Tx4x4,
             TxMode::Largest => block_size.largest_supported_tx_size(),
-            TxMode::Select if block_size.signals_tx_size() && !skip => {
+            // Intra blocks signal the selected transform size even when
+            // skip_txfm suppresses coefficient payloads. The transmitted size
+            // still updates neighbouring transform contexts.
+            TxMode::Select if block_size.signals_tx_size() => {
                 let context = self.tx_size_context(x, y, block_size);
                 let category = block_size.tx_size_category();
                 let symbol = self
@@ -372,12 +375,7 @@ impl<'a> TileDecoder<'a> {
                     )));
                 }
                 let tx_size = block_size.tx_size_from_depth(symbol);
-                if skip {
-                    let (width, height) = block_size.largest_supported_tx_dimensions();
-                    self.set_txfm_context_dimensions(x, y, block_size, width, height);
-                } else {
-                    self.set_txfm_context(x, y, block_size, tx_size);
-                }
+                self.set_txfm_context(x, y, block_size, tx_size);
                 return Ok((Some(context), Some(symbol), tx_size));
             }
             TxMode::Select => TxSize::Tx4x4,
