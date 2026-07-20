@@ -379,6 +379,16 @@ fn decode_sequence_samples_from_info(
             })
         })
         .collect::<Result<_, _>>()?;
+    if collect_all
+        && kinds.iter().all(|kind| {
+            matches!(
+                kind,
+                AvifSequenceSampleKind::Key | AvifSequenceSampleKind::IntraOnly
+            )
+        })
+    {
+        return decode_independent_sequence_samples(info, sequence_obu, &samples[..=stop_index]);
+    }
     let mut references = FrameReferenceSlots::default();
     let mut frames = Vec::new();
     for ((index, sample), kind) in samples.iter().enumerate().take(stop_index + 1).zip(kinds) {
@@ -423,6 +433,66 @@ fn decode_sequence_samples_from_info(
         }
     }
     Ok(frames)
+}
+
+fn decode_independent_sequence_samples(
+    info: &AvifInfo,
+    sequence_obu: &crate::obu::Obu<'_>,
+    samples: &[Vec<u8>],
+) -> Result<Vec<DecodedFrame>, DecoderError> {
+    #[cfg(not(target_family = "wasm"))]
+    if samples.len() > 1 {
+        const MAX_WORKERS: usize = 8;
+        let worker_count = samples.len().min(MAX_WORKERS);
+        let chunk_size = samples.len().div_ceil(worker_count);
+        return std::thread::scope(|scope| {
+            let handles = samples
+                .chunks(chunk_size)
+                .map(|chunk| {
+                    scope.spawn(|| {
+                        chunk
+                            .iter()
+                            .map(|sample| {
+                                decode_independent_sequence_sample(info, sequence_obu, sample)
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    })
+                })
+                .collect::<Vec<_>>();
+            let mut frames = Vec::with_capacity(samples.len());
+            for handle in handles {
+                let chunk = handle.join().map_err(|_| {
+                    DecoderError::Bitstream("AVIS sequence decoder thread panicked".to_string())
+                })??;
+                frames.extend(chunk);
+            }
+            Ok(frames)
+        });
+    }
+
+    samples
+        .iter()
+        .map(|sample| decode_independent_sequence_sample(info, sequence_obu, sample))
+        .collect()
+}
+
+fn decode_independent_sequence_sample(
+    info: &AvifInfo,
+    sequence_obu: &crate::obu::Obu<'_>,
+    sample: &[u8],
+) -> Result<DecodedFrame, DecoderError> {
+    let sample_has_sequence_header = parse_obu_stream(sample)?
+        .iter()
+        .any(|obu| obu.obu_type == ObuType::SequenceHeader);
+    let payload = sample_payload_with_sequence_header(sequence_obu, sample)?;
+    let mut sample_info = info.clone();
+    sample_info.primary_item_payload = payload;
+    sample_info.sequence_sample_payloads.clear();
+    if sample_has_sequence_header {
+        sample_info.av1_config = None;
+    }
+    let headers = parse_av1_headers(&sample_info)?;
+    decode_still_frame(&headers, Some(&sample_info))
 }
 
 fn sample_payload_with_sequence_header(
