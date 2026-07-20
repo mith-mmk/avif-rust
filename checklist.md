@@ -1141,3 +1141,11 @@ the integer-position 4:2:0/4:2:2/4:4:0 cases while preserving the normative
 and the 4:2:2 mapping. A five-iteration YUV420 release recheck measured
 `353.13/339.75 ms` (native/RGBA), so this is recorded as an allocation/load
 reduction and no-regression checkpoint rather than a stable speedup claim.
+
+On 2026-07-20, normal transform reconstruction now reuses the non-zero
+coefficient count returned by the reconstruction scratch path when recording
+post-filter boundaries, avoiding a second full-transform scan. The focused
+reconstruction suite passed, and an 11-iteration release recheck measured
+`307.32/301.79 ms` (native/RGBA) for `WML2Viewer.avif` and
+`345.94/358.04 ms` for the external YUV420 sample. These are host-specific
+allocation/scan-reduction checkpoints, not a stable speedup claim.

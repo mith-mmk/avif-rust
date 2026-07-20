@@ -236,15 +236,6 @@ pub(super) fn decode_plane_block_unit(
         let retain_coefficients = plane_index == 0 && decoded_luma.is_some();
         let decoded_transform =
             decoder.read_decoded_transform(frame, block_mode, transform, txb_context.dc_sign)?;
-        decoder.record_transform_boundary(
-            decoded_transform.transform,
-            decoded_transform.tx_type,
-            decoded_transform
-                .coefficients
-                .iter()
-                .filter(|coefficient| **coefficient != 0)
-                .count(),
-        );
         decoder.set_txb_entropy_context(
             transform,
             coefficient_entropy_context(&decoded_transform.coefficients),
@@ -283,7 +274,7 @@ pub(super) fn decode_plane_block_unit(
         let dequant = &mut decoder.dequant_scratch[..prediction_len];
         let reconstructed = &mut decoder.reconstruction_scratch[..prediction_len];
         let residual = &mut decoder.residual_scratch[..prediction_len];
-        if frame.coded_lossless() {
+        let reconstructed_transform = if frame.coded_lossless() {
             reconstruct_lossless_transform_block_parts_into(
                 plane,
                 block,
@@ -294,7 +285,7 @@ pub(super) fn decode_plane_block_unit(
                 sequence.color_config.bit_depth,
                 dequant,
                 reconstructed,
-            )?;
+            )?
         } else {
             let qmatrix_level = frame.quantization.qmatrix_level(transform.plane);
             let qmatrix = frame
@@ -314,8 +305,16 @@ pub(super) fn decode_plane_block_unit(
                 dequant,
                 reconstructed,
                 residual,
-            )?;
-        }
+            )?
+        };
+        // The reconstruction already counted non-zero coefficients for its
+        // zero-residual fast path. Reuse that result instead of scanning the
+        // full transform a second time while recording post-filter state.
+        decoder.record_transform_boundary(
+            reconstructed_transform.block,
+            reconstructed_transform.tx_type,
+            reconstructed_transform.non_zero_coefficients,
+        );
         decoder.mark_reconstructed_transform(transform)?;
         if retain_coefficients {
             if let Some(decoded_luma) = decoded_luma.as_deref_mut() {
