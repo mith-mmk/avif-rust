@@ -769,6 +769,12 @@ workspace `WML2Viewer.avif` measured `303.14/305.33 ms` (native/RGBA). This is
 within the existing host variance and records a no-regression checkpoint; the
 reference-slot API does not add work to the still-image hot path.
 
+The CDEF stage now skips the directional filter for blocks whose effective
+primary and secondary strengths are both zero, since the source block has
+already been copied to the output. A seven-iteration release recheck measured
+`302.06/300.98 ms` (native/RGBA); this remains a host-specific no-regression
+checkpoint rather than a stable speedup claim.
+
 The same IntrABC fixture is now generated and checked in 4:2:0 as well as
 4:4:4. The 4:2:0 luma plane is exact and chroma remains within the existing
 oracle tolerance (maximum error 4), covering the subsampled block geometry

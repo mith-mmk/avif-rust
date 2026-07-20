@@ -2363,6 +2363,13 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
             } else {
                 strength.uv_sec
             };
+            // A zero-strength CDEF index leaves the copied source block
+            // unchanged. Skip the directional filter entirely in this case;
+            // this is common for disabled chroma strengths and avoids the
+            // per-pixel neighborhood work on those blocks.
+            if cdef_strengths_disabled(primary_strength, secondary_strength) {
+                continue;
+            }
             let damping = frame_header
                 .cdef
                 .damping
@@ -2392,6 +2399,11 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
             }
         }
     }
+}
+
+#[inline]
+fn cdef_strengths_disabled(primary_strength: u8, secondary_strength: u8) -> bool {
+    primary_strength == 0 && secondary_strength == 0
 }
 
 fn apply_loop_restoration_stage(

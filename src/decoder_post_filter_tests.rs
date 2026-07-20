@@ -1,4 +1,6 @@
-use super::{DecodedFrame, apply_loop_filter_deltas, apply_loop_restoration_stage};
+use super::{
+    DecodedFrame, apply_loop_filter_deltas, apply_loop_restoration_stage, cdef_strengths_disabled,
+};
 use crate::av1::{
     ColorConfig, ColorRange, FrameBuffers, PlaneBuffer, PlaneLayout, PostFilterState,
     RestorationUnit, wiener_filter_unit,
@@ -10,6 +12,13 @@ fn segmentation_loop_filter_delta_is_applied_before_other_deltas() {
     assert_eq!(apply_loop_filter_deltas(10, true, 1, 2, 2, 5), 20);
     assert_eq!(apply_loop_filter_deltas(2, false, 0, 0, 0, -9), 0);
     assert_eq!(apply_loop_filter_deltas(60, true, 0, 0, 0, 9), 63);
+}
+
+#[test]
+fn zero_cdef_strengths_are_detected_without_filtering() {
+    assert!(cdef_strengths_disabled(0, 0));
+    assert!(!cdef_strengths_disabled(1, 0));
+    assert!(!cdef_strengths_disabled(0, 1));
 }
 
 #[test]
