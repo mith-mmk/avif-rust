@@ -384,10 +384,19 @@ fn decode_sequence_samples_from_info(
     for ((index, sample), kind) in samples.iter().enumerate().take(stop_index + 1).zip(kinds) {
         match kind {
             AvifSequenceSampleKind::Key | AvifSequenceSampleKind::IntraOnly => {
+                let sample_has_sequence_header = parse_obu_stream(sample)?
+                    .iter()
+                    .any(|obu| obu.obu_type == ObuType::SequenceHeader);
                 let payload = sample_payload_with_sequence_header(sequence_obu, sample)?;
                 let mut sample_info = info.clone();
                 sample_info.primary_item_payload = payload;
                 sample_info.sequence_sample_payloads.clear();
+                if sample_has_sequence_header {
+                    // A per-sample Sequence Header is authoritative when an
+                    // AVIS track changes its sample description. The primary
+                    // item av1C still validates the primary sample above.
+                    sample_info.av1_config = None;
+                }
                 let headers = parse_av1_headers(&sample_info)?;
                 let decoded = decode_still_frame(&headers, Some(&sample_info))?;
                 references.refresh(headers.frame.refresh_frame_flags, &decoded);
@@ -575,6 +584,20 @@ mod reference_frame_tests {
         let expected = decode_frame_bytes(data).unwrap();
         let shown = decode_sequence_frame_from_info(&info, 1).unwrap();
         assert_eq!(shown, expected);
+    }
+
+    #[test]
+    fn indexed_sample_with_own_sequence_header_uses_that_header() {
+        let data = include_bytes!("../test_data/images/WML2Viewer.avif");
+        let mut info = parse_avif(data).unwrap();
+        info.major_brand = *b"avis";
+        info.av1_config = Some(vec![0xff, 0xee, 0xdd, 0xcc]);
+        info.sequence_sample_payloads = vec![
+            info.primary_item_payload.clone(),
+            info.primary_item_payload.clone(),
+        ];
+        let frame = decode_sequence_frame_from_info(&info, 1).unwrap();
+        assert_eq!((frame.width, frame.height), (900, 900));
     }
 }
 
