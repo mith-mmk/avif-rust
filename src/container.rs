@@ -33,6 +33,12 @@ pub struct AvifInfo {
     pub mirror: Option<ImageMirror>,
     pub av1_config: Option<Vec<u8>>,
     pub primary_item_payload: Vec<u8>,
+    /// AV1 samples following the primary item in an AVIS image sequence.
+    ///
+    /// The primary item remains in `primary_item_payload`; these samples are
+    /// exposed separately so still-image callers do not accidentally decode a
+    /// sequence as one concatenated OBU stream.
+    pub sequence_sample_payloads: Vec<Vec<u8>>,
 }
 
 impl AvifInfo {
@@ -278,6 +284,8 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
     })?;
 
     let primary_item_payload = primary_item_payload(data, &meta)?;
+    let sequence_sample_payloads =
+        sequence_sample_payloads(data, &major_brand, &compatible_brands)?;
     validate_primary_item_metadata(&meta)?;
     let alpha_auxiliary_items = alpha_auxiliary_items(data, &meta)?;
     let primary_grid = primary_grid(data, &primary_item_payload, &meta)?;
@@ -300,6 +308,7 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
         mirror: primary_metadata.mirror,
         av1_config: primary_metadata.av1_config,
         primary_item_payload,
+        sequence_sample_payloads,
     })
 }
 
@@ -1040,6 +1049,275 @@ fn primary_item_payload(data: &[u8], state: &MetaState) -> Result<Vec<u8>, Decod
         .primary_item_id
         .ok_or_else(|| DecoderError::Bitstream("primary item is missing".to_string()))?;
     item_payload(data, state, primary_item_id)
+}
+
+fn sequence_sample_payloads(
+    data: &[u8],
+    major_brand: &[u8; 4],
+    compatible_brands: &[[u8; 4]],
+) -> Result<Vec<Vec<u8>>, DecoderError> {
+    if major_brand != BRAND_AVIS && !compatible_brands.iter().any(|brand| brand == BRAND_AVIS) {
+        return Ok(Vec::new());
+    }
+    let mut samples = Vec::new();
+    for_each_top_level_box(data, |header| {
+        if header.box_type == *b"moov" && samples.is_empty() {
+            let payload = box_payload(data, header)?;
+            if let Some(track_samples) = parse_sequence_track(data, payload)? {
+                samples = track_samples;
+            }
+        }
+        Ok(())
+    })?;
+    Ok(samples)
+}
+
+fn parse_sequence_track(
+    data: &[u8],
+    moov_payload: &[u8],
+) -> Result<Option<Vec<Vec<u8>>>, DecoderError> {
+    for trak in child_boxes(moov_payload)? {
+        let trak_payload = box_payload(moov_payload, trak)?;
+        let Some(mdia) = child_box(trak_payload, b"mdia")? else {
+            continue;
+        };
+        let mdia_payload = box_payload(trak_payload, mdia)?;
+        let Some(hdlr) = child_box(mdia_payload, b"hdlr")? else {
+            continue;
+        };
+        let hdlr_payload = box_payload(mdia_payload, hdlr)?;
+        if hdlr_payload.len() < 12
+            || (&hdlr_payload[8..12] != b"vide" && &hdlr_payload[8..12] != b"pict")
+        {
+            continue;
+        }
+        let Some(minf) = child_box(mdia_payload, b"minf")? else {
+            continue;
+        };
+        let minf_payload = box_payload(mdia_payload, minf)?;
+        let Some(stbl) = child_box(minf_payload, b"stbl")? else {
+            continue;
+        };
+        let stbl_payload = box_payload(minf_payload, stbl)?;
+        let Some(stsd) = child_box(stbl_payload, b"stsd")? else {
+            continue;
+        };
+        let stsd_payload = box_payload(stbl_payload, stsd)?;
+        if !stsd_has_av01(stsd_payload)? {
+            continue;
+        }
+        let Some(stsc) = child_box(stbl_payload, b"stsc")? else {
+            continue;
+        };
+        let Some(stsz) = child_box(stbl_payload, b"stsz")? else {
+            continue;
+        };
+        let (chunk_offset_payload, chunk_offset_width) =
+            if let Some(header) = child_box(stbl_payload, b"stco")? {
+                (Some(box_payload(stbl_payload, header)?), 4)
+            } else if let Some(header) = child_box(stbl_payload, b"co64")? {
+                (Some(box_payload(stbl_payload, header)?), 8)
+            } else {
+                (None, 0)
+            };
+        let Some(chunk_offset_payload) = chunk_offset_payload else {
+            continue;
+        };
+        let chunk_offsets = parse_chunk_offsets(chunk_offset_payload, chunk_offset_width)?;
+        let sizes = parse_sample_sizes(box_payload(stbl_payload, stsz)?)?;
+        let samples_per_chunk = parse_samples_per_chunk(box_payload(stbl_payload, stsc)?)?;
+        let sample_offsets = build_sample_offsets(&chunk_offsets, &samples_per_chunk, &sizes)?;
+        let mut samples = Vec::with_capacity(sizes.len());
+        for (offset, size) in sample_offsets.into_iter().zip(sizes) {
+            let start = usize::try_from(offset).map_err(|_| {
+                DecoderError::Bitstream("AVIS sample offset is too large".to_string())
+            })?;
+            let end = start.checked_add(size).ok_or_else(|| {
+                DecoderError::Bitstream("AVIS sample end overflows usize".to_string())
+            })?;
+            if end > data.len() {
+                return Err(DecoderError::NotEnoughData(
+                    "AVIS sample extends beyond the file".to_string(),
+                ));
+            }
+            samples.push(data[start..end].to_vec());
+        }
+        return Ok(Some(samples));
+    }
+    Ok(None)
+}
+
+fn child_boxes(payload: &[u8]) -> Result<Vec<BoxHeader>, DecoderError> {
+    let mut headers = Vec::new();
+    let mut offset = 0;
+    while offset < payload.len() {
+        let header = read_box_header(payload, offset, payload.len())?;
+        offset = checked_add(header.offset, header.size, "child box end")?;
+        headers.push(header);
+    }
+    Ok(headers)
+}
+
+fn child_box(payload: &[u8], box_type: &[u8; 4]) -> Result<Option<BoxHeader>, DecoderError> {
+    Ok(child_boxes(payload)?
+        .into_iter()
+        .find(|header| header.box_type == *box_type))
+}
+
+fn stsd_has_av01(payload: &[u8]) -> Result<bool, DecoderError> {
+    if payload.len() < 8 {
+        return Err(DecoderError::NotEnoughData(
+            "stsd payload is too short".to_string(),
+        ));
+    }
+    let entry_count = read_u32(payload, 4)? as usize;
+    let mut offset = 8;
+    for _ in 0..entry_count {
+        let header = read_box_header(payload, offset, payload.len())?;
+        if header.box_type == *b"av01" {
+            return Ok(true);
+        }
+        offset = checked_add(header.offset, header.size, "stsd entry end")?;
+    }
+    Ok(false)
+}
+
+fn parse_sample_sizes(payload: &[u8]) -> Result<Vec<usize>, DecoderError> {
+    if payload.len() < 12 {
+        return Err(DecoderError::NotEnoughData(
+            "stsz payload is too short".to_string(),
+        ));
+    }
+    let sample_size = read_u32(payload, 4)? as usize;
+    let sample_count = read_u32(payload, 8)? as usize;
+    if sample_size != 0 {
+        return Ok(vec![sample_size; sample_count]);
+    }
+    let end = 12usize
+        .checked_add(sample_count.checked_mul(4).ok_or_else(|| {
+            DecoderError::Bitstream("stsz sample count overflows usize".to_string())
+        })?)
+        .ok_or_else(|| DecoderError::Bitstream("stsz payload size overflows usize".to_string()))?;
+    if end > payload.len() {
+        return Err(DecoderError::NotEnoughData(
+            "stsz entries are truncated".to_string(),
+        ));
+    }
+    (0..sample_count)
+        .map(|index| {
+            usize::try_from(read_u32(payload, 12 + index * 4)?)
+                .map_err(|_| DecoderError::Bitstream("stsz sample size is too large".to_string()))
+        })
+        .collect()
+}
+
+fn parse_chunk_offsets(payload: &[u8], width: usize) -> Result<Vec<u64>, DecoderError> {
+    if width != 4 && width != 8 {
+        return Err(DecoderError::Bitstream(
+            "invalid chunk offset width".to_string(),
+        ));
+    }
+    if payload.len() < 8 {
+        return Err(DecoderError::NotEnoughData(
+            "chunk offset table is too short".to_string(),
+        ));
+    }
+    let count = read_u32(payload, 4)? as usize;
+    let end = 8usize
+        .checked_add(
+            count.checked_mul(width).ok_or_else(|| {
+                DecoderError::Bitstream("chunk count overflows usize".to_string())
+            })?,
+        )
+        .ok_or_else(|| DecoderError::Bitstream("chunk table size overflows usize".to_string()))?;
+    if end > payload.len() {
+        return Err(DecoderError::NotEnoughData(
+            "chunk offsets are truncated".to_string(),
+        ));
+    }
+    (0..count)
+        .map(|index| {
+            if width == 8 {
+                read_u64(payload, 8 + index * width)
+            } else {
+                read_u32(payload, 8 + index * width).map(u64::from)
+            }
+        })
+        .collect()
+}
+
+fn parse_samples_per_chunk(payload: &[u8]) -> Result<Vec<(u32, u32, u32)>, DecoderError> {
+    if payload.len() < 8 {
+        return Err(DecoderError::NotEnoughData(
+            "stsc payload is too short".to_string(),
+        ));
+    }
+    let count = read_u32(payload, 4)? as usize;
+    let end = 8usize
+        .checked_add(
+            count
+                .checked_mul(12)
+                .ok_or_else(|| DecoderError::Bitstream("stsc count overflows usize".to_string()))?,
+        )
+        .ok_or_else(|| DecoderError::Bitstream("stsc table size overflows usize".to_string()))?;
+    if end > payload.len() {
+        return Err(DecoderError::NotEnoughData(
+            "stsc entries are truncated".to_string(),
+        ));
+    }
+    (0..count)
+        .map(|index| {
+            let offset = 8 + index * 12;
+            Ok((
+                read_u32(payload, offset)?,
+                read_u32(payload, offset + 4)?,
+                read_u32(payload, offset + 8)?,
+            ))
+        })
+        .collect()
+}
+
+fn build_sample_offsets(
+    chunk_offsets: &[u64],
+    samples_per_chunk: &[(u32, u32, u32)],
+    sizes: &[usize],
+) -> Result<Vec<u64>, DecoderError> {
+    if samples_per_chunk.is_empty() {
+        return Err(DecoderError::Bitstream("stsc table is empty".to_string()));
+    }
+    let mut offsets = Vec::with_capacity(sizes.len());
+    let mut sample_index = 0usize;
+    for (chunk_index, &chunk_offset) in chunk_offsets.iter().enumerate() {
+        let chunk_number = u32::try_from(chunk_index + 1)
+            .map_err(|_| DecoderError::Bitstream("chunk number is too large".to_string()))?;
+        let record = samples_per_chunk
+            .iter()
+            .rev()
+            .find(|(first_chunk, _, _)| *first_chunk <= chunk_number)
+            .ok_or_else(|| DecoderError::Bitstream("stsc first_chunk is invalid".to_string()))?;
+        if record.2 != 1 {
+            return Err(DecoderError::Unsupported(
+                "AVIS tracks with multiple sample descriptions are not supported".to_string(),
+            ));
+        }
+        let mut offset = chunk_offset;
+        for _ in 0..record.1 {
+            let size = *sizes.get(sample_index).ok_or_else(|| {
+                DecoderError::Bitstream("stsc references more samples than stsz".to_string())
+            })?;
+            offsets.push(offset);
+            offset = offset.checked_add(size as u64).ok_or_else(|| {
+                DecoderError::Bitstream("AVIS sample offset overflows u64".to_string())
+            })?;
+            sample_index += 1;
+        }
+    }
+    if sample_index != sizes.len() {
+        return Err(DecoderError::Bitstream(
+            "stsz contains samples not covered by stsc".to_string(),
+        ));
+    }
+    Ok(offsets)
 }
 
 fn alpha_auxiliary_items(

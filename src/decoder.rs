@@ -355,12 +355,25 @@ fn decode_hidden_key_frame_show_existing(
         .iter()
         .position(|obu| std::ptr::eq(obu, first_frame))
         .expect("first frame must belong to the parsed OBU list");
-    let show_existing_index = obus
+    let mut show_existing_index = obus
         .iter()
         .skip(first_frame_position + 1)
         .filter(|obu| matches!(obu.obu_type, ObuType::Frame | ObuType::FrameHeader))
         .find_map(|obu| parse_show_existing_frame_index(obu.payload).transpose())
         .transpose()?;
+    if show_existing_index.is_none() {
+        for sample_payload in info.sequence_sample_payloads.iter().skip(1) {
+            let sample_obus = parse_obu_stream(sample_payload)?;
+            show_existing_index = sample_obus
+                .iter()
+                .filter(|obu| matches!(obu.obu_type, ObuType::Frame | ObuType::FrameHeader))
+                .find_map(|obu| parse_show_existing_frame_index(obu.payload).transpose())
+                .transpose()?;
+            if show_existing_index.is_some() {
+                break;
+            }
+        }
+    }
     let Some(show_existing_index) = show_existing_index else {
         return Ok(None);
     };
@@ -1334,6 +1347,7 @@ fn grid_cell_info(info: &AvifInfo, cell: &GridCell) -> AvifInfo {
         mirror: None,
         av1_config: cell.av1_config.clone(),
         primary_item_payload: cell.payload.clone(),
+        sequence_sample_payloads: Vec::new(),
     }
 }
 
@@ -1424,6 +1438,7 @@ fn decode_alpha_auxiliary_frame(info: &AvifInfo) -> Result<DecodedFrame, Decoder
         mirror: None,
         av1_config: None,
         primary_item_payload: auxiliary.payload.clone(),
+        sequence_sample_payloads: Vec::new(),
     };
     let headers = parse_av1_headers(&alpha_info)?;
     decode_still_frame(&headers, None)
@@ -1589,6 +1604,7 @@ fn decode_alpha_grid_cell_frame(cell: &GridCell) -> Result<DecodedFrame, Decoder
         mirror: None,
         av1_config: cell.av1_config.clone(),
         primary_item_payload: cell.payload.clone(),
+        sequence_sample_payloads: Vec::new(),
     };
     validate_public_container_preflight(&info, false)?;
     let headers = parse_av1_headers(&info)?;
@@ -1669,6 +1685,7 @@ fn decode_grid_cell_from_alpha(cell: &GridCell) -> Result<ImageBuffer, DecoderEr
         mirror: None,
         av1_config: cell.av1_config.clone(),
         primary_item_payload: cell.payload.clone(),
+        sequence_sample_payloads: Vec::new(),
     };
     validate_public_container_preflight(&info, true)?;
     let headers = parse_av1_headers(&info)?;

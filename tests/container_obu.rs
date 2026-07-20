@@ -1,5 +1,7 @@
 mod support;
 
+use std::process::Command;
+
 use avif_rust::DecoderError;
 use avif_rust::container::{is_avif_file, parse_avif};
 use avif_rust::obu::{ObuType, count_obus, find_obu_payload, find_obu_payloads, parse_obu_stream};
@@ -72,6 +74,59 @@ fn public_obu_helpers_count_repeated_types() {
     assert_eq!(count_obus(&data, ObuType::TileGroup).unwrap(), 2);
     assert_eq!(count_obus(&data, ObuType::SequenceHeader).unwrap(), 1);
     assert_eq!(count_obus(&data, ObuType::Frame).unwrap(), 0);
+}
+
+#[test]
+fn avis_container_exposes_track_samples_without_concatenating_obus() {
+    let root = std::env::temp_dir().join(format!(".test-avif-avis-{}", std::process::id()));
+    std::fs::create_dir_all(&root).expect("temporary AVIS directory should be creatable");
+    let output = root.join("sequence.avif");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .args(["-f", "lavfi", "-i", "testsrc2=size=64x64:rate=4"])
+        .args([
+            "-frames:v",
+            "8",
+            "-c:v",
+            "libaom-av1",
+            "-still-picture",
+            "0",
+            "-g",
+            "8",
+            "-lag-in-frames",
+            "8",
+            "-auto-alt-ref",
+            "1",
+            "-f",
+            "avif",
+        ])
+        .arg(&output)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated AVIS sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom AVIS encoder is unavailable; skipping generated sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let data = std::fs::read(&output).expect("generated AVIS sample should be readable");
+    let info = parse_avif(&data).expect("generated AVIS metadata should parse");
+    assert_eq!(&info.major_brand, b"avis");
+    assert_eq!(info.sequence_sample_payloads.len(), 8);
+    assert_eq!(info.sequence_sample_payloads[0], info.primary_item_payload);
+    let frame = avif_rust::decode_frame_bytes(&data).expect("primary AVIS frame should decode");
+    assert_eq!((frame.width, frame.height), (64, 64));
+    for payload in &info.sequence_sample_payloads {
+        assert!(
+            !parse_obu_stream(payload)
+                .expect("AVIS sample should be an independently framed OBU stream")
+                .is_empty()
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
