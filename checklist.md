@@ -1015,6 +1015,12 @@ same-host baseline confirms a stable speedup.
       a 7-iteration release check measured `14.92/57.23 ms` (native/RGBA) for
       `sofa_grid1x5_420.avif`; retain this as a host-specific checkpoint rather
       than a stable speedup claim.
+- [x] Share the bounded grid-cell worker path with the public RGBA grid decoder
+      and alpha-grid composition, capping native work at eight workers while
+      preserving cell order and sequential Wasm fallback. The same 1x5 grid
+      pixel/native-plane and alpha-grid composition oracles pass; a later
+      7-iteration check measured `14.82/17.20 ms` (native/RGBA), retained as a
+      host-specific no-regression checkpoint rather than a stable speedup claim.
 
 Required validation after every implementation step:
 

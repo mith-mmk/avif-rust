@@ -1109,6 +1109,26 @@ fn decode_grid_cells(
     info: &AvifInfo,
     cells: &[GridCell],
 ) -> Result<Vec<DecodedFrame>, DecoderError> {
+    decode_grid_items(cells, |cell| decode_grid_cell_frame(info, cell))
+}
+
+fn decode_grid_images(
+    info: &AvifInfo,
+    cells: &[GridCell],
+) -> Result<Vec<ImageBuffer>, DecoderError> {
+    decode_grid_items(cells, |cell| decode_grid_cell(info, cell))
+}
+
+#[cfg(not(target_family = "wasm"))]
+const PARALLEL_GRID_MIN_PIXELS: usize = 256 * 1024;
+#[cfg(not(target_family = "wasm"))]
+const MAX_GRID_WORKERS: usize = 8;
+
+fn decode_grid_items<T, F>(cells: &[GridCell], decode: F) -> Result<Vec<T>, DecoderError>
+where
+    T: Send,
+    F: Fn(&GridCell) -> Result<T, DecoderError> + Sync,
+{
     #[cfg(not(target_family = "wasm"))]
     {
         let total_pixels = cells.iter().fold(0usize, |total, cell| {
@@ -1118,30 +1138,36 @@ fn decode_grid_cells(
                     .saturating_mul(usize::try_from(cell.height).unwrap_or(usize::MAX)),
             )
         });
-        if cells.len() > 1 && total_pixels >= 256 * 1024 {
+        if cells.len() > 1 && total_pixels >= PARALLEL_GRID_MIN_PIXELS {
+            let worker_count = cells.len().min(MAX_GRID_WORKERS);
+            let chunk_size = cells.len().div_ceil(worker_count);
             return std::thread::scope(|scope| {
                 let handles = cells
-                    .iter()
-                    .map(|cell| scope.spawn(|| decode_grid_cell_frame(info, cell)))
-                    .collect::<Vec<_>>();
-                handles
-                    .into_iter()
-                    .map(|handle| {
-                        handle.join().map_err(|_| {
-                            DecoderError::Bitstream(
-                                "AVIF grid cell decoder thread panicked".to_string(),
-                            )
-                        })?
+                    .chunks(chunk_size)
+                    .map(|chunk| {
+                        scope.spawn(|| {
+                            chunk
+                                .iter()
+                                .map(|cell| decode(cell))
+                                .collect::<Result<Vec<_>, _>>()
+                        })
                     })
-                    .collect()
+                    .collect::<Vec<_>>();
+                let mut decoded = Vec::with_capacity(cells.len());
+                for handle in handles {
+                    let chunk = handle.join().map_err(|_| {
+                        DecoderError::Bitstream(
+                            "AVIF grid cell decoder thread panicked".to_string(),
+                        )
+                    })??;
+                    decoded.extend(chunk);
+                }
+                Ok(decoded)
             });
         }
     }
 
-    cells
-        .iter()
-        .map(|cell| decode_grid_cell_frame(info, cell))
-        .collect()
+    cells.iter().map(decode).collect()
 }
 
 fn apply_native_grid_geometry(
@@ -1340,7 +1366,7 @@ fn decode_grid_image(info: &AvifInfo) -> Result<ImageBuffer, DecoderError> {
     }
     let mut column_widths = vec![0usize; columns];
     let mut row_heights = vec![0usize; rows];
-    let mut decoded_cells = Vec::with_capacity(cell_count);
+    let decoded_cells = decode_grid_images(info, &grid.cells)?;
     for (index, cell) in grid.cells.iter().enumerate() {
         let cell_width = usize::try_from(cell.width)
             .map_err(|_| DecoderError::InvalidParam("grid cell width is too large".to_string()))?;
@@ -1366,7 +1392,6 @@ fn decode_grid_image(info: &AvifInfo) -> Result<ImageBuffer, DecoderError> {
         }
         column_widths[column] = cell_width;
         row_heights[row] = cell_height;
-        decoded_cells.push(decode_grid_cell(info, cell)?);
     }
     if column_widths.iter().sum::<usize>() != width || row_heights.iter().sum::<usize>() != height {
         return Err(DecoderError::Bitstream(
@@ -1765,7 +1790,7 @@ fn decode_alpha_grid_plane(
     }
     let mut column_widths = vec![0usize; columns];
     let mut row_heights = vec![0usize; rows];
-    let mut cells = Vec::with_capacity(cell_count);
+    let decoded_cells = decode_alpha_grid_cells(&grid.cells)?;
     for (index, cell) in grid.cells.iter().enumerate() {
         let cell_width = usize::try_from(cell.width).map_err(|_| {
             DecoderError::InvalidParam("alpha grid cell width is too large".to_string())
@@ -1787,21 +1812,22 @@ fn decode_alpha_grid_plane(
         }
         column_widths[column] = cell_width;
         row_heights[row] = cell_height;
-        let decoded = decode_alpha_grid_cell_frame(cell)?;
+        let decoded = decoded_cells.get(index).ok_or_else(|| {
+            DecoderError::Bitstream("alpha grid cell decode result is missing".to_string())
+        })?;
         if decoded.width != cell_width || decoded.height != cell_height {
             return Err(DecoderError::Bitstream(format!(
                 "alpha grid cell {} decoded as {}x{}, metadata declares {}x{}",
                 cell.item_id, decoded.width, decoded.height, cell_width, cell_height
             )));
         }
-        cells.push(decoded);
     }
     if column_widths.iter().sum::<usize>() != width || row_heights.iter().sum::<usize>() != height {
         return Err(DecoderError::Bitstream(
             "alpha grid cell dimensions do not cover the declared output".to_string(),
         ));
     }
-    let first = cells
+    let first = decoded_cells
         .first()
         .ok_or_else(|| DecoderError::Bitstream("alpha grid has no cells".to_string()))?;
     let source = first
@@ -1809,7 +1835,7 @@ fn decode_alpha_grid_plane(
         .planes
         .first()
         .ok_or_else(|| DecoderError::Bitstream("alpha grid cell has no plane".to_string()))?;
-    for cell in &cells {
+    for cell in &decoded_cells {
         let plane =
             cell.buffers.planes.first().ok_or_else(|| {
                 DecoderError::Bitstream("alpha grid cell has no plane".to_string())
@@ -1847,7 +1873,7 @@ fn decode_alpha_grid_plane(
     for row in 0..rows {
         let mut x_offset = 0usize;
         for column in 0..columns {
-            let cell = &cells[row * columns + column];
+            let cell = &decoded_cells[row * columns + column];
             let source = cell.buffers.planes.first().ok_or_else(|| {
                 DecoderError::Bitstream("alpha grid cell has no plane".to_string())
             })?;
@@ -1904,6 +1930,10 @@ fn decode_alpha_grid_cell_frame(cell: &GridCell) -> Result<DecodedFrame, Decoder
     validate_public_container_preflight(&info, false)?;
     let headers = parse_av1_headers(&info)?;
     decode_still_frame(&headers, None)
+}
+
+fn decode_alpha_grid_cells(cells: &[GridCell]) -> Result<Vec<DecodedFrame>, DecoderError> {
+    decode_grid_items(cells, decode_alpha_grid_cell_frame)
 }
 
 fn apply_alpha_grid(
