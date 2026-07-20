@@ -717,6 +717,14 @@ native/public success without partial output; the remaining RGB difference is
 kept as an explicit oracle limitation until a chroma-siting-compatible RGB
 reference is available.
 
+The unsupported-directory audit is now a permanent 25-sample gate. Every
+official sample in `test/images/external/avif/unsupported` must produce a
+non-partial RGBA buffer with the expected post-container dimensions, including
+the sequence primary item, alpha, grid, crop/mirror/rotate, 10/12-bit and
+progressive-IDAT samples. The gate completed in 55.7 seconds on the current
+host; its cost is intentional because it exercises the full public decode path
+instead of only checking headers.
+
 On 2026-07-20, coefficient decoding began returning its owned level buffer to
 the decoder scratch after reconstruction; only the public diagnostic luma
 capture retains it. The scratch-transfer regression test confirms that two

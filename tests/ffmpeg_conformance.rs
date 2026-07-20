@@ -2723,3 +2723,67 @@ fn public_additional_official_samples_match_ffmpeg_when_present() {
         );
     }
 }
+
+#[test]
+fn all_official_unsupported_samples_decode_without_partial_output() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("test/images/external/avif/unsupported");
+    if !root.is_dir() {
+        eprintln!("official unsupported sample directory is unavailable; skipping audit");
+        return;
+    }
+    let cases = [
+        ("abc_color_irot_alpha_irot.avif", 256, 512),
+        ("abc_color_irot_alpha_NOirot.avif", 256, 512),
+        ("alpha_noispe.avif", 80, 80),
+        ("clap_irot_imir_non_essential.avif", 10, 8),
+        ("clop_irot_imor.avif", 34, 12),
+        ("draw_points_idat.avif", 33, 11),
+        ("draw_points_idat_metasize0.avif", 33, 11),
+        ("draw_points_idat_progressive.avif", 33, 11),
+        ("extended_pixi.avif", 4, 4),
+        ("fox.profile0.8bpc.yuv420.avif", 1204, 800),
+        ("fox.profile0.8bpc.yuv420.monochrome.avif", 1204, 800),
+        ("fox.profile1.10bpc.yuv444.avif", 1204, 800),
+        ("fox.profile2.12bpc.yuv444.avif", 1204, 800),
+        ("fox.profile2.8bpc.yuv422.avif", 1204, 800),
+        ("kimono.crop.avif", 385, 330),
+        ("kimono.mirror-horizontal.avif", 722, 1024),
+        ("kimono.mirror-vertical.rotate270.avif", 722, 1024),
+        ("kimono.rotate270.avif", 722, 1024),
+        ("kimono.rotate90.avif", 722, 1024),
+        (
+            "plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
+            128,
+            128,
+        ),
+        ("red-at-12-oclock-with-color-profile-8bpc.avif", 800, 800),
+        ("sofa_grid1x5_420.avif", 1024, 770),
+        ("sofa_grid1x5_420_dimg_repeat.avif", 1024, 770),
+        ("sofa_grid1x5_420_reversed_dimg_order.avif", 1024, 770),
+        ("star-8bpc.avifs", 159, 159),
+    ];
+    assert_eq!(cases.len(), 25);
+    for (name, width, height) in cases {
+        let path = root.join(name);
+        assert!(
+            path.is_file(),
+            "official unsupported sample is missing: {name}"
+        );
+        let data = std::fs::read(&path).expect("official unsupported sample should be readable");
+        let image = avif_rust::image_from_bytes(&data)
+            .unwrap_or_else(|err| panic!("{name} should produce complete RGBA output: {err}"));
+        assert_eq!(
+            (image.width, image.height),
+            (width, height),
+            "{name} RGBA dimensions"
+        );
+        assert_eq!(
+            image.rgba.len(),
+            width * height * 4,
+            "{name} partial RGBA output"
+        );
+    }
+}
