@@ -695,6 +695,11 @@ The same IntrABC fixture is now generated and checked in 4:2:0 as well as
 oracle tolerance (maximum error 4), covering the subsampled block geometry
 without widening the unsupported high-complexity boundary.
 
+The IntrABC fixture also covers 4:2:2. Its luma plane is exact and the
+subsampled chroma planes remain within maximum error 2 against FFmpeg, closing
+the three supported chroma layouts for the current low-complexity IntrABC
+path.
+
 On 2026-07-20, coefficient decoding began returning its owned level buffer to
 the decoder scratch after reconstruction; only the public diagnostic luma
 capture retains it. The scratch-transfer regression test confirms that two

@@ -1329,6 +1329,11 @@ fn generated_intrabc_yuv420_sample_matches_ffmpeg_when_encoder_present() {
 }
 
 #[test]
+fn generated_intrabc_yuv422_sample_matches_ffmpeg_when_encoder_present() {
+    generated_intrabc_sample_matches_ffmpeg("yuv422p", "yuv422p", [128 * 128, 64 * 128, 64 * 128]);
+}
+
+#[test]
 fn generated_12bit_rect_partition_sample_matches_ffmpeg_when_encoder_present() {
     let root = std::env::temp_dir().join(format!(".test-avif-12bit-rect-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {
