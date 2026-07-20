@@ -282,6 +282,7 @@ pub(super) fn decode_plane_block_unit(
         let tx_type = decoded_transform.tx_type;
         let dequant = &mut decoder.dequant_scratch[..prediction_len];
         let reconstructed = &mut decoder.reconstruction_scratch[..prediction_len];
+        let residual = &mut decoder.residual_scratch[..prediction_len];
         if frame.coded_lossless() {
             reconstruct_lossless_transform_block_parts_into(
                 plane,
@@ -312,6 +313,7 @@ pub(super) fn decode_plane_block_unit(
                 qmatrix,
                 dequant,
                 reconstructed,
+                residual,
             )?;
         }
         decoder.mark_reconstructed_transform(transform)?;

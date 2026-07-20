@@ -372,6 +372,7 @@ pub(crate) fn reconstruct_transform_block_parts(
 ) -> Result<ReconstructedTransform, DecoderError> {
     let mut dequant = vec![0; block.tx_size.sample_count()];
     let mut reconstructed = vec![0; block.tx_size.sample_count()];
+    let mut residual = vec![0; block.tx_size.sample_count()];
     reconstruct_transform_block_parts_into(
         plane,
         block,
@@ -383,6 +384,7 @@ pub(crate) fn reconstruct_transform_block_parts(
         qmatrix,
         &mut dequant,
         &mut reconstructed,
+        &mut residual,
     )
 }
 
@@ -397,6 +399,7 @@ pub(crate) fn reconstruct_transform_block_parts_into(
     qmatrix: Option<(u8, usize)>,
     dequant: &mut [i32],
     reconstructed: &mut [u16],
+    residual: &mut [i32],
 ) -> Result<ReconstructedTransform, DecoderError> {
     let tx_size = block.tx_size;
     if coefficients.len() != tx_size.sample_count() {
@@ -417,6 +420,11 @@ pub(crate) fn reconstruct_transform_block_parts_into(
     if dequant.len() != tx_size.sample_count() {
         return Err(DecoderError::InvalidParam(
             "AV1 dequantization output count does not match transform size".to_string(),
+        ));
+    }
+    if residual.len() != tx_size.sample_count() {
+        return Err(DecoderError::InvalidParam(
+            "AV1 residual output count does not match transform size".to_string(),
         ));
     }
 
@@ -464,8 +472,8 @@ pub(crate) fn reconstruct_transform_block_parts_into(
             dequant,
         )?;
     }
-    let residual = inverse_transform(tx_type, tx_size, dequant, bit_depth)?;
-    add_residual_to_prediction_into(prediction, &residual, bit_depth, reconstructed)?;
+    inverse_transform_into(tx_type, tx_size, dequant, bit_depth, residual)?;
+    add_residual_to_prediction_into(prediction, residual, bit_depth, reconstructed)?;
     write_plane_block(
         plane,
         block.x,
@@ -681,6 +689,40 @@ pub fn inverse_transform(
         _ => Err(DecoderError::Unsupported(format!(
             "AV1 {tx_size:?} rectangular transform is not supported yet"
         ))),
+    }
+}
+
+pub(crate) fn inverse_transform_into(
+    tx_type: TxType,
+    tx_size: TxSize,
+    dequant: &[i32],
+    bit_depth: u8,
+    output: &mut [i32],
+) -> Result<(), DecoderError> {
+    validate_transform_bit_depth(bit_depth)?;
+    if dequant.len() != tx_size.sample_count() || output.len() != tx_size.sample_count() {
+        return Err(DecoderError::InvalidParam(
+            "AV1 transform input/output count does not match transform size".to_string(),
+        ));
+    }
+    if dequant.iter().all(|value| *value == 0) {
+        output.fill(0);
+        return Ok(());
+    }
+    match tx_size {
+        TxSize::Tx4x4 => {
+            inverse_transform_4x4_into(tx_type, dequant, bit_depth, output);
+            Ok(())
+        }
+        TxSize::Tx8x8 => {
+            inverse_transform_8x8_into(tx_type, dequant, bit_depth, output);
+            Ok(())
+        }
+        _ => {
+            let transformed = inverse_transform(tx_type, tx_size, dequant, bit_depth)?;
+            output.copy_from_slice(&transformed);
+            Ok(())
+        }
     }
 }
 
@@ -1137,6 +1179,12 @@ enum StagedTransform {
 }
 
 fn inverse_transform_4x4(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> Vec<i32> {
+    let mut output = vec![0i32; 16];
+    inverse_transform_4x4_into(tx_type, dequant, bit_depth, &mut output);
+    output
+}
+
+fn inverse_transform_4x4_into(tx_type: TxType, dequant: &[i32], bit_depth: u8, output: &mut [i32]) {
     let (vertical, horizontal) = staged_transform_pair(tx_type);
     let row_range = bit_depth + 8;
     let mut intermediate = [0i32; 16];
@@ -1148,7 +1196,6 @@ fn inverse_transform_4x4(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> Vec
     }
 
     let residual_limit = 1i32 << (bit_depth + 7);
-    let mut output = vec![0i32; 16];
     for column in 0..4 {
         let input =
             std::array::from_fn(|row| clamp_signed(intermediate[row * 4 + column], bit_depth + 8));
@@ -1158,7 +1205,6 @@ fn inverse_transform_4x4(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> Vec
                 round2_signed(transformed[row], 4).clamp(-residual_limit, residual_limit - 1);
         }
     }
-    output
 }
 
 fn inverse_staged_4(transform: StagedTransform, input: [i32; 4], range: u8) -> [i32; 4] {
@@ -1172,6 +1218,12 @@ fn inverse_staged_4(transform: StagedTransform, input: [i32; 4], range: u8) -> [
 }
 
 fn inverse_transform_8x8(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> Vec<i32> {
+    let mut output = vec![0i32; 64];
+    inverse_transform_8x8_into(tx_type, dequant, bit_depth, &mut output);
+    output
+}
+
+fn inverse_transform_8x8_into(tx_type: TxType, dequant: &[i32], bit_depth: u8, output: &mut [i32]) {
     let (vertical, horizontal) = staged_transform_pair(tx_type);
     let row_range = bit_depth + 8;
     let mut intermediate = [0i32; 64];
@@ -1185,7 +1237,6 @@ fn inverse_transform_8x8(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> Vec
     }
 
     let residual_limit = 1i32 << (bit_depth + 7);
-    let mut output = vec![0i32; 64];
     for column in 0..8 {
         let input =
             std::array::from_fn(|row| clamp_signed(intermediate[row * 8 + column], bit_depth + 8));
@@ -1195,7 +1246,6 @@ fn inverse_transform_8x8(tx_type: TxType, dequant: &[i32], bit_depth: u8) -> Vec
                 round2_signed(transformed[row], 4).clamp(-residual_limit, residual_limit - 1);
         }
     }
-    output
 }
 
 fn staged_transform_pair(tx_type: TxType) -> (StagedTransform, StagedTransform) {
@@ -2344,6 +2394,19 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn inverse_transform_into_matches_allocating_small_transform_path() {
+        for (tx_size, coefficient_index) in [(TxSize::Tx4x4, 1), (TxSize::Tx8x8, 9)] {
+            let mut coefficients = vec![0; tx_size.sample_count()];
+            coefficients[coefficient_index] = 37;
+            let expected = inverse_transform(TxType::AdstDct, tx_size, &coefficients, 8).unwrap();
+            let mut actual = vec![0; tx_size.sample_count()];
+            inverse_transform_into(TxType::AdstDct, tx_size, &coefficients, 8, &mut actual)
+                .unwrap();
+            assert_eq!(actual, expected, "{tx_size:?}");
         }
     }
 

@@ -716,6 +716,13 @@ this path. A fresh optimized 10-iteration run measured `316.69/313.85 ms`
 (native/RGBA) for `WML2Viewer.avif`; this remains a same-host checkpoint rather
 than a cross-run speedup claim.
 
+The 4x4 and 8x8 inverse-transform paths now write into the tile decoder's
+reusable residual scratch instead of allocating a `Vec` per non-zero block.
+The allocating and scratch-backed paths share an equivalence test. A fresh
+optimized 10-iteration run measured `308.45/308.11 ms` (native/RGBA) for
+`WML2Viewer.avif`; this is recorded as a local performance checkpoint pending
+another same-host baseline.
+
 - [x] Add malformed/truncated coverage for the currently supported container,
       OBU, entropy and metadata paths.
 - [ ] Add malformed/truncated cases for each future syntax path as it becomes
