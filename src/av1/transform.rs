@@ -34,6 +34,69 @@ pub struct ReconstructedTransform {
     pub non_zero_coefficients: usize,
 }
 
+/// Allocation-free transform geometry traversal used by the normal decoder.
+/// The public planning helper below still returns a `Vec` for diagnostics and
+/// compatibility callers, while reconstruction can walk the same geometry
+/// without allocating once per plane block.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TransformBlockIter {
+    plane: usize,
+    x: usize,
+    y: usize,
+    tx_size: TxSize,
+    tx_width: usize,
+    tx_height: usize,
+    block_width: usize,
+    block_height: usize,
+    offset_x: usize,
+    offset_y: usize,
+}
+
+impl Iterator for TransformBlockIter {
+    type Item = TransformBlock;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.offset_y >= self.block_height {
+            return None;
+        }
+        let transform = TransformBlock {
+            plane: self.plane,
+            x: self.x + self.offset_x,
+            y: self.y + self.offset_y,
+            tx_size: self.tx_size,
+        };
+        self.offset_x += self.tx_width;
+        if self.offset_x >= self.block_width {
+            self.offset_x = 0;
+            self.offset_y += self.tx_height;
+        }
+        Some(transform)
+    }
+}
+
+pub(crate) fn iter_transform_blocks_with_tx_size(
+    plane: usize,
+    x: usize,
+    y: usize,
+    block_size: BlockSize,
+    tx_size: TxSize,
+    frame_width: usize,
+    frame_height: usize,
+) -> TransformBlockIter {
+    TransformBlockIter {
+        plane,
+        x,
+        y,
+        tx_size,
+        tx_width: tx_size.width(),
+        tx_height: tx_size.height(),
+        block_width: block_size.width().min(frame_width.saturating_sub(x)),
+        block_height: block_size.height().min(frame_height.saturating_sub(y)),
+        offset_x: 0,
+        offset_y: 0,
+    }
+}
+
 pub fn plan_transform_blocks(
     plane: usize,
     x: usize,
@@ -55,27 +118,8 @@ pub fn plan_transform_blocks_with_tx_size(
     frame_width: usize,
     frame_height: usize,
 ) -> Vec<TransformBlock> {
-    let tx_width = tx_size.width();
-    let tx_height = tx_size.height();
-    let block_width = block_size.width().min(frame_width.saturating_sub(x));
-    let block_height = block_size.height().min(frame_height.saturating_sub(y));
-    let mut blocks = Vec::new();
-
-    let mut offset_y = 0;
-    while offset_y < block_height {
-        let mut offset_x = 0;
-        while offset_x < block_width {
-            blocks.push(TransformBlock {
-                plane,
-                x: x + offset_x,
-                y: y + offset_y,
-                tx_size,
-            });
-            offset_x += tx_width;
-        }
-        offset_y += tx_height;
-    }
-    blocks
+    iter_transform_blocks_with_tx_size(plane, x, y, block_size, tx_size, frame_width, frame_height)
+        .collect()
 }
 
 pub fn zig_zag_scan(tx_size: TxSize) -> Vec<usize> {
@@ -1612,6 +1656,22 @@ mod tests {
         assert_eq!(blocks[0].x, 0);
         assert_eq!(blocks[3].x, 64);
         assert_eq!(blocks[3].y, 64);
+    }
+
+    #[test]
+    fn allocation_free_transform_iterator_matches_public_plan_at_edges() {
+        for (block_size, tx_size, x, y, width, height) in [
+            (BlockSize::Block128x128, TxSize::Tx64x64, 0, 0, 900, 900),
+            (BlockSize::Block128x128, TxSize::Tx64x64, 896, 896, 900, 900),
+            (BlockSize::Block16x8, TxSize::Tx8x4, 12, 8, 20, 14),
+        ] {
+            let expected =
+                plan_transform_blocks_with_tx_size(1, x, y, block_size, tx_size, width, height);
+            let actual =
+                iter_transform_blocks_with_tx_size(1, x, y, block_size, tx_size, width, height)
+                    .collect::<Vec<_>>();
+            assert_eq!(actual, expected);
+        }
     }
 
     #[test]

@@ -11,7 +11,7 @@ use crate::av1::sequence::SequenceHeader;
 use crate::av1::syntax::{PredictionMode, TxSize, TxType};
 use crate::av1::tile_decode::palette::PALETTE_MAX_SIZE;
 use crate::av1::transform::{
-    plan_transform_blocks_with_tx_size, reconstruct_lossless_transform_block_parts_into,
+    iter_transform_blocks_with_tx_size, reconstruct_lossless_transform_block_parts_into,
     reconstruct_transform_block_parts_into,
 };
 
@@ -93,7 +93,7 @@ pub(super) fn decode_plane_block_unit(
         }
     };
     let transforms = if subsampling_x == 0 && subsampling_y == 0 {
-        plan_transform_blocks_with_tx_size(
+        iter_transform_blocks_with_tx_size(
             plane_index,
             x,
             y,
@@ -103,7 +103,7 @@ pub(super) fn decode_plane_block_unit(
             decoder.mi_rows << 2,
         )
     } else {
-        plan_transform_blocks_with_tx_size(
+        iter_transform_blocks_with_tx_size(
             plane_index,
             block_x,
             block_y,
@@ -127,19 +127,19 @@ pub(super) fn decode_plane_block_unit(
             && transform.y < unit_y.saturating_add(unit_height)
     };
     for transform in transforms
-        .iter()
+        .clone()
         .filter(|transform| transform_in_unit(transform))
     {
-        decoder.record_transform_boundary(*transform, TxType::DctDct, 0);
+        decoder.record_transform_boundary(transform, TxType::DctDct, 0);
     }
     if block_mode.skip {
         for transform in transforms
-            .iter()
+            .clone()
             .filter(|transform| transform_in_unit(transform))
         {
-            decoder.set_txb_entropy_context(*transform, 0);
+            decoder.set_txb_entropy_context(transform, 0);
             let (top_right_available, bottom_left_available) =
-                decoder.reconstructed_extension_availability(plane, *transform)?;
+                decoder.reconstructed_extension_availability(plane, transform)?;
             let prediction_len = transform.tx_size.width() * transform.tx_size.height();
             let prediction = &mut decoder.prediction_scratch[..prediction_len];
             predict_plane_block_into(
@@ -175,15 +175,12 @@ pub(super) fn decode_plane_block_unit(
                 transform.tx_size.height(),
                 &prediction,
             )?;
-            decoder.mark_reconstructed_transform(*transform)?;
+            decoder.mark_reconstructed_transform(transform)?;
         }
         return Ok(());
     }
 
-    for transform in transforms
-        .into_iter()
-        .filter(|transform| transform_in_unit(transform))
-    {
+    for transform in transforms.filter(|transform| transform_in_unit(transform)) {
         let txb_context = decoder.txb_context(plane_block_size, transform);
         let skip_cdf = decoder
             .cdf

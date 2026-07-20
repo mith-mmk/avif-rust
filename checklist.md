@@ -655,6 +655,15 @@ current host measured `359.35 ms` (native) and `359.65 ms` (RGBA); scheduler
 variance remains larger than this single-run delta, so no stable speedup claim
 is made yet.
 
+On 2026-07-20, normal reconstruction stopped allocating a transform-geometry
+`Vec` for every plane block and now traverses the same clipped geometry through
+an allocation-free iterator; the public diagnostic planning API remains
+`Vec`-based. The iterator is covered at full-frame and clipped-edge cases. An
+11-iteration multi-sample recheck measured `377.63/389.04 ms` (native/RGBA) for
+`WML2Viewer.avif` and `4.12/4.38 ms` for the 128x128 alpha sample. These are
+recorded as allocation-reduction/no-regression measurements until a quieter
+same-host baseline confirms a stable speedup.
+
 - [x] Add malformed/truncated coverage for the currently supported container,
       OBU, entropy and metadata paths.
 - [ ] Add malformed/truncated cases for each future syntax path as it becomes
