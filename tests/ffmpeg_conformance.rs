@@ -1016,6 +1016,91 @@ fn generated_10bit_yuv420_sample_matches_ffmpeg_when_encoder_present() {
 }
 
 #[test]
+fn generated_10bit_identity_gbr_sample_matches_ffmpeg_when_encoder_present() {
+    let root = std::env::temp_dir().join(format!(
+        ".test-avif-10bit-identity-gbr-{}",
+        std::process::id()
+    ));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary 10-bit identity AVIF directory: {err}");
+    }
+    let output_path = root.join("identity-gbr-10bit.avif");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .arg("-i")
+        .arg(sample_path("WML2Viewer.png"))
+        .args([
+            "-vf",
+            "scale=512:512:flags=neighbor,format=gbrp10le",
+            "-frames:v",
+            "1",
+            "-c:v",
+            "libaom-av1",
+            "-still-picture",
+            "1",
+            "-crf",
+            "0",
+            "-cpu-used",
+            "8",
+            "-pix_fmt",
+            "gbrp10le",
+            "-colorspace",
+            "rgb",
+            "-color_primaries",
+            "bt709",
+            "-color_trc",
+            "iec61966-2-1",
+            "-color_range",
+            "pc",
+            "-f",
+            "avif",
+        ])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated 10-bit identity GBR sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom 10-bit identity GBR encoder is unavailable; skipping generated sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+
+    let data =
+        std::fs::read(&output_path).expect("generated 10-bit identity GBR AVIF should be readable");
+    let frame = avif_rust::decode_frame_bytes(&data)
+        .expect("generated 10-bit identity GBR frame should decode");
+    assert_eq!((frame.width, frame.height), (512, 512));
+    assert_eq!(frame.bit_depth, 10);
+    assert_eq!(frame.buffers.planes.len(), 3);
+    assert!(
+        frame
+            .color_config
+            .color_description
+            .is_some_and(|description| matches!(description.matrix_coefficients, 0 | 3))
+    );
+    let actual = frame
+        .to_rgba8()
+        .expect("generated 10-bit identity GBR RGBA conversion should succeed");
+    if let Some(expected) = ffmpeg_decode_rgba_dynamic(&output_path, 512, 512) {
+        let metrics = diff_rgb_dynamic(&actual.rgba, &expected);
+        eprintln!(
+            "generated 10-bit identity GBR: average RGB absolute error={} max={}",
+            metrics.average_rgb_abs, metrics.max_rgb_abs
+        );
+        assert!(
+            metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 8,
+            "generated 10-bit identity GBR FFmpeg RGB error average={} max={}",
+            metrics.average_rgb_abs,
+            metrics.max_rgb_abs
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn generated_chroma_sample_positions_match_ffmpeg_when_encoder_present() {
     let root =
         std::env::temp_dir().join(format!(".test-avif-chroma-position-{}", std::process::id()));

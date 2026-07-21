@@ -1473,3 +1473,11 @@ sample is mutated to both `spac` and `scnr` in the external regression gate and
 must produce byte-identical RGBA output. High-bit-depth identity GBR RGBA8
 conversion now uses the native row-chunk scheduler; its channel-order and
 alpha mapping are pinned by a focused 10-bit regression vector.
+
+High-bit-depth identity GBR RGBA8 conversion now precomputes the exact
+sample-to-byte mapping for 10/12-bit sources, removing three per-pixel integer
+divides while retaining the previous rounded output for every table entry. A
+generated 512x512 identity-GBR sample measured `15.98/16.52 ms` over five
+iterations (native/RGBA) after the table path; this is a same-host checkpoint,
+not a cross-machine speedup claim. The same generated sample is now part of
+the FFmpeg RGBA oracle suite with native 10-bit and identity-matrix assertions.

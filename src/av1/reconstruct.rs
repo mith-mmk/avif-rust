@@ -379,6 +379,7 @@ fn frame_buffers_to_rgba_8_high_bit_sdr(
         let plane_b = &buffers.planes[1].samples;
         let plane_r = &buffers.planes[2].samples;
         let alpha = buffers.planes.get(3);
+        let scale_table = (max_source <= 4095).then(|| build_rgba8_scale_table(max_source));
         for_each_rgba_row_chunk(
             &mut rgba,
             buffers.width,
@@ -388,15 +389,19 @@ fn frame_buffers_to_rgba_8_high_bit_sdr(
                     let y = first_row + row_offset;
                     for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
                         let index = y * buffers.width + x;
-                        pixel[0] = u16_to_u8(scale_sample_to_u16(plane_r[index], max_source));
-                        pixel[1] = u16_to_u8(scale_sample_to_u16(plane_g[index], max_source));
-                        pixel[2] = u16_to_u8(scale_sample_to_u16(plane_b[index], max_source));
-                        pixel[3] = u16_to_u8(scale_sample_to_u16(
+                        pixel[0] =
+                            scale_sample_to_rgba8(plane_r[index], max_source, scale_table.as_ref());
+                        pixel[1] =
+                            scale_sample_to_rgba8(plane_g[index], max_source, scale_table.as_ref());
+                        pixel[2] =
+                            scale_sample_to_rgba8(plane_b[index], max_source, scale_table.as_ref());
+                        pixel[3] = scale_sample_to_rgba8(
                             alpha
                                 .map(|plane| plane.samples[index])
                                 .unwrap_or(u16::try_from(max_source).unwrap_or(u16::MAX)),
                             max_source,
-                        ));
+                            scale_table.as_ref(),
+                        );
                     }
                 }
             },
@@ -1457,6 +1462,26 @@ fn scale_sample_to_u16(sample: u16, max_source: u32) -> u16 {
     }
 }
 
+fn build_rgba8_scale_table(max_source: u32) -> [u8; 4096] {
+    let mut table = [0; 4096];
+    for (sample, value) in table
+        .iter_mut()
+        .enumerate()
+        .take(usize::try_from(max_source).expect("high-bit-depth scale table fits") + 1)
+    {
+        *value = u16_to_u8(scale_sample_to_u16(sample as u16, max_source));
+    }
+    table
+}
+
+#[inline]
+fn scale_sample_to_rgba8(sample: u16, max_source: u32, table: Option<&[u8; 4096]>) -> u8 {
+    table.map_or_else(
+        || u16_to_u8(scale_sample_to_u16(sample, max_source)),
+        |table| table[usize::from(sample)],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1773,6 +1798,20 @@ mod tests {
                 scale(128),
             ]
         );
+    }
+
+    #[test]
+    fn high_bit_rgba8_scale_table_matches_scalar_mapping() {
+        for max_source in [1023, 4095] {
+            let table = build_rgba8_scale_table(max_source);
+            for sample in [0, 1, max_source / 2, max_source] {
+                let sample = sample as u16;
+                assert_eq!(
+                    scale_sample_to_rgba8(sample, max_source, Some(&table)),
+                    u16_to_u8(scale_sample_to_u16(sample, max_source))
+                );
+            }
+        }
     }
 
     #[test]
