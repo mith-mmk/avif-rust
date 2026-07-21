@@ -111,7 +111,10 @@ The lower-level `parse_info` and `decode` functions accept a
 For a `tmap` image, `decode_gain_map_frame_bytes` returns the referenced AV1
 gain-map item and its `GainMapMetadata` without changing the default base-image
 decode. Call `DecodedFrame::to_rgba16_with_gain_map` with a selected display
-headroom to apply the explicit base-colour-space composition path.
+headroom to apply the explicit base-colour-space composition path. An
+alternate-colour-space map is accepted when its decoded colour configuration
+is identical to the base; genuinely different alternate spaces remain
+fail-closed.
 
 ## Validation
 

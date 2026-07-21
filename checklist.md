@@ -1392,9 +1392,12 @@ native frame alongside `GainMapMetadata`. `DecodedFrame::to_rgba16_with_gain_map
 now applies the ISO 21496 log2 gain formula for the base colour space, keeps
 alpha unchanged, and returns the base image through an exact fast path when the
 selected headroom is zero. Alternate-colour-space composition remains
-fail-closed. The optional gain-map conformance test now checks the decoded item
+fail-closed unless the decoded base and gain-map colour configurations are
+identical, in which case no colour-space conversion is required. The optional
+gain-map conformance test now checks the decoded item
 whenever the external fixture set is available, and synthetic vectors cover
-headroom, gain, alpha, and rejection behavior.
+headroom, gain, alpha, equivalent alternate colour space, and rejection
+behavior.
 
 Gain-map composition now converts its per-channel rational coefficients once
 before walking the RGBA pixels, avoiding repeated metadata division in the

@@ -279,9 +279,12 @@ impl DecodedFrame {
                 "gain-map HDR headroom must be finite and non-negative".to_string(),
             ));
         }
-        if !gain_map.metadata.use_base_colour_space {
+        if !gain_map.metadata.use_base_colour_space
+            && !gain_map_colour_spaces_match(self, &gain_map.frame)
+        {
             return Err(DecoderError::Unsupported(
-                "gain-map composition in an alternate colour space is not supported".to_string(),
+                "gain-map composition in a different alternate colour space is not supported"
+                    .to_string(),
             ));
         }
         if self.width != gain_map.frame.width || self.height != gain_map.frame.height {
@@ -363,6 +366,11 @@ fn gain_map_weight(
     } else {
         normalized as f32
     })
+}
+
+fn gain_map_colour_spaces_match(base: &DecodedFrame, gain_map: &DecodedFrame) -> bool {
+    base.color_config == gain_map.color_config
+        && base.color_information == gain_map.color_information
 }
 
 fn rational_to_f64(
@@ -5699,14 +5707,31 @@ mod gain_map_tests {
     #[test]
     fn gain_map_rejects_alternate_colour_space_composition() {
         let base = identity_frame(128);
+        let mut alternate_frame = identity_frame(255);
+        alternate_frame.color_config.color_description = Some(crate::av1::ColorDescription {
+            color_primaries: 9,
+            transfer_characteristics: 13,
+            matrix_coefficients: 0,
+        });
+        let gain_map = DecodedGainMapFrame {
+            metadata: metadata(false),
+            frame: alternate_frame,
+        };
+        assert!(matches!(
+            base.to_rgba16_with_gain_map(&gain_map, 1.0),
+            Err(DecoderError::Unsupported(message)) if message.contains("different alternate colour space")
+        ));
+    }
+
+    #[test]
+    fn gain_map_accepts_equivalent_alternate_colour_space() {
+        let base = identity_frame(128);
         let gain_map = DecodedGainMapFrame {
             metadata: metadata(false),
             frame: identity_frame(255),
         };
-        assert!(matches!(
-            base.to_rgba16_with_gain_map(&gain_map, 1.0),
-            Err(DecoderError::Unsupported(message)) if message.contains("alternate colour space")
-        ));
+        let mapped = base.to_rgba16_with_gain_map(&gain_map, 1.0).unwrap();
+        assert!(mapped.rgba[0] > base.to_rgba16().unwrap().rgba[0]);
     }
 }
 

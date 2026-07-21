@@ -109,7 +109,8 @@ Inter／Switchサンプルは`DecoderError::Unsupported`を返します。
 `tmap`画像では、`decode_gain_map_frame_bytes`によって参照されたAV1 gain-map
 itemと`GainMapMetadata`を取得できます。既定のbase画像デコードは変更せず、
 `DecodedFrame::to_rgba16_with_gain_map`へdisplay headroomを渡すことで、base色空間
-の明示的なHDR合成を適用できます。
+の明示的なHDR合成を適用できます。alternate色空間でもデコード後の色設定がbaseと
+同一の場合は合成できますが、実際に異なるalternate色空間はfail-closedです。
 
 ## 検証
 
