@@ -3154,3 +3154,48 @@ fn external_sato_12bit_to_16bit_sample_decodes() {
     assert_eq!((image.width, image.height), (1024, 684));
     assert_eq!(image.rgba.len(), 1024 * 684 * 4);
 }
+
+#[test]
+fn external_gainmap_samples_keep_complete_base_decode() {
+    let root = std::env::var_os("AVIF_GAINMAP_SAMPLE_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("workspace root should exist")
+                .join("test/images/external/avif/gainmap")
+        });
+    let cases = [
+        ("seine_hdr_gainmap_srgb.avif", 400, 300),
+        ("seine_hdr_gainmap_small_srgb.avif", 400, 300),
+        ("seine_sdr_gainmap_srgb.avif", 400, 300),
+        ("seine_sdr_gainmap_notmapbrand.avif", 400, 300),
+        ("unsupported_gainmap_version.avif", 100, 100),
+        ("unsupported_gainmap_minimum_version.avif", 100, 100),
+        (
+            "unsupported_gainmap_writer_version_with_extra_bytes.avif",
+            100,
+            100,
+        ),
+    ];
+    if !cases.iter().any(|(name, _, _)| root.join(name).is_file()) {
+        eprintln!("external gainmap samples are unavailable; skipping base decode audit");
+        return;
+    }
+    for (name, width, height) in cases {
+        let path = root.join(name);
+        if !path.is_file() {
+            eprintln!("external gainmap sample is unavailable; skipping {name}");
+            continue;
+        }
+        let data = std::fs::read(&path).expect("gainmap sample should be readable");
+        let image = avif_rust::image_from_bytes(&data)
+            .unwrap_or_else(|error| panic!("{name} should keep a complete base decode: {error}"));
+        assert_eq!(
+            (image.width, image.height),
+            (width, height),
+            "{name} dimensions"
+        );
+        assert_eq!(image.rgba.len(), width * height * 4, "{name} complete RGBA");
+    }
+}

@@ -1255,3 +1255,9 @@ the primary item to be first. A five-iteration optimized recheck of the
 official sample measured `396.10 ms` native / `445.70 ms` RGBA on this host;
 the result is a local allocation-reuse checkpoint rather than a stable
 cross-machine speedup claim.
+
+The optional external conformance set now also audits seven official Gain Map
+fixtures (including unsupported `tmap` metadata versions). Each file must
+still produce a complete base RGBA image with exact dimensions; HDR gain-map
+tone mapping remains intentionally outside the current RGBA API and is
+tracked separately from AV1 decode support.
