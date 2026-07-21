@@ -1217,30 +1217,35 @@ fn generated_12bit_sample_decodes_without_post_filter_overflow() {
 
 #[test]
 fn generated_10bit_yuv420_sample_matches_ffmpeg_when_encoder_is_present() {
-    generated_subsampled_sample_matches_ffmpeg("yuv420p10le", "10bit-yuv420", 10);
+    generated_subsampled_sample_matches_ffmpeg("yuv420p10le", "10bit-yuv420", 10, Some((1, 1)));
 }
 
 #[test]
 fn generated_10bit_yuv422_sample_matches_ffmpeg_when_encoder_is_present() {
-    generated_subsampled_sample_matches_ffmpeg("yuv422p10le", "10bit-yuv422", 10);
+    generated_subsampled_sample_matches_ffmpeg("yuv422p10le", "10bit-yuv422", 10, Some((1, 0)));
 }
 
 #[test]
 fn generated_12bit_yuv420_sample_matches_ffmpeg_when_encoder_is_present() {
-    generated_subsampled_sample_matches_ffmpeg("yuv420p12le", "12bit-yuv420", 12);
+    generated_subsampled_sample_matches_ffmpeg("yuv420p12le", "12bit-yuv420", 12, Some((1, 1)));
 }
 
 #[test]
 fn generated_12bit_yuv422_sample_matches_ffmpeg_when_encoder_is_present() {
-    generated_subsampled_sample_matches_ffmpeg("yuv422p12le", "12bit-yuv422", 12);
+    generated_subsampled_sample_matches_ffmpeg("yuv422p12le", "12bit-yuv422", 12, Some((1, 0)));
 }
 
 #[test]
 fn generated_12bit_monochrome_sample_matches_ffmpeg_when_encoder_is_present() {
-    generated_subsampled_sample_matches_ffmpeg("gray12le", "12bit-monochrome", 12);
+    generated_subsampled_sample_matches_ffmpeg("gray12le", "12bit-monochrome", 12, None);
 }
 
-fn generated_subsampled_sample_matches_ffmpeg(pixel_format: &str, label: &str, bit_depth: u8) {
+fn generated_subsampled_sample_matches_ffmpeg(
+    pixel_format: &str,
+    label: &str,
+    bit_depth: u8,
+    expected_chroma_subsampling: Option<(u8, u8)>,
+) {
     let root = std::env::temp_dir().join(format!(".test-avif-{label}-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {
         panic!("failed to create temporary AVIF sample directory: {err}");
@@ -1286,6 +1291,15 @@ fn generated_subsampled_sample_matches_ffmpeg(pixel_format: &str, label: &str, b
     let frame =
         avif_rust::decode_frame_bytes(&data).expect("generated subsampled AVIF should decode");
     assert_eq!(frame.bit_depth, bit_depth, "{label} bit depth");
+    if let Some((subsampling_x, subsampling_y)) = expected_chroma_subsampling {
+        for plane in frame.buffers.planes.get(1..3).unwrap_or_default() {
+            assert_eq!(
+                (plane.layout.subsampling_x, plane.layout.subsampling_y),
+                (subsampling_x, subsampling_y),
+                "{label} native chroma subsampling"
+            );
+        }
+    }
     let actual =
         avif_rust::image_from_bytes(&data).expect("generated subsampled RGBA should decode");
     assert_eq!((actual.width, actual.height), (64, 64));

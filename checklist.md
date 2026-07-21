@@ -1429,6 +1429,11 @@ native bit depth and public grayscale RGBA output pass the FFmpeg oracle with
 average/max RGB error `0.2839/1`. This covers the high-bit-depth
 single-plane path in addition to the 4:2:0 and 4:2:2 cases.
 
+An attempted generated 4:4:0 (`yuv440p`) matrix was rejected as a false
+coverage signal: the available libaom/FFmpeg encoder normalizes that request
+to `yuv444p` before writing AVIF. No 4:4:0 fixture is promoted until a source
+that preserves `subsampling_x=0, subsampling_y=1` is available.
+
 The normal reconstruction path no longer walks each transform geometry once
 just to pre-register a zero-valued filter boundary and then walks it again to
 decode the block. Skip, all-zero, and non-zero transform paths now register
