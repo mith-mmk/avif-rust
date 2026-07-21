@@ -342,14 +342,23 @@ fn frame_buffers_to_rgba_8_high_bit_sdr(
         let luma = buffers.planes.first().ok_or_else(|| {
             DecoderError::Bitstream("AV1 monochrome luma plane is missing".to_string())
         })?;
-        for y in 0..buffers.height {
-            for x in 0..buffers.width {
-                let index = (y * buffers.width + x) * 4;
-                let value = u16_to_u8(scale_sample_to_u16(sample_plane(luma, x, y), max_source));
-                rgba[index..index + 3].fill(value);
-                rgba[index + 3] = u16_to_u8(alpha_sample(buffers.planes.get(3), x, y, max_source));
-            }
-        }
+        let alpha = buffers.planes.get(3);
+        for_each_rgba_row_chunk(
+            &mut rgba,
+            buffers.width,
+            buffers.height,
+            |first_row, chunk| {
+                for (row_offset, row) in chunk.chunks_exact_mut(buffers.width * 4).enumerate() {
+                    let y = first_row + row_offset;
+                    for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                        let value =
+                            u16_to_u8(scale_sample_to_u16(sample_plane(luma, x, y), max_source));
+                        pixel[..3].fill(value);
+                        pixel[3] = u16_to_u8(alpha_sample(alpha, x, y, max_source));
+                    }
+                }
+            },
+        );
         return Ok(Some(ImageBuffer {
             width: buffers.width,
             height: buffers.height,
@@ -467,25 +476,36 @@ fn frame_buffers_to_rgba_8_high_bit_sdr(
             rgba,
         }));
     }
-    for y in 0..buffers.height {
-        for x in 0..buffers.width {
-            let index = (y * buffers.width + x) * 4;
-            let y_sample = sample_plane(plane_y, x, y);
-            let u_sample = plane_u
-                .map(|plane| sample_chroma_plane(plane, x, y, color_config.chroma_sample_position))
-                .unwrap_or(chroma_mid);
-            let v_sample = plane_v
-                .map(|plane| sample_chroma_plane(plane, x, y, color_config.chroma_sample_position))
-                .unwrap_or(chroma_mid);
-            let rgb = yuv_to_rgb_u16_fast(
-                y_sample, u_sample, v_sample, fast_range, kr as f32, kb as f32,
-            );
-            rgba[index] = u16_to_u8(rgb[0]);
-            rgba[index + 1] = u16_to_u8(rgb[1]);
-            rgba[index + 2] = u16_to_u8(rgb[2]);
-            rgba[index + 3] = u16_to_u8(alpha_sample(buffers.planes.get(3), x, y, max_source));
-        }
-    }
+    for_each_rgba_row_chunk(
+        &mut rgba,
+        buffers.width,
+        buffers.height,
+        |first_row, chunk| {
+            for (row_offset, row) in chunk.chunks_exact_mut(buffers.width * 4).enumerate() {
+                let y = first_row + row_offset;
+                for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                    let y_sample = sample_plane(plane_y, x, y);
+                    let u_sample = plane_u
+                        .map(|plane| {
+                            sample_chroma_plane(plane, x, y, color_config.chroma_sample_position)
+                        })
+                        .unwrap_or(chroma_mid);
+                    let v_sample = plane_v
+                        .map(|plane| {
+                            sample_chroma_plane(plane, x, y, color_config.chroma_sample_position)
+                        })
+                        .unwrap_or(chroma_mid);
+                    let rgb = yuv_to_rgb_u16_fast(
+                        y_sample, u_sample, v_sample, fast_range, kr as f32, kb as f32,
+                    );
+                    pixel[0] = u16_to_u8(rgb[0]);
+                    pixel[1] = u16_to_u8(rgb[1]);
+                    pixel[2] = u16_to_u8(rgb[2]);
+                    pixel[3] = u16_to_u8(alpha_sample(buffers.planes.get(3), x, y, max_source));
+                }
+            }
+        },
+    );
     Ok(Some(ImageBuffer {
         width: buffers.width,
         height: buffers.height,
@@ -587,32 +607,42 @@ fn frame_buffers_to_rgba_8_sdr(
             rgba,
         });
     }
-    for y in 0..buffers.height {
-        for x in 0..buffers.width {
-            let index = y * buffers.width + x;
-            let y_sample = sample_plane(plane_y, x, y);
-            let u_sample = plane_u
-                .map(|plane| sample_chroma_plane(plane, x, y, color_config.chroma_sample_position))
-                .unwrap_or(128);
-            let v_sample = plane_v
-                .map(|plane| sample_chroma_plane(plane, x, y, color_config.chroma_sample_position))
-                .unwrap_or(128);
-            let rgb = if let Some((kr, kb)) = fast_yuv_coefficients {
-                // Sampling remains normative, but the YUV matrix itself can
-                // use the bounded f32 path for subsampled planes too.
-                yuv_to_rgb_u16_fast(y_sample, u_sample, v_sample, fast_range, kr, kb)
-            } else if fast_ycgco {
-                ycgco_to_rgb_u16_fast(y_sample, u_sample, v_sample, fast_range)
-            } else {
-                yuv_to_rgb_u16(y_sample, u_sample, v_sample, range, matrix)
-            };
-            let out = index * 4;
-            rgba[out] = u16_to_u8(rgb[0]);
-            rgba[out + 1] = u16_to_u8(rgb[1]);
-            rgba[out + 2] = u16_to_u8(rgb[2]);
-            rgba[out + 3] = u16_to_u8(alpha_sample(buffers.planes.get(3), x, y, 255));
-        }
-    }
+    for_each_rgba_row_chunk(
+        &mut rgba,
+        buffers.width,
+        buffers.height,
+        |first_row, chunk| {
+            for (row_offset, row) in chunk.chunks_exact_mut(buffers.width * 4).enumerate() {
+                let y = first_row + row_offset;
+                for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                    let y_sample = sample_plane(plane_y, x, y);
+                    let u_sample = plane_u
+                        .map(|plane| {
+                            sample_chroma_plane(plane, x, y, color_config.chroma_sample_position)
+                        })
+                        .unwrap_or(128);
+                    let v_sample = plane_v
+                        .map(|plane| {
+                            sample_chroma_plane(plane, x, y, color_config.chroma_sample_position)
+                        })
+                        .unwrap_or(128);
+                    let rgb = if let Some((kr, kb)) = fast_yuv_coefficients {
+                        // Sampling remains normative, but the YUV matrix itself can
+                        // use the bounded f32 path for subsampled planes too.
+                        yuv_to_rgb_u16_fast(y_sample, u_sample, v_sample, fast_range, kr, kb)
+                    } else if fast_ycgco {
+                        ycgco_to_rgb_u16_fast(y_sample, u_sample, v_sample, fast_range)
+                    } else {
+                        yuv_to_rgb_u16(y_sample, u_sample, v_sample, range, matrix)
+                    };
+                    pixel[0] = u16_to_u8(rgb[0]);
+                    pixel[1] = u16_to_u8(rgb[1]);
+                    pixel[2] = u16_to_u8(rgb[2]);
+                    pixel[3] = u16_to_u8(alpha_sample(buffers.planes.get(3), x, y, 255));
+                }
+            }
+        },
+    );
     Ok(ImageBuffer {
         width: buffers.width,
         height: buffers.height,
@@ -628,22 +658,28 @@ fn frame_buffers_to_rgba_8_monochrome_sdr(
         DecoderError::Bitstream("AV1 monochrome luma plane is missing".to_string())
     })?;
     let mut rgba = vec![0u8; buffers.width * buffers.height * 4];
-    for y in 0..buffers.height {
-        for x in 0..buffers.width {
-            let index = y * buffers.width + x;
-            let value = u16_to_u8(scale_sample_to_u16(sample_plane(luma, x, y), 255));
-            let alpha = buffers
-                .planes
-                .get(3)
-                .map(|plane| u16_to_u8(scale_sample_to_u16(sample_plane(plane, x, y), 255)))
-                .unwrap_or(u8::MAX);
-            let out = index * 4;
-            rgba[out] = value;
-            rgba[out + 1] = value;
-            rgba[out + 2] = value;
-            rgba[out + 3] = alpha;
-        }
-    }
+    for_each_rgba_row_chunk(
+        &mut rgba,
+        buffers.width,
+        buffers.height,
+        |first_row, chunk| {
+            for (row_offset, row) in chunk.chunks_exact_mut(buffers.width * 4).enumerate() {
+                let y = first_row + row_offset;
+                for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                    let value = u16_to_u8(scale_sample_to_u16(sample_plane(luma, x, y), 255));
+                    let alpha = buffers
+                        .planes
+                        .get(3)
+                        .map(|plane| u16_to_u8(scale_sample_to_u16(sample_plane(plane, x, y), 255)))
+                        .unwrap_or(u8::MAX);
+                    pixel[0] = value;
+                    pixel[1] = value;
+                    pixel[2] = value;
+                    pixel[3] = alpha;
+                }
+            }
+        },
+    );
     Ok(ImageBuffer {
         width: buffers.width,
         height: buffers.height,
@@ -668,22 +704,29 @@ pub fn frame_buffers_to_rgba_16(
         })?;
         let max_source = (1u32 << color_config.bit_depth) - 1;
         let mut rgba = vec![0u16; buffers.width * buffers.height * 4];
-        for y in 0..buffers.height {
-            for x in 0..buffers.width {
-                let index = y * buffers.width + x;
-                let source_x = (x >> usize::from(luma.layout.subsampling_x))
-                    .min(luma.layout.width.saturating_sub(1));
-                let source_y = (y >> usize::from(luma.layout.subsampling_y))
-                    .min(luma.layout.height.saturating_sub(1));
-                let value = scale_sample_to_u16(
-                    luma.samples[source_y * luma.layout.width + source_x],
-                    max_source,
-                );
-                let out = index * 4;
-                rgba[out..out + 3].fill(value);
-                rgba[out + 3] = alpha_sample(buffers.planes.get(3), x, y, max_source);
-            }
-        }
+        let alpha = buffers.planes.get(3);
+        for_each_rgba_row_chunk(
+            &mut rgba,
+            buffers.width,
+            buffers.height,
+            |first_row, chunk| {
+                for (row_offset, row) in chunk.chunks_exact_mut(buffers.width * 4).enumerate() {
+                    let y = first_row + row_offset;
+                    for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                        let source_x = (x >> usize::from(luma.layout.subsampling_x))
+                            .min(luma.layout.width.saturating_sub(1));
+                        let source_y = (y >> usize::from(luma.layout.subsampling_y))
+                            .min(luma.layout.height.saturating_sub(1));
+                        let value = scale_sample_to_u16(
+                            luma.samples[source_y * luma.layout.width + source_x],
+                            max_source,
+                        );
+                        pixel[..3].fill(value);
+                        pixel[3] = alpha_sample(alpha, x, y, max_source);
+                    }
+                }
+            },
+        );
         if let Some(transfer) = hdr_transfer {
             apply_transfer_function(&mut rgba, transfer);
         }
@@ -709,16 +752,24 @@ pub fn frame_buffers_to_rgba_16(
                 pixel[3] = u16::MAX;
             }
         } else {
-            for y in 0..buffers.height {
-                for x in 0..buffers.width {
-                    let index = y * buffers.width + x;
-                    let out = index * 4;
-                    rgba[out] = scale_sample_to_u16(plane_r[index], max_source);
-                    rgba[out + 1] = scale_sample_to_u16(plane_g[index], max_source);
-                    rgba[out + 2] = scale_sample_to_u16(plane_b[index], max_source);
-                    rgba[out + 3] = alpha_sample(buffers.planes.get(3), x, y, max_source);
-                }
-            }
+            let alpha = buffers.planes.get(3);
+            for_each_rgba_row_chunk(
+                &mut rgba,
+                buffers.width,
+                buffers.height,
+                |first_row, chunk| {
+                    for (row_offset, row) in chunk.chunks_exact_mut(buffers.width * 4).enumerate() {
+                        let y = first_row + row_offset;
+                        for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                            let index = y * buffers.width + x;
+                            pixel[0] = scale_sample_to_u16(plane_r[index], max_source);
+                            pixel[1] = scale_sample_to_u16(plane_g[index], max_source);
+                            pixel[2] = scale_sample_to_u16(plane_b[index], max_source);
+                            pixel[3] = alpha_sample(alpha, x, y, max_source);
+                        }
+                    }
+                },
+            );
         }
     } else {
         let color_primaries = color_config
@@ -781,34 +832,52 @@ pub fn frame_buffers_to_rgba_16(
                 },
             );
         } else {
-            for y in 0..buffers.height {
-                for x in 0..buffers.width {
-                    let index = y * buffers.width + x;
-                    let y_sample = sample_plane(plane_y, x, y);
-                    let u_sample = plane_u
-                        .map(|plane| {
-                            sample_chroma_plane(plane, x, y, color_config.chroma_sample_position)
-                        })
-                        .unwrap_or(chroma_mid);
-                    let v_sample = plane_v
-                        .map(|plane| {
-                            sample_chroma_plane(plane, x, y, color_config.chroma_sample_position)
-                        })
-                        .unwrap_or(chroma_mid);
-                    let rgb = if let Some((kr, kb)) = fast_yuv_coefficients {
-                        yuv_to_rgb_u16_fast(y_sample, u_sample, v_sample, fast_range, kr, kb)
-                    } else if fast_ycgco {
-                        ycgco_to_rgb_u16_fast(y_sample, u_sample, v_sample, fast_range)
-                    } else {
-                        yuv_to_rgb_u16(y_sample, u_sample, v_sample, range, matrix)
-                    };
-                    let out = index * 4;
-                    rgba[out] = rgb[0];
-                    rgba[out + 1] = rgb[1];
-                    rgba[out + 2] = rgb[2];
-                    rgba[out + 3] = alpha_sample(buffers.planes.get(3), x, y, alpha_max_source);
-                }
-            }
+            for_each_rgba_row_chunk(
+                &mut rgba,
+                buffers.width,
+                buffers.height,
+                |first_row, chunk| {
+                    for (row_offset, row) in chunk.chunks_exact_mut(buffers.width * 4).enumerate() {
+                        let y = first_row + row_offset;
+                        for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                            let y_sample = sample_plane(plane_y, x, y);
+                            let u_sample = plane_u
+                                .map(|plane| {
+                                    sample_chroma_plane(
+                                        plane,
+                                        x,
+                                        y,
+                                        color_config.chroma_sample_position,
+                                    )
+                                })
+                                .unwrap_or(chroma_mid);
+                            let v_sample = plane_v
+                                .map(|plane| {
+                                    sample_chroma_plane(
+                                        plane,
+                                        x,
+                                        y,
+                                        color_config.chroma_sample_position,
+                                    )
+                                })
+                                .unwrap_or(chroma_mid);
+                            let rgb = if let Some((kr, kb)) = fast_yuv_coefficients {
+                                yuv_to_rgb_u16_fast(
+                                    y_sample, u_sample, v_sample, fast_range, kr, kb,
+                                )
+                            } else if fast_ycgco {
+                                ycgco_to_rgb_u16_fast(y_sample, u_sample, v_sample, fast_range)
+                            } else {
+                                yuv_to_rgb_u16(y_sample, u_sample, v_sample, range, matrix)
+                            };
+                            pixel[0] = rgb[0];
+                            pixel[1] = rgb[1];
+                            pixel[2] = rgb[2];
+                            pixel[3] = alpha_sample(buffers.planes.get(3), x, y, alpha_max_source);
+                        }
+                    }
+                },
+            );
         }
     }
 
