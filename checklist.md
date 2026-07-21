@@ -1445,10 +1445,15 @@ cross-machine speedup claim.
 
 Monochrome AVIFs carrying a valid GRAY/XYZ ICC profile now apply the profile's
 media white point and tone curve before converting luma to sRGB, while
-preserving alpha. A synthetic profile vector covers the transform and malformed
-profiles remain fail-closed; Inter/Switch motion-vector frames are still
-explicitly unsupported.
+preserving alpha. Matrix-shaper and GRAY profiles from the ICC `spac` colour
+space class are accepted alongside display/output classes. Synthetic profile
+vectors cover the transform and malformed profiles remain fail-closed;
+Inter/Switch motion-vector frames are still explicitly unsupported.
 
 A fresh five-iteration release benchmark measured `170.24 ms` native decode and
 `174.90 ms` RGBA conversion for `WML2Viewer.avif`; this is a same-host
 checkpoint and the GRAY ICC branch is bypassed for ordinary RGB samples.
+
+After the ICC device-class expansion, a second five-iteration release run
+measured `168.30/169.74 ms` (native/RGBA) for the same sample. This remains a
+same-host no-regression checkpoint rather than a cross-machine speedup claim.

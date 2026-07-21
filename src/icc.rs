@@ -131,7 +131,7 @@ impl GrayProfile {
         if declared_size < 132 || declared_size > profile.len() {
             return Err(unsupported("ICC profile size is invalid"));
         }
-        if &profile[12..16] != b"mntr" && &profile[12..16] != b"prtr" {
+        if !is_supported_device_class(&profile[12..16]) {
             return Err(unsupported(
                 "ICC gray profile device class is not supported",
             ));
@@ -560,7 +560,7 @@ impl MatrixShaperProfile {
         if declared_size < 132 || declared_size > profile.len() {
             return Err(unsupported("ICC profile size is invalid"));
         }
-        if &profile[12..16] != b"mntr" && &profile[12..16] != b"prtr" {
+        if !is_supported_device_class(&profile[12..16]) {
             return Err(unsupported("ICC profile device class is not supported"));
         }
         if &profile[16..20] != b"RGB " || &profile[20..24] != b"XYZ " {
@@ -1099,6 +1099,10 @@ fn close_to_white(actual: [f64; 3], expected: [f64; 3]) -> bool {
         .all(|(actual, expected)| (actual - expected).abs() <= 0.002)
 }
 
+fn is_supported_device_class(class: &[u8]) -> bool {
+    matches!(class, b"mntr" | b"prtr" | b"spac")
+}
+
 fn read_u16(data: &[u8], offset: usize) -> Result<u16, DecoderError> {
     let bytes = data
         .get(offset..offset + 2)
@@ -1458,16 +1462,32 @@ mod tests {
 
     #[test]
     fn gray_profile_applies_tone_curve_and_preserves_alpha() {
-        let profile = synthetic_gray_profile();
-        let mut rgba = [32_768, 32_768, 32_768, 12_345];
+        for class in [*b"mntr", *b"prtr", *b"spac"] {
+            let mut profile = synthetic_gray_profile();
+            profile[12..16].copy_from_slice(&class);
+            let mut rgba = [32_768, 32_768, 32_768, 12_345];
 
-        apply_to_rgba16(&mut rgba, &profile).unwrap();
+            apply_to_rgba16(&mut rgba, &profile).unwrap();
 
-        assert!(rgba[..3].iter().all(|value| *value > 40_000));
-        let min = *rgba[..3].iter().min().unwrap();
-        let max = *rgba[..3].iter().max().unwrap();
-        assert!(max - min < 512);
-        assert_eq!(rgba[3], 12_345);
+            assert!(rgba[..3].iter().all(|value| *value > 40_000));
+            let min = *rgba[..3].iter().min().unwrap();
+            let max = *rgba[..3].iter().max().unwrap();
+            assert!(max - min < 512);
+            assert_eq!(rgba[3], 12_345);
+        }
+    }
+
+    #[test]
+    fn gray_profile_rejects_unsupported_device_class() {
+        let mut profile = synthetic_gray_profile();
+        profile[12..16].copy_from_slice(b"abst");
+
+        let error = apply_to_rgba16(&mut [32_768, 32_768, 32_768, u16::MAX], &profile).unwrap_err();
+
+        assert!(matches!(
+            error,
+            DecoderError::Unsupported(message) if message.contains("device class")
+        ));
     }
 
     #[test]
