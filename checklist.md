@@ -1247,7 +1247,7 @@ oracle locally. A three-iteration optimized checkpoint measured
 `485.32 ms` native / `500.93 ms` RGBA for the 1024x684 sato sample and
 `309.34/309.18 ms` for `WML2Viewer.avif`; these are host-specific decode
 checkpoints, not stable cross-machine speedup claims. Inter/Switch reference
-reconstruction and 64-bit sato expressions remain explicitly unsupported.
+reconstruction remains explicitly unsupported.
 
 The sato evaluator now reuses one postfix stack allocation across all output
 samples and accepts the file-declared `dimg` input order instead of requiring
@@ -1265,6 +1265,12 @@ The container preflight now accepts a `sato` item as the primary item (not
 only as an alternate derived item). The optional official-fixture regression
 rewrites `pitm` to the Sample Transform item and verifies native 16-bit and
 complete RGBA decode through the public APIs.
+
+The sato evaluator now accepts the 64-bit intermediate expression width. Signed
+64-bit big-endian constants are parsed and evaluated with an i128 stack, while
+each unary/binary result is clamped to the declared intermediate range before
+the final output clamp. Parser and saturation vectors cover the newly promoted
+width; no public AVIF API shape changes.
 
 The optional external conformance set now also audits seven official Gain Map
 fixtures (including unsupported `tmap` metadata versions). Each file must

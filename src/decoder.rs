@@ -816,6 +816,30 @@ mod reference_frame_tests {
         let frame = decode_sequence_frame_from_info(&info, 1).unwrap();
         assert_eq!((frame.width, frame.height), (900, 900));
     }
+
+    #[test]
+    fn evaluates_64_bit_sato_expression_with_saturation() {
+        let tokens = [
+            SampleTransformToken::Constant(i64::MAX),
+            SampleTransformToken::Constant(2),
+            SampleTransformToken::Binary(0),
+        ];
+        let mut stack = Vec::new();
+        let value =
+            evaluate_sample_transform_expression(&tokens, 64, 65_535, |_| Ok(0), &mut stack)
+                .unwrap();
+        assert_eq!(value, 65_535);
+
+        let tokens = [
+            SampleTransformToken::Constant(2),
+            SampleTransformToken::Constant(63),
+            SampleTransformToken::Binary(7),
+        ];
+        let value =
+            evaluate_sample_transform_expression(&tokens, 64, 65_535, |_| Ok(0), &mut stack)
+                .unwrap();
+        assert_eq!(value, 65_535);
+    }
 }
 
 /// Decodes the narrow sequence shape that can be handled without inter-frame
@@ -2434,103 +2458,36 @@ fn decode_sample_transform_frame(
         ));
     }
     let output_bit_depth = transform.output_bit_depth;
-    let intermediate_bits = i64::from(transform.intermediate_bit_depth);
-    let intermediate_min = -(1_i64 << (intermediate_bits - 1));
-    let intermediate_max = (1_i64 << (intermediate_bits - 1)) - 1;
     let output_max = (1_u32 << output_bit_depth) - 1;
     let mut planes = Vec::with_capacity(first.buffers.planes.len());
     let mut stack = Vec::with_capacity(transform.tokens.len());
     for (plane_index, first_plane) in first.buffers.planes.iter().enumerate() {
         let mut samples = Vec::with_capacity(first_plane.samples.len());
         for sample_index in 0..first_plane.samples.len() {
-            stack.clear();
-            for token in &transform.tokens {
-                match *token {
-                    SampleTransformToken::Constant(value) => stack.push(value),
-                    SampleTransformToken::Input(index) => {
-                        let frame = frames.get(index).ok_or_else(|| {
-                            DecoderError::Bitstream(format!(
-                                "sato input reference {index} is out of range"
-                            ))
-                        })?;
-                        let plane = frame.buffers.planes.get(plane_index).ok_or_else(|| {
-                            DecoderError::Unsupported(
-                                "sato input plane count does not match".to_string(),
-                            )
-                        })?;
-                        let value = *plane.samples.get(sample_index).ok_or_else(|| {
-                            DecoderError::Bitstream(
-                                "sato input plane dimensions do not match".to_string(),
-                            )
-                        })?;
-                        stack.push(i64::from(value));
-                    }
-                    SampleTransformToken::Unary(op) => {
-                        let value = stack.pop().ok_or_else(|| {
-                            DecoderError::Bitstream("sato unary stack underflow".to_string())
-                        })?;
-                        let value = match op {
-                            0 => value.saturating_neg(),
-                            1 => value.saturating_abs(),
-                            2 => !value,
-                            3 => {
-                                if value <= 0 {
-                                    0
-                                } else {
-                                    i64::from(63 - value.leading_zeros())
-                                }
-                            }
-                            _ => unreachable!(),
-                        };
-                        stack.push(value.clamp(intermediate_min, intermediate_max));
-                    }
-                    SampleTransformToken::Binary(op) => {
-                        let right = stack.pop().ok_or_else(|| {
-                            DecoderError::Bitstream("sato binary stack underflow".to_string())
-                        })?;
-                        let left = stack.pop().ok_or_else(|| {
-                            DecoderError::Bitstream("sato binary stack underflow".to_string())
-                        })?;
-                        let value = match op {
-                            0 => left.saturating_add(right),
-                            1 => left.saturating_sub(right),
-                            2 => left.saturating_mul(right),
-                            3 => {
-                                if right == 0 {
-                                    return Err(DecoderError::Bitstream(
-                                        "sato division by zero".to_string(),
-                                    ));
-                                }
-                                left / right
-                            }
-                            4 => left & right,
-                            5 => left | right,
-                            6 => left ^ right,
-                            7 => {
-                                if right < 0 {
-                                    return Err(DecoderError::Unsupported(
-                                        "negative sato exponent is not supported".to_string(),
-                                    ));
-                                }
-                                left.saturating_pow(right as u32)
-                            }
-                            8 => left.min(right),
-                            9 => left.max(right),
-                            _ => unreachable!(),
-                        };
-                        stack.push(value.clamp(intermediate_min, intermediate_max));
-                    }
-                }
-            }
-            let value = stack.pop().ok_or_else(|| {
-                DecoderError::Bitstream("sato expression produced no result".to_string())
-            })?;
-            if !stack.is_empty() {
-                return Err(DecoderError::Bitstream(
-                    "sato expression produced multiple results".to_string(),
-                ));
-            }
-            samples.push(value.clamp(0, i64::from(output_max)) as u16);
+            samples.push(evaluate_sample_transform_expression(
+                &transform.tokens,
+                transform.intermediate_bit_depth,
+                output_max,
+                |index| {
+                    let frame = frames.get(index).ok_or_else(|| {
+                        DecoderError::Bitstream(format!(
+                            "sato input reference {index} is out of range"
+                        ))
+                    })?;
+                    let plane = frame.buffers.planes.get(plane_index).ok_or_else(|| {
+                        DecoderError::Unsupported(
+                            "sato input plane count does not match".to_string(),
+                        )
+                    })?;
+                    let value = *plane.samples.get(sample_index).ok_or_else(|| {
+                        DecoderError::Bitstream(
+                            "sato input plane dimensions do not match".to_string(),
+                        )
+                    })?;
+                    Ok(i128::from(value))
+                },
+                &mut stack,
+            )?);
         }
         planes.push(PlaneBuffer {
             layout: first_plane.layout,
@@ -2564,6 +2521,111 @@ fn decode_sample_transform_frame(
         append_alpha_plane(&mut output, alpha_frame)?;
     }
     Ok(Some(output))
+}
+
+fn evaluate_sample_transform_expression<F>(
+    tokens: &[SampleTransformToken],
+    intermediate_bit_depth: u8,
+    output_max: u32,
+    mut input_value: F,
+    stack: &mut Vec<i128>,
+) -> Result<u16, DecoderError>
+where
+    F: FnMut(usize) -> Result<i128, DecoderError>,
+{
+    if !(8..=64).contains(&intermediate_bit_depth) {
+        return Err(DecoderError::Unsupported(format!(
+            "sato intermediate bit depth {intermediate_bit_depth} is not supported"
+        )));
+    }
+    let intermediate_min = -(1_i128 << (u32::from(intermediate_bit_depth) - 1));
+    let intermediate_max = (1_i128 << (u32::from(intermediate_bit_depth) - 1)) - 1;
+    stack.clear();
+    for token in tokens {
+        match *token {
+            SampleTransformToken::Constant(value) => stack.push(i128::from(value)),
+            SampleTransformToken::Input(index) => stack.push(input_value(index)?),
+            SampleTransformToken::Unary(op) => {
+                let value = stack.pop().ok_or_else(|| {
+                    DecoderError::Bitstream("sato unary stack underflow".to_string())
+                })?;
+                let value = match op {
+                    0 => value.saturating_neg(),
+                    1 => value.saturating_abs(),
+                    2 => !value,
+                    3 => {
+                        if value <= 0 {
+                            0
+                        } else {
+                            i128::from(127 - value.leading_zeros())
+                        }
+                    }
+                    _ => unreachable!(),
+                };
+                stack.push(value.clamp(intermediate_min, intermediate_max));
+            }
+            SampleTransformToken::Binary(op) => {
+                let right = stack.pop().ok_or_else(|| {
+                    DecoderError::Bitstream("sato binary stack underflow".to_string())
+                })?;
+                let left = stack.pop().ok_or_else(|| {
+                    DecoderError::Bitstream("sato binary stack underflow".to_string())
+                })?;
+                let value = match op {
+                    0 => left.saturating_add(right),
+                    1 => left.saturating_sub(right),
+                    2 => left.saturating_mul(right),
+                    3 => {
+                        if right == 0 {
+                            return Err(DecoderError::Bitstream(
+                                "sato division by zero".to_string(),
+                            ));
+                        }
+                        left / right
+                    }
+                    4 => left & right,
+                    5 => left | right,
+                    6 => left ^ right,
+                    7 => {
+                        if right < 0 {
+                            return Err(DecoderError::Unsupported(
+                                "negative sato exponent is not supported".to_string(),
+                            ));
+                        }
+                        saturating_pow_i128(left, right)
+                    }
+                    8 => left.min(right),
+                    9 => left.max(right),
+                    _ => unreachable!(),
+                };
+                stack.push(value.clamp(intermediate_min, intermediate_max));
+            }
+        }
+    }
+    let value = stack
+        .pop()
+        .ok_or_else(|| DecoderError::Bitstream("sato expression produced no result".to_string()))?;
+    if !stack.is_empty() {
+        return Err(DecoderError::Bitstream(
+            "sato expression produced multiple results".to_string(),
+        ));
+    }
+    Ok(value.clamp(0, i128::from(output_max)) as u16)
+}
+
+fn saturating_pow_i128(mut base: i128, exponent: i128) -> i128 {
+    let mut result = 1_i128;
+    let mut exponent = exponent as u128;
+    while exponent != 0 {
+        if exponent & 1 != 0 {
+            result = result.saturating_mul(base);
+        }
+        exponent >>= 1;
+        if exponent != 0 {
+            base = base.saturating_mul(base);
+        }
+    }
+    result
 }
 
 #[cfg(test)]

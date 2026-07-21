@@ -576,11 +576,6 @@ fn parse_sample_transform_payload(
         2 => 32,
         _ => 64,
     };
-    if intermediate_bit_depth == 64 {
-        return Err(DecoderError::Unsupported(
-            "64-bit sato expressions are not supported".to_string(),
-        ));
-    }
     let token_count = usize::from(payload[1]);
     if token_count == 0 || payload.len() < token_count + 2 {
         return Err(DecoderError::Bitstream(
@@ -613,7 +608,17 @@ fn parse_sample_transform_payload(
                         payload[cursor + 2],
                         payload[cursor + 3],
                     ])),
-                    _ => unreachable!(),
+                    8 => i64::from_be_bytes([
+                        payload[cursor],
+                        payload[cursor + 1],
+                        payload[cursor + 2],
+                        payload[cursor + 3],
+                        payload[cursor + 4],
+                        payload[cursor + 5],
+                        payload[cursor + 6],
+                        payload[cursor + 7],
+                    ]),
+                    _ => unreachable!("sato intermediate depth is byte-aligned"),
                 };
                 cursor = end;
                 tokens.push(SampleTransformToken::Constant(value));
@@ -2335,6 +2340,17 @@ mod tests {
                 SampleTransformToken::Unary(2),
             ]
         );
+    }
+
+    #[test]
+    fn parses_sato_64_bit_signed_constants() {
+        // The 64-bit form is a signed big-endian integer, not a reserved
+        // expression width. Keep the value at the signed boundary so both
+        // byte width and sign extension are covered.
+        let payload = [3, 1, 0, 0x80, 0, 0, 0, 0, 0, 0, 0];
+        let (depth, tokens) = parse_sample_transform_payload(&payload).unwrap();
+        assert_eq!(depth, 64);
+        assert_eq!(tokens, vec![SampleTransformToken::Constant(i64::MIN)]);
     }
 
     #[test]
