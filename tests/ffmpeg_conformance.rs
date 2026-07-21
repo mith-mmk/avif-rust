@@ -1217,21 +1217,30 @@ fn generated_12bit_sample_decodes_without_post_filter_overflow() {
 
 #[test]
 fn generated_10bit_yuv420_sample_matches_ffmpeg_when_encoder_is_present() {
-    generated_10bit_subsampled_sample_matches_ffmpeg("yuv420p10le", "yuv420");
+    generated_subsampled_sample_matches_ffmpeg("yuv420p10le", "10bit-yuv420", 10);
 }
 
 #[test]
 fn generated_10bit_yuv422_sample_matches_ffmpeg_when_encoder_is_present() {
-    generated_10bit_subsampled_sample_matches_ffmpeg("yuv422p10le", "yuv422");
+    generated_subsampled_sample_matches_ffmpeg("yuv422p10le", "10bit-yuv422", 10);
 }
 
-fn generated_10bit_subsampled_sample_matches_ffmpeg(pixel_format: &str, label: &str) {
-    let root =
-        std::env::temp_dir().join(format!(".test-avif-10bit-{label}-{}", std::process::id()));
+#[test]
+fn generated_12bit_yuv420_sample_matches_ffmpeg_when_encoder_is_present() {
+    generated_subsampled_sample_matches_ffmpeg("yuv420p12le", "12bit-yuv420", 12);
+}
+
+#[test]
+fn generated_12bit_yuv422_sample_matches_ffmpeg_when_encoder_is_present() {
+    generated_subsampled_sample_matches_ffmpeg("yuv422p12le", "12bit-yuv422", 12);
+}
+
+fn generated_subsampled_sample_matches_ffmpeg(pixel_format: &str, label: &str, bit_depth: u8) {
+    let root = std::env::temp_dir().join(format!(".test-avif-{label}-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {
         panic!("failed to create temporary AVIF sample directory: {err}");
     }
-    let output_path = root.join(format!("generated-10bit-{label}.avif"));
+    let output_path = root.join(format!("generated-{label}.avif"));
     let filter = format!("scale=64:64:flags=neighbor,format={pixel_format}");
     let status = Command::new("ffmpeg")
         .args(["-y", "-loglevel", "error"])
@@ -1257,29 +1266,33 @@ fn generated_10bit_subsampled_sample_matches_ffmpeg(pixel_format: &str, label: &
         .arg(&output_path)
         .status();
     let Ok(status) = status else {
-        eprintln!("ffmpeg is not available; skipping generated 10-bit {label} sample");
+        eprintln!("ffmpeg is not available; skipping generated {label} sample");
         let _ = std::fs::remove_dir_all(&root);
         return;
     };
     if !status.success() {
-        eprintln!("libaom 10-bit {label} encoder is unavailable; skipping generated sample");
+        eprintln!(
+            "libaom {bit_depth}-bit {label} encoder is unavailable; skipping generated sample"
+        );
         let _ = std::fs::remove_dir_all(&root);
         return;
     }
-    let data =
-        std::fs::read(&output_path).expect("generated 10-bit subsampled AVIF should be readable");
+    let data = std::fs::read(&output_path).expect("generated subsampled AVIF should be readable");
+    let frame =
+        avif_rust::decode_frame_bytes(&data).expect("generated subsampled AVIF should decode");
+    assert_eq!(frame.bit_depth, bit_depth, "{label} bit depth");
     let actual =
-        avif_rust::image_from_bytes(&data).expect("generated 10-bit subsampled AVIF should decode");
+        avif_rust::image_from_bytes(&data).expect("generated subsampled RGBA should decode");
     assert_eq!((actual.width, actual.height), (64, 64));
     if let Some(expected) = ffmpeg_decode_rgba_dynamic(&output_path, 64, 64) {
         let metrics = diff_rgb_dynamic(&actual.rgba, &expected);
         eprintln!(
-            "10-bit {label}: average RGB absolute error={} max={}",
+            "{label}: average RGB absolute error={} max={}",
             metrics.average_rgb_abs, metrics.max_rgb_abs
         );
         assert!(
             metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 48,
-            "10-bit {label} FFmpeg RGB error average={} max={}",
+            "{label} FFmpeg RGB error average={} max={}",
             metrics.average_rgb_abs,
             metrics.max_rgb_abs
         );

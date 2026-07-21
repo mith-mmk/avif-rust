@@ -1411,3 +1411,9 @@ The existing official unsupported-sample gate and a focused scaling vector
 cover the path. A fresh five-iteration `WML2Viewer.avif` release benchmark
 measured `242.95/244.90 ms` (native/RGBA), retained as a host-specific
 checkpoint rather than a cross-machine speedup claim.
+
+The generated high-bit-depth subsampling set now covers 12-bit YUV420 and
+YUV422 in addition to the 10-bit variants. Both native bit-depth assertions
+and FFmpeg RGBA oracles pass; the 12-bit samples measured average/max RGB
+errors `1.4553/38` (420) and `1.2152/10` (422). This closes the previously
+untested 12-bit subsampled decode boundary.
