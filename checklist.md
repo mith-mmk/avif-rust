@@ -1310,3 +1310,8 @@ item for complete SDR/native decode, preserving the fallback-image contract.
 Gain-map metadata and alternate HDR rendering remain intentionally un-applied;
 missing or malformed base references fail closed rather than passing the `tmap`
 payload into the AV1 decoder.
+
+Alpha auxiliary composition now uses the native row-chunk scheduler for large
+RGBA frames (up to eight workers), while Wasm and small images retain the
+sequential path to avoid thread overhead. A subsampled alpha regression vector
+verifies that row chunking preserves the one-pass output and alpha coordinates.

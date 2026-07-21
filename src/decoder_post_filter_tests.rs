@@ -1,5 +1,5 @@
 use super::{
-    DecodedFrame, apply_loop_filter_deltas, apply_loop_restoration_stage,
+    DecodedFrame, apply_alpha_rows, apply_loop_filter_deltas, apply_loop_restoration_stage,
     cdef_has_active_strengths, cdef_strengths_disabled,
 };
 use crate::av1::CdefParams;
@@ -197,4 +197,29 @@ fn restoration_runs_independently_for_multiple_planes() {
             "plane {plane} restoration mismatch"
         );
     }
+}
+
+#[test]
+fn alpha_row_chunks_match_one_pass_with_subsampling() {
+    let width = 8;
+    let height = 4;
+    let alpha_samples = vec![0, 64, 128, 255, 32, 96, 160, 224];
+    let mut one_pass = vec![0u8; width * height * 4];
+    apply_alpha_rows(&mut one_pass, 0, width, 4, 2, 1, 1, &alpha_samples, 8);
+    let mut chunked = vec![0u8; width * height * 4];
+    for row in 0..height {
+        let start = row * width * 4;
+        apply_alpha_rows(
+            &mut chunked[start..start + width * 4],
+            row,
+            width,
+            4,
+            2,
+            1,
+            1,
+            &alpha_samples,
+            8,
+        );
+    }
+    assert_eq!(chunked, one_pass);
 }

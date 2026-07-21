@@ -2291,20 +2291,107 @@ fn apply_alpha_auxiliary(image: &mut ImageBuffer, info: &AvifInfo) -> Result<(),
             "AVIF alpha auxiliary dimensions do not match the primary image".to_string(),
         ));
     }
-    for y in 0..image.height {
-        for x in 0..image.width {
-            let alpha_x = (x >> usize::from(alpha_plane.layout.subsampling_x))
-                .min(alpha_plane.layout.width.saturating_sub(1));
-            let alpha_y = (y >> usize::from(alpha_plane.layout.subsampling_y))
-                .min(alpha_plane.layout.height.saturating_sub(1));
-            let alpha = scale_sample_to_u8(
-                alpha_plane.samples[alpha_y * alpha_plane.layout.width + alpha_x],
-                frame.bit_depth,
-            );
-            image.rgba[(y * image.width + x) * 4 + 3] = alpha;
+    apply_alpha_plane_rows(
+        &mut image.rgba,
+        image.width,
+        image.height,
+        alpha_plane,
+        frame.bit_depth,
+    );
+    Ok(())
+}
+
+#[cfg(not(target_family = "wasm"))]
+const PARALLEL_ALPHA_MIN_PIXELS: usize = 256 * 1024;
+#[cfg(not(target_family = "wasm"))]
+const MAX_ALPHA_WORKERS: usize = 8;
+
+fn apply_alpha_plane_rows(
+    rgba: &mut [u8],
+    width: usize,
+    _height: usize,
+    alpha_plane: &crate::av1::PlaneBuffer,
+    bit_depth: u8,
+) {
+    #[cfg(not(target_family = "wasm"))]
+    let workers = if width.saturating_mul(_height) < PARALLEL_ALPHA_MIN_PIXELS {
+        1
+    } else {
+        std::thread::available_parallelism()
+            .map_or(1, std::num::NonZeroUsize::get)
+            .min(MAX_ALPHA_WORKERS)
+            .min(_height.max(1))
+    };
+    #[cfg(target_family = "wasm")]
+    let workers = 1;
+    if workers <= 1 {
+        apply_alpha_rows(
+            rgba,
+            0,
+            width,
+            alpha_plane.layout.width,
+            alpha_plane.layout.height,
+            alpha_plane.layout.subsampling_x,
+            alpha_plane.layout.subsampling_y,
+            &alpha_plane.samples,
+            bit_depth,
+        );
+        return;
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    {
+        let rows_per_worker = _height.div_ceil(workers);
+        let samples_per_chunk = rows_per_worker.saturating_mul(width).saturating_mul(4);
+        let alpha_width = alpha_plane.layout.width;
+        let alpha_height = alpha_plane.layout.height;
+        let alpha_subsampling_x = alpha_plane.layout.subsampling_x;
+        let alpha_subsampling_y = alpha_plane.layout.subsampling_y;
+        let alpha_samples = &alpha_plane.samples;
+        std::thread::scope(|scope| {
+            for (chunk_index, chunk) in rgba.chunks_mut(samples_per_chunk).enumerate() {
+                let first_row = chunk_index * rows_per_worker;
+                scope.spawn(move || {
+                    apply_alpha_rows(
+                        chunk,
+                        first_row,
+                        width,
+                        alpha_width,
+                        alpha_height,
+                        alpha_subsampling_x,
+                        alpha_subsampling_y,
+                        alpha_samples,
+                        bit_depth,
+                    );
+                });
+            }
+        });
+    }
+}
+
+fn apply_alpha_rows(
+    rgba: &mut [u8],
+    first_row: usize,
+    width: usize,
+    alpha_width: usize,
+    alpha_height: usize,
+    alpha_subsampling_x: u8,
+    alpha_subsampling_y: u8,
+    alpha_samples: &[u16],
+    bit_depth: u8,
+) {
+    let row_count = rgba.len() / width.max(1) / 4;
+    for local_y in 0..row_count {
+        let y = first_row + local_y;
+        let alpha_y = (y >> usize::from(alpha_subsampling_y)).min(alpha_height.saturating_sub(1));
+        let row = &mut rgba[local_y * width * 4..(local_y + 1) * width * 4];
+        for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+            let alpha_x =
+                (x >> usize::from(alpha_subsampling_x)).min(alpha_width.saturating_sub(1));
+            pixel[3] =
+                scale_sample_to_u8(alpha_samples[alpha_y * alpha_width + alpha_x], bit_depth);
         }
     }
-    Ok(())
 }
 
 fn scale_sample_to_u8(sample: u16, bit_depth: u8) -> u8 {
