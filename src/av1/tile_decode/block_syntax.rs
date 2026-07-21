@@ -221,7 +221,9 @@ impl<'a> TileDecoder<'a> {
             skip,
             is_inter: false,
             reference_frame: None,
+            reference_frame_secondary: None,
             motion_vector: None,
+            motion_vector_secondary: None,
             use_intrabc,
             intra_block_copy_mv,
             cdef_idx,
@@ -265,67 +267,29 @@ impl<'a> TileDecoder<'a> {
         skip: bool,
         cdef_idx: Option<u32>,
     ) -> Result<BlockModeProbe, DecoderError> {
-        if frame.reference_select {
-            let compound_context = self.intra_inter_context(x, y).min(4);
-            let compound = self
-                .reader
-                .read_symbol(self.cdf.comp_inter_cdf_mut(compound_context))?;
-            if compound != 0 {
-                return Err(DecoderError::Unsupported(
-                    "AV1 compound inter prediction is not supported yet".to_string(),
-                ));
-            }
-        }
         let ref_context = self.intra_inter_context(x, y).min(4);
-        let reference_type = if self
-            .reader
-            .read_symbol(self.cdf.single_ref_cdf_mut(ref_context, 0))?
-            != 0
-        {
-            if self
+        let is_compound = frame.reference_select
+            && self
                 .reader
-                .read_symbol(self.cdf.single_ref_cdf_mut(ref_context, 1))?
-                == 0
-            {
-                if self
-                    .reader
-                    .read_symbol(self.cdf.single_ref_cdf_mut(ref_context, 5))?
-                    != 0
-                {
-                    5
-                } else {
-                    4
-                }
-            } else {
-                6
-            }
-        } else if self
-            .reader
-            .read_symbol(self.cdf.single_ref_cdf_mut(ref_context, 2))?
-            != 0
-        {
-            if self
-                .reader
-                .read_symbol(self.cdf.single_ref_cdf_mut(ref_context, 4))?
-                != 0
-            {
-                3
-            } else {
-                2
-            }
-        } else if self
-            .reader
-            .read_symbol(self.cdf.single_ref_cdf_mut(ref_context, 3))?
-            != 0
-        {
-            1
+                .read_symbol(self.cdf.comp_inter_cdf_mut(ref_context))?
+                != 0;
+        let (reference_type, reference_type_secondary) = if is_compound {
+            self.read_compound_reference_types(ref_context, frame)?
         } else {
-            0
+            (self.read_single_reference_type(ref_context)?, None)
         };
         let reference_frame = *frame
             .reference_frame_indices
             .get(reference_type)
             .ok_or_else(|| DecoderError::Bitstream("AV1 reference type is invalid".to_string()))?;
+        let reference_frame_secondary = reference_type_secondary
+            .map(|reference_type| frame.reference_frame_indices.get(reference_type).copied())
+            .flatten();
+        if is_compound && reference_frame_secondary.is_none() {
+            return Err(DecoderError::Bitstream(
+                "AV1 compound reference type is invalid".to_string(),
+            ));
+        }
 
         // Inter mode is a small decision tree.  New-MV is decoded against the
         // block's motion-vector predictor; the first compatibility predictor
@@ -333,27 +297,72 @@ impl<'a> TileDecoder<'a> {
         // neighbouring candidates.  The resulting vector is retained in the
         // block probe so reconstruction can apply the reference prediction.
         let mode_context = self.intra_inter_context(x, y).min(5);
-        let new_mv = self
-            .reader
-            .read_symbol(self.cdf.newmv_cdf_mut(mode_context))?
-            == 0;
-        let motion_vector = if new_mv {
-            self.read_new_mv((0, 0), frame)?
+        let (motion_vector, motion_vector_secondary) = if is_compound {
+            let mode = if skip {
+                1
+            } else {
+                self.reader
+                    .read_symbol(self.cdf.inter_compound_mode_cdf_mut(mode_context))?
+            };
+            let first_new = matches!(mode, 2 | 5 | 7);
+            let second_new = matches!(mode, 2 | 4 | 6);
+            let first = if first_new {
+                self.read_new_mv((0, 0), frame)?
+            } else {
+                (0, 0)
+            };
+            let second = if second_new {
+                self.read_new_mv((0, 0), frame)?
+            } else {
+                (0, 0)
+            };
+            (first, Some(second))
         } else {
-            let zero_mv = self
+            let new_mv = self
                 .reader
-                .read_symbol(self.cdf.zeromv_cdf_mut(mode_context.min(1)))?
+                .read_symbol(self.cdf.newmv_cdf_mut(mode_context))?
                 == 0;
-            if !zero_mv {
-                let _nearest = self
+            let motion_vector = if new_mv {
+                self.read_new_mv((0, 0), frame)?
+            } else {
+                let zero_mv = self
                     .reader
-                    .read_symbol(self.cdf.refmv_cdf_mut(mode_context))?;
-                return Err(DecoderError::Unsupported(
-                    "AV1 inter nearest/near-MV prediction is not supported yet".to_string(),
-                ));
-            }
-            (0, 0)
+                    .read_symbol(self.cdf.zeromv_cdf_mut(mode_context.min(1)))?
+                    == 0;
+                if !zero_mv {
+                    let _nearest_or_near = self
+                        .reader
+                        .read_symbol(self.cdf.refmv_cdf_mut(mode_context))?;
+                }
+                (0, 0)
+            };
+            (motion_vector, None)
         };
+        if is_compound && !skip {
+            let masked_compound_used = sequence.enable_masked_compound
+                && block_size.width() >= 8
+                && block_size.height() >= 8;
+            let comp_group_idx = if masked_compound_used {
+                self.reader
+                    .read_symbol(self.cdf.comp_group_idx_cdf_mut(0))?
+            } else {
+                0
+            };
+            if comp_group_idx == 0 && sequence.enable_dist_wtd_comp {
+                let _compound_idx = self.reader.read_symbol(self.cdf.compound_idx_cdf_mut(0))?;
+            }
+        }
+        if frame.is_filter_switchable {
+            let filter_context = mode_context.min(15);
+            let _vertical_filter = self
+                .reader
+                .read_symbol(self.cdf.switchable_interp_cdf_mut(filter_context))?;
+            if sequence.enable_dual_filter {
+                let _horizontal_filter = self
+                    .reader
+                    .read_symbol(self.cdf.switchable_interp_cdf_mut(filter_context))?;
+            }
+        }
 
         self.set_inter_context(x, y, block_size, true);
         self.set_smooth_context(x, y, block_size, false, false);
@@ -377,7 +386,9 @@ impl<'a> TileDecoder<'a> {
             skip,
             is_inter: true,
             reference_frame: Some(reference_frame),
+            reference_frame_secondary,
             motion_vector: Some(motion_vector),
+            motion_vector_secondary,
             use_intrabc: false,
             intra_block_copy_mv: None,
             cdef_idx,
@@ -398,6 +409,109 @@ impl<'a> TileDecoder<'a> {
             tx_size,
             bit_position_after: self.reader.bit_position(),
         })
+    }
+
+    fn read_single_reference_type(&mut self, context: usize) -> Result<usize, DecoderError> {
+        Ok(
+            if self
+                .reader
+                .read_symbol(self.cdf.single_ref_cdf_mut(context, 0))?
+                != 0
+            {
+                if self
+                    .reader
+                    .read_symbol(self.cdf.single_ref_cdf_mut(context, 1))?
+                    == 0
+                {
+                    if self
+                        .reader
+                        .read_symbol(self.cdf.single_ref_cdf_mut(context, 5))?
+                        != 0
+                    {
+                        5
+                    } else {
+                        4
+                    }
+                } else {
+                    6
+                }
+            } else if self
+                .reader
+                .read_symbol(self.cdf.single_ref_cdf_mut(context, 2))?
+                != 0
+            {
+                if self
+                    .reader
+                    .read_symbol(self.cdf.single_ref_cdf_mut(context, 4))?
+                    != 0
+                {
+                    3
+                } else {
+                    2
+                }
+            } else if self
+                .reader
+                .read_symbol(self.cdf.single_ref_cdf_mut(context, 3))?
+                != 0
+            {
+                1
+            } else {
+                0
+            },
+        )
+    }
+
+    fn read_compound_reference_types(
+        &mut self,
+        context: usize,
+        _frame: &FrameHeader,
+    ) -> Result<(usize, Option<usize>), DecoderError> {
+        let comp_context = context.min(4);
+        let reference_type = self
+            .reader
+            .read_symbol(self.cdf.comp_ref_type_cdf_mut(comp_context))?;
+        let (first, second) = if reference_type == 0 {
+            let bit = self
+                .reader
+                .read_symbol(self.cdf.uni_comp_ref_cdf_mut(0, 0))?;
+            if bit != 0 {
+                (4, 5)
+            } else {
+                let bit1 = self
+                    .reader
+                    .read_symbol(self.cdf.uni_comp_ref_cdf_mut(0, 1))?;
+                if bit1 != 0 {
+                    let bit2 = self
+                        .reader
+                        .read_symbol(self.cdf.uni_comp_ref_cdf_mut(0, 2))?;
+                    if bit2 != 0 { (0, 3) } else { (0, 2) }
+                } else {
+                    (0, 1)
+                }
+            }
+        } else {
+            let bit = self.reader.read_symbol(self.cdf.comp_ref_cdf_mut(0, 0))?;
+            let first = if bit == 0 {
+                let bit1 = self.reader.read_symbol(self.cdf.comp_ref_cdf_mut(0, 1))?;
+                if bit1 != 0 { 1 } else { 0 }
+            } else {
+                let bit2 = self.reader.read_symbol(self.cdf.comp_ref_cdf_mut(0, 2))?;
+                if bit2 != 0 { 3 } else { 2 }
+            };
+            let bit_bwd = self
+                .reader
+                .read_symbol(self.cdf.comp_bwdref_cdf_mut(0, 0))?;
+            let second = if bit_bwd == 0 {
+                let bit1_bwd = self
+                    .reader
+                    .read_symbol(self.cdf.comp_bwdref_cdf_mut(0, 1))?;
+                if bit1_bwd != 0 { 6 } else { 4 }
+            } else {
+                5
+            };
+            (first, second)
+        };
+        Ok((first, Some(second)))
     }
 
     fn read_new_mv(

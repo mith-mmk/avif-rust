@@ -61,6 +61,9 @@ pub struct SequenceHeader {
     pub use_128x128_superblock: bool,
     pub enable_filter_intra: bool,
     pub enable_intra_edge_filter: bool,
+    pub enable_dual_filter: bool,
+    pub enable_masked_compound: bool,
+    pub enable_dist_wtd_comp: bool,
     pub enable_order_hint: bool,
     pub enable_warped_motion: bool,
     pub order_hint_bits: u8,
@@ -136,6 +139,9 @@ pub fn parse_sequence_header(data: &[u8]) -> Result<SequenceHeader, DecoderError
         use_128x128_superblock,
         enable_filter_intra,
         enable_intra_edge_filter,
+        enable_dual_filter: inter_tools.enable_dual_filter,
+        enable_masked_compound: inter_tools.enable_masked_compound,
+        enable_dist_wtd_comp: inter_tools.enable_dist_wtd_comp,
         enable_order_hint: inter_tools.enable_order_hint,
         enable_warped_motion: inter_tools.enable_warped_motion,
         order_hint_bits: inter_tools.order_hint_bits,
@@ -212,6 +218,9 @@ fn parse_operating_points(reader: &mut BitReader<'_>) -> Result<u8, DecoderError
 struct InterTools {
     enable_order_hint: bool,
     enable_warped_motion: bool,
+    enable_dual_filter: bool,
+    enable_masked_compound: bool,
+    enable_dist_wtd_comp: bool,
     enable_ref_frame_mvs: bool,
     order_hint_bits: u8,
     seq_force_screen_content_tools: u8,
@@ -230,13 +239,14 @@ impl InterTools {
 
 fn parse_inter_tools(reader: &mut BitReader<'_>) -> Result<InterTools, DecoderError> {
     let _enable_interintra_compound = reader.read_bool("enable_interintra_compound")?;
-    let _enable_masked_compound = reader.read_bool("enable_masked_compound")?;
+    let enable_masked_compound = reader.read_bool("enable_masked_compound")?;
     let enable_warped_motion = reader.read_bool("enable_warped_motion")?;
-    let _enable_dual_filter = reader.read_bool("enable_dual_filter")?;
+    let enable_dual_filter = reader.read_bool("enable_dual_filter")?;
     let enable_order_hint = reader.read_bool("enable_order_hint")?;
+    let mut enable_dist_wtd_comp = false;
     let enable_ref_frame_mvs;
     if enable_order_hint {
-        let _enable_jnt_comp = reader.read_bool("enable_jnt_comp")?;
+        enable_dist_wtd_comp = reader.read_bool("enable_jnt_comp")?;
         enable_ref_frame_mvs = reader.read_bool("enable_ref_frame_mvs")?;
     } else {
         enable_ref_frame_mvs = false;
@@ -263,6 +273,9 @@ fn parse_inter_tools(reader: &mut BitReader<'_>) -> Result<InterTools, DecoderEr
     Ok(InterTools {
         enable_order_hint,
         enable_warped_motion,
+        enable_dual_filter,
+        enable_masked_compound,
+        enable_dist_wtd_comp,
         enable_ref_frame_mvs,
         order_hint_bits,
         seq_force_screen_content_tools,

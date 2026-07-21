@@ -44,6 +44,7 @@ pub struct FrameHeader {
     pub reference_frame_indices: [u8; 7],
     pub frame_refs_short_signaling: bool,
     pub allow_high_precision_mv: bool,
+    pub is_filter_switchable: bool,
     pub is_motion_mode_switchable: bool,
     pub use_ref_frame_mvs: bool,
     pub reference_select: bool,
@@ -193,6 +194,7 @@ pub(crate) fn parse_frame_header_with_references(
             reference_frame_indices: [0; 7],
             frame_refs_short_signaling: false,
             allow_high_precision_mv: false,
+            is_filter_switchable: false,
             is_motion_mode_switchable: false,
             use_ref_frame_mvs: false,
             reference_select: false,
@@ -271,6 +273,7 @@ pub(crate) fn parse_frame_header_with_references(
     let mut reference_frame_indices = [0; 7];
     let mut frame_refs_short_signaling = false;
     let mut allow_high_precision_mv = false;
+    let mut is_filter_switchable = false;
     let mut is_motion_mode_switchable = false;
     let mut use_ref_frame_mvs = false;
 
@@ -305,7 +308,7 @@ pub(crate) fn parse_frame_header_with_references(
         } else {
             reader.read_bool("allow_high_precision_mv")?
         };
-        let is_filter_switchable = reader.read_bool("is_filter_switchable")?;
+        is_filter_switchable = reader.read_bool("is_filter_switchable")?;
         if !is_filter_switchable {
             let _interpolation_filter = reader.read_bits(2, "interpolation_filter")?;
         }
@@ -353,6 +356,7 @@ pub(crate) fn parse_frame_header_with_references(
         reference_frame_indices,
         frame_refs_short_signaling,
         allow_high_precision_mv,
+        is_filter_switchable,
         is_motion_mode_switchable,
         use_ref_frame_mvs,
         reference_select: trailing.reference_select,

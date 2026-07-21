@@ -2633,6 +2633,31 @@ fn public_sequence_primary_item_decodes_first_frame_when_present() {
 }
 
 #[test]
+fn public_sequence_inter_sample_decodes_when_present() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("test/images/external/avif/unsupported/star-8bpc.avifs");
+    if !path.is_file() {
+        eprintln!("external sequence sample is unavailable; skipping inter oracle");
+        return;
+    }
+    let data = std::fs::read(&path).expect("external sequence AVIS should be readable");
+    let frame = avif_rust::decode_sequence_frame_bytes(&data, 1)
+        .expect("the inter sample should decode as the second frame");
+    assert_eq!((frame.width, frame.height), (159, 159));
+    let Some(expected) = ffmpeg_decode_rgba_dynamic(&path, 159, 159) else {
+        return;
+    };
+    let metrics = diff_rgb_dynamic(&frame.to_rgba8().unwrap().rgba, &expected);
+    eprintln!(
+        "sequence inter frame: average RGB absolute error={}, max={}",
+        metrics.average_rgb_abs, metrics.max_rgb_abs
+    );
+    assert!(metrics.average_rgb_abs <= 3.0 && metrics.max_rgb_abs <= 128);
+}
+
+#[test]
 fn public_12bit_sample_matches_ffmpeg_when_present() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

@@ -97,6 +97,71 @@ pub const DEFAULT_COMP_INTER_CDF: [[u16; 3]; 5] = [
     [9804, 32768, 0],
     [2842, 32768, 0],
 ];
+pub const DEFAULT_COMP_REF_TYPE_CDF: [[u16; 3]; 5] = [
+    [1198, 32768, 0],
+    [2070, 32768, 0],
+    [9166, 32768, 0],
+    [7499, 32768, 0],
+    [22475, 32768, 0],
+];
+pub const DEFAULT_UNI_COMP_REF_CDF: [[[u16; 3]; 3]; 3] = [
+    [[5284, 32768, 0], [3865, 32768, 0], [3128, 32768, 0]],
+    [[23152, 32768, 0], [14173, 32768, 0], [15270, 32768, 0]],
+    [[31774, 32768, 0], [25120, 32768, 0], [26710, 32768, 0]],
+];
+pub const DEFAULT_COMP_REF_CDF: [[[u16; 3]; 3]; 3] = [
+    [[4946, 32768, 0], [9468, 32768, 0], [1503, 32768, 0]],
+    [[19891, 32768, 0], [22441, 32768, 0], [15160, 32768, 0]],
+    [[30731, 32768, 0], [31059, 32768, 0], [27544, 32768, 0]],
+];
+pub const DEFAULT_COMP_BWDREF_CDF: [[[u16; 3]; 2]; 3] = [
+    [[2235, 32768, 0], [1423, 32768, 0]],
+    [[17182, 32768, 0], [15175, 32768, 0]],
+    [[30606, 32768, 0], [30489, 32768, 0]],
+];
+pub const DEFAULT_INTER_COMPOUND_MODE_CDF: [[u16; 9]; 6] = [
+    [19712, 28229, 30892, 31437, 31712, 32135, 32360, 32768, 0],
+    [9600, 24804, 29268, 30323, 30802, 31726, 32177, 32768, 0],
+    [896, 22434, 27015, 29026, 29753, 31114, 31597, 32768, 0],
+    [1024, 15904, 22127, 25421, 26864, 28996, 30001, 32768, 0],
+    [512, 11222, 17217, 21445, 23473, 26133, 27550, 32768, 0],
+    [512, 11222, 17217, 21445, 23473, 26133, 27550, 32768, 0],
+];
+pub const DEFAULT_SWITCHABLE_INTERP_CDF: [[u16; 4]; 16] = [
+    [31935, 32720, 32768, 0],
+    [5568, 32719, 32768, 0],
+    [422, 2938, 32768, 0],
+    [28244, 32608, 32768, 0],
+    [31206, 31953, 32768, 0],
+    [4862, 32121, 32768, 0],
+    [770, 1152, 32768, 0],
+    [20889, 25637, 32768, 0],
+    [31910, 32724, 32768, 0],
+    [4120, 32712, 32768, 0],
+    [305, 2247, 32768, 0],
+    [27403, 32636, 32768, 0],
+    [31022, 32009, 32768, 0],
+    [2963, 32093, 32768, 0],
+    [601, 943, 32768, 0],
+    [14969, 21398, 32768, 0],
+];
+pub const DEFAULT_COMP_GROUP_IDX_CDF: [[u16; 3]; 7] = [
+    [26607, 32768, 0],
+    [22891, 32768, 0],
+    [18840, 32768, 0],
+    [24594, 32768, 0],
+    [19934, 32768, 0],
+    [22674, 32768, 0],
+    [22674, 32768, 0],
+];
+pub const DEFAULT_COMPOUND_IDX_CDF: [[u16; 3]; 6] = [
+    [18244, 32768, 0],
+    [12865, 32768, 0],
+    [7053, 32768, 0],
+    [13259, 32768, 0],
+    [9334, 32768, 0],
+    [4644, 32768, 0],
+];
 
 // AV1 motion-vector CDFs.  These are kept in the frame CDF context because
 // new-MV syntax is adaptive just like the block-mode symbols.  The values
@@ -1895,6 +1960,14 @@ pub struct CdfContext {
     pub refmv: [[u16; 3]; 6],
     pub single_ref: [[[u16; 3]; 6]; 5],
     pub comp_inter: [[u16; 3]; 5],
+    pub comp_ref_type: [[u16; 3]; 5],
+    pub uni_comp_ref: [[[u16; 3]; 3]; 3],
+    pub comp_ref: [[[u16; 3]; 3]; 3],
+    pub comp_bwdref: [[[u16; 3]; 2]; 3],
+    pub inter_compound_mode: [[u16; 9]; 6],
+    pub switchable_interp: [[u16; 4]; 16],
+    pub comp_group_idx: [[u16; 3]; 7],
+    pub compound_idx: [[u16; 3]; 6],
     pub motion: MotionVectorCdf,
     pub seg_id: [[u16; SEGMENT_IDS + 1]; SEGMENT_ID_CONTEXTS],
     pub delta_q: [u16; 5],
@@ -1966,6 +2039,14 @@ impl CdfContext {
             refmv: DEFAULT_REFMV_CDF,
             single_ref: DEFAULT_SINGLE_REF_CDF,
             comp_inter: DEFAULT_COMP_INTER_CDF,
+            comp_ref_type: DEFAULT_COMP_REF_TYPE_CDF,
+            uni_comp_ref: DEFAULT_UNI_COMP_REF_CDF,
+            comp_ref: DEFAULT_COMP_REF_CDF,
+            comp_bwdref: DEFAULT_COMP_BWDREF_CDF,
+            inter_compound_mode: DEFAULT_INTER_COMPOUND_MODE_CDF,
+            switchable_interp: DEFAULT_SWITCHABLE_INTERP_CDF,
+            comp_group_idx: DEFAULT_COMP_GROUP_IDX_CDF,
+            compound_idx: DEFAULT_COMPOUND_IDX_CDF,
             motion: MotionVectorCdf::DEFAULT,
             seg_id: DEFAULT_SEG_ID_CDF,
             delta_q: DEFAULT_DELTA_Q_CDF,
@@ -2064,6 +2145,38 @@ impl CdfContext {
 
     pub fn comp_inter_cdf_mut(&mut self, context: usize) -> &mut [u16] {
         &mut self.comp_inter[context]
+    }
+
+    pub fn comp_ref_type_cdf_mut(&mut self, context: usize) -> &mut [u16] {
+        &mut self.comp_ref_type[context]
+    }
+
+    pub fn uni_comp_ref_cdf_mut(&mut self, context: usize, index: usize) -> &mut [u16] {
+        &mut self.uni_comp_ref[context][index]
+    }
+
+    pub fn comp_ref_cdf_mut(&mut self, context: usize, index: usize) -> &mut [u16] {
+        &mut self.comp_ref[context][index]
+    }
+
+    pub fn comp_bwdref_cdf_mut(&mut self, context: usize, index: usize) -> &mut [u16] {
+        &mut self.comp_bwdref[context][index]
+    }
+
+    pub fn inter_compound_mode_cdf_mut(&mut self, context: usize) -> &mut [u16] {
+        &mut self.inter_compound_mode[context]
+    }
+
+    pub fn switchable_interp_cdf_mut(&mut self, context: usize) -> &mut [u16] {
+        &mut self.switchable_interp[context]
+    }
+
+    pub fn comp_group_idx_cdf_mut(&mut self, context: usize) -> &mut [u16] {
+        &mut self.comp_group_idx[context]
+    }
+
+    pub fn compound_idx_cdf_mut(&mut self, context: usize) -> &mut [u16] {
+        &mut self.compound_idx[context]
     }
 
     pub fn motion_joint_cdf_mut(&mut self) -> &mut [u16] {

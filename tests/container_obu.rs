@@ -469,25 +469,17 @@ fn external_avis_sequence_exposes_all_track_samples_when_present() {
 }
 
 #[test]
-fn sequence_api_rejects_inter_sample_without_partial_output() {
+fn sequence_api_decodes_inter_sample_without_partial_output() {
     let path = external_star_path();
     if !path.is_file() {
         eprintln!("external AVIS sequence sample is unavailable; skipping API boundary test");
         return;
     }
     let data = std::fs::read(&path).expect("external AVIS sequence should be readable");
-    let error = avif_rust::decode_sequence_frame_bytes(&data, 1).unwrap_err();
-    assert!(matches!(
-        error,
-        DecoderError::Unsupported(message)
-            if message.contains("sample 1") && message.contains("Inter")
-    ));
-    let error = avif_rust::decode_sequence_frames_bytes(&data).unwrap_err();
-    assert!(matches!(
-        error,
-        DecoderError::Unsupported(message)
-            if message.contains("sample 1") && message.contains("Inter")
-    ));
+    let frame = avif_rust::decode_sequence_frame_bytes(&data, 1)
+        .expect("inter sample should decode without partial output");
+    assert_eq!((frame.width, frame.height), (159, 159));
+    assert_eq!(frame.buffers.planes[0].samples.len(), 159 * 159);
 }
 
 #[test]

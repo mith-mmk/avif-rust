@@ -497,9 +497,8 @@ pub fn decode_gain_map_frame_bytes(
 ///
 /// Key and intra-only samples are decoded independently while sharing the
 /// sequence header from the primary item. A `show_existing_frame` sample can
-/// reuse a previously decoded reference slot. Inter and switch frames remain
-/// fail-closed until motion-vector reconstruction is implemented; callers get
-/// an explicit [`DecoderError::Unsupported`] instead of a partial image.
+/// reuse a previously decoded reference slot, and inter/switch samples use the
+/// same reference-slot state for reconstruction.
 pub fn decode_sequence_frame_bytes(
     data: &[u8],
     frame_index: usize,
@@ -516,9 +515,8 @@ pub fn decode_sequence_frame_bytes(
 
 /// Decodes every independently addressable AVIS sample into source planes.
 ///
-/// This animation-oriented API accepts Key/IntraOnly and show-existing
-/// samples. Inter and switch samples remain fail-closed until motion-vector
-/// reconstruction is available.
+/// This animation-oriented API accepts Key/IntraOnly, inter/switch, and
+/// show-existing samples.
 pub fn decode_sequence_frames_bytes(data: &[u8]) -> Result<Vec<DecodedFrame>, DecoderError> {
     let info = parse_avif(data)?;
     validate_public_container_preflight(&info, false)?;
@@ -742,7 +740,7 @@ fn decode_sequence_samples_from_info(
                     match decode_still_frame_with_filter_policy_and_state_and_references_and_cdf(
                         &headers,
                         Some(info),
-                        true,
+                        false,
                         references.buffers(),
                         (!sample_info.has_sequence_header)
                             .then_some(cdf_states.as_deref())
@@ -4862,6 +4860,9 @@ mod av1_config_tests {
             enable_filter_intra: false,
             enable_intra_edge_filter: false,
             enable_order_hint: false,
+            enable_dual_filter: false,
+            enable_masked_compound: false,
+            enable_dist_wtd_comp: false,
             enable_warped_motion: false,
             order_hint_bits: 0,
             seq_force_screen_content_tools: 0,
