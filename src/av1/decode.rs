@@ -239,14 +239,22 @@ fn validate_complete_tile_group(
 }
 
 pub fn alloc_frame_buffers(plan: &FrameDecodePlan) -> Result<FrameBuffers, DecoderError> {
-    if plan.bit_depth > 16 {
+    alloc_frame_buffers_for_layouts(plan.bit_depth, plan.width, plan.height, &plan.planes)
+}
+
+fn alloc_frame_buffers_for_layouts(
+    bit_depth: u8,
+    width: usize,
+    height: usize,
+    layouts: &[PlaneLayout],
+) -> Result<FrameBuffers, DecoderError> {
+    if bit_depth > 16 {
         return Err(DecoderError::Unsupported(format!(
-            "AV1 {}-bit output buffers are not supported",
-            plan.bit_depth
+            "AV1 {bit_depth}-bit output buffers are not supported"
         )));
     }
-    let mut planes = Vec::with_capacity(plan.planes.len());
-    for layout in &plan.planes {
+    let mut planes = Vec::with_capacity(layouts.len());
+    for layout in layouts {
         if layout.sample_count > MAX_PLANE_SAMPLE_ALLOCATION {
             return Err(DecoderError::InvalidParam(format!(
                 "AV1 plane sample count {} exceeds decoder resource limit",
@@ -259,8 +267,8 @@ pub fn alloc_frame_buffers(plan: &FrameDecodePlan) -> Result<FrameBuffers, Decod
         });
     }
     Ok(FrameBuffers {
-        width: plan.width,
-        height: plan.height,
+        width,
+        height,
         planes,
     })
 }
@@ -280,15 +288,17 @@ pub(crate) fn alloc_coded_frame_buffers(
         })?))
         .map_err(|_| DecoderError::InvalidParam("AV1 frame height is too large".to_string()))?
             << 2;
-    let mut coded_plan = plan.clone();
-    for layout in &mut coded_plan.planes {
+    let mut coded_layouts = plan.planes.clone();
+    for layout in &mut coded_layouts {
         layout.width = round_shift_usize(coded_width, layout.subsampling_x);
         layout.height = round_shift_usize(coded_height, layout.subsampling_y);
         layout.sample_count = layout.width.checked_mul(layout.height).ok_or_else(|| {
             DecoderError::InvalidParam("AV1 coded plane dimensions are too large".to_string())
         })?;
     }
-    alloc_frame_buffers(&coded_plan)
+    // Keep the public frame dimensions visible while the plane layouts retain
+    // aligned coded dimensions until the post-filter crop stage.
+    alloc_frame_buffers_for_layouts(plan.bit_depth, plan.width, plan.height, &coded_layouts)
 }
 
 pub(crate) fn crop_frame_buffers_to_plan(
@@ -299,6 +309,14 @@ pub(crate) fn crop_frame_buffers_to_plan(
         return Err(DecoderError::InvalidParam(
             "AV1 frame buffer plane count does not match decode plan".to_string(),
         ));
+    }
+    if buffers
+        .planes
+        .iter()
+        .zip(&plan.planes)
+        .all(|(plane, target_layout)| plane.layout == *target_layout)
+    {
+        return Ok(());
     }
     for (plane, target_layout) in buffers.planes.iter_mut().zip(&plan.planes) {
         if plane.layout.width < target_layout.width || plane.layout.height < target_layout.height {
@@ -527,6 +545,48 @@ mod tests {
         assert_eq!(buffers.planes[0].layout, plan.planes[0]);
         assert_eq!(buffers.planes[0].samples.len(), 900 * 900);
         assert_eq!(buffers.planes[0].samples[899], 7);
+    }
+
+    #[test]
+    fn crop_skips_allocation_when_coded_layout_is_already_visible() {
+        let plan = FrameDecodePlan {
+            width: 2,
+            height: 1,
+            upscaled_width: 2,
+            render_width: 2,
+            render_height: 1,
+            bit_depth: 8,
+            base_q_idx: 0,
+            tx_mode: TxMode::Largest,
+            superblock_size: 64,
+            superblock_cols: 1,
+            superblock_rows: 1,
+            uses_cdef: false,
+            uses_restoration: false,
+            planes: vec![PlaneLayout {
+                plane: 0,
+                width: 2,
+                height: 1,
+                subsampling_x: 0,
+                subsampling_y: 0,
+                sample_count: 2,
+            }],
+            tiles: Vec::new(),
+        };
+        let mut buffers = FrameBuffers {
+            width: 2,
+            height: 1,
+            planes: vec![PlaneBuffer {
+                layout: plan.planes[0],
+                samples: vec![11, 29],
+            }],
+        };
+        let samples = buffers.planes[0].samples.as_ptr();
+
+        crop_frame_buffers_to_plan(&mut buffers, &plan).unwrap();
+
+        assert_eq!(buffers.planes[0].samples.as_ptr(), samples);
+        assert_eq!(buffers.planes[0].samples, vec![11, 29]);
     }
 
     #[test]

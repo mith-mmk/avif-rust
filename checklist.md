@@ -1318,6 +1318,13 @@ Gain-map metadata and alternate HDR rendering remain intentionally un-applied;
 missing or malformed base references fail closed rather than passing the `tmap`
 payload into the AV1 decoder.
 
+The coded-frame allocation path now builds only the aligned plane layouts it
+needs instead of cloning the complete frame decode plan (including tile
+vectors) for every frame. The crop stage also returns without copying when
+the coded layout already matches the visible layout; a pointer-preservation
+regression test covers that fast path while the existing padded-edge test
+continues to cover the copying path.
+
 Alpha auxiliary composition now uses the native row-chunk scheduler for large
 RGBA frames (up to eight workers), while Wasm and small images retain the
 sequential path to avoid thread overhead. A subsampled alpha regression vector
