@@ -1,7 +1,7 @@
 use super::{BlockModeProbe, CflParams, TileDecoder};
 use crate::DecoderError;
 use crate::av1::decode::TileDecodePlan;
-use crate::av1::frame::{FrameHeader, TxMode};
+use crate::av1::frame::{FrameHeader, FrameType, TxMode};
 use crate::av1::sequence::SequenceHeader;
 use crate::av1::syntax::{BlockSize, PredictionMode, TxSize, UvPredictionMode};
 use crate::av1::tile_decode::context_grid::{
@@ -62,6 +62,33 @@ impl<'a> TileDecoder<'a> {
         let cdef_idx = self.read_cdef_index(sequence, frame, skip, x, y)?;
         let qindex = self.read_delta_qindex(sequence, frame, block_size, skip, x, y)?;
         let delta_lf = self.read_delta_lf(sequence, frame, block_size, skip, x, y)?;
+        let is_inter = if matches!(frame.frame_type, FrameType::Inter | FrameType::Switch) {
+            let context = self.intra_inter_context(x, y);
+            let symbol = self
+                .reader
+                .read_symbol(self.cdf.intra_inter_cdf_mut(context))?;
+            symbol != 0
+        } else {
+            false
+        };
+        if is_inter {
+            return self.read_inter_frame_block_mode(
+                sequence,
+                frame,
+                tile,
+                block_size,
+                x,
+                y,
+                chroma_reference,
+                segment_id,
+                qindex,
+                delta_lf,
+                skip_context,
+                skip_symbol,
+                skip,
+                cdef_idx,
+            );
+        }
 
         let (use_intrabc, intra_block_copy_mv) = if frame.allow_intrabc {
             let use_intrabc = self.reader.read_symbol(self.cdf.intrabc_cdf_mut())? != 0;
@@ -85,10 +112,16 @@ impl<'a> TileDecoder<'a> {
         let (y_mode_symbol, y_mode, angle_delta_y) = if use_intrabc {
             (0, PredictionMode::Dc, None)
         } else {
-            let y_mode_symbol = self.reader.read_symbol(
-                self.cdf
-                    .intra_frame_y_mode_cdf_mut(y_above_context, y_left_context),
-            )?;
+            let y_mode_symbol = if matches!(frame.frame_type, FrameType::Inter | FrameType::Switch)
+            {
+                self.reader
+                    .read_symbol(self.cdf.y_mode_cdf_mut(block_size.size_group()))?
+            } else {
+                self.reader.read_symbol(
+                    self.cdf
+                        .intra_frame_y_mode_cdf_mut(y_above_context, y_left_context),
+                )?
+            };
             let y_mode = PredictionMode::from_intra_symbol(y_mode_symbol).ok_or_else(|| {
                 DecoderError::Bitstream(format!("AV1 y_mode symbol {y_mode_symbol} is invalid"))
             })?;
@@ -186,6 +219,9 @@ impl<'a> TileDecoder<'a> {
             skip_context,
             skip_symbol,
             skip,
+            is_inter: false,
+            reference_frame: None,
+            motion_vector: None,
             use_intrabc,
             intra_block_copy_mv,
             cdef_idx,
@@ -201,6 +237,163 @@ impl<'a> TileDecoder<'a> {
             angle_delta_uv,
             uv_smooth_neighbour,
             palette,
+            tx_size_context,
+            tx_size_symbol,
+            tx_size,
+            bit_position_after: self.reader.bit_position(),
+        })
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "AV1 inter syntax state is explicit"
+    )]
+    fn read_inter_frame_block_mode(
+        &mut self,
+        sequence: &SequenceHeader,
+        frame: &FrameHeader,
+        tile: &TileDecodePlan,
+        block_size: BlockSize,
+        x: usize,
+        y: usize,
+        chroma_reference: bool,
+        segment_id: u8,
+        qindex: u8,
+        delta_lf: [i8; 4],
+        skip_context: usize,
+        skip_symbol: usize,
+        skip: bool,
+        cdef_idx: Option<u32>,
+    ) -> Result<BlockModeProbe, DecoderError> {
+        if frame.reference_select {
+            let compound_context = self.intra_inter_context(x, y).min(4);
+            let compound = self
+                .reader
+                .read_symbol(self.cdf.comp_inter_cdf_mut(compound_context))?;
+            if compound != 0 {
+                return Err(DecoderError::Unsupported(
+                    "AV1 compound inter prediction is not supported yet".to_string(),
+                ));
+            }
+        }
+        let ref_context = self.intra_inter_context(x, y).min(4);
+        let reference_type = if self
+            .reader
+            .read_symbol(self.cdf.single_ref_cdf_mut(ref_context, 0))?
+            != 0
+        {
+            if self
+                .reader
+                .read_symbol(self.cdf.single_ref_cdf_mut(ref_context, 1))?
+                == 0
+            {
+                if self
+                    .reader
+                    .read_symbol(self.cdf.single_ref_cdf_mut(ref_context, 5))?
+                    != 0
+                {
+                    5
+                } else {
+                    4
+                }
+            } else {
+                6
+            }
+        } else if self
+            .reader
+            .read_symbol(self.cdf.single_ref_cdf_mut(ref_context, 2))?
+            != 0
+        {
+            if self
+                .reader
+                .read_symbol(self.cdf.single_ref_cdf_mut(ref_context, 4))?
+                != 0
+            {
+                3
+            } else {
+                2
+            }
+        } else if self
+            .reader
+            .read_symbol(self.cdf.single_ref_cdf_mut(ref_context, 3))?
+            != 0
+        {
+            1
+        } else {
+            0
+        };
+        let reference_frame = *frame
+            .reference_frame_indices
+            .get(reference_type)
+            .ok_or_else(|| DecoderError::Bitstream("AV1 reference type is invalid".to_string()))?;
+
+        // Inter mode is a small decision tree.  The zero-MV branch is the
+        // first useful compatibility slice: it needs no motion-vector
+        // payload, and reconstruction can copy the corresponding reference.
+        let mode_context = self.intra_inter_context(x, y).min(5);
+        let new_mv = self
+            .reader
+            .read_symbol(self.cdf.newmv_cdf_mut(mode_context))?
+            == 0;
+        let zero_mv = if new_mv {
+            false
+        } else {
+            self.reader
+                .read_symbol(self.cdf.zeromv_cdf_mut(mode_context.min(1)))?
+                == 0
+        };
+        if new_mv {
+            return Err(DecoderError::Unsupported(
+                "AV1 inter new-MV prediction is not supported yet".to_string(),
+            ));
+        }
+        if !zero_mv {
+            let _nearest = self
+                .reader
+                .read_symbol(self.cdf.refmv_cdf_mut(mode_context))?;
+            return Err(DecoderError::Unsupported(
+                "AV1 inter nearest/near-MV prediction is not supported yet".to_string(),
+            ));
+        }
+
+        self.set_inter_context(x, y, block_size, true);
+        self.set_smooth_context(x, y, block_size, false, false);
+        self.set_skip_context(x, y, block_size, skip);
+        let (tx_size_context, tx_size_symbol, tx_size) =
+            self.read_intra_tx_size(frame, block_size, skip, false, x, y)?;
+        let has_chroma = !sequence.color_config.monochrome && chroma_reference;
+        let (uv_mode_symbol, uv_mode) = if has_chroma {
+            (Some(0), Some(UvPredictionMode::Intra(PredictionMode::Dc)))
+        } else {
+            (None, None)
+        };
+        Ok(BlockModeProbe {
+            tile_id: tile.tile_id,
+            block_size,
+            segment_id,
+            qindex,
+            delta_lf,
+            skip_context,
+            skip_symbol,
+            skip,
+            is_inter: true,
+            reference_frame: Some(reference_frame),
+            motion_vector: Some((0, 0)),
+            use_intrabc: false,
+            intra_block_copy_mv: None,
+            cdef_idx,
+            y_above_context: 0,
+            y_left_context: 0,
+            y_mode_symbol: 0,
+            y_mode: PredictionMode::Dc,
+            angle_delta_y: None,
+            y_smooth_neighbour: false,
+            filter_intra_mode: None,
+            uv_mode_symbol,
+            uv_mode,
+            angle_delta_uv: None,
+            uv_smooth_neighbour: false,
+            palette: super::PaletteBlockInfo { y: None, uv: None },
             tx_size_context,
             tx_size_symbol,
             tx_size,
@@ -493,6 +686,45 @@ impl<'a> TileDecoder<'a> {
             return None;
         }
         self.y_mode_grid[mi_row * self.mi_cols + mi_col]
+    }
+
+    fn is_inter_at_mi(&self, mi_col: usize, mi_row: usize) -> Option<bool> {
+        if mi_col >= self.mi_cols || mi_row >= self.mi_rows {
+            return None;
+        }
+        self.is_inter_grid[mi_row * self.mi_cols + mi_col]
+    }
+
+    fn intra_inter_context(&self, x: usize, y: usize) -> usize {
+        let mi_col = x >> 2;
+        let mi_row = y >> 2;
+        let above = (mi_row > self.tile_mi_row_start)
+            .then(|| self.is_inter_at_mi(mi_col, mi_row - 1))
+            .flatten();
+        let left = (mi_col > self.tile_mi_col_start)
+            .then(|| self.is_inter_at_mi(mi_col - 1, mi_row))
+            .flatten();
+        match (above, left) {
+            (Some(above), Some(left)) => match (above, left) {
+                (false, false) => 3,
+                (false, true) | (true, false) => 1,
+                (true, true) => 0,
+            },
+            (Some(above), None) | (None, Some(above)) => usize::from(!above) * 2,
+            (None, None) => 0,
+        }
+    }
+
+    fn set_inter_context(&mut self, x: usize, y: usize, block_size: BlockSize, is_inter: bool) {
+        fill_mi_grid(
+            &mut self.is_inter_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            is_inter,
+        );
     }
 
     fn set_y_mode_context(&mut self, x: usize, y: usize, block_size: BlockSize, symbol: usize) {

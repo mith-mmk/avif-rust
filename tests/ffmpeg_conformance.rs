@@ -430,6 +430,67 @@ fn generated_sequence_sample_decodes_first_frame_when_encoder_present() {
 }
 
 #[test]
+fn generated_inter_sequence_sample_is_classified_for_decoder_gate_when_encoder_present() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(format!(".test-avif-sequence-inter-{}", std::process::id()));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary AVIF sequence directory: {err}");
+    }
+    let output_path = root.join("sequence.avifs");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .args(["-f", "lavfi", "-i", "testsrc2=size=64x64:rate=1"])
+        .args([
+            "-t",
+            "2",
+            "-c:v",
+            "libaom-av1",
+            "-cpu-used",
+            "8",
+            "-crf",
+            "0",
+        ])
+        .args(["-g", "30", "-frame-parallel", "1"])
+        .args(["-aom-params", "enable-cdef=0:enable-restoration=0"])
+        .args([
+            "-colorspace",
+            "bt709",
+            "-color_primaries",
+            "bt709",
+            "-color_trc",
+            "bt709",
+            "-color_range",
+            "tv",
+            "-f",
+            "avif",
+        ])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated inter sequence sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom sequence encoder is unavailable; skipping generated inter sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let data = std::fs::read(&output_path).expect("generated AVIF sequence should be readable");
+    let info =
+        avif_rust::container::parse_avif(&data).expect("generated AVIF sequence should parse");
+    let inter_sample = info
+        .sequence_sample_payloads
+        .get(1)
+        .expect("generated sequence should contain a second sample");
+    assert_eq!(
+        avif_rust::classify_av1_sequence_sample(inter_sample).unwrap(),
+        Some(avif_rust::AvifSequenceSampleKind::Inter)
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn generated_cdef_sample_matches_explicit_ffmpeg_yuv_oracle_when_encoder_present() {
     let root = std::env::temp_dir().join(format!(".test-avif-cdef-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {

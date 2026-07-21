@@ -1,10 +1,12 @@
 use super::cdf::CdfContext;
+use super::decode::FrameBuffers;
 use super::entropy::EntropyDecoder;
 use super::frame::{FrameHeader, RestorationParams};
 use super::sequence::SequenceHeader;
 use super::syntax::{BlockSize, TxSize, TxType, mi_dimension};
 use super::transform::TransformBlock;
 use crate::DecoderError;
+use std::sync::Arc;
 
 mod block_syntax;
 mod coefficient;
@@ -47,7 +49,9 @@ pub use diagnostic::{
 use diagnostic::{CoeffBaseProbe, CoeffBaseRead, CoeffBrProbe, CoeffSignRead};
 #[cfg(test)]
 pub(crate) use public_api::decode_luma_root_block_prefix_with_post_filter_state_and_entropy;
+#[cfg(test)]
 pub(crate) use public_api::decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options;
+pub(crate) use public_api::decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references;
 pub use public_api::{
     decode_first_luma_block, decode_first_luma_transform, decode_luma_root_block_prefix,
     decode_luma_root_blocks, prepare_tile_entropy, probe_first_block_residuals,
@@ -130,6 +134,7 @@ pub struct TileDecoder<'a> {
     tile_mi_col_start: usize,
     tile_mi_row_start: usize,
     y_mode_grid: Vec<Option<usize>>,
+    is_inter_grid: Vec<Option<bool>>,
     intra_bc_mv_grid: Vec<Option<(i32, i32)>>,
     y_palette_size_grid: Vec<Option<usize>>,
     uv_palette_size_grid: Vec<Option<usize>>,
@@ -166,6 +171,7 @@ pub struct TileDecoder<'a> {
     coefficient_scan_cache: CoefficientScanCache,
     current_qindex: u8,
     current_delta_lf: [i8; 4],
+    reference_buffers: [Option<Arc<FrameBuffers>>; 8],
 }
 
 pub(super) fn is_chroma_reference(
@@ -191,6 +197,14 @@ pub(super) fn is_chroma_reference(
 
 impl<'a> TileDecoder<'a> {
     pub fn new(payload: &'a [u8], frame: &FrameHeader) -> Result<Self, DecoderError> {
+        Self::new_with_references(payload, frame, std::array::from_fn(|_| None))
+    }
+
+    pub fn new_with_references(
+        payload: &'a [u8],
+        frame: &FrameHeader,
+        reference_buffers: [Option<Arc<FrameBuffers>>; 8],
+    ) -> Result<Self, DecoderError> {
         let mi_cols = usize::try_from(mi_dimension(frame.frame_width))
             .map_err(|_| DecoderError::InvalidParam("AV1 frame width is too large".to_string()))?;
         let mi_rows = usize::try_from(mi_dimension(frame.frame_height))
@@ -206,6 +220,7 @@ impl<'a> TileDecoder<'a> {
             tile_mi_col_start: 0,
             tile_mi_row_start: 0,
             y_mode_grid: vec![None; mi_count],
+            is_inter_grid: vec![None; mi_count],
             intra_bc_mv_grid: vec![None; mi_count],
             y_palette_size_grid: vec![None; mi_count],
             uv_palette_size_grid: vec![None; mi_count],
@@ -247,7 +262,18 @@ impl<'a> TileDecoder<'a> {
             coefficient_scan_cache: CoefficientScanCache::new(),
             current_qindex: frame.segmentation.effective_qindex(frame.base_q_idx),
             current_delta_lf: [0; 4],
+            reference_buffers,
         })
+    }
+
+    pub(super) fn reference_buffer(&self, slot: u8) -> Result<Arc<FrameBuffers>, DecoderError> {
+        self.reference_buffers
+            .get(usize::from(slot))
+            .and_then(Option::as_ref)
+            .map(Arc::clone)
+            .ok_or_else(|| {
+                DecoderError::Unsupported(format!("AV1 inter reference slot {slot} is unavailable"))
+            })
     }
 
     pub(super) fn set_tile_bounds(&mut self, tile: &crate::av1::TileDecodePlan) {

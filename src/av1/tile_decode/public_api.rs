@@ -18,6 +18,7 @@ use crate::av1::transform::{
     QuantizedTransform, plan_transform_blocks_with_tx_size, reconstruct_lossless_transform_block,
     reconstruct_transform_block,
 };
+use std::sync::Arc;
 
 pub fn prepare_tile_entropy(
     data: &[u8],
@@ -414,6 +415,7 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy(
     clippy::too_many_arguments,
     reason = "internal prefix decode exposes each independently testable pipeline input"
 )]
+#[cfg(test)]
 pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options(
     data: &[u8],
     tile_group: &TileGroup,
@@ -424,6 +426,36 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
     max_blocks: usize,
     validate_entropy: bool,
     collect_diagnostics: bool,
+) -> Result<(DecodedBlockPrefix, PostFilterState), DecoderError> {
+    decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references(
+        data,
+        tile_group,
+        sequence,
+        frame,
+        plan,
+        buffers,
+        max_blocks,
+        validate_entropy,
+        collect_diagnostics,
+        std::array::from_fn(|_| None),
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "internal prefix decode exposes each independently testable pipeline input"
+)]
+pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references(
+    data: &[u8],
+    tile_group: &TileGroup,
+    sequence: &SequenceHeader,
+    frame: &FrameHeader,
+    plan: &FrameDecodePlan,
+    buffers: &mut FrameBuffers,
+    max_blocks: usize,
+    validate_entropy: bool,
+    collect_diagnostics: bool,
+    reference_buffers: [Option<Arc<FrameBuffers>>; 8],
 ) -> Result<(DecodedBlockPrefix, PostFilterState), DecoderError> {
     if tile_group.tiles.is_empty() {
         return Err(DecoderError::Bitstream(
@@ -440,7 +472,8 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
         let tile_plan = plan.tiles.get(tile_index).ok_or_else(|| {
             DecoderError::Bitstream("AV1 tile decode plan is missing a tile".to_string())
         })?;
-        let mut decoder = TileDecoder::new(payload, frame)?;
+        let mut decoder =
+            TileDecoder::new_with_references(payload, frame, reference_buffers.clone())?;
         decoder.set_tile_bounds(tile_plan);
         for sb_row in tile_plan.sb_row_start..tile_plan.sb_row_end {
             decoder.reset_left_superblock_contexts();

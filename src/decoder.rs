@@ -12,7 +12,7 @@ use crate::av1::{
     build_still_decode_plan, cdef_adjust_primary_strength,
     cdef_filter_block_region_with_edge_mode_into, cdef_find_direction_with_variance,
     crop_frame_buffers_to_plan, deblock_filter_edge_with_visible_bounds,
-    decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options,
+    decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references,
     frame_buffers_to_rgba_16, parse_av1_config, parse_frame_header,
     parse_frame_header_with_references, parse_sequence_header, parse_show_existing_frame_index,
     parse_tile_group, plan_transform_blocks_with_tx_size, prepare_tile_entropy,
@@ -716,12 +716,7 @@ fn decode_sequence_samples_from_info(
                     .then_some(info.av1_config.as_deref())
                     .flatten();
                 let reference_states = references.states();
-                // Parse the complete frame header against the slots already
-                // refreshed by preceding coded frames. Reconstruction remains
-                // fail-closed until inter block syntax and prediction are
-                // connected, but header errors are no longer reported as a
-                // generic unsupported frame before reference validation.
-                let _headers = parse_av1_sequence_sample_headers_with_references(
+                let headers = parse_av1_sequence_sample_headers_with_references(
                     info,
                     &sequence_prefix,
                     sample,
@@ -729,9 +724,28 @@ fn decode_sequence_samples_from_info(
                     av1_config,
                     &reference_states,
                 )?;
-                return Err(DecoderError::Unsupported(format!(
-                    "AVIS sample {index} uses {kind:?} frame prediction"
-                )));
+                let decoded_state =
+                    match decode_still_frame_with_filter_policy_and_state_and_references(
+                        &headers,
+                        Some(info),
+                        true,
+                        references.buffers(),
+                    ) {
+                        Ok(decoded) => decoded,
+                        Err(DecoderError::Bitstream(_)) | Err(DecoderError::Unsupported(_)) => {
+                            return Err(DecoderError::Unsupported(format!(
+                                "AVIS sample {index} uses {kind:?} frame prediction"
+                            )));
+                        }
+                        Err(err) => return Err(err),
+                    };
+                let decoded = decoded_state.frame;
+                references.refresh(headers.frame.refresh_frame_flags, &decoded, &headers.frame);
+                if collect_all {
+                    frames.push(decoded);
+                } else if index == stop_index {
+                    return Ok(vec![decoded]);
+                }
             }
         }
     }
@@ -889,6 +903,7 @@ struct FrameReferenceSlots {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ReferenceFrame {
     decoded: Arc<DecodedFrame>,
+    buffers: Arc<FrameBuffers>,
     frame_width: u32,
     frame_height: u32,
     upscaled_width: u32,
@@ -905,6 +920,7 @@ impl FrameReferenceSlots {
             if refresh_frame_flags & (1 << index) != 0 {
                 *slot = Some(ReferenceFrame {
                     decoded: Arc::clone(&shared),
+                    buffers: Arc::new(frame.buffers.clone()),
                     frame_width: header.frame_width,
                     frame_height: header.frame_height,
                     upscaled_width: header.upscaled_width,
@@ -941,6 +957,14 @@ impl FrameReferenceSlots {
                     render_height: reference.render_height,
                     order_hint: reference.order_hint,
                 })
+        })
+    }
+
+    fn buffers(&self) -> [Option<Arc<FrameBuffers>>; 8] {
+        std::array::from_fn(|index| {
+            self.slots[index]
+                .as_ref()
+                .map(|reference| Arc::clone(&reference.buffers))
         })
     }
 
@@ -3738,12 +3762,26 @@ fn decode_still_frame_with_filter_policy_and_state(
     info: Option<&AvifInfo>,
     validate_filters: bool,
 ) -> Result<DecodedStillFrame, DecoderError> {
+    decode_still_frame_with_filter_policy_and_state_and_references(
+        headers,
+        info,
+        validate_filters,
+        std::array::from_fn(|_| None),
+    )
+}
+
+fn decode_still_frame_with_filter_policy_and_state_and_references(
+    headers: &Av1Headers,
+    info: Option<&AvifInfo>,
+    validate_filters: bool,
+    reference_buffers: [Option<Arc<FrameBuffers>>; 8],
+) -> Result<DecodedStillFrame, DecoderError> {
     if validate_filters {
         validate_public_decode_tools(headers)?;
     }
     let mut buffers = alloc_coded_frame_buffers(&headers.decode_plan)?;
     let (prefix, post_filter_state) =
-        decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options(
+        decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references(
             &headers.tile_group.tile_data,
             &headers.tile_group.group,
             &headers.sequence,
@@ -3753,6 +3791,7 @@ fn decode_still_frame_with_filter_policy_and_state(
             usize::MAX,
             validate_filters,
             false,
+            reference_buffers,
         )?;
     if let Some(err) = prefix.next_unsupported {
         return Err(err);

@@ -92,6 +92,18 @@ pub(super) fn decode_plane_block_unit(
             scale_tx_size(block_mode.tx_size, subsampling_x, subsampling_y)
         }
     };
+    let reference_buffer = block_mode
+        .reference_frame
+        .map(|slot| decoder.reference_buffer(slot))
+        .transpose()?;
+    let reference_plane = reference_buffer
+        .as_ref()
+        .and_then(|buffers| buffers.planes.get(plane_index));
+    if block_mode.is_inter && reference_plane.is_none() {
+        return Err(DecoderError::Unsupported(format!(
+            "AV1 inter reference plane {plane_index} is unavailable"
+        )));
+    }
     let transforms = if subsampling_x == 0 && subsampling_y == 0 {
         iter_transform_blocks_with_tx_size(
             plane_index,
@@ -136,6 +148,7 @@ pub(super) fn decode_plane_block_unit(
             let prediction = &mut decoder.prediction_scratch[..prediction_len];
             predict_plane_block_into(
                 plane,
+                reference_plane,
                 block_mode,
                 plane_index,
                 prediction_mode,
@@ -190,6 +203,7 @@ pub(super) fn decode_plane_block_unit(
             let prediction = &mut decoder.prediction_scratch[..prediction_len];
             predict_plane_block_into(
                 plane,
+                reference_plane,
                 block_mode,
                 plane_index,
                 prediction_mode,
@@ -238,6 +252,7 @@ pub(super) fn decode_plane_block_unit(
         let prediction = &mut decoder.prediction_scratch[..prediction_len];
         predict_plane_block_into(
             plane,
+            reference_plane,
             block_mode,
             plane_index,
             prediction_mode,
@@ -532,6 +547,7 @@ fn plane_block_size(
 )]
 fn predict_plane_block_into(
     plane: &PlaneBuffer,
+    reference_plane: Option<&PlaneBuffer>,
     block_mode: &BlockModeProbe,
     plane_index: usize,
     prediction_mode: PredictionMode,
@@ -563,7 +579,30 @@ fn predict_plane_block_into(
             "AV1 prediction output dimensions do not match block".to_string(),
         ));
     }
-    if let Some(mv) = intra_block_copy_mv {
+    if block_mode.is_inter {
+        let slot = block_mode.reference_frame.ok_or_else(|| {
+            DecoderError::Unsupported("AV1 inter block has no reference frame".to_string())
+        })?;
+        let mv = block_mode.motion_vector.ok_or_else(|| {
+            DecoderError::Unsupported("AV1 inter block has no motion vector".to_string())
+        })?;
+        let reference = reference_plane.ok_or_else(|| {
+            DecoderError::Unsupported(format!(
+                "AV1 inter reference slot {slot} plane {plane_index} is unavailable"
+            ))
+        })?;
+        predict_inter_block_into(
+            reference,
+            x,
+            y,
+            width,
+            height,
+            mv,
+            subsampling_x,
+            subsampling_y,
+            output,
+        )?;
+    } else if let Some(mv) = intra_block_copy_mv {
         predict_intra_block_copy_into(
             plane,
             x,
@@ -651,6 +690,68 @@ fn predict_plane_block_into(
             subsampling_x,
             subsampling_y,
         )?;
+    }
+    Ok(())
+}
+
+fn predict_inter_block_into(
+    reference: &PlaneBuffer,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    mv: (i32, i32),
+    subsampling_x: usize,
+    subsampling_y: usize,
+    output: &mut [u16],
+) -> Result<(), DecoderError> {
+    let expected_len = width.checked_mul(height).ok_or_else(|| {
+        DecoderError::Bitstream("AV1 inter prediction size overflows".to_string())
+    })?;
+    if output.len() != expected_len {
+        return Err(DecoderError::Bitstream(
+            "AV1 inter prediction buffer has an invalid size".to_string(),
+        ));
+    }
+    let scale_x = 8i32.checked_shl(subsampling_x as u32).ok_or_else(|| {
+        DecoderError::Bitstream("AV1 inter horizontal MV scale overflows".to_string())
+    })?;
+    let scale_y = 8i32.checked_shl(subsampling_y as u32).ok_or_else(|| {
+        DecoderError::Bitstream("AV1 inter vertical MV scale overflows".to_string())
+    })?;
+    if mv.0 % scale_y != 0 || mv.1 % scale_x != 0 {
+        return Err(DecoderError::Unsupported(
+            "AV1 fractional inter motion vectors are not supported yet".to_string(),
+        ));
+    }
+    let source_x = i64::try_from(x)
+        .ok()
+        .and_then(|value| value.checked_add(i64::from(mv.1 / scale_x)))
+        .ok_or_else(|| DecoderError::Bitstream("AV1 inter source x overflows".to_string()))?;
+    let source_y = i64::try_from(y)
+        .ok()
+        .and_then(|value| value.checked_add(i64::from(mv.0 / scale_y)))
+        .ok_or_else(|| DecoderError::Bitstream("AV1 inter source y overflows".to_string()))?;
+    let source_x = usize::try_from(source_x)
+        .map_err(|_| DecoderError::Bitstream("AV1 inter source x is negative".to_string()))?;
+    let source_y = usize::try_from(source_y)
+        .map_err(|_| DecoderError::Bitstream("AV1 inter source y is negative".to_string()))?;
+    let source_right = source_x
+        .checked_add(width)
+        .ok_or_else(|| DecoderError::Bitstream("AV1 inter source x overflows".to_string()))?;
+    let source_bottom = source_y
+        .checked_add(height)
+        .ok_or_else(|| DecoderError::Bitstream("AV1 inter source y overflows".to_string()))?;
+    if source_right > reference.layout.width || source_bottom > reference.layout.height {
+        return Err(DecoderError::Bitstream(
+            "AV1 inter reference block is outside the reference frame".to_string(),
+        ));
+    }
+    for row in 0..height {
+        let source_start = (source_y + row) * reference.layout.width + source_x;
+        let target_start = row * width;
+        output[target_start..target_start + width]
+            .copy_from_slice(&reference.samples[source_start..source_start + width]);
     }
     Ok(())
 }
@@ -1191,5 +1292,42 @@ mod tests {
         let mut output = [0; 4];
         predict_palette_block_into(&palette, 0, 3, 0, 0, 0, 0, 2, 2, &mut output);
         assert_eq!(output, [10, 20, 30, 20]);
+    }
+
+    #[test]
+    fn inter_prediction_copies_an_integer_reference_block() {
+        let reference = PlaneBuffer {
+            layout: crate::av1::decode::PlaneLayout {
+                plane: 0,
+                width: 4,
+                height: 3,
+                subsampling_x: 0,
+                subsampling_y: 0,
+                sample_count: 12,
+            },
+            samples: (0..12).collect(),
+        };
+        let mut output = [0; 4];
+        predict_inter_block_into(&reference, 1, 1, 2, 2, (0, 0), 0, 0, &mut output).unwrap();
+        assert_eq!(output, [5, 6, 9, 10]);
+    }
+
+    #[test]
+    fn inter_prediction_rejects_fractional_motion_until_filtering_exists() {
+        let reference = PlaneBuffer {
+            layout: crate::av1::decode::PlaneLayout {
+                plane: 0,
+                width: 4,
+                height: 4,
+                subsampling_x: 0,
+                subsampling_y: 0,
+                sample_count: 16,
+            },
+            samples: vec![0; 16],
+        };
+        let mut output = [0; 4];
+        let error = predict_inter_block_into(&reference, 0, 0, 2, 2, (1, 0), 0, 0, &mut output)
+            .unwrap_err();
+        assert!(error.to_string().contains("fractional inter"));
     }
 }

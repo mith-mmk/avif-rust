@@ -32,6 +32,71 @@ pub const MV_JOINTS: usize = 4;
 pub const MV_CLASSES: usize = 11;
 pub const MV_CLASS_BITS: usize = 10;
 pub const DEFAULT_INTRABC_CDF: [u16; 3] = [30531, 32768, 0];
+pub const DEFAULT_INTRA_INTER_CDF: [[u16; 3]; 4] = [
+    [806, 32768, 0],
+    [16662, 32768, 0],
+    [20186, 32768, 0],
+    [26538, 32768, 0],
+];
+pub const DEFAULT_NEWMV_CDF: [[u16; 3]; 6] = [
+    [24035, 32768, 0],
+    [16630, 32768, 0],
+    [15339, 32768, 0],
+    [8386, 32768, 0],
+    [12222, 32768, 0],
+    [4676, 32768, 0],
+];
+pub const DEFAULT_ZEROMV_CDF: [[u16; 3]; 2] = [[2175, 32768, 0], [1054, 32768, 0]];
+pub const DEFAULT_REFMV_CDF: [[u16; 3]; 6] = [
+    [23974, 32768, 0],
+    [24188, 32768, 0],
+    [17848, 32768, 0],
+    [28622, 32768, 0],
+    [24312, 32768, 0],
+    [19923, 32768, 0],
+];
+pub const DEFAULT_SINGLE_REF_CDF: [[[u16; 3]; 6]; 5] = [
+    [
+        [4623, 32768, 0],
+        [2110, 32768, 0],
+        [4132, 32768, 0],
+        [7309, 32768, 0],
+        [1392, 32768, 0],
+        [1781, 32768, 0],
+    ],
+    [
+        [8659, 32768, 0],
+        [16372, 32768, 0],
+        [9371, 32768, 0],
+        [16322, 32768, 0],
+        [6216, 32768, 0],
+        [15834, 32768, 0],
+    ],
+    [
+        [17353, 32768, 0],
+        [30182, 32768, 0],
+        [16300, 32768, 0],
+        [21702, 32768, 0],
+        [10365, 32768, 0],
+        [30486, 32768, 0],
+    ],
+    [[16384, 32768, 0]; 6],
+    [
+        [28672, 32768, 0],
+        [16384, 32768, 0],
+        [29440, 32768, 0],
+        [30976, 32768, 0],
+        [26624, 32768, 0],
+        [16384, 32768, 0],
+    ],
+];
+pub const DEFAULT_COMP_INTER_CDF: [[u16; 3]; 5] = [
+    [24290, 32768, 0],
+    [19956, 32768, 0],
+    [11641, 32768, 0],
+    [9804, 32768, 0],
+    [2842, 32768, 0],
+];
 
 const DEFAULT_SEG_ID_CDF: [[u16; SEGMENT_IDS + 1]; SEGMENT_ID_CONTEXTS] = [
     [5622, 7893, 16093, 18233, 27809, 28373, 32533, 32768, 0],
@@ -1757,6 +1822,12 @@ pub struct CdfContext {
     pub partition_w64: [[u16; 11]; PARTITION_CONTEXTS],
     pub partition_w128: [[u16; 9]; PARTITION_CONTEXTS],
     pub skip: [[u16; 3]; SKIP_CONTEXTS],
+    pub intra_inter: [[u16; 3]; 4],
+    pub newmv: [[u16; 3]; 6],
+    pub zeromv: [[u16; 3]; 2],
+    pub refmv: [[u16; 3]; 6],
+    pub single_ref: [[[u16; 3]; 6]; 5],
+    pub comp_inter: [[u16; 3]; 5],
     pub seg_id: [[u16; SEGMENT_IDS + 1]; SEGMENT_ID_CONTEXTS],
     pub delta_q: [u16; 5],
     pub delta_lf: [u16; 5],
@@ -1821,6 +1892,12 @@ impl CdfContext {
             partition_w64: DEFAULT_PARTITION_W64_CDF,
             partition_w128: DEFAULT_PARTITION_W128_CDF,
             skip: DEFAULT_SKIP_CDF,
+            intra_inter: DEFAULT_INTRA_INTER_CDF,
+            newmv: DEFAULT_NEWMV_CDF,
+            zeromv: DEFAULT_ZEROMV_CDF,
+            refmv: DEFAULT_REFMV_CDF,
+            single_ref: DEFAULT_SINGLE_REF_CDF,
+            comp_inter: DEFAULT_COMP_INTER_CDF,
             seg_id: DEFAULT_SEG_ID_CDF,
             delta_q: DEFAULT_DELTA_Q_CDF,
             delta_lf: DEFAULT_DELTA_LF_CDF,
@@ -1894,6 +1971,30 @@ impl CdfContext {
 
     pub fn skip_cdf_mut(&mut self, context: usize) -> &mut [u16] {
         &mut self.skip[context]
+    }
+
+    pub fn intra_inter_cdf_mut(&mut self, context: usize) -> &mut [u16] {
+        &mut self.intra_inter[context]
+    }
+
+    pub fn newmv_cdf_mut(&mut self, context: usize) -> &mut [u16] {
+        &mut self.newmv[context]
+    }
+
+    pub fn zeromv_cdf_mut(&mut self, context: usize) -> &mut [u16] {
+        &mut self.zeromv[context]
+    }
+
+    pub fn refmv_cdf_mut(&mut self, context: usize) -> &mut [u16] {
+        &mut self.refmv[context]
+    }
+
+    pub fn single_ref_cdf_mut(&mut self, context: usize, index: usize) -> &mut [u16] {
+        &mut self.single_ref[context][index]
+    }
+
+    pub fn comp_inter_cdf_mut(&mut self, context: usize) -> &mut [u16] {
+        &mut self.comp_inter[context]
     }
 
     pub fn seg_id_cdf_mut(&mut self, context: usize) -> &mut [u16] {
