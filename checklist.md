@@ -1361,3 +1361,17 @@ checkpoint measured `244.83/245.21 ms` for `WML2Viewer.avif`,
 `396.91/407.49 ms` for the external 12-bit YUV444 sample, and
 `3.18/3.67 ms` for the 128x128 alpha sample (native/RGBA); these are local
 measurements, not cross-machine speedup claims.
+
+The official `extended_pixi.avif` sample now parses the AVIF extended `pixi`
+channel descriptors instead of silently discarding the flagged payload. The
+decoder exposes unsigned-integer channel format and per-channel subsampling
+type/location metadata, rejects reserved channel fields, and keeps the 4x4
+YUV420 sample's complete RGBA decode as a regression gate. Descriptor-level
+vectors cover truncation and unsupported channel/component combinations.
+
+The same five-iteration release benchmark after the parser change measured
+`241.88 ms` native / `250.11 ms` RGBA for `WML2Viewer.avif`; the 4x4 extended
+`pixi` sample measured `0.0187/0.0194 ms`. This confirms that the metadata
+extension does not add a measurable cost to the normal large-frame decode;
+the numbers remain host-specific checkpoints rather than a cross-machine
+speedup claim.

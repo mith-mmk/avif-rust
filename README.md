@@ -29,6 +29,7 @@ passes the FFmpeg RGB oracle (average absolute error about 0.075, maximum 6).
 | Premultiplied alpha (`prem`) | Supported (RGBA8/RGBA16 outputs are unpremultiplied; native planes remain unchanged) |
 | Deblock, CDEF, and loop restoration used by supported streams | Supported |
 | Monochrome, 4:2:0, and 4:2:2 | Supported |
+| Extended `pixi` channel descriptors | Supported (unsigned integer channels and subsampling type/location are parsed and exposed) |
 | Alpha auxiliary images and grid composition | Supported (native alpha plane and aligned `clap`/`irot`/`imir` are applied) |
 | `iloc` item payloads in file data and meta `idat` | Supported (construction methods 0, 1, and indexed method 2) |
 | `clap`, `irot`, and `imir` composition | Supported |

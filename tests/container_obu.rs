@@ -151,6 +151,41 @@ fn sample_container_metadata_is_exposed_through_public_api() {
 }
 
 #[test]
+fn official_extended_pixi_sample_exposes_channel_descriptors() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("test/images/external/avif/unsupported/extended_pixi.avif");
+    if !path.is_file() {
+        eprintln!("extended pixi sample is unavailable; skipping metadata check");
+        return;
+    }
+    let data = std::fs::read(path).expect("extended pixi sample should be readable");
+    let info = parse_avif(&data).expect("extended pixi sample should parse");
+    let pixi = info
+        .pixel_information
+        .expect("extended pixi sample should expose pixi");
+    let channels = pixi
+        .extended_channels
+        .expect("extended pixi sample should expose channel descriptors");
+    assert_eq!(channels.len(), 3);
+    assert_eq!(
+        channels[0].subsampling,
+        Some(avif_rust::container::PixelSubsampling {
+            subsampling_type: 0,
+            subsampling_location: 0,
+        })
+    );
+    assert!(channels[1..].iter().all(|channel| channel.subsampling
+        == Some(avif_rust::container::PixelSubsampling {
+            subsampling_type: 2,
+            subsampling_location: 0,
+        })));
+    let image = avif_rust::image_from_bytes(&data).expect("extended pixi image should decode");
+    assert_eq!((image.width, image.height), (4, 4));
+}
+
+#[test]
 fn avio_major_brand_is_accepted_for_intra_only_image_items() {
     let mut data = sample_avif();
     assert_eq!(&data[4..8], b"ftyp");

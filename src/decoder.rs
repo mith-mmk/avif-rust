@@ -5,13 +5,13 @@ use crate::av1::alloc_frame_buffers;
 #[cfg(test)]
 use crate::av1::decode_luma_root_block_prefix_with_post_filter_state_and_entropy;
 use crate::av1::{
-    Av1CodecConfiguration, BlockModeProbe, ColorConfig, FilmGrainParams, FrameBuffers,
-    FrameDecodePlan, FrameHeader, PartitionProbe, PlaneBuffer, PlaneLayout, QuantState,
-    ResidualProbe, SequenceHeader, TileEntropyState, TileGroup, alloc_coded_frame_buffers,
-    apply_film_grain, apply_superres_horizontal, build_still_decode_plan,
-    cdef_adjust_primary_strength, cdef_filter_block_region_with_edge_mode_into,
-    cdef_find_direction_with_variance, crop_frame_buffers_to_plan,
-    deblock_filter_edge_with_visible_bounds,
+    Av1CodecConfiguration, BlockModeProbe, ChromaSamplePosition, ColorConfig, FilmGrainParams,
+    FrameBuffers, FrameDecodePlan, FrameHeader, PartitionProbe, PlaneBuffer, PlaneLayout,
+    QuantState, ResidualProbe, SequenceHeader, TileEntropyState, TileGroup,
+    alloc_coded_frame_buffers, apply_film_grain, apply_superres_horizontal,
+    build_still_decode_plan, cdef_adjust_primary_strength,
+    cdef_filter_block_region_with_edge_mode_into, cdef_find_direction_with_variance,
+    crop_frame_buffers_to_plan, deblock_filter_edge_with_visible_bounds,
     decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options,
     frame_buffers_to_rgba_16, parse_av1_config, parse_frame_header, parse_sequence_header,
     parse_show_existing_frame_index, parse_tile_group, plan_transform_blocks_with_tx_size,
@@ -21,8 +21,8 @@ use crate::av1::{
 use crate::compat::{DataMap, DecodeOptions, InitOptions};
 use crate::container::{
     AvifInfo, AvifSequenceSampleInfo, AvifSequenceSampleKind, CleanAperture, ColorInformation,
-    GridCell, ImageMirror, ImageRotation, SampleTransformToken, inspect_av1_sequence_sample,
-    parse_avif, parse_sample_transform,
+    GridCell, ImageMirror, ImageRotation, PixelInformation, SampleTransformToken,
+    inspect_av1_sequence_sample, parse_avif, parse_sample_transform,
 };
 use crate::obu::{ObuType, find_obu_payloads_in_parts, parse_obu_stream};
 use crate::{DecoderError, ImageBuffer, Rgba16ImageBuffer};
@@ -976,6 +976,7 @@ fn parse_av1_headers_from_parts(
     let sequence_payload = sequence_payload
         .ok_or_else(|| DecoderError::Bitstream("AV1 sequence header OBU is missing".to_string()))?;
     let sequence = parse_sequence_header(sequence_payload)?;
+    validate_extended_pixi(info.pixel_information.as_ref(), &sequence.color_config)?;
     validate_color_metadata(info.color_information.as_ref(), &sequence.color_config)?;
     let config = av1_config.map(parse_av1_config).transpose()?;
     if let Some(config) = config {
@@ -3542,6 +3543,64 @@ fn validate_color_metadata(
     Ok(())
 }
 
+fn validate_extended_pixi(
+    pixel_information: Option<&PixelInformation>,
+    color_config: &ColorConfig,
+) -> Result<(), DecoderError> {
+    let Some(channels) = pixel_information.and_then(|pixi| pixi.extended_channels.as_deref())
+    else {
+        return Ok(());
+    };
+    let expected_channels = if color_config.monochrome { 1 } else { 3 };
+    if channels.len() != expected_channels {
+        return Err(DecoderError::Bitstream(format!(
+            "extended pixi has {} channels but AV1 signals {expected_channels}",
+            channels.len()
+        )));
+    }
+    for (index, channel) in channels.iter().enumerate() {
+        let expected_type = if index == 0 {
+            0
+        } else if color_config.subsampling_x && color_config.subsampling_y {
+            2
+        } else if color_config.subsampling_x {
+            1
+        } else if color_config.subsampling_y {
+            4
+        } else {
+            0
+        };
+        let Some(subsampling) = channel.subsampling else {
+            continue;
+        };
+        if subsampling.subsampling_type != expected_type {
+            return Err(DecoderError::Bitstream(format!(
+                "extended pixi channel {index} subsampling type {} does not match AV1 type {expected_type}",
+                subsampling.subsampling_type
+            )));
+        }
+        let expected_location = match (index, color_config.chroma_sample_position) {
+            (0, _) | (_, None) | (_, Some(ChromaSamplePosition::Unknown)) => None,
+            (_, Some(ChromaSamplePosition::Vertical)) => Some(0),
+            (_, Some(ChromaSamplePosition::Colocated)) => Some(2),
+            (_, Some(ChromaSamplePosition::Reserved)) => {
+                return Err(DecoderError::Bitstream(
+                    "AV1 chroma sample position is reserved".to_string(),
+                ));
+            }
+        };
+        if let Some(expected_location) = expected_location
+            && subsampling.subsampling_location != expected_location
+        {
+            return Err(DecoderError::Bitstream(format!(
+                "extended pixi channel {index} location {} does not match AV1 location {expected_location}",
+                subsampling.subsampling_location
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 #[path = "decoder_post_filter_tests.rs"]
 mod post_filter_tests;
@@ -4191,6 +4250,55 @@ mod color_metadata_tests {
     #[test]
     fn color_metadata_accepts_unspecified_nclx_codes() {
         validate_color_metadata(Some(&nclx(2, 2, 2, true)), &config()).unwrap();
+    }
+
+    #[test]
+    fn extended_pixi_must_match_av1_subsampling() {
+        let mut color = config();
+        color.subsampling_x = true;
+        color.subsampling_y = true;
+        color.chroma_sample_position = Some(ChromaSamplePosition::Vertical);
+        let pixi = PixelInformation {
+            bits_per_channel: vec![8, 8, 8],
+            extended_channels: Some(vec![
+                crate::container::PixelChannelInformation {
+                    channel_idc: 0,
+                    component_format: 0,
+                    subsampling: Some(crate::container::PixelSubsampling {
+                        subsampling_type: 0,
+                        subsampling_location: 0,
+                    }),
+                },
+                crate::container::PixelChannelInformation {
+                    channel_idc: 0,
+                    component_format: 0,
+                    subsampling: Some(crate::container::PixelSubsampling {
+                        subsampling_type: 2,
+                        subsampling_location: 0,
+                    }),
+                },
+                crate::container::PixelChannelInformation {
+                    channel_idc: 0,
+                    component_format: 0,
+                    subsampling: Some(crate::container::PixelSubsampling {
+                        subsampling_type: 2,
+                        subsampling_location: 0,
+                    }),
+                },
+            ]),
+        };
+        validate_extended_pixi(Some(&pixi), &color).unwrap();
+
+        let mut mismatch = pixi.clone();
+        mismatch.extended_channels.as_mut().unwrap()[1]
+            .subsampling
+            .as_mut()
+            .unwrap()
+            .subsampling_location = 2;
+        assert!(matches!(
+            validate_extended_pixi(Some(&mismatch), &color),
+            Err(DecoderError::Bitstream(message)) if message.contains("location")
+        ));
     }
 
     #[test]

@@ -133,6 +133,29 @@ pub struct ImageSpatialExtents {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PixelInformation {
     pub bits_per_channel: Vec<u8>,
+    /// Optional channel descriptors from the extended `pixi` form.
+    ///
+    /// The ordinary AVIF form has no channel descriptors. When the `pixi`
+    /// full-box flags signal the extended form, each channel carries its
+    /// component format and (when present) chroma subsampling location.
+    pub extended_channels: Option<Vec<PixelChannelInformation>>,
+}
+
+/// One channel descriptor carried by an extended `pixi` property.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PixelChannelInformation {
+    /// ISO/IEC 23008-12 channel identifier (0 is colour or grayscale).
+    pub channel_idc: u8,
+    /// ISO/IEC 23001-17 component format (0 is unsigned integer).
+    pub component_format: u8,
+    pub subsampling: Option<PixelSubsampling>,
+}
+
+/// Chroma subsampling type and sample location from an extended `pixi` field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PixelSubsampling {
+    pub subsampling_type: u8,
+    pub subsampling_location: u8,
 }
 
 /// `colr` color information box payload.
@@ -1717,15 +1740,139 @@ fn parse_pixi(payload: &[u8]) -> Result<PixelInformation, DecoderError> {
             "pixi payload is too short".to_string(),
         ));
     }
+    if payload[0] != 0 {
+        return Err(DecoderError::Unsupported(format!(
+            "pixi version {} is not supported",
+            payload[0]
+        )));
+    }
     let channel_count = payload[4] as usize;
     if payload.len() < 5 + channel_count {
         return Err(DecoderError::NotEnoughData(
             "pixi channel depth list is too short".to_string(),
         ));
     }
+    let flags = u32::from_be_bytes([0, payload[1], payload[2], payload[3]]);
+    if flags & !1 != 0 {
+        return Err(DecoderError::Unsupported(format!(
+            "pixi flags 0x{flags:06x} are not supported"
+        )));
+    }
+    let extended_channels = if flags & 1 == 0 {
+        None
+    } else {
+        let mut reader = PixiBitReader::new(&payload[5 + channel_count..]);
+        let mut channels = Vec::with_capacity(channel_count);
+        for channel in 0..channel_count {
+            let channel_idc = reader.read_bits(3, "pixi channel_idc")? as u8;
+            let reserved = reader.read_bits(1, "pixi reserved")?;
+            let component_format = reader.read_bits(2, "pixi component_format")? as u8;
+            let subsampling_flag = reader.read_bits(1, "pixi subsampling_flag")? != 0;
+            let channel_label_flag = reader.read_bits(1, "pixi channel_label_flag")? != 0;
+            if reserved != 0 {
+                return Err(DecoderError::Bitstream(format!(
+                    "pixi channel {channel} has non-zero reserved bits"
+                )));
+            }
+            if channel_idc != 0 {
+                return Err(DecoderError::Unsupported(format!(
+                    "pixi channel {channel} idc {channel_idc} is not supported"
+                )));
+            }
+            if component_format != 0 {
+                return Err(DecoderError::Unsupported(format!(
+                    "pixi channel {channel} component format {component_format} is not supported"
+                )));
+            }
+            let subsampling = if subsampling_flag {
+                let subsampling_type = reader.read_bits(4, "pixi subsampling_type")? as u8;
+                let subsampling_location = reader.read_bits(4, "pixi subsampling_location")? as u8;
+                if subsampling_type >= 5 {
+                    return Err(DecoderError::Bitstream(format!(
+                        "pixi channel {channel} subsampling type {subsampling_type} is reserved"
+                    )));
+                }
+                if subsampling_location > 4 {
+                    return Err(DecoderError::Bitstream(format!(
+                        "pixi channel {channel} subsampling location {subsampling_location} is reserved"
+                    )));
+                }
+                Some(PixelSubsampling {
+                    subsampling_type,
+                    subsampling_location,
+                })
+            } else {
+                None
+            };
+            if channel_label_flag {
+                reader.skip_utf8_string(channel)?;
+            }
+            channels.push(PixelChannelInformation {
+                channel_idc,
+                component_format,
+                subsampling,
+            });
+        }
+        Some(channels)
+    };
     Ok(PixelInformation {
         bits_per_channel: payload[5..5 + channel_count].to_vec(),
+        extended_channels,
     })
+}
+
+struct PixiBitReader<'a> {
+    data: &'a [u8],
+    bit_position: usize,
+}
+
+impl<'a> PixiBitReader<'a> {
+    fn new(data: &'a [u8]) -> Self {
+        Self {
+            data,
+            bit_position: 0,
+        }
+    }
+
+    fn read_bits(&mut self, count: usize, field: &str) -> Result<u32, DecoderError> {
+        if count > 32 {
+            return Err(DecoderError::Bitstream(format!(
+                "{field} requests too many bits"
+            )));
+        }
+        let end = self
+            .bit_position
+            .checked_add(count)
+            .ok_or_else(|| DecoderError::Bitstream(format!("{field} bit position overflows")))?;
+        if end > self.data.len().saturating_mul(8) {
+            return Err(DecoderError::NotEnoughData(format!("{field} is truncated")));
+        }
+        let mut value = 0u32;
+        for _ in 0..count {
+            let byte = self.data[self.bit_position / 8];
+            let shift = 7 - (self.bit_position % 8);
+            value = (value << 1) | u32::from((byte >> shift) & 1);
+            self.bit_position += 1;
+        }
+        Ok(value)
+    }
+
+    fn skip_utf8_string(&mut self, channel: usize) -> Result<(), DecoderError> {
+        if self.bit_position % 8 != 0 {
+            return Err(DecoderError::Bitstream(format!(
+                "pixi channel {channel} label is not byte aligned"
+            )));
+        }
+        let mut cursor = self.bit_position / 8;
+        let Some(relative_end) = self.data[cursor..].iter().position(|byte| *byte == 0) else {
+            return Err(DecoderError::NotEnoughData(format!(
+                "pixi channel {channel} label is unterminated"
+            )));
+        };
+        cursor += relative_end + 1;
+        self.bit_position = cursor * 8;
+        Ok(())
+    }
 }
 
 fn parse_colr(payload: &[u8]) -> Result<ColorInformation, DecoderError> {
@@ -3372,6 +3519,94 @@ mod tests {
     }
 
     #[test]
+    fn parses_extended_pixi_channel_subsampling() {
+        let pixi = parse_pixi(&[
+            0, 0, 0, 1, // version and extended-pixi flag
+            3, 8, 8, 8, // three 8-bit channels
+            0x02, 0x00, // Y: subsampling type 0, location 0
+            0x02, 0x20, // U: subsampling type 2, location 0
+            0x02, 0x20, // V: subsampling type 2, location 0
+        ])
+        .unwrap();
+        assert_eq!(pixi.bits_per_channel, vec![8, 8, 8]);
+        assert_eq!(
+            pixi.extended_channels,
+            Some(vec![
+                PixelChannelInformation {
+                    channel_idc: 0,
+                    component_format: 0,
+                    subsampling: Some(PixelSubsampling {
+                        subsampling_type: 0,
+                        subsampling_location: 0,
+                    }),
+                },
+                PixelChannelInformation {
+                    channel_idc: 0,
+                    component_format: 0,
+                    subsampling: Some(PixelSubsampling {
+                        subsampling_type: 2,
+                        subsampling_location: 0,
+                    }),
+                },
+                PixelChannelInformation {
+                    channel_idc: 0,
+                    component_format: 0,
+                    subsampling: Some(PixelSubsampling {
+                        subsampling_type: 2,
+                        subsampling_location: 0,
+                    }),
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_extended_pixi_channel_fields() {
+        let base = vec![0, 0, 0, 1, 1, 8, 0x02, 0x00];
+        let mut version = base.clone();
+        version[0] = 1;
+        assert!(matches!(
+            parse_pixi(&version),
+            Err(DecoderError::Unsupported(message)) if message.contains("version")
+        ));
+
+        let mut flags = base.clone();
+        flags[3] = 2;
+        assert!(matches!(
+            parse_pixi(&flags),
+            Err(DecoderError::Unsupported(message)) if message.contains("flags")
+        ));
+
+        let mut channel_idc = base.clone();
+        channel_idc[6] = 0x22;
+        assert!(matches!(
+            parse_pixi(&channel_idc),
+            Err(DecoderError::Unsupported(message)) if message.contains("idc")
+        ));
+
+        let mut reserved = base.clone();
+        reserved[6] = 0x12;
+        assert!(matches!(
+            parse_pixi(&reserved),
+            Err(DecoderError::Bitstream(message)) if message.contains("reserved")
+        ));
+
+        let mut component_format = base.clone();
+        component_format[6] = 0x06;
+        assert!(matches!(
+            parse_pixi(&component_format),
+            Err(DecoderError::Unsupported(message)) if message.contains("component format")
+        ));
+
+        let mut subsampling_type = base;
+        subsampling_type[7] = 0x50;
+        assert!(matches!(
+            parse_pixi(&subsampling_type),
+            Err(DecoderError::Bitstream(message)) if message.contains("subsampling type")
+        ));
+    }
+
+    #[test]
     fn parses_alpha_auxiliary_item_metadata_and_payload() {
         let state = MetaState {
             primary_item_id: Some(1),
@@ -3530,6 +3765,7 @@ mod tests {
                 }),
                 ItemProperty::PixelInformation(PixelInformation {
                     bits_per_channel: vec![8, 8, 8],
+                    extended_channels: None,
                 }),
                 ItemProperty::Av1Config(vec![0x81, 0, 0, 0]),
                 ItemProperty::LayerSelector(1),
@@ -3629,6 +3865,7 @@ mod tests {
                 }),
                 ItemProperty::PixelInformation(PixelInformation {
                     bits_per_channel: vec![8, 8, 8],
+                    extended_channels: None,
                 }),
                 ItemProperty::Av1Config(vec![0x81, 0, 0, 0]),
                 ItemProperty::Other,
@@ -3903,6 +4140,7 @@ mod tests {
                 }),
                 ItemProperty::PixelInformation(PixelInformation {
                     bits_per_channel: vec![8, 8, 8],
+                    extended_channels: None,
                 }),
                 ItemProperty::Av1Config(vec![1, 2, 3]),
                 ItemProperty::ColorInformation(primary_color.clone()),
@@ -3912,6 +4150,7 @@ mod tests {
                 }),
                 ItemProperty::PixelInformation(PixelInformation {
                     bits_per_channel: vec![10],
+                    extended_channels: None,
                 }),
                 ItemProperty::Av1Config(vec![9]),
                 ItemProperty::ColorInformation(auxiliary_color),
@@ -3999,6 +4238,7 @@ mod tests {
                 }),
                 ItemProperty::PixelInformation(PixelInformation {
                     bits_per_channel: vec![16, 16, 16],
+                    extended_channels: None,
                 }),
             ],
             item_property_associations: vec![ItemPropertyAssociation {
@@ -4157,6 +4397,7 @@ mod tests {
                 }),
                 ItemProperty::PixelInformation(PixelInformation {
                     bits_per_channel: vec![8, 8, 8],
+                    extended_channels: None,
                 }),
                 ItemProperty::Av1Config(vec![1]),
             ],
