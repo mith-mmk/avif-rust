@@ -55,39 +55,89 @@ pub(crate) fn apply_to_rgba16(rgba: &mut [u16], profile: &[u8]) -> Result<(), De
             .ok_or_else(|| unsupported("ICC A2B tag is outside the profile"))?;
         if signature == b"mft1" || signature == b"mft2" {
             let profile = LutProfile::parse(profile, tag)?;
-            for pixel in rgba.chunks_exact_mut(4) {
-                profile.apply(pixel);
-            }
+            for_each_rgba16_chunk(rgba, |chunk| {
+                for pixel in chunk.chunks_exact_mut(4) {
+                    profile.apply(pixel);
+                }
+            });
             return Ok(());
         }
         if signature == b"mAB " || signature == b"mBA " {
             let profile = MabProfile::parse(profile, tag, signature == b"mBA ")?;
-            for pixel in rgba.chunks_exact_mut(4) {
-                profile.apply(pixel);
-            }
+            for_each_rgba16_chunk(rgba, |chunk| {
+                for pixel in chunk.chunks_exact_mut(4) {
+                    profile.apply(pixel);
+                }
+            });
             return Ok(());
         }
         return Err(unsupported("ICC A2B tag is not an mft1/mft2/mAB/mBA LUT"));
     }
     let profile = MatrixShaperProfile::parse(profile)?;
-    for pixel in rgba.chunks_exact_mut(4) {
-        let source = [
-            f64::from(pixel[0]) / f64::from(u16::MAX),
-            f64::from(pixel[1]) / f64::from(u16::MAX),
-            f64::from(pixel[2]) / f64::from(u16::MAX),
-        ];
-        let linear = [
-            profile.curves[0].decode(source[0]),
-            profile.curves[1].decode(source[1]),
-            profile.curves[2].decode(source[2]),
-        ];
-        let xyz = multiply(profile.to_xyz, linear);
-        let rgb = multiply(profile.xyz_to_srgb, xyz);
-        pixel[0] = encode_srgb(rgb[0]);
-        pixel[1] = encode_srgb(rgb[1]);
-        pixel[2] = encode_srgb(rgb[2]);
-    }
+    for_each_rgba16_chunk(rgba, |chunk| {
+        for pixel in chunk.chunks_exact_mut(4) {
+            let source = [
+                f64::from(pixel[0]) / f64::from(u16::MAX),
+                f64::from(pixel[1]) / f64::from(u16::MAX),
+                f64::from(pixel[2]) / f64::from(u16::MAX),
+            ];
+            let linear = [
+                profile.curves[0].decode(source[0]),
+                profile.curves[1].decode(source[1]),
+                profile.curves[2].decode(source[2]),
+            ];
+            let xyz = multiply(profile.to_xyz, linear);
+            let rgb = multiply(profile.xyz_to_srgb, xyz);
+            pixel[0] = encode_srgb(rgb[0]);
+            pixel[1] = encode_srgb(rgb[1]);
+            pixel[2] = encode_srgb(rgb[2]);
+        }
+    });
     Ok(())
+}
+
+#[cfg(not(target_family = "wasm"))]
+const PARALLEL_RGBA16_MIN_PIXELS: usize = 256 * 1024;
+#[cfg(not(target_family = "wasm"))]
+const MAX_RGBA16_WORKERS: usize = 8;
+
+fn for_each_rgba16_chunk<F>(rgba: &mut [u16], function: F)
+where
+    F: Fn(&mut [u16]) + Sync,
+{
+    let pixel_count = rgba.len() / 4;
+    if pixel_count == 0 {
+        return;
+    }
+    #[cfg(not(target_family = "wasm"))]
+    let workers = if pixel_count < PARALLEL_RGBA16_MIN_PIXELS {
+        1
+    } else {
+        std::thread::available_parallelism()
+            .map_or(1, std::num::NonZeroUsize::get)
+            .min(MAX_RGBA16_WORKERS)
+            .min(pixel_count)
+    };
+    #[cfg(target_family = "wasm")]
+    let workers = 1;
+    if workers <= 1 {
+        function(rgba);
+        return;
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    {
+        let pixels_per_worker = pixel_count.div_ceil(workers);
+        let samples_per_chunk = pixels_per_worker * 4;
+        std::thread::scope(|scope| {
+            for chunk in rgba.chunks_mut(samples_per_chunk) {
+                let function = &function;
+                scope.spawn(move || function(chunk));
+            }
+        });
+    }
+    #[cfg(target_family = "wasm")]
+    unreachable!("Wasm uses the sequential ICC RGBA path");
 }
 
 impl LutProfile {
@@ -973,6 +1023,30 @@ fn unsupported(message: impl Into<String>) -> DecoderError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parallel_rgba16_chunks_match_sequential_layout() {
+        let mut actual = vec![0u16; (256 * 1024 + 17) * 4];
+        for (index, sample) in actual.iter_mut().enumerate() {
+            *sample = (index as u16).wrapping_mul(257);
+        }
+        let mut expected = actual.clone();
+        for pixel in expected.chunks_exact_mut(4) {
+            pixel[0] = pixel[0].wrapping_add(1);
+            pixel[1] = pixel[1].wrapping_mul(3);
+            pixel[2] ^= 0x55aa;
+            pixel[3] = u16::MAX;
+        }
+        for_each_rgba16_chunk(&mut actual, |chunk| {
+            for pixel in chunk.chunks_exact_mut(4) {
+                pixel[0] = pixel[0].wrapping_add(1);
+                pixel[1] = pixel[1].wrapping_mul(3);
+                pixel[2] ^= 0x55aa;
+                pixel[3] = u16::MAX;
+            }
+        });
+        assert_eq!(actual, expected);
+    }
 
     const SRGB_D50_TO_XYZ: [[f64; 3]; 3] = [
         [0.4360747, 0.3850649, 0.1430804],

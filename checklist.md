@@ -1277,3 +1277,9 @@ fixtures (including unsupported `tmap` metadata versions). Each file must
 still produce a complete base RGBA image with exact dimensions; HDR gain-map
 tone mapping remains intentionally outside the current RGBA API and is
 tracked separately from AV1 decode support.
+
+ICC matrix-shaper, LUT, and mAB/mBA profile application now reuse the native
+RGBA16 row-chunk scheduler used by AV1 colour conversion. Large ICC-bearing
+frames therefore avoid a single-threaded per-pixel post-processing pass while
+Wasm remains sequential; a 1,048,593-pixel equivalence vector covers the
+parallel chunk boundary and preserves alpha/output ordering.
