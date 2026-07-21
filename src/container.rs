@@ -5,6 +5,7 @@ use crate::obu::{ObuType, parse_obu_stream};
 
 const BRAND_AVIF: &[u8; 4] = b"avif";
 const BRAND_AVIS: &[u8; 4] = b"avis";
+const BRAND_AVIO: &[u8; 4] = b"avio";
 const ALPHA_AUX_TYPE: &str = "urn:mpeg:mpegB:cicp:systems:auxiliary:alpha";
 
 /// The coded-frame kind found in one AVIS track sample.
@@ -387,7 +388,7 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
 }
 
 fn brand_is_avif(brand: &[u8; 4]) -> bool {
-    brand == BRAND_AVIF || brand == BRAND_AVIS
+    brand == BRAND_AVIF || brand == BRAND_AVIS || brand == BRAND_AVIO
 }
 
 fn parse_ftyp(data: &[u8]) -> Result<([u8; 4], Vec<[u8; 4]>), DecoderError> {

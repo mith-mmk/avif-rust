@@ -151,6 +151,20 @@ fn sample_container_metadata_is_exposed_through_public_api() {
 }
 
 #[test]
+fn avio_major_brand_is_accepted_for_intra_only_image_items() {
+    let mut data = sample_avif();
+    assert_eq!(&data[4..8], b"ftyp");
+    data[8..12].copy_from_slice(b"avio");
+
+    assert!(is_avif_file(&data));
+    let info = parse_avif(&data).expect("AVIO-branded image should parse");
+    assert_eq!(&info.major_brand, b"avio");
+    assert_eq!(info.sequence_sample_payloads.len(), 0);
+    let frame = avif_rust::decode_frame_bytes(&data).expect("AVIO image should decode");
+    assert_eq!((frame.width, frame.height), (900, 900));
+}
+
+#[test]
 fn public_obu_helpers_find_sample_frame_payloads() {
     let data = sample_avif();
     let info = parse_avif(&data).unwrap();

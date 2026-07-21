@@ -1230,3 +1230,9 @@ seven-iteration optimized run on the same generated 16-frame 1024x1024 sample
 measured `151.03 ms` native and `165.27 ms` RGBA (previous checkpoint:
 `153.06/166.45 ms`); host noise is significant, so this remains a local
 allocation/reuse checkpoint rather than a stable percentage claim.
+
+The `avio` AVIF brand is now accepted in `ftyp` validation, covering the
+intra-only image-item profile used by newer AVIF writers. A regression test
+mutates the checked-in still-image sample to an `avio` major brand and verifies
+metadata parsing plus full-frame decode; `avis` remains the sequence brand that
+activates track-sample extraction.
