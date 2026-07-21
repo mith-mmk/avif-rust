@@ -1375,3 +1375,12 @@ The same five-iteration release benchmark after the parser change measured
 extension does not add a measurable cost to the normal large-frame decode;
 the numbers remain host-specific checkpoints rather than a cross-machine
 speedup claim.
+
+The unsupported-sample regression gate now recursively enumerates every
+`.avif`/`.avifs` file below `test/images/external/avif/unsupported`, including
+nested fixture directories. Optional external samples and FFmpeg oracles now
+continue to the remaining cases when unavailable instead of aborting the whole
+matrix. The complete-output and dimension checks remain unchanged. A fresh
+five-iteration benchmark measured `243.25/241.89 ms` for `WML2Viewer.avif`
+and `0.0102/0.0105 ms` for `extended_pixi.avif` (native/RGBA); these are local
+checkpoints and show no regression from the audit-only changes.

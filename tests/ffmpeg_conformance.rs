@@ -2997,7 +2997,7 @@ fn public_additional_official_samples_match_ffmpeg_when_present() {
         let path = root.join(name);
         if !path.is_file() {
             eprintln!("additional official sample is unavailable; skipping {name}");
-            return;
+            continue;
         }
         let data = std::fs::read(&path).expect("official sample should be readable");
         let actual = avif_rust::image_from_bytes(&data)
@@ -3006,7 +3006,7 @@ fn public_additional_official_samples_match_ffmpeg_when_present() {
         if name == "extended_pixi.avif" {
             let frame = avif_rust::decode_frame_bytes(&data).expect("extended pixi frame");
             let Some(expected) = ffmpeg_decode_raw(&path, "yuv420p") else {
-                return;
+                continue;
             };
             let expected_lengths = [16, 4, 4];
             assert_eq!(expected.len(), expected_lengths.iter().sum());
@@ -3052,7 +3052,7 @@ fn public_additional_official_samples_match_ffmpeg_when_present() {
             continue;
         }
         let Some(expected) = ffmpeg_decode_rgba_dynamic(&path, width, height) else {
-            return;
+            continue;
         };
         let metrics = diff_rgb_dynamic(&actual.rgba, &expected);
         eprintln!(
@@ -3133,27 +3133,13 @@ fn all_official_unsupported_samples_decode_without_partial_output() {
 }
 
 #[test]
-fn every_top_level_external_unsupported_sample_decodes_completely() {
+fn every_external_unsupported_sample_decodes_completely() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root should exist")
         .join("test/images/external/avif/unsupported");
-    let mut paths = std::fs::read_dir(&root)
-        .ok()
-        .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.is_file()
-                && path
-                    .extension()
-                    .and_then(|extension| extension.to_str())
-                    .is_some_and(|extension| {
-                        matches!(extension.to_ascii_lowercase().as_str(), "avif" | "avifs")
-                    })
-        })
-        .collect::<Vec<_>>();
+    let mut paths = Vec::new();
+    collect_external_unsupported_samples(&root, &mut paths);
     if paths.is_empty() {
         eprintln!("external unsupported sample directory is unavailable; skipping dynamic audit");
         return;
@@ -3174,6 +3160,29 @@ fn every_top_level_external_unsupported_sample_decodes_completely() {
             "{} has partial RGBA output",
             path.display()
         );
+    }
+}
+
+fn collect_external_unsupported_samples(root: &Path, output: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries {
+        let entry = entry.expect("external unsupported sample directory should be readable");
+        let path = entry.path();
+        if path.is_dir() {
+            collect_external_unsupported_samples(&path, output);
+            continue;
+        }
+        let is_avif = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                matches!(extension.to_ascii_lowercase().as_str(), "avif" | "avifs")
+            });
+        if is_avif {
+            output.push(path);
+        }
     }
 }
 
