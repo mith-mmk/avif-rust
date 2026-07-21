@@ -3242,5 +3242,23 @@ fn external_gainmap_samples_keep_complete_base_decode() {
             "{name} dimensions"
         );
         assert_eq!(image.rgba.len(), width * height * 4, "{name} complete RGBA");
+
+        let gain_map_metadata = avif_rust::parse_gain_map_metadata(&data);
+        if name.starts_with("seine_") {
+            assert!(
+                gain_map_metadata
+                    .expect("supported gain-map metadata should parse")
+                    .is_some(),
+                "{name} should expose a tmap descriptor"
+            );
+        } else if name == "unsupported_gainmap_minimum_version.avif" {
+            assert!(
+                matches!(
+                    gain_map_metadata,
+                    Err(avif_rust::DecoderError::Unsupported(_))
+                ),
+                "{name} should fail closed on its descriptor minimum version"
+            );
+        }
     }
 }
