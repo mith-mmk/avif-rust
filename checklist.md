@@ -1333,6 +1333,12 @@ RGBA frames (up to eight workers), while Wasm and small images retain the
 sequential path to avoid thread overhead. A subsampled alpha regression vector
 verifies that row chunking preserves the one-pass output and alpha coordinates.
 
+Sequence alpha composition now borrows the decoded auxiliary frame while
+cloning only its single plane for each output frame. This removes a full
+`DecodedFrame` clone per animation sample without changing the public alpha
+plane contract; the existing alpha and sequence integration tests cover the
+regression path.
+
 RGBA16 identity-plane conversion and PQ/HLG transfer application now share the
 same native row-chunk scheduler; Wasm remains sequential. A 640x512 transfer
 equivalence vector covers chunk boundaries. A three-iteration multi-sample

@@ -101,7 +101,7 @@ pub fn decode<B: BinaryReader>(
         if !info.alpha_auxiliary_items.is_empty() {
             let alpha_frame = decode_alpha_auxiliary_frame(&info)?;
             for frame in &mut frames {
-                append_alpha_plane(frame, alpha_frame.clone())?;
+                append_alpha_plane(frame, &alpha_frame)?;
             }
         }
         let mut images = Vec::with_capacity(frames.len());
@@ -297,7 +297,7 @@ pub fn decode_frame_bytes(data: &[u8]) -> Result<DecodedFrame, DecoderError> {
     };
     if !info.alpha_auxiliary_items.is_empty() {
         let alpha_frame = decode_alpha_auxiliary_frame(&info)?;
-        append_alpha_plane(&mut frame, alpha_frame)?;
+        append_alpha_plane(&mut frame, &alpha_frame)?;
     }
     Ok(frame)
 }
@@ -318,7 +318,7 @@ pub fn decode_sequence_frame_bytes(
     let mut frame = decode_sequence_frame_from_info(&info, frame_index)?;
     if !info.alpha_auxiliary_items.is_empty() {
         let alpha_frame = decode_alpha_auxiliary_frame(&info)?;
-        append_alpha_plane(&mut frame, alpha_frame)?;
+        append_alpha_plane(&mut frame, &alpha_frame)?;
     }
     Ok(frame)
 }
@@ -335,7 +335,7 @@ pub fn decode_sequence_frames_bytes(data: &[u8]) -> Result<Vec<DecodedFrame>, De
     if !info.alpha_auxiliary_items.is_empty() {
         let alpha_frame = decode_alpha_auxiliary_frame(&info)?;
         for frame in &mut frames {
-            append_alpha_plane(frame, alpha_frame.clone())?;
+            append_alpha_plane(frame, &alpha_frame)?;
         }
     }
     Ok(frames)
@@ -1397,7 +1397,7 @@ fn decode_grid_frame(info: &AvifInfo) -> Result<DecodedFrame, DecoderError> {
         append_alpha_plane_buffer(&mut frame, alpha_plane, alpha_bit_depth)?;
     } else if !info.alpha_auxiliary_items.is_empty() {
         let alpha_frame = decode_alpha_auxiliary_frame(info)?;
-        append_alpha_plane(&mut frame, alpha_frame)?;
+        append_alpha_plane(&mut frame, &alpha_frame)?;
     }
     apply_native_grid_geometry(&mut frame, info)?;
     Ok(frame)
@@ -1985,7 +1985,7 @@ fn decode_grid_cell_frame(info: &AvifInfo, cell: &GridCell) -> Result<DecodedFra
 
 fn append_alpha_plane(
     frame: &mut DecodedFrame,
-    alpha_frame: DecodedFrame,
+    alpha_frame: &DecodedFrame,
 ) -> Result<(), DecoderError> {
     if alpha_frame.width != frame.width || alpha_frame.height != frame.height {
         return Err(DecoderError::Bitstream(
@@ -2639,7 +2639,7 @@ fn decode_sample_transform_frame(
         append_alpha_plane_buffer(&mut output, alpha_plane, alpha_bit_depth)?;
     } else if !info.alpha_auxiliary_items.is_empty() {
         let alpha_frame = decode_alpha_auxiliary_frame(info)?;
-        append_alpha_plane(&mut output, alpha_frame)?;
+        append_alpha_plane(&mut output, &alpha_frame)?;
     }
     Ok(Some(output))
 }
