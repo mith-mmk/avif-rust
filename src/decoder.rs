@@ -264,11 +264,12 @@ impl DecodedFrame {
 
     /// Applies an explicitly decoded ISO 21496 gain map to this frame.
     ///
-    /// The base and gain-map frames must have matching dimensions and the
-    /// metadata must use the base colour space. `hdr_headroom` is expressed in
-    /// log2 headroom units; a value at the base headroom returns the base RGBA16
-    /// image unchanged. The default AVIF decode path never applies this method
-    /// implicitly.
+    /// The base and gain-map frames must have matching dimensions. Base-colour
+    /// maps and alternate maps with an identical decoded colour configuration
+    /// are supported; genuinely different alternate spaces fail closed.
+    /// `hdr_headroom` is expressed in log2 headroom units; a value at the base
+    /// headroom returns the base RGBA16 image unchanged. The default AVIF
+    /// decode path never applies this method implicitly.
     pub fn to_rgba16_with_gain_map(
         &self,
         gain_map: &DecodedGainMapFrame,
