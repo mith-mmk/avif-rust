@@ -378,19 +378,29 @@ fn frame_buffers_to_rgba_8_high_bit_sdr(
         let plane_g = &buffers.planes[0].samples;
         let plane_b = &buffers.planes[1].samples;
         let plane_r = &buffers.planes[2].samples;
-        for (index, pixel) in rgba.chunks_exact_mut(4).enumerate() {
-            pixel[0] = u16_to_u8(scale_sample_to_u16(plane_r[index], max_source));
-            pixel[1] = u16_to_u8(scale_sample_to_u16(plane_g[index], max_source));
-            pixel[2] = u16_to_u8(scale_sample_to_u16(plane_b[index], max_source));
-            pixel[3] = u16_to_u8(scale_sample_to_u16(
-                buffers
-                    .planes
-                    .get(3)
-                    .map(|plane| plane.samples[index])
-                    .unwrap_or(u16::try_from(max_source).unwrap_or(u16::MAX)),
-                max_source,
-            ));
-        }
+        let alpha = buffers.planes.get(3);
+        for_each_rgba_row_chunk(
+            &mut rgba,
+            buffers.width,
+            buffers.height,
+            |first_row, chunk| {
+                for (row_offset, row) in chunk.chunks_exact_mut(buffers.width * 4).enumerate() {
+                    let y = first_row + row_offset;
+                    for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                        let index = y * buffers.width + x;
+                        pixel[0] = u16_to_u8(scale_sample_to_u16(plane_r[index], max_source));
+                        pixel[1] = u16_to_u8(scale_sample_to_u16(plane_g[index], max_source));
+                        pixel[2] = u16_to_u8(scale_sample_to_u16(plane_b[index], max_source));
+                        pixel[3] = u16_to_u8(scale_sample_to_u16(
+                            alpha
+                                .map(|plane| plane.samples[index])
+                                .unwrap_or(u16::try_from(max_source).unwrap_or(u16::MAX)),
+                            max_source,
+                        ));
+                    }
+                }
+            },
+        );
         return Ok(Some(ImageBuffer {
             width: buffers.width,
             height: buffers.height,
@@ -1695,6 +1705,73 @@ mod tests {
         assert_eq!(
             image.rgba,
             vec![2570, 7710, 12850, u16::MAX, 5140, 10280, 15420, u16::MAX]
+        );
+    }
+
+    #[test]
+    fn rgba8_high_bit_identity_gbr_preserves_channel_order_and_alpha() {
+        let layout = PlaneLayout {
+            plane: 0,
+            width: 2,
+            height: 1,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 2,
+        };
+        let buffers = FrameBuffers {
+            width: 2,
+            height: 1,
+            planes: vec![
+                PlaneBuffer {
+                    layout,
+                    samples: vec![128, 512],
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout { plane: 1, ..layout },
+                    samples: vec![256, 768],
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout { plane: 2, ..layout },
+                    samples: vec![900, 64],
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout { plane: 3, ..layout },
+                    samples: vec![1023, 128],
+                },
+            ],
+        };
+        let color_config = ColorConfig {
+            high_bitdepth: true,
+            twelve_bit: false,
+            bit_depth: 10,
+            monochrome: false,
+            color_description: Some(ColorDescription {
+                color_primaries: 1,
+                transfer_characteristics: 13,
+                matrix_coefficients: 3,
+            }),
+            color_range: ColorRange::Full,
+            subsampling_x: false,
+            subsampling_y: false,
+            chroma_sample_position: None,
+            separate_uv_delta_q: false,
+        };
+
+        let image = frame_buffers_to_rgba_8(&buffers, &color_config).unwrap();
+
+        let scale = |sample| u16_to_u8(scale_sample_to_u16(sample, 1023));
+        assert_eq!(
+            image.rgba,
+            vec![
+                scale(900),
+                scale(128),
+                scale(256),
+                255,
+                scale(64),
+                scale(512),
+                scale(768),
+                scale(128),
+            ]
         );
     }
 

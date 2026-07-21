@@ -1100,7 +1100,7 @@ fn close_to_white(actual: [f64; 3], expected: [f64; 3]) -> bool {
 }
 
 fn is_supported_device_class(class: &[u8]) -> bool {
-    matches!(class, b"mntr" | b"prtr" | b"spac")
+    matches!(class, b"scnr" | b"mntr" | b"prtr" | b"spac")
 }
 
 fn read_u16(data: &[u8], offset: usize) -> Result<u16, DecoderError> {
@@ -1462,7 +1462,7 @@ mod tests {
 
     #[test]
     fn gray_profile_applies_tone_curve_and_preserves_alpha() {
-        for class in [*b"mntr", *b"prtr", *b"spac"] {
+        for class in [*b"scnr", *b"mntr", *b"prtr", *b"spac"] {
             let mut profile = synthetic_gray_profile();
             profile[12..16].copy_from_slice(&class);
             let mut rgba = [32_768, 32_768, 32_768, 12_345];

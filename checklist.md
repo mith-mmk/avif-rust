@@ -1465,3 +1465,11 @@ preserving the exact existing output. Two five-iteration checks measured
 `2.01/2.13 ms` and `1.92/2.11 ms` (native/RGBA) for the external alpha sample,
 and `56.40/56.31 ms` and `56.02/56.66 ms` for the external monochrome sample;
 these are same-host checkpoints, not cross-machine speedup claims.
+
+ICC matrix-shaper and GRAY profiles from the input-device `scnr` class are now
+accepted alongside display/output/colour-space classes because they use the
+same validated RGB/XYZ or GRAY/XYZ transform contracts. The real embedded ICC
+sample is mutated to both `spac` and `scnr` in the external regression gate and
+must produce byte-identical RGBA output. High-bit-depth identity GBR RGBA8
+conversion now uses the native row-chunk scheduler; its channel-order and
+alpha mapping are pinned by a focused 10-bit regression vector.
