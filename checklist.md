@@ -1281,6 +1281,12 @@ official sample measured `396.10 ms` native / `445.70 ms` RGBA on this host;
 the result is a local allocation-reuse checkpoint rather than a stable
 cross-machine speedup claim.
 
+The skip reconstruction branch now consumes its transform iterator directly
+after the duplicate boundary scan was removed, avoiding the remaining
+iterator clone on that hot path. A seven-iteration release recheck measured
+`158.64/161.48 ms` (native/RGBA) for `WML2Viewer.avif`; this remains a
+same-host reference point.
+
 Sato-derived color output now also carries the primary item's auxiliary alpha
 plane (including an alpha grid) when present, preserving the existing
 native-plane and RGBA alpha contract instead of rejecting the derived color
@@ -1417,6 +1423,11 @@ YUV422 in addition to the 10-bit variants. Both native bit-depth assertions
 and FFmpeg RGBA oracles pass; the 12-bit samples measured average/max RGB
 errors `1.4553/38` (420) and `1.2152/10` (422). This closes the previously
 untested 12-bit subsampled decode boundary.
+
+The same generated matrix now includes a 12-bit monochrome (`gray12le`) AVIF;
+native bit depth and public grayscale RGBA output pass the FFmpeg oracle with
+average/max RGB error `0.2839/1`. This covers the high-bit-depth
+single-plane path in addition to the 4:2:0 and 4:2:2 cases.
 
 The normal reconstruction path no longer walks each transform geometry once
 just to pre-register a zero-valued filter boundary and then walks it again to

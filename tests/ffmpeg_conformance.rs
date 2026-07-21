@@ -1235,6 +1235,11 @@ fn generated_12bit_yuv422_sample_matches_ffmpeg_when_encoder_is_present() {
     generated_subsampled_sample_matches_ffmpeg("yuv422p12le", "12bit-yuv422", 12);
 }
 
+#[test]
+fn generated_12bit_monochrome_sample_matches_ffmpeg_when_encoder_is_present() {
+    generated_subsampled_sample_matches_ffmpeg("gray12le", "12bit-monochrome", 12);
+}
+
 fn generated_subsampled_sample_matches_ffmpeg(pixel_format: &str, label: &str, bit_depth: u8) {
     let root = std::env::temp_dir().join(format!(".test-avif-{label}-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {

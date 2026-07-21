@@ -127,10 +127,7 @@ pub(super) fn decode_plane_block_unit(
             && transform.y < unit_y.saturating_add(unit_height)
     };
     if block_mode.skip {
-        for transform in transforms
-            .clone()
-            .filter(|transform| transform_in_unit(transform))
-        {
+        for transform in transforms.filter(|transform| transform_in_unit(transform)) {
             decoder.record_transform_boundary(transform, TxType::DctDct, 0);
             decoder.set_txb_entropy_context(transform, 0);
             let (top_right_available, bottom_left_available) =
