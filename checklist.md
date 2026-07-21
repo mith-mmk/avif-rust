@@ -1487,3 +1487,9 @@ items. Grid cells are composed through the existing native grid decoder before
 the sample-transform expression runs; malformed or dimension-inconsistent
 inputs remain fail-closed. This covers the AVIF 1.2 grid-input form without
 weakening the same-dimensions requirement for sample-transform operands.
+
+Inter/Switch frame headers now consume the AV1 reference-index signalling,
+`frame_size_with_refs` probe, high-precision-MV, interpolation, motion-mode,
+and reference-frame-MV flags before reaching the existing fail-closed decode
+boundary. Reference-backed dimensions and motion reconstruction remain the
+next implementation step; no Inter/Switch frame is emitted partially.

@@ -65,6 +65,7 @@ pub struct SequenceHeader {
     pub order_hint_bits: u8,
     pub seq_force_screen_content_tools: u8,
     pub seq_force_integer_mv: u8,
+    pub enable_ref_frame_mvs: bool,
     pub enable_superres: bool,
     pub enable_cdef: bool,
     pub enable_restoration: bool,
@@ -138,6 +139,7 @@ pub fn parse_sequence_header(data: &[u8]) -> Result<SequenceHeader, DecoderError
         order_hint_bits: inter_tools.order_hint_bits,
         seq_force_screen_content_tools: inter_tools.seq_force_screen_content_tools,
         seq_force_integer_mv: inter_tools.seq_force_integer_mv,
+        enable_ref_frame_mvs: inter_tools.enable_ref_frame_mvs,
         enable_superres,
         enable_cdef,
         enable_restoration,
@@ -207,6 +209,7 @@ fn parse_operating_points(reader: &mut BitReader<'_>) -> Result<u8, DecoderError
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct InterTools {
     enable_order_hint: bool,
+    enable_ref_frame_mvs: bool,
     order_hint_bits: u8,
     seq_force_screen_content_tools: u8,
     seq_force_integer_mv: u8,
@@ -228,9 +231,12 @@ fn parse_inter_tools(reader: &mut BitReader<'_>) -> Result<InterTools, DecoderEr
     let _enable_warped_motion = reader.read_bool("enable_warped_motion")?;
     let _enable_dual_filter = reader.read_bool("enable_dual_filter")?;
     let enable_order_hint = reader.read_bool("enable_order_hint")?;
+    let enable_ref_frame_mvs;
     if enable_order_hint {
         let _enable_jnt_comp = reader.read_bool("enable_jnt_comp")?;
-        let _enable_ref_frame_mvs = reader.read_bool("enable_ref_frame_mvs")?;
+        enable_ref_frame_mvs = reader.read_bool("enable_ref_frame_mvs")?;
+    } else {
+        enable_ref_frame_mvs = false;
     }
 
     let seq_choose_screen_content_tools = reader.read_bool("seq_choose_screen_content_tools")?;
@@ -253,6 +259,7 @@ fn parse_inter_tools(reader: &mut BitReader<'_>) -> Result<InterTools, DecoderEr
     };
     Ok(InterTools {
         enable_order_hint,
+        enable_ref_frame_mvs,
         order_hint_bits,
         seq_force_screen_content_tools,
         seq_force_integer_mv,

@@ -4655,6 +4655,7 @@ mod av1_config_tests {
             order_hint_bits: 0,
             seq_force_screen_content_tools: 0,
             seq_force_integer_mv: 0,
+            enable_ref_frame_mvs: false,
             enable_superres: false,
             enable_cdef: false,
             enable_restoration: false,

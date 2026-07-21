@@ -51,6 +51,7 @@ fn sample_sequence_header() -> SequenceHeader {
         order_hint_bits: 7,
         seq_force_screen_content_tools: 2,
         seq_force_integer_mv: 2,
+        enable_ref_frame_mvs: false,
         enable_superres: false,
         enable_cdef: false,
         enable_restoration: false,

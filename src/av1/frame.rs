@@ -39,6 +39,13 @@ pub struct FrameHeader {
     pub order_hint: u32,
     pub primary_ref_frame: u8,
     pub refresh_frame_flags: u8,
+    /// Reference slots signalled by an inter/switch frame.  The seven entries
+    /// correspond to LAST..ALTREF in AV1 reference-frame order.
+    pub reference_frame_indices: [u8; 7],
+    pub frame_refs_short_signaling: bool,
+    pub allow_high_precision_mv: bool,
+    pub is_motion_mode_switchable: bool,
+    pub use_ref_frame_mvs: bool,
     pub frame_width: u32,
     pub frame_height: u32,
     pub upscaled_width: u32,
@@ -155,6 +162,11 @@ pub fn parse_frame_header(
             order_hint: 0,
             primary_ref_frame: 7,
             refresh_frame_flags: 0xff,
+            reference_frame_indices: [0; 7],
+            frame_refs_short_signaling: false,
+            allow_high_precision_mv: false,
+            is_motion_mode_switchable: false,
+            use_ref_frame_mvs: false,
             frame_width: frame_size.width,
             frame_height: frame_size.height,
             upscaled_width: frame_size.upscaled_width,
@@ -224,20 +236,65 @@ pub fn parse_frame_header(
         reader.read_bits(8, "refresh_frame_flags")? as u8
     };
 
-    if !matches!(frame_type, FrameType::Key | FrameType::IntraOnly) {
-        return Err(DecoderError::Unsupported(format!(
-            "{frame_type:?} AV1 frames are not supported yet"
-        )));
-    }
+    let frame_is_intra = frame_type_is_intra(frame_type);
+    let mut reference_frame_indices = [0; 7];
+    let mut frame_refs_short_signaling = false;
+    let mut allow_high_precision_mv = false;
+    let mut is_motion_mode_switchable = false;
+    let mut use_ref_frame_mvs = false;
 
-    let frame_size = parse_frame_size(&mut reader, sequence, frame_size_override_flag)?;
-    let render_size = parse_render_size(&mut reader, frame_size.width, frame_size.height)?;
-    let allow_intrabc =
-        if allow_screen_content_tools && frame_size.upscaled_width == frame_size.width {
-            reader.read_bool("allow_intrabc")?
+    let (frame_size, render_size, allow_intrabc) = if frame_is_intra {
+        let frame_size = parse_frame_size(&mut reader, sequence, frame_size_override_flag)?;
+        let render_size = parse_render_size(&mut reader, frame_size.width, frame_size.height)?;
+        let allow_intrabc =
+            if allow_screen_content_tools && frame_size.upscaled_width == frame_size.width {
+                reader.read_bool("allow_intrabc")?
+            } else {
+                false
+            };
+        (frame_size, render_size, allow_intrabc)
+    } else {
+        (frame_refs_short_signaling, reference_frame_indices) =
+            parse_inter_reference_indices(&mut reader, sequence.enable_order_hint)?;
+        if sequence.frame_id_numbers_present {
+            return Err(DecoderError::Unsupported(
+                "AV1 inter-frame ids are not supported yet".to_string(),
+            ));
+        }
+        let frame_size = if frame_size_override_flag && !error_resilient_mode {
+            let mut found_ref = false;
+            for _ in 0..7 {
+                if reader.read_bool("found_ref")? {
+                    found_ref = true;
+                }
+            }
+            if found_ref {
+                return Err(DecoderError::Unsupported(
+                    "AV1 frame_size_with_refs needs reference dimensions".to_string(),
+                ));
+            }
+            parse_frame_size(&mut reader, sequence, frame_size_override_flag)?
         } else {
-            false
+            parse_frame_size(&mut reader, sequence, frame_size_override_flag)?
         };
+        let render_size = parse_render_size(&mut reader, frame_size.width, frame_size.height)?;
+        allow_high_precision_mv = if force_integer_mv != 0 {
+            false
+        } else {
+            reader.read_bool("allow_high_precision_mv")?
+        };
+        let is_filter_switchable = reader.read_bool("is_filter_switchable")?;
+        if !is_filter_switchable {
+            let _interpolation_filter = reader.read_bits(2, "interpolation_filter")?;
+        }
+        is_motion_mode_switchable = reader.read_bool("is_motion_mode_switchable")?;
+        use_ref_frame_mvs = if error_resilient_mode || !sequence.enable_ref_frame_mvs {
+            false
+        } else {
+            reader.read_bool("use_ref_frame_mvs")?
+        };
+        (frame_size, render_size, false)
+    };
     let disable_frame_end_update_cdf = reader.read_bool("disable_frame_end_update_cdf")?;
     let tile_info = parse_tile_info(&mut reader, sequence, frame_size.width, frame_size.height)?;
     let trailing = parse_frame_header_trailing_params(
@@ -267,6 +324,11 @@ pub fn parse_frame_header(
         order_hint,
         primary_ref_frame,
         refresh_frame_flags,
+        reference_frame_indices,
+        frame_refs_short_signaling,
+        allow_high_precision_mv,
+        is_motion_mode_switchable,
+        use_ref_frame_mvs,
         frame_width: frame_size.width,
         frame_height: frame_size.height,
         upscaled_width: frame_size.upscaled_width,
@@ -553,6 +615,27 @@ fn parse_frame_size(
         height,
         upscaled_width,
     })
+}
+
+fn parse_inter_reference_indices(
+    reader: &mut BitReader<'_>,
+    enable_order_hint: bool,
+) -> Result<(bool, [u8; 7]), DecoderError> {
+    let frame_refs_short_signaling = if enable_order_hint {
+        reader.read_bool("frame_refs_short_signaling")?
+    } else {
+        false
+    };
+    let mut reference_frame_indices = [0; 7];
+    if frame_refs_short_signaling {
+        reference_frame_indices[0] = reader.read_bits(3, "last_frame_idx")? as u8;
+        reference_frame_indices[3] = reader.read_bits(3, "golden_frame_idx")? as u8;
+    } else {
+        for reference in &mut reference_frame_indices {
+            *reference = reader.read_bits(3, "ref_frame_idx")? as u8;
+        }
+    }
+    Ok((frame_refs_short_signaling, reference_frame_indices))
 }
 
 fn parse_render_size(
@@ -1114,8 +1197,9 @@ fn frame_type_is_intra(frame_type: FrameType) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        LoopFilterParams, SegmentationParams, parse_segmentation_params,
-        parse_show_existing_frame_index, read_inv_signed_literal, read_signed_delta,
+        LoopFilterParams, SegmentationParams, parse_inter_reference_indices,
+        parse_segmentation_params, parse_show_existing_frame_index, read_inv_signed_literal,
+        read_signed_delta,
     };
     use crate::av1::bitstream::BitReader;
 
@@ -1127,6 +1211,25 @@ mod tests {
             }
         }
         data
+    }
+
+    #[test]
+    fn parses_inter_reference_indices_for_both_signalling_modes() {
+        let (short, indices) = parse_inter_reference_indices(&mut BitReader::new(&[0; 4]), false)
+            .expect("explicit inter references should parse");
+        assert!(!short);
+        assert_eq!(indices, [0; 7]);
+
+        let mut bits = Vec::new();
+        bits.push(true);
+        push_unsigned(&mut bits, 3, 3);
+        push_unsigned(&mut bits, 5, 3);
+        let (short, indices) =
+            parse_inter_reference_indices(&mut BitReader::new(&bits_to_bytes(&bits)), true)
+                .expect("short inter references should parse");
+        assert!(short);
+        assert_eq!(indices[0], 3);
+        assert_eq!(indices[3], 5);
     }
 
     fn push_unsigned(bits: &mut Vec<bool>, value: u32, width: usize) {
