@@ -1431,6 +1431,10 @@ fn normalized_to_u16_fast(value: f32) -> u16 {
 fn scale_sample_to_u16(sample: u16, max_source: u32) -> u16 {
     if max_source == u32::from(u16::MAX) {
         sample
+    } else if max_source == 255 {
+        // The common 8-bit SDR path has an exact bit replication mapping;
+        // avoid a 32-bit divide for every luma/chroma/alpha sample.
+        (sample << 8) | sample
     } else {
         ((u32::from(sample) * u32::from(u16::MAX) + (max_source / 2)) / max_source) as u16
     }
@@ -1501,6 +1505,17 @@ mod tests {
         let mut actual = source;
         apply_transfer_function_rows(&mut actual, width, height, TransferFunction::Pq);
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn eight_bit_sample_scaling_uses_exact_u16_replication() {
+        for sample in [0, 1, 17, 128, 254, 255] {
+            assert_eq!(
+                scale_sample_to_u16(sample, 255),
+                (sample << 8) | sample,
+                "8-bit sample {sample} should map by bit replication"
+            );
+        }
     }
 
     #[test]

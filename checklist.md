@@ -1401,3 +1401,10 @@ before walking the RGBA pixels, avoiding repeated metadata division in the
 post-decode loop. A fresh five-iteration `WML2Viewer.avif` release benchmark
 measured `248.24/243.45 ms` (native/RGBA); this path does not change ordinary
 decode output and remains a host-specific checkpoint.
+
+The common 8-bit sample-to-RGBA16 conversion now uses exact byte replication
+instead of a per-sample divide for luma, chroma, and auxiliary alpha values.
+The existing official unsupported-sample gate and a focused scaling vector
+cover the path. A fresh five-iteration `WML2Viewer.avif` release benchmark
+measured `242.95/244.90 ms` (native/RGBA), retained as a host-specific
+checkpoint rather than a cross-machine speedup claim.
