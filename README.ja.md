@@ -35,6 +35,7 @@ frame AVIF profileに対応します。1 frameの`avis` primary itemも静止画
 | 1 frameの`avis` primary item | 対応 |
 | AVISのKey/IntraOnly/show-existing frameをindex指定・一括でデコード | 対応（Inter/Switchはfail-closed） |
 | animated AVIFの複数frame callback出力 | Key／IntraOnly／show-existingに対応（`animation: true`、Inter／Switchはfail-closed） |
+| layered image selector（`a1op=0`、`lsel=0`） | 解析・受理（既定外の層／operating point選択はfail-closed） |
 | HDR tone mapping、matrix-shaper以外のICC表示変換 | 未対応 |
 
 未対応のcompositionやAV1 toolは`DecoderError::Unsupported`を返します。不完全な

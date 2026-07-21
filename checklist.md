@@ -1283,3 +1283,9 @@ RGBA16 row-chunk scheduler used by AV1 colour conversion. Large ICC-bearing
 frames therefore avoid a single-threaded per-pixel post-processing pass while
 Wasm remains sequential; a 1,048,593-pixel equivalence vector covers the
 parallel chunk boundary and preserves alpha/output ordering.
+
+Layered-image item properties `a1op`, `lsel`, and `a1lx` are now parsed with
+strict payload and reserved-bit validation. The existing still-image policy
+accepts only the default operating point/layer (`a1op=0`, `lsel=0`); non-default
+selectors return explicit `Unsupported` instead of being silently ignored,
+while `a1lx` indexing metadata is retained for future layer-range decode.

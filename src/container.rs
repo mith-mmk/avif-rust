@@ -312,6 +312,9 @@ enum ItemProperty {
     Av1Config(Vec<u8>),
     ColorInformation(ColorInformation),
     Premultiplied,
+    OperatingPointSelector(u8),
+    LayerSelector(u16),
+    LayerIndexing([u64; 3]),
     Other,
 }
 
@@ -326,6 +329,9 @@ enum PropertyKind {
     Av1Config,
     ColorInformation,
     Premultiplied,
+    OperatingPointSelector,
+    LayerSelector,
+    LayerIndexing,
     Other,
 }
 
@@ -346,6 +352,9 @@ fn property_kind(property: &ItemProperty) -> PropertyKind {
         ItemProperty::Av1Config(_) => PropertyKind::Av1Config,
         ItemProperty::ColorInformation(_) => PropertyKind::ColorInformation,
         ItemProperty::Premultiplied => PropertyKind::Premultiplied,
+        ItemProperty::OperatingPointSelector(_) => PropertyKind::OperatingPointSelector,
+        ItemProperty::LayerSelector(_) => PropertyKind::LayerSelector,
+        ItemProperty::LayerIndexing(_) => PropertyKind::LayerIndexing,
         ItemProperty::Other => PropertyKind::Other,
     }
 }
@@ -775,6 +784,9 @@ fn parse_ipco(_source: &[u8], payload: &[u8], state: &mut MetaState) -> Result<(
             b"av1C" => ItemProperty::Av1Config(child_payload.to_vec()),
             b"colr" => ItemProperty::ColorInformation(parse_colr(child_payload)?),
             b"prem" => ItemProperty::Premultiplied,
+            b"a1op" => ItemProperty::OperatingPointSelector(parse_a1op(child_payload)?),
+            b"lsel" => ItemProperty::LayerSelector(parse_lsel(child_payload)?),
+            b"a1lx" => ItemProperty::LayerIndexing(parse_a1lx(child_payload)?),
             _ => ItemProperty::Other,
         };
         state.item_properties.push(property);
@@ -1189,6 +1201,26 @@ fn validate_primary_item_metadata(state: &MetaState) -> Result<(), DecoderError>
                     association.item_id, index
                 )));
             }
+            match &state.item_properties[usize::from(index) - 1] {
+                // The decoder's default AV1 operating point is index 0 and
+                // its still-image path currently reconstructs the first
+                // spatial layer. Accept only selectors that are equivalent
+                // to that existing policy; other selectors must not be
+                // silently ignored.
+                ItemProperty::OperatingPointSelector(op_index) if *op_index != 0 => {
+                    return Err(DecoderError::Unsupported(format!(
+                        "item {} a1op operating point {} is not supported",
+                        association.item_id, op_index
+                    )));
+                }
+                ItemProperty::LayerSelector(layer_id) if *layer_id != 0 => {
+                    return Err(DecoderError::Unsupported(format!(
+                        "item {} lsel layer {} is not supported",
+                        association.item_id, layer_id
+                    )));
+                }
+                _ => {}
+            }
             if kind.is_singleton() && seen_kinds.contains(&kind) {
                 return Err(DecoderError::Bitstream(format!(
                     "item {} has duplicate {kind:?} property association",
@@ -1287,7 +1319,11 @@ fn item_metadata(state: &MetaState, item_id: u32) -> Result<PrimaryItemMetadata,
             ItemProperty::CleanAperture(clap) => metadata.clean_aperture = Some(*clap),
             ItemProperty::Rotation(rotation) => metadata.rotation = Some(*rotation),
             ItemProperty::Mirror(mirror) => metadata.mirror = Some(*mirror),
-            ItemProperty::AuxiliaryType(_) | ItemProperty::Other => {}
+            ItemProperty::AuxiliaryType(_)
+            | ItemProperty::OperatingPointSelector(_)
+            | ItemProperty::LayerSelector(_)
+            | ItemProperty::LayerIndexing(_)
+            | ItemProperty::Other => {}
         }
     }
     Ok(metadata)
@@ -1307,6 +1343,59 @@ fn parse_auxc(payload: &[u8]) -> Result<String, DecoderError> {
     std::str::from_utf8(&aux_type[..end])
         .map(|value| value.to_string())
         .map_err(|_| DecoderError::Bitstream("auxC auxiliary type is not UTF-8".to_string()))
+}
+
+fn parse_a1op(payload: &[u8]) -> Result<u8, DecoderError> {
+    if payload.len() != 1 {
+        return Err(DecoderError::Bitstream(
+            "a1op payload must contain one byte".to_string(),
+        ));
+    }
+    Ok(payload[0])
+}
+
+fn parse_lsel(payload: &[u8]) -> Result<u16, DecoderError> {
+    if payload.len() != 2 {
+        return Err(DecoderError::Bitstream(
+            "lsel payload must contain one 16-bit layer id".to_string(),
+        ));
+    }
+    Ok(u16::from_be_bytes([payload[0], payload[1]]))
+}
+
+fn parse_a1lx(payload: &[u8]) -> Result<[u64; 3], DecoderError> {
+    let large_size = payload
+        .first()
+        .ok_or_else(|| DecoderError::NotEnoughData("a1lx payload is empty".to_string()))?;
+    if large_size & 0xfe != 0 {
+        return Err(DecoderError::Bitstream(
+            "a1lx reserved bits are not zero".to_string(),
+        ));
+    }
+    let field_bytes = if large_size & 1 == 0 { 2 } else { 4 };
+    let expected = 1 + field_bytes * 3;
+    if payload.len() != expected {
+        return Err(DecoderError::Bitstream(format!(
+            "a1lx payload length {} does not match {}-byte layer sizes",
+            payload.len(),
+            field_bytes
+        )));
+    }
+    let mut sizes = [0; 3];
+    for (index, size) in sizes.iter_mut().enumerate() {
+        let offset = 1 + index * field_bytes;
+        *size = if field_bytes == 2 {
+            u64::from(u16::from_be_bytes([payload[offset], payload[offset + 1]]))
+        } else {
+            u64::from(u32::from_be_bytes([
+                payload[offset],
+                payload[offset + 1],
+                payload[offset + 2],
+                payload[offset + 3],
+            ]))
+        };
+    }
+    Ok(sizes)
 }
 
 fn parse_clap(payload: &[u8]) -> Result<CleanAperture, DecoderError> {
@@ -2938,6 +3027,77 @@ mod tests {
                 }],
             }]
         );
+    }
+
+    #[test]
+    fn parses_layered_image_selector_properties() {
+        assert_eq!(parse_a1op(&[0]).unwrap(), 0);
+        assert_eq!(parse_lsel(&[0, 0]).unwrap(), 0);
+        assert_eq!(parse_lsel(&[0xff, 0xff]).unwrap(), u16::MAX);
+        assert_eq!(parse_a1lx(&[0, 0, 4, 0, 8, 0, 0]).unwrap(), [4, 8, 0]);
+        assert_eq!(
+            parse_a1lx(&[1, 0, 0, 0, 3, 0, 0, 0, 7, 0, 0, 0, 0]).unwrap(),
+            [3, 7, 0]
+        );
+    }
+
+    #[test]
+    fn layered_image_selectors_fail_closed_outside_default_layer_policy() {
+        let state = MetaState {
+            primary_item_id: Some(1),
+            item_infos: vec![ItemInfo {
+                item_id: 1,
+                item_type: *b"av01",
+                item_name: "primary".to_string(),
+            }],
+            item_locations: vec![ItemLocation {
+                item_id: 1,
+                base_offset: 0,
+                extents: vec![ItemExtent {
+                    offset: 0,
+                    length: 1,
+                }],
+            }],
+            item_property_associations: vec![ItemPropertyAssociation {
+                item_id: 1,
+                associations: vec![
+                    PropertyAssociation {
+                        index: 1,
+                        essential: true,
+                    },
+                    PropertyAssociation {
+                        index: 2,
+                        essential: true,
+                    },
+                    PropertyAssociation {
+                        index: 3,
+                        essential: true,
+                    },
+                    PropertyAssociation {
+                        index: 4,
+                        essential: true,
+                    },
+                ],
+            }],
+            item_properties: vec![
+                ItemProperty::SpatialExtents(ImageSpatialExtents {
+                    width: 1,
+                    height: 1,
+                }),
+                ItemProperty::PixelInformation(PixelInformation {
+                    bits_per_channel: vec![8, 8, 8],
+                }),
+                ItemProperty::Av1Config(vec![0x81, 0, 0, 0]),
+                ItemProperty::LayerSelector(1),
+            ],
+            ..MetaState::default()
+        };
+
+        let error = validate_primary_item_metadata(&state).unwrap_err();
+        assert!(matches!(
+            error,
+            DecoderError::Unsupported(message) if message.contains("lsel layer 1")
+        ));
     }
 
     #[test]
