@@ -728,7 +728,7 @@ pub fn frame_buffers_to_rgba_16(
             },
         );
         if let Some(transfer) = hdr_transfer {
-            apply_transfer_function(&mut rgba, transfer);
+            apply_transfer_function_rows(&mut rgba, buffers.width, buffers.height, transfer);
         }
         return Ok(Rgba16ImageBuffer {
             width: buffers.width,
@@ -744,33 +744,24 @@ pub fn frame_buffers_to_rgba_16(
         let plane_g = &buffers.planes[0].samples;
         let plane_b = &buffers.planes[1].samples;
         let plane_r = &buffers.planes[2].samples;
-        if buffers.planes.get(3).is_none() {
-            for (index, pixel) in rgba.chunks_exact_mut(4).enumerate() {
-                pixel[0] = scale_sample_to_u16(plane_r[index], max_source);
-                pixel[1] = scale_sample_to_u16(plane_g[index], max_source);
-                pixel[2] = scale_sample_to_u16(plane_b[index], max_source);
-                pixel[3] = u16::MAX;
-            }
-        } else {
-            let alpha = buffers.planes.get(3);
-            for_each_rgba_row_chunk(
-                &mut rgba,
-                buffers.width,
-                buffers.height,
-                |first_row, chunk| {
-                    for (row_offset, row) in chunk.chunks_exact_mut(buffers.width * 4).enumerate() {
-                        let y = first_row + row_offset;
-                        for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
-                            let index = y * buffers.width + x;
-                            pixel[0] = scale_sample_to_u16(plane_r[index], max_source);
-                            pixel[1] = scale_sample_to_u16(plane_g[index], max_source);
-                            pixel[2] = scale_sample_to_u16(plane_b[index], max_source);
-                            pixel[3] = alpha_sample(alpha, x, y, max_source);
-                        }
+        let alpha = buffers.planes.get(3);
+        for_each_rgba_row_chunk(
+            &mut rgba,
+            buffers.width,
+            buffers.height,
+            |first_row, chunk| {
+                for (row_offset, row) in chunk.chunks_exact_mut(buffers.width * 4).enumerate() {
+                    let y = first_row + row_offset;
+                    for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                        let index = y * buffers.width + x;
+                        pixel[0] = scale_sample_to_u16(plane_r[index], max_source);
+                        pixel[1] = scale_sample_to_u16(plane_g[index], max_source);
+                        pixel[2] = scale_sample_to_u16(plane_b[index], max_source);
+                        pixel[3] = alpha_sample(alpha, x, y, max_source);
                     }
-                },
-            );
-        }
+                }
+            },
+        );
     } else {
         let color_primaries = color_config
             .color_description
@@ -882,7 +873,7 @@ pub fn frame_buffers_to_rgba_16(
     }
 
     if let Some(transfer) = hdr_transfer {
-        apply_transfer_function(&mut rgba, transfer);
+        apply_transfer_function_rows(&mut rgba, buffers.width, buffers.height, transfer);
     }
 
     Ok(Rgba16ImageBuffer {
@@ -1032,6 +1023,17 @@ fn apply_transfer_function(rgba: &mut [u16], transfer: TransferFunction) {
         pixel[1] = transfer_to_sdr(pixel[1], transfer);
         pixel[2] = transfer_to_sdr(pixel[2], transfer);
     }
+}
+
+fn apply_transfer_function_rows(
+    rgba: &mut [u16],
+    width: usize,
+    height: usize,
+    transfer: TransferFunction,
+) {
+    for_each_rgba_row_chunk(rgba, width, height, |_, chunk| {
+        apply_transfer_function(chunk, transfer);
+    });
 }
 
 fn transfer_to_sdr(sample: u16, transfer: TransferFunction) -> u16 {
@@ -1481,6 +1483,23 @@ mod tests {
             pixel[2] = (index >> 8) as u16;
             pixel[3] = u16::MAX;
         }
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn parallel_transfer_rows_match_one_pass() {
+        let width = 640;
+        let height = 512;
+        let source = (0..width * height)
+            .flat_map(|index| {
+                let sample = (index as u16).wrapping_mul(257);
+                [sample, sample / 2, u16::MAX - sample, 1234]
+            })
+            .collect::<Vec<_>>();
+        let mut expected = source.clone();
+        apply_transfer_function(&mut expected, TransferFunction::Pq);
+        let mut actual = source;
+        apply_transfer_function_rows(&mut actual, width, height, TransferFunction::Pq);
         assert_eq!(actual, expected);
     }
 

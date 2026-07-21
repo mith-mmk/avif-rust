@@ -1315,3 +1315,11 @@ Alpha auxiliary composition now uses the native row-chunk scheduler for large
 RGBA frames (up to eight workers), while Wasm and small images retain the
 sequential path to avoid thread overhead. A subsampled alpha regression vector
 verifies that row chunking preserves the one-pass output and alpha coordinates.
+
+RGBA16 identity-plane conversion and PQ/HLG transfer application now share the
+same native row-chunk scheduler; Wasm remains sequential. A 640x512 transfer
+equivalence vector covers chunk boundaries. A three-iteration multi-sample
+checkpoint measured `244.83/245.21 ms` for `WML2Viewer.avif`,
+`396.91/407.49 ms` for the external 12-bit YUV444 sample, and
+`3.18/3.67 ms` for the 128x128 alpha sample (native/RGBA); these are local
+measurements, not cross-machine speedup claims.
