@@ -919,8 +919,20 @@ struct FrameReferenceSlots {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct ReferenceFrameMetadata {
+    width: usize,
+    height: usize,
+    render_width: usize,
+    render_height: usize,
+    bit_depth: u8,
+    color_config: ColorConfig,
+    color_information: Option<ColorInformation>,
+    alpha_premultiplied: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ReferenceFrame {
-    decoded: Arc<DecodedFrame>,
+    metadata: Arc<ReferenceFrameMetadata>,
     buffers: Arc<FrameBuffers>,
     frame_width: u32,
     frame_height: u32,
@@ -933,12 +945,25 @@ struct ReferenceFrame {
 
 impl FrameReferenceSlots {
     fn refresh(&mut self, refresh_frame_flags: u8, frame: &DecodedFrame, header: &FrameHeader) {
-        let shared = Arc::new(frame.clone());
+        // Keep the decoded planes shared between reference slots. Cloning a
+        // full `DecodedFrame` here used to duplicate every plane once per
+        // refresh, which is especially expensive for AVIS inter sequences.
+        let metadata = Arc::new(ReferenceFrameMetadata {
+            width: frame.width,
+            height: frame.height,
+            render_width: frame.render_width,
+            render_height: frame.render_height,
+            bit_depth: frame.bit_depth,
+            color_config: frame.color_config,
+            color_information: frame.color_information.clone(),
+            alpha_premultiplied: frame.alpha_premultiplied,
+        });
+        let buffers = Arc::new(frame.buffers.clone());
         for (index, slot) in self.slots.iter_mut().enumerate() {
             if refresh_frame_flags & (1 << index) != 0 {
                 *slot = Some(ReferenceFrame {
-                    decoded: Arc::clone(&shared),
-                    buffers: Arc::new(frame.buffers.clone()),
+                    metadata: Arc::clone(&metadata),
+                    buffers: Arc::clone(&buffers),
                     frame_width: header.frame_width,
                     frame_height: header.frame_height,
                     upscaled_width: header.upscaled_width,
@@ -990,7 +1015,17 @@ impl FrameReferenceSlots {
         self.slots
             .get(usize::from(index))
             .and_then(Option::as_ref)
-            .map(|reference| reference.decoded.as_ref().clone())
+            .map(|reference| DecodedFrame {
+                width: reference.metadata.width,
+                height: reference.metadata.height,
+                render_width: reference.metadata.render_width,
+                render_height: reference.metadata.render_height,
+                bit_depth: reference.metadata.bit_depth,
+                color_config: reference.metadata.color_config,
+                color_information: reference.metadata.color_information.clone(),
+                alpha_premultiplied: reference.metadata.alpha_premultiplied,
+                buffers: reference.buffers.as_ref().clone(),
+            })
             .ok_or_else(|| {
                 DecoderError::Unsupported(format!(
                     "AV1 show_existing_frame slot {index} has no decoded reference"
