@@ -405,15 +405,19 @@ fn decode_sequence_samples_from_info(
                     .iter()
                     .any(|obu| obu.obu_type == ObuType::SequenceHeader);
                 let payload = sample_payload_with_sequence_header(sequence_obu, sample)?;
-                let mut sample_info = info.clone();
-                sample_info.primary_item_payload = payload;
-                sample_info.sequence_sample_payloads.clear();
-                if sample_has_sequence_header {
-                    // A per-sample Sequence Header is authoritative when an
-                    // AVIS track changes its sample description. The primary
-                    // item av1C still validates the primary sample above.
-                    sample_info.av1_config = None;
-                }
+                let sample_info = sequence_sample_info(
+                    info,
+                    payload,
+                    if sample_has_sequence_header {
+                        // A per-sample Sequence Header is authoritative when
+                        // an AVIS track changes its sample description. The
+                        // primary item av1C still validates the primary sample
+                        // above.
+                        None
+                    } else {
+                        info.av1_config.clone()
+                    },
+                );
                 let headers = parse_av1_headers(&sample_info)?;
                 let decoded = decode_still_frame(&headers, Some(&sample_info))?;
                 references.refresh(headers.frame.refresh_frame_flags, &decoded);
@@ -492,14 +496,41 @@ fn decode_independent_sequence_sample(
         .iter()
         .any(|obu| obu.obu_type == ObuType::SequenceHeader);
     let payload = sample_payload_with_sequence_header(sequence_obu, sample)?;
-    let mut sample_info = info.clone();
-    sample_info.primary_item_payload = payload;
-    sample_info.sequence_sample_payloads.clear();
-    if sample_has_sequence_header {
-        sample_info.av1_config = None;
-    }
+    let sample_info = sequence_sample_info(
+        info,
+        payload,
+        (!sample_has_sequence_header)
+            .then(|| info.av1_config.clone())
+            .flatten(),
+    );
     let headers = parse_av1_headers(&sample_info)?;
     decode_still_frame(&headers, Some(&sample_info))
+}
+
+fn sequence_sample_info(
+    info: &AvifInfo,
+    payload: Vec<u8>,
+    av1_config: Option<Vec<u8>>,
+) -> AvifInfo {
+    AvifInfo {
+        major_brand: info.major_brand,
+        compatible_brands: Vec::new(),
+        primary_item_id: info.primary_item_id,
+        width: info.width,
+        height: info.height,
+        pixel_information: None,
+        color_information: info.color_information.clone(),
+        alpha_premultiplied: info.alpha_premultiplied,
+        alpha_auxiliary_items: Vec::new(),
+        alpha_grid: None,
+        primary_grid: None,
+        clean_aperture: None,
+        rotation: None,
+        mirror: None,
+        av1_config,
+        primary_item_payload: payload,
+        sequence_sample_payloads: Vec::new(),
+    }
 }
 
 fn sample_payload_with_sequence_header(

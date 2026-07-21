@@ -1194,3 +1194,9 @@ The official `abc_color_irot_alpha_NOirot.avif` fixture now also compares the
 auxiliary alpha plane after the primary image's quarter-turn transform. This
 keeps alpha orientation coverage separate from the existing RGB and rotated
 alpha checks.
+
+AVIS sample decoding now builds a minimal per-sample `AvifInfo` containing only
+the payload, dimensions, color metadata, alpha premultiplication flag, and
+applicable `av1C` bytes. This avoids cloning the parent image's complete track
+and auxiliary metadata for every parallel or indexed sample without changing
+the public decode behavior.
