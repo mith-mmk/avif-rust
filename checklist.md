@@ -1342,6 +1342,11 @@ cloning only its single plane for each output frame. This removes a full
 plane contract; the existing alpha and sequence integration tests cover the
 regression path.
 
+A five-iteration optimized recheck of `test_data/images/WML2Viewer.avif`
+measured `240.02 ms` native frame decode and `240.79 ms` RGBA decode on this
+host. This is a local baseline for the allocation changes, not a
+cross-machine speedup claim.
+
 RGBA16 identity-plane conversion and PQ/HLG transfer application now share the
 same native row-chunk scheduler; Wasm remains sequential. A 640x512 transfer
 equivalence vector covers chunk boundaries. A three-iteration multi-sample
