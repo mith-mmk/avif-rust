@@ -1256,6 +1256,11 @@ official sample measured `396.10 ms` native / `445.70 ms` RGBA on this host;
 the result is a local allocation-reuse checkpoint rather than a stable
 cross-machine speedup claim.
 
+Sato-derived color output now also carries the primary item's auxiliary alpha
+plane (including an alpha grid) when present, preserving the existing
+native-plane and RGBA alpha contract instead of rejecting the derived color
+path outright.
+
 The optional external conformance set now also audits seven official Gain Map
 fixtures (including unsupported `tmap` metadata versions). Each file must
 still produce a complete base RGBA image with exact dimensions; HDR gain-map

@@ -2389,13 +2389,12 @@ fn decode_sample_transform_frame(
         return Ok(None);
     };
     if info.primary_grid.is_some()
-        || !info.alpha_auxiliary_items.is_empty()
         || transform.inputs.iter().any(|input| {
             input.width != transform.output_width || input.height != transform.output_height
         })
     {
         return Err(DecoderError::Unsupported(
-            "sato grid, alpha, or mismatched dimensions are not supported".to_string(),
+            "sato grid or mismatched dimensions are not supported".to_string(),
         ));
     }
     let mut frames = Vec::with_capacity(transform.inputs.len());
@@ -2542,7 +2541,7 @@ fn decode_sample_transform_frame(
     color_config.bit_depth = output_bit_depth;
     color_config.high_bitdepth = output_bit_depth > 8;
     color_config.twelve_bit = output_bit_depth == 12;
-    Ok(Some(DecodedFrame {
+    let mut output = DecodedFrame {
         width: transform.output_width as usize,
         height: transform.output_height as usize,
         render_width: transform.output_width as usize,
@@ -2556,7 +2555,15 @@ fn decode_sample_transform_frame(
             height: transform.output_height as usize,
             planes,
         },
-    }))
+    };
+    if let Some(alpha_grid) = info.alpha_grid.as_ref() {
+        let (alpha_plane, alpha_bit_depth) = decode_alpha_grid_plane(alpha_grid)?;
+        append_alpha_plane_buffer(&mut output, alpha_plane, alpha_bit_depth)?;
+    } else if !info.alpha_auxiliary_items.is_empty() {
+        let alpha_frame = decode_alpha_auxiliary_frame(info)?;
+        append_alpha_plane(&mut output, alpha_frame)?;
+    }
+    Ok(Some(output))
 }
 
 #[cfg(test)]
