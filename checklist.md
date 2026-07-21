@@ -724,6 +724,13 @@ three iterations: `WML2Viewer.avif` measured `306.37/305.48 ms` (native/RGBA)
 and the 128x128 alpha sample measured `2.93/3.23 ms`. The short run is kept as
 a fresh reference point only; it is not treated as a stable speedup claim.
 
+The AVIS sequence path now inspects a shared Sequence Header and a later
+sample as separate OBU parts instead of allocating a concatenated payload for
+every Key/IntraOnly/show-existing sample. The OBU helper is covered by a
+split-input regression test. A five-iteration release run measured
+`star-8bpc.avifs` at `3.91/4.34 ms` (native/RGBA); this is a same-host AVIS
+checkpoint, not a cross-machine percentage claim.
+
 On 2026-07-20, CDEF source handling now swaps each plane's decoded samples into
 caller-owned scratch storage and reuses the previous output allocation for the
 next plane. This removes the per-plane source `clone` while preserving the

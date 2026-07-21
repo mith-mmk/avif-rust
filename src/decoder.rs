@@ -24,7 +24,7 @@ use crate::container::{
     GridCell, ImageMirror, ImageRotation, SampleTransformToken, inspect_av1_sequence_sample,
     parse_avif, parse_sample_transform,
 };
-use crate::obu::{ObuType, find_obu_payloads, parse_obu_stream};
+use crate::obu::{ObuType, find_obu_payloads_in_parts, parse_obu_stream};
 use crate::{DecoderError, ImageBuffer, Rgba16ImageBuffer};
 use bin_rs::reader::BinaryReader;
 use std::io::SeekFrom;
@@ -488,26 +488,22 @@ fn decode_sequence_samples_from_info(
     {
         match kind {
             AvifSequenceSampleKind::Key | AvifSequenceSampleKind::IntraOnly => {
-                let payload = sample_payload_with_sequence_header(
+                // A per-sample Sequence Header is authoritative when an AVIS
+                // track changes its sample description.  For the common case
+                // where it is omitted, inspect the shared prefix and sample
+                // as separate OBU streams to avoid rebuilding a concatenated
+                // temporary payload.
+                let av1_config = (!sample_info.has_sequence_header)
+                    .then_some(info.av1_config.as_deref())
+                    .flatten();
+                let headers = parse_av1_sequence_sample_headers(
+                    info,
                     &sequence_prefix,
                     sample,
                     sample_info.has_sequence_header,
+                    av1_config,
                 )?;
-                let sample_info = sequence_sample_info(
-                    info,
-                    payload,
-                    if sample_info.has_sequence_header {
-                        // A per-sample Sequence Header is authoritative when
-                        // an AVIS track changes its sample description. The
-                        // primary item av1C still validates the primary sample
-                        // above.
-                        None
-                    } else {
-                        info.av1_config.clone()
-                    },
-                );
-                let headers = parse_av1_headers(&sample_info)?;
-                let decoded = decode_still_frame(&headers, Some(&sample_info))?;
+                let decoded = decode_still_frame(&headers, Some(info))?;
                 references.refresh(headers.frame.refresh_frame_flags, &decoded);
                 if collect_all {
                     frames.push(decoded);
@@ -613,57 +609,31 @@ fn decode_independent_sequence_sample(
     sample: &[u8],
     sample_has_sequence_header: bool,
 ) -> Result<DecodedFrame, DecoderError> {
-    let payload =
-        sample_payload_with_sequence_header(sequence_prefix, sample, sample_has_sequence_header)?;
-    let sample_info = sequence_sample_info(
+    let av1_config = (!sample_has_sequence_header)
+        .then_some(info.av1_config.as_deref())
+        .flatten();
+    let headers = parse_av1_sequence_sample_headers(
         info,
-        payload,
-        (!sample_has_sequence_header)
-            .then(|| info.av1_config.clone())
-            .flatten(),
-    );
-    let headers = parse_av1_headers(&sample_info)?;
-    decode_still_frame(&headers, Some(&sample_info))
-}
-
-fn sequence_sample_info(
-    info: &AvifInfo,
-    payload: Vec<u8>,
-    av1_config: Option<Vec<u8>>,
-) -> AvifInfo {
-    AvifInfo {
-        major_brand: info.major_brand,
-        compatible_brands: Vec::new(),
-        primary_item_id: info.primary_item_id,
-        width: info.width,
-        height: info.height,
-        pixel_information: None,
-        color_information: info.color_information.clone(),
-        alpha_premultiplied: info.alpha_premultiplied,
-        alpha_auxiliary_items: Vec::new(),
-        alpha_grid: None,
-        primary_grid: None,
-        clean_aperture: None,
-        rotation: None,
-        mirror: None,
+        sequence_prefix,
+        sample,
+        sample_has_sequence_header,
         av1_config,
-        primary_item_payload: payload,
-        sequence_sample_payloads: Vec::new(),
-    }
+    )?;
+    decode_still_frame(&headers, Some(info))
 }
 
-fn sample_payload_with_sequence_header(
+fn parse_av1_sequence_sample_headers(
+    info: &AvifInfo,
     sequence_prefix: &[u8],
     sample: &[u8],
-    has_sequence_header: bool,
-) -> Result<Vec<u8>, DecoderError> {
-    if has_sequence_header {
-        return Ok(sample.to_vec());
+    sample_has_sequence_header: bool,
+    av1_config: Option<&[u8]>,
+) -> Result<Av1Headers, DecoderError> {
+    if sample_has_sequence_header {
+        parse_av1_headers_from_parts(info, &[sample], av1_config)
+    } else {
+        parse_av1_headers_from_parts(info, &[sequence_prefix, sample], av1_config)
     }
-    let mut payload = Vec::with_capacity(sequence_prefix.len() + sample.len());
-    payload.extend_from_slice(sequence_prefix);
-    payload.extend_from_slice(sample);
-    Ok(payload)
 }
 
 fn first_show_existing_index(sample: &[u8]) -> Result<u8, DecoderError> {
@@ -977,13 +947,25 @@ fn encode_obu(obu_type: ObuType, payload: &[u8]) -> Result<Vec<u8>, DecoderError
 }
 
 fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
+    parse_av1_headers_from_parts(
+        info,
+        &[&info.primary_item_payload],
+        info.av1_config.as_deref(),
+    )
+}
+
+fn parse_av1_headers_from_parts(
+    info: &AvifInfo,
+    payloads: &[&[u8]],
+    av1_config: Option<&[u8]>,
+) -> Result<Av1Headers, DecoderError> {
     let [
         sequence_payload,
         frame_payload,
         frame_header_payload,
         _tile_group_payload,
-    ] = find_obu_payloads(
-        &info.primary_item_payload,
+    ] = find_obu_payloads_in_parts(
+        payloads,
         [
             ObuType::SequenceHeader,
             ObuType::Frame,
@@ -995,11 +977,7 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
         .ok_or_else(|| DecoderError::Bitstream("AV1 sequence header OBU is missing".to_string()))?;
     let sequence = parse_sequence_header(sequence_payload)?;
     validate_color_metadata(info.color_information.as_ref(), &sequence.color_config)?;
-    let config = info
-        .av1_config
-        .as_deref()
-        .map(parse_av1_config)
-        .transpose()?;
+    let config = av1_config.map(parse_av1_config).transpose()?;
     if let Some(config) = config {
         validate_av1_config(&config, &sequence)?;
     }
@@ -1047,17 +1025,21 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
         // frame boundary instead of mixing subsequent frames into it.
         let mut tile_group_payloads = Vec::new();
         let mut first_frame_started = false;
-        for obu in parse_obu_stream(&info.primary_item_payload)? {
-            match obu.obu_type {
-                ObuType::FrameHeader => {
-                    if first_frame_started {
-                        break;
+        'parts: for payload in payloads {
+            for obu in parse_obu_stream(payload)? {
+                match obu.obu_type {
+                    ObuType::FrameHeader => {
+                        if first_frame_started {
+                            break 'parts;
+                        }
+                        first_frame_started = true;
                     }
-                    first_frame_started = true;
+                    ObuType::TemporalDelimiter if first_frame_started => break 'parts,
+                    ObuType::TileGroup if first_frame_started => {
+                        tile_group_payloads.push(obu.payload)
+                    }
+                    _ => {}
                 }
-                ObuType::TemporalDelimiter if first_frame_started => break,
-                ObuType::TileGroup if first_frame_started => tile_group_payloads.push(obu.payload),
-                _ => {}
             }
         }
         if tile_group_payloads.is_empty() {

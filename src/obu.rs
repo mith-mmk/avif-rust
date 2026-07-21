@@ -76,16 +76,29 @@ pub fn find_obu_payloads<const N: usize>(
     data: &[u8],
     targets: [ObuType; N],
 ) -> Result<[Option<&[u8]>; N], DecoderError> {
-    let mut offset = 0usize;
+    find_obu_payloads_in_parts(&[data], targets)
+}
+
+/// Finds the first payload for each requested OBU type across independently
+/// framed byte slices.  AVIS samples commonly omit the sequence header; the
+/// decoder can inspect the shared sequence OBU and the sample payload without
+/// concatenating them into a temporary buffer.
+pub fn find_obu_payloads_in_parts<'a, const N: usize>(
+    parts: &[&'a [u8]],
+    targets: [ObuType; N],
+) -> Result<[Option<&'a [u8]>; N], DecoderError> {
     let mut payloads = [None; N];
-    while let Some(obu) = read_next_obu(data, &mut offset)? {
-        for (index, target) in targets.iter().enumerate() {
-            if payloads[index].is_none() && obu.obu_type == *target {
-                payloads[index] = Some(obu.payload);
+    for part in parts {
+        let mut offset = 0usize;
+        while let Some(obu) = read_next_obu(part, &mut offset)? {
+            for (index, target) in targets.iter().enumerate() {
+                if payloads[index].is_none() && obu.obu_type == *target {
+                    payloads[index] = Some(obu.payload);
+                }
             }
-        }
-        if payloads.iter().all(Option::is_some) {
-            break;
+            if payloads.iter().all(Option::is_some) {
+                return Ok(payloads);
+            }
         }
     }
     Ok(payloads)
@@ -207,5 +220,17 @@ mod tests {
     fn rejects_forbidden_obu_bit() {
         let err = parse_obu_stream(&[0x80]).unwrap_err();
         assert!(err.to_string().contains("forbidden bit"));
+    }
+
+    #[test]
+    fn finds_obus_across_independently_framed_parts() {
+        let sequence = [0x0a, 0x01, 0xaa];
+        let frame = [0x1a, 0x01, 0xbb];
+        let payloads = find_obu_payloads_in_parts(
+            &[&sequence, &frame],
+            [ObuType::SequenceHeader, ObuType::FrameHeader],
+        )
+        .unwrap();
+        assert_eq!(payloads, [Some(&[0xaa][..]), Some(&[0xbb][..])]);
     }
 }
