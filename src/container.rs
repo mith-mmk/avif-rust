@@ -442,13 +442,18 @@ pub(crate) fn parse_sample_transform(data: &[u8]) -> Result<Option<SampleTransfo
     let Some(primary_item_id) = meta.primary_item_id else {
         return Ok(None);
     };
+    let primary_item_is_sato = meta
+        .item_infos
+        .iter()
+        .any(|item| item.item_id == primary_item_id && item.item_type == *b"sato");
     let Some(sato) = meta.item_infos.iter().find(|item| {
         item.item_type == *b"sato"
-            && meta.item_references.iter().any(|reference| {
-                reference.reference_type == *b"dimg"
-                    && reference.from_item_id == item.item_id
-                    && reference.to_item_ids.contains(&primary_item_id)
-            })
+            && (item.item_id == primary_item_id
+                || meta.item_references.iter().any(|reference| {
+                    reference.reference_type == *b"dimg"
+                        && reference.from_item_id == item.item_id
+                        && reference.to_item_ids.contains(&primary_item_id)
+                }))
     }) else {
         return Ok(None);
     };
@@ -465,6 +470,11 @@ pub(crate) fn parse_sample_transform(data: &[u8]) -> Result<Option<SampleTransfo
     if inputs.is_empty() {
         return Err(DecoderError::Bitstream(
             "sato input reference list is empty".to_string(),
+        ));
+    }
+    if !primary_item_is_sato && !inputs.contains(&primary_item_id) {
+        return Err(DecoderError::Unsupported(
+            "sato inputs do not reference the primary item".to_string(),
         ));
     }
 
@@ -1199,12 +1209,12 @@ fn validate_primary_item_metadata(state: &MetaState) -> Result<(), DecoderError>
             property_kind(&state.item_properties[usize::from(association.index) - 1])
         })
         .collect::<Vec<_>>();
-    let is_grid = state
+    let is_derived = state
         .item_infos
         .iter()
         .find(|info| info.item_id == primary_item_id)
-        .is_some_and(|info| &info.item_type == b"grid");
-    let required: &[PropertyKind] = if is_grid {
+        .is_some_and(|info| matches!(&info.item_type, b"grid" | b"sato"));
+    let required: &[PropertyKind] = if is_derived {
         &[PropertyKind::SpatialExtents, PropertyKind::PixelInformation]
     } else {
         &[
@@ -3286,6 +3296,103 @@ mod tests {
         );
         assert_eq!(metadata.av1_config, Some(vec![1, 2, 3]));
         assert_eq!(metadata.color_information, Some(primary_color));
+    }
+
+    #[test]
+    fn sato_primary_item_requires_derived_image_properties_not_av1c() {
+        let state = MetaState {
+            primary_item_id: Some(7),
+            item_infos: vec![ItemInfo {
+                item_id: 7,
+                item_type: *b"sato",
+                item_name: "sample transform".to_string(),
+            }],
+            item_locations: vec![ItemLocation {
+                item_id: 7,
+                base_offset: 0,
+                extents: vec![ItemExtent {
+                    offset: 0,
+                    length: 2,
+                }],
+            }],
+            item_properties: vec![
+                ItemProperty::SpatialExtents(ImageSpatialExtents {
+                    width: 1,
+                    height: 1,
+                }),
+                ItemProperty::PixelInformation(PixelInformation {
+                    bits_per_channel: vec![16, 16, 16],
+                }),
+            ],
+            item_property_associations: vec![ItemPropertyAssociation {
+                item_id: 7,
+                associations: vec![
+                    PropertyAssociation {
+                        index: 1,
+                        essential: true,
+                    },
+                    PropertyAssociation {
+                        index: 2,
+                        essential: true,
+                    },
+                ],
+            }],
+            ..MetaState::default()
+        };
+        validate_primary_item_metadata(&state).unwrap();
+    }
+
+    #[test]
+    fn official_sato_item_can_be_selected_as_primary_when_fixture_is_present() {
+        let Some(path) = std::env::var_os("AVIF_SATO_SAMPLE") else {
+            return;
+        };
+        let mut data = std::fs::read(path).expect("sato fixture should be readable");
+        let mut state = MetaState::default();
+        let mut pitm_payload_offset = None;
+        for_each_top_level_box(&data, |top| {
+            if &top.box_type != b"meta" {
+                return Ok(());
+            }
+            let payload = box_payload(&data, top)?;
+            parse_meta(&data, top, &mut state)?;
+            let mut offset = 4usize;
+            while offset < payload.len() {
+                let child = read_box_header(payload, offset, payload.len())?;
+                if &child.box_type == b"pitm" {
+                    pitm_payload_offset =
+                        Some(top.offset + top.header_size + child.offset + child.header_size);
+                    break;
+                }
+                offset = checked_add(child.offset, child.size, "test meta child end")?;
+            }
+            Ok(())
+        })
+        .unwrap();
+        let sato_id = state
+            .item_infos
+            .iter()
+            .find(|item| item.item_type == *b"sato")
+            .map(|item| item.item_id)
+            .expect("official sato fixture should contain a sato item");
+        let pitm = pitm_payload_offset.expect("sato fixture should contain pitm");
+        match data[pitm] {
+            0 => data[pitm + 4..pitm + 6].copy_from_slice(&(sato_id as u16).to_be_bytes()),
+            1 => data[pitm + 4..pitm + 8].copy_from_slice(&sato_id.to_be_bytes()),
+            version => panic!("unexpected pitm version {version}"),
+        }
+        let info = parse_avif(&data).expect("primary sato metadata should parse");
+        assert_eq!(info.primary_item_id, Some(sato_id));
+        let transform = parse_sample_transform(&data)
+            .unwrap()
+            .expect("primary sato transform should be selected");
+        assert_eq!(transform.output_bit_depth, 16);
+        let frame = crate::decode_frame_bytes(&data).expect("primary sato frame should decode");
+        assert_eq!((frame.width, frame.height), (1024, 684));
+        assert_eq!(frame.bit_depth, 16);
+        let image = crate::image_from_bytes(&data).expect("primary sato RGBA should decode");
+        assert_eq!((image.width, image.height), (1024, 684));
+        assert_eq!(image.rgba.len(), 1024 * 684 * 4);
     }
 
     #[test]

@@ -1261,6 +1261,11 @@ plane (including an alpha grid) when present, preserving the existing
 native-plane and RGBA alpha contract instead of rejecting the derived color
 path outright.
 
+The container preflight now accepts a `sato` item as the primary item (not
+only as an alternate derived item). The optional official-fixture regression
+rewrites `pitm` to the Sample Transform item and verifies native 16-bit and
+complete RGBA decode through the public APIs.
+
 The optional external conformance set now also audits seven official Gain Map
 fixtures (including unsupported `tmap` metadata versions). Each file must
 still produce a complete base RGBA image with exact dimensions; HDR gain-map
