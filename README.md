@@ -30,7 +30,7 @@ passes the FFmpeg RGB oracle (average absolute error about 0.075, maximum 6).
 | Deblock, CDEF, and loop restoration used by supported streams | Supported |
 | Monochrome, 4:2:0, and 4:2:2 | Supported |
 | Alpha auxiliary images and grid composition | Supported (native alpha plane and aligned `clap`/`irot`/`imir` are applied) |
-| `iloc` item payloads in file data and meta `idat` | Supported (construction methods 0 and 1) |
+| `iloc` item payloads in file data and meta `idat` | Supported (construction methods 0, 1, and indexed method 2) |
 | `clap`, `irot`, and `imir` composition | Supported |
 | One-frame `avis` primary item | Supported |
 | AVIS Key/IntraOnly/show-existing sample decode by index or batch | Supported (Inter/Switch remain fail-closed) |

@@ -31,7 +31,7 @@ frame AVIF profileに対応します。1 frameの`avis` primary itemも静止画
 | 対応streamで使用するdeblock、CDEF、loop restoration | 対応 |
 | monochrome、4:2:0、4:2:2 | 対応 |
 | alpha auxiliary image、grid composition | 対応（native alpha planeと整列した`clap`／`irot`／`imir`を適用） |
-| file dataおよびmeta `idat`の`iloc` item payload | 対応（construction method 0／1） |
+| file dataおよびmeta `idat`の`iloc` item payload | 対応（construction method 0／1／indexed method 2） |
 | `clap`、`irot`、`imir` composition | 対応 |
 | 1 frameの`avis` primary item | 対応 |
 | AVISのKey/IntraOnly/show-existing frameをindex指定・一括でデコード | 対応（Inter/Switchはfail-closed） |

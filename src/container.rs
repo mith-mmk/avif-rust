@@ -2668,6 +2668,15 @@ mod tests {
         payload.extend_from_slice(&value.to_be_bytes());
     }
 
+    fn boxed(box_type: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+        let size = u32::try_from(payload.len() + 8).unwrap();
+        let mut output = Vec::with_capacity(payload.len() + 8);
+        output.extend_from_slice(&size.to_be_bytes());
+        output.extend_from_slice(box_type);
+        output.extend_from_slice(payload);
+        output
+    }
+
     fn common_gain_map_payload() -> Vec<u8> {
         let mut payload = Vec::new();
         push_u16(&mut payload, 0);
@@ -2753,6 +2762,37 @@ mod tests {
     #[test]
     fn gain_map_metadata_is_absent_without_tmap_item() {
         assert_eq!(parse_gain_map_metadata(b"not an avif").unwrap(), None);
+    }
+
+    #[test]
+    fn parses_gain_map_metadata_from_tmap_item_payload() {
+        let gain_map = common_gain_map_payload();
+        let mut infe = vec![2, 0, 0, 0, 0, 1, 0, 0];
+        infe.extend_from_slice(b"tmapgain\0");
+        let iinf_entry = boxed(b"infe", &infe);
+        let mut iinf = vec![0, 0, 0, 0, 0, 1];
+        iinf.extend_from_slice(&iinf_entry);
+
+        let mut iloc = vec![
+            1, 0, 0, 0, 0x04, 0, 0, 1, // version, sizes, one item
+            0, 1, // item id
+            0, 1, // construction method 1
+            0, 0, // data reference index
+            0, 1, // one extent
+        ];
+        iloc.extend_from_slice(&(u32::try_from(gain_map.len()).unwrap()).to_be_bytes());
+
+        let mut meta_payload = vec![0, 0, 0, 0];
+        meta_payload.extend_from_slice(&boxed(b"pitm", &[0, 0, 0, 0, 0, 1]));
+        meta_payload.extend_from_slice(&boxed(b"iinf", &iinf));
+        meta_payload.extend_from_slice(&boxed(b"iloc", &iloc));
+        meta_payload.extend_from_slice(&boxed(b"idat", &gain_map));
+
+        let metadata = parse_gain_map_metadata(&boxed(b"meta", &meta_payload))
+            .unwrap()
+            .expect("tmap metadata should be discovered from the item payload");
+        assert_eq!(metadata.channel_count(), 3);
+        assert_eq!(metadata.channels[2].gain_map_max.numerator, 42);
     }
 
     fn one_frame_obu(obu_type: u8, header_byte: u8) -> Vec<u8> {
