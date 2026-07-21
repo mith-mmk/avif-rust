@@ -399,14 +399,16 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
         Ok(())
     })?;
 
-    let primary_item_payload = primary_item_payload(data, &meta)?;
+    let decode_primary_item_id = effective_primary_item_id(&meta)?;
+    let primary_item_payload = item_payload(data, &meta, decode_primary_item_id)?;
     let sequence_sample_payloads =
         sequence_sample_payloads(data, &major_brand, &compatible_brands)?;
     validate_primary_item_metadata(&meta)?;
-    let alpha_auxiliary_items = alpha_auxiliary_items(data, &meta)?;
+    let alpha_auxiliary_items =
+        alpha_auxiliary_items_for(data, &meta, Some(decode_primary_item_id))?;
     let primary_grid = primary_grid(data, &primary_item_payload, &meta)?;
     let alpha_grid = alpha_grid(data, &alpha_auxiliary_items, &meta)?;
-    let primary_metadata = primary_item_metadata(&meta)?;
+    let primary_metadata = item_metadata(&meta, decode_primary_item_id)?;
     Ok(AvifInfo {
         major_brand,
         compatible_brands,
@@ -1151,11 +1153,7 @@ fn merge_ipma(
 }
 
 fn validate_primary_item_metadata(state: &MetaState) -> Result<(), DecoderError> {
-    let Some(primary_item_id) = state.primary_item_id else {
-        return Err(DecoderError::Bitstream(
-            "primary item is missing".to_string(),
-        ));
-    };
+    let primary_item_id = effective_primary_item_id(state)?;
     if !state
         .item_infos
         .iter()
@@ -1249,7 +1247,7 @@ fn validate_primary_item_metadata(state: &MetaState) -> Result<(), DecoderError>
     let is_derived = state
         .item_infos
         .iter()
-        .find(|info| info.item_id == primary_item_id)
+        .find(|info| info.item_id == state.primary_item_id.unwrap_or(primary_item_id))
         .is_some_and(|info| matches!(&info.item_type, b"grid" | b"sato"));
     let required: &[PropertyKind] = if is_derived {
         &[PropertyKind::SpatialExtents, PropertyKind::PixelInformation]
@@ -1283,6 +1281,7 @@ struct PrimaryItemMetadata {
     mirror: Option<ImageMirror>,
 }
 
+#[cfg(test)]
 fn primary_item_metadata(state: &MetaState) -> Result<PrimaryItemMetadata, DecoderError> {
     let Some(primary_item_id) = state.primary_item_id else {
         return Err(DecoderError::Bitstream(
@@ -1481,11 +1480,48 @@ fn parse_colr(payload: &[u8]) -> Result<ColorInformation, DecoderError> {
     })
 }
 
+#[cfg(test)]
 fn primary_item_payload(data: &[u8], state: &MetaState) -> Result<Vec<u8>, DecoderError> {
+    let primary_item_id = effective_primary_item_id(state)?;
+    item_payload(data, state, primary_item_id)
+}
+
+fn effective_primary_item_id(state: &MetaState) -> Result<u32, DecoderError> {
     let primary_item_id = state
         .primary_item_id
         .ok_or_else(|| DecoderError::Bitstream("primary item is missing".to_string()))?;
-    item_payload(data, state, primary_item_id)
+    let Some(primary_info) = state
+        .item_infos
+        .iter()
+        .find(|item| item.item_id == primary_item_id)
+    else {
+        // Keep the payload helper's low-level error behavior for callers that
+        // construct a partial MetaState in tests; full parse validation still
+        // requires item information before this helper is used for decoding.
+        return Ok(primary_item_id);
+    };
+    if primary_info.item_type != *b"tmap" {
+        return Ok(primary_item_id);
+    }
+    let base_item_id = state
+        .item_references
+        .iter()
+        .filter(|reference| {
+            reference.reference_type == *b"dimg" && reference.from_item_id == primary_item_id
+        })
+        .flat_map(|reference| reference.to_item_ids.iter().copied())
+        .find(|item_id| {
+            state
+                .item_infos
+                .iter()
+                .any(|item| item.item_id == *item_id && item.item_type == *b"av01")
+        })
+        .ok_or_else(|| {
+            DecoderError::Unsupported(
+                "tmap primary item has no referenced base av01 image".to_string(),
+            )
+        })?;
+    Ok(base_item_id)
 }
 
 fn sequence_sample_payloads(
@@ -1819,9 +1855,18 @@ fn build_sample_offsets_with_descriptions(
     Ok((offsets, description_indices))
 }
 
+#[cfg(test)]
 fn alpha_auxiliary_items(
     data: &[u8],
     state: &MetaState,
+) -> Result<Vec<AuxiliaryImage>, DecoderError> {
+    alpha_auxiliary_items_for(data, state, state.primary_item_id)
+}
+
+fn alpha_auxiliary_items_for(
+    data: &[u8],
+    state: &MetaState,
+    owner_item_id: Option<u32>,
 ) -> Result<Vec<AuxiliaryImage>, DecoderError> {
     let mut item_ids: Vec<(u32, String)> = state
         .item_property_associations
@@ -1845,7 +1890,7 @@ fn alpha_auxiliary_items(
         .collect();
 
     if item_ids.is_empty()
-        && let Some(primary_item_id) = state.primary_item_id
+        && let Some(primary_item_id) = owner_item_id
     {
         for reference in &state.item_references {
             if &reference.reference_type == b"auxl" && reference.from_item_id == primary_item_id {
@@ -3097,6 +3142,46 @@ mod tests {
         assert!(matches!(
             error,
             DecoderError::Unsupported(message) if message.contains("lsel layer 1")
+        ));
+    }
+
+    #[test]
+    fn tmap_primary_selects_the_referenced_base_av1_item() {
+        let state = MetaState {
+            primary_item_id: Some(10),
+            item_infos: vec![
+                ItemInfo {
+                    item_id: 10,
+                    item_type: *b"tmap",
+                    item_name: "tone map".to_string(),
+                },
+                ItemInfo {
+                    item_id: 11,
+                    item_type: *b"av01",
+                    item_name: "base".to_string(),
+                },
+                ItemInfo {
+                    item_id: 12,
+                    item_type: *b"av01",
+                    item_name: "gain map".to_string(),
+                },
+            ],
+            item_references: vec![ItemReference {
+                reference_type: *b"dimg",
+                from_item_id: 10,
+                to_item_ids: vec![11, 12],
+            }],
+            ..MetaState::default()
+        };
+
+        assert_eq!(effective_primary_item_id(&state).unwrap(), 11);
+
+        let mut without_base = state;
+        without_base.item_references[0].to_item_ids = Vec::new();
+        let error = effective_primary_item_id(&without_base).unwrap_err();
+        assert!(matches!(
+            error,
+            DecoderError::Unsupported(message) if message.contains("base av01")
         ));
     }
 

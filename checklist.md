@@ -1289,3 +1289,9 @@ strict payload and reserved-bit validation. The existing still-image policy
 accepts only the default operating point/layer (`a1op=0`, `lsel=0`); non-default
 selectors return explicit `Unsupported` instead of being silently ignored,
 while `a1lx` indexing metadata is retained for future layer-range decode.
+
+Tone-map (`tmap`) primary items now resolve their first referenced base `av01`
+item for complete SDR/native decode, preserving the fallback-image contract.
+Gain-map metadata and alternate HDR rendering remain intentionally un-applied;
+missing or malformed base references fail closed rather than passing the `tmap`
+payload into the AV1 decoder.

@@ -35,6 +35,7 @@ passes the FFmpeg RGB oracle (average absolute error about 0.075, maximum 6).
 | AVIS Key/IntraOnly/show-existing sample decode by index or batch | Supported (Inter/Switch remain fail-closed) |
 | Animated AVIF multi-frame callback output | Supported for Key/IntraOnly/show-existing samples (`animation: true`); Inter/Switch remain fail-closed |
 | Layered-image selectors (`a1op=0`, `lsel=0`) | Parsed and accepted; non-default layer/operating-point selection remains fail-closed |
+| `tmap` primary item base-image fallback | Supported (base `av01` decode); gain-map HDR application is not performed |
 | HDR tone mapping and non-matrix ICC display conversion | Not yet supported |
 
 Unsupported composition or AV1 tools return `DecoderError::Unsupported`. The
