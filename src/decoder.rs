@@ -2440,10 +2440,11 @@ fn decode_sample_transform_frame(
     let intermediate_max = (1_i64 << (intermediate_bits - 1)) - 1;
     let output_max = (1_u32 << output_bit_depth) - 1;
     let mut planes = Vec::with_capacity(first.buffers.planes.len());
+    let mut stack = Vec::with_capacity(transform.tokens.len());
     for (plane_index, first_plane) in first.buffers.planes.iter().enumerate() {
         let mut samples = Vec::with_capacity(first_plane.samples.len());
         for sample_index in 0..first_plane.samples.len() {
-            let mut stack = Vec::new();
+            stack.clear();
             for token in &transform.tokens {
                 match *token {
                     SampleTransformToken::Constant(value) => stack.push(value),

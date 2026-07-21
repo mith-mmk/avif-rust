@@ -1248,3 +1248,10 @@ oracle locally. A three-iteration optimized checkpoint measured
 `309.34/309.18 ms` for `WML2Viewer.avif`; these are host-specific decode
 checkpoints, not stable cross-machine speedup claims. Inter/Switch reference
 reconstruction and 64-bit sato expressions remain explicitly unsupported.
+
+The sato evaluator now reuses one postfix stack allocation across all output
+samples and accepts the file-declared `dimg` input order instead of requiring
+the primary item to be first. A five-iteration optimized recheck of the
+official sample measured `396.10 ms` native / `445.70 ms` RGBA on this host;
+the result is a local allocation-reuse checkpoint rather than a stable
+cross-machine speedup claim.

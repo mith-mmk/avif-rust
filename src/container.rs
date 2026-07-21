@@ -422,9 +422,9 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
 /// Parses the first `sato` derived item that references the primary image.
 ///
 /// AVIF permits multiple alternative derived items. The still decoder only
-/// selects a transform whose first `dimg` input is the primary item; this is
-/// the deterministic form emitted by current encoders and avoids silently
-/// applying an unrelated auxiliary transform.
+/// selects a transform whose `dimg` inputs include the primary item. This
+/// keeps the still-image API deterministic while allowing the input order
+/// prescribed by the file to place hidden/residual inputs before the primary.
 pub(crate) fn parse_sample_transform(data: &[u8]) -> Result<Option<SampleTransform>, DecoderError> {
     // Avoid a second full metadata walk for the overwhelmingly common case.
     // `sato` is an item type, so this cheap byte preflight is only a hint; the
@@ -447,7 +447,7 @@ pub(crate) fn parse_sample_transform(data: &[u8]) -> Result<Option<SampleTransfo
             && meta.item_references.iter().any(|reference| {
                 reference.reference_type == *b"dimg"
                     && reference.from_item_id == item.item_id
-                    && reference.to_item_ids.first() == Some(&primary_item_id)
+                    && reference.to_item_ids.contains(&primary_item_id)
             })
     }) else {
         return Ok(None);
@@ -462,9 +462,9 @@ pub(crate) fn parse_sample_transform(data: &[u8]) -> Result<Option<SampleTransfo
         .ok_or_else(|| {
             DecoderError::Bitstream("sato item is missing dimg input references".to_string())
         })?;
-    if inputs.is_empty() || inputs.first() != Some(&primary_item_id) {
-        return Err(DecoderError::Unsupported(
-            "sato input does not begin with the primary item".to_string(),
+    if inputs.is_empty() {
+        return Err(DecoderError::Bitstream(
+            "sato input reference list is empty".to_string(),
         ));
     }
 
@@ -2309,6 +2309,22 @@ mod tests {
             parse_sample_transform_payload(&leaked),
             Err(DecoderError::Bitstream(message)) if message.contains("exactly one result")
         ));
+    }
+
+    #[test]
+    fn parses_sato_32_bit_signed_constants_and_unary_operators() {
+        // -2, absolute value, then bitwise-not: ~abs(-2) == -3.
+        let payload = [2, 3, 0, 0xff, 0xff, 0xff, 0xfe, 65, 66];
+        let (depth, tokens) = parse_sample_transform_payload(&payload).unwrap();
+        assert_eq!(depth, 32);
+        assert_eq!(
+            tokens,
+            vec![
+                SampleTransformToken::Constant(-2),
+                SampleTransformToken::Unary(1),
+                SampleTransformToken::Unary(2),
+            ]
+        );
     }
 
     #[test]
