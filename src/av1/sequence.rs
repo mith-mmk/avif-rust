@@ -62,6 +62,7 @@ pub struct SequenceHeader {
     pub enable_filter_intra: bool,
     pub enable_intra_edge_filter: bool,
     pub enable_order_hint: bool,
+    pub enable_warped_motion: bool,
     pub order_hint_bits: u8,
     pub seq_force_screen_content_tools: u8,
     pub seq_force_integer_mv: u8,
@@ -136,6 +137,7 @@ pub fn parse_sequence_header(data: &[u8]) -> Result<SequenceHeader, DecoderError
         enable_filter_intra,
         enable_intra_edge_filter,
         enable_order_hint: inter_tools.enable_order_hint,
+        enable_warped_motion: inter_tools.enable_warped_motion,
         order_hint_bits: inter_tools.order_hint_bits,
         seq_force_screen_content_tools: inter_tools.seq_force_screen_content_tools,
         seq_force_integer_mv: inter_tools.seq_force_integer_mv,
@@ -209,6 +211,7 @@ fn parse_operating_points(reader: &mut BitReader<'_>) -> Result<u8, DecoderError
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct InterTools {
     enable_order_hint: bool,
+    enable_warped_motion: bool,
     enable_ref_frame_mvs: bool,
     order_hint_bits: u8,
     seq_force_screen_content_tools: u8,
@@ -228,7 +231,7 @@ impl InterTools {
 fn parse_inter_tools(reader: &mut BitReader<'_>) -> Result<InterTools, DecoderError> {
     let _enable_interintra_compound = reader.read_bool("enable_interintra_compound")?;
     let _enable_masked_compound = reader.read_bool("enable_masked_compound")?;
-    let _enable_warped_motion = reader.read_bool("enable_warped_motion")?;
+    let enable_warped_motion = reader.read_bool("enable_warped_motion")?;
     let _enable_dual_filter = reader.read_bool("enable_dual_filter")?;
     let enable_order_hint = reader.read_bool("enable_order_hint")?;
     let enable_ref_frame_mvs;
@@ -259,6 +262,7 @@ fn parse_inter_tools(reader: &mut BitReader<'_>) -> Result<InterTools, DecoderEr
     };
     Ok(InterTools {
         enable_order_hint,
+        enable_warped_motion,
         enable_ref_frame_mvs,
         order_hint_bits,
         seq_force_screen_content_tools,

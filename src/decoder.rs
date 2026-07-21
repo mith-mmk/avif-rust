@@ -939,6 +939,7 @@ impl FrameReferenceSlots {
                     upscaled_width: reference.upscaled_width,
                     render_width: reference.render_width,
                     render_height: reference.render_height,
+                    order_hint: reference.order_hint,
                 })
         })
     }
@@ -4772,6 +4773,7 @@ mod av1_config_tests {
             enable_filter_intra: false,
             enable_intra_edge_filter: false,
             enable_order_hint: false,
+            enable_warped_motion: false,
             order_hint_bits: 0,
             seq_force_screen_content_tools: 0,
             seq_force_integer_mv: 0,

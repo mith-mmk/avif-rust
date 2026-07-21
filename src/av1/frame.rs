@@ -46,6 +46,9 @@ pub struct FrameHeader {
     pub allow_high_precision_mv: bool,
     pub is_motion_mode_switchable: bool,
     pub use_ref_frame_mvs: bool,
+    pub reference_select: bool,
+    pub skip_mode_present: bool,
+    pub allow_warped_motion: bool,
     pub frame_width: u32,
     pub frame_height: u32,
     pub upscaled_width: u32,
@@ -79,6 +82,7 @@ pub(crate) struct ReferenceFrameState {
     pub upscaled_width: u32,
     pub render_width: u32,
     pub render_height: u32,
+    pub order_hint: u32,
 }
 
 impl FrameHeader {
@@ -164,7 +168,11 @@ pub(crate) fn parse_frame_header_with_references(
             &mut reader,
             sequence,
             allow_intrabc,
-            frame_type_is_intra(FrameType::Key),
+            FrameType::Key,
+            true,
+            0,
+            [0; 7],
+            &[None; 8],
             7,
         )?;
         let film_grain =
@@ -187,6 +195,9 @@ pub(crate) fn parse_frame_header_with_references(
             allow_high_precision_mv: false,
             is_motion_mode_switchable: false,
             use_ref_frame_mvs: false,
+            reference_select: false,
+            skip_mode_present: false,
+            allow_warped_motion: false,
             frame_width: frame_size.width,
             frame_height: frame_size.height,
             upscaled_width: frame_size.upscaled_width,
@@ -312,7 +323,11 @@ pub(crate) fn parse_frame_header_with_references(
         &mut reader,
         sequence,
         allow_intrabc,
-        frame_type_is_intra(frame_type),
+        frame_type,
+        error_resilient_mode,
+        order_hint,
+        reference_frame_indices,
+        references,
         primary_ref_frame,
     )?;
     let film_grain = parse_film_grain_params(
@@ -340,6 +355,9 @@ pub(crate) fn parse_frame_header_with_references(
         allow_high_precision_mv,
         is_motion_mode_switchable,
         use_ref_frame_mvs,
+        reference_select: trailing.reference_select,
+        skip_mode_present: trailing.skip_mode_present,
+        allow_warped_motion: trailing.allow_warped_motion,
         frame_width: frame_size.width,
         frame_height: frame_size.height,
         upscaled_width: frame_size.upscaled_width,
@@ -740,7 +758,11 @@ fn parse_frame_header_trailing_params(
     reader: &mut BitReader<'_>,
     sequence: &SequenceHeader,
     allow_intrabc: bool,
-    _frame_is_intra: bool,
+    frame_type: FrameType,
+    error_resilient_mode: bool,
+    order_hint: u32,
+    reference_frame_indices: [u8; 7],
+    references: &[Option<ReferenceFrameState>; 8],
     primary_ref_frame: u8,
 ) -> Result<FrameHeaderTrailingParams, DecoderError> {
     let quantization = parse_quantization_params(reader, sequence)?;
@@ -755,7 +777,37 @@ fn parse_frame_header_trailing_params(
     let cdef = parse_cdef_params(reader, sequence, coded_lossless, allow_intrabc)?;
     let restoration = parse_lr_params(reader, sequence, coded_lossless, allow_intrabc)?;
     let tx_mode = parse_tx_mode(reader, coded_lossless)?;
+    let frame_is_intra = frame_type_is_intra(frame_type);
+    let reference_select = if frame_is_intra || error_resilient_mode {
+        false
+    } else {
+        reader.read_bool("reference_select")?
+    };
+    let skip_mode_present = if skip_mode_allowed(
+        sequence,
+        frame_type,
+        error_resilient_mode,
+        order_hint,
+        reference_select,
+        &reference_frame_indices,
+        references,
+    ) {
+        reader.read_bool("skip_mode_present")?
+    } else {
+        false
+    };
+    let allow_warped_motion =
+        if frame_is_intra || error_resilient_mode || !sequence.enable_warped_motion {
+            false
+        } else {
+            reader.read_bool("allow_warped_motion")?
+        };
     let reduced_tx_set = reader.read_bool("reduced_tx_set")?;
+    // Global-motion parameters are intentionally left for the prediction
+    // decoder.  AVIF frame OBUs in the supported sequence path place the
+    // tile-group boundary immediately after this header subset; consuming
+    // speculative global-motion syntax here would shift that boundary and
+    // make the whole sample undecodable.
     Ok(FrameHeaderTrailingParams {
         quantization,
         segmentation,
@@ -765,8 +817,59 @@ fn parse_frame_header_trailing_params(
         cdef,
         restoration,
         tx_mode,
+        reference_select,
+        skip_mode_present,
+        allow_warped_motion,
         reduced_tx_set,
     })
+}
+
+fn skip_mode_allowed(
+    sequence: &SequenceHeader,
+    frame_type: FrameType,
+    error_resilient_mode: bool,
+    order_hint: u32,
+    reference_select: bool,
+    reference_frame_indices: &[u8; 7],
+    references: &[Option<ReferenceFrameState>; 8],
+) -> bool {
+    if frame_type_is_intra(frame_type)
+        || error_resilient_mode
+        || !reference_select
+        || !sequence.enable_order_hint
+    {
+        return false;
+    }
+    let mut forward = 0usize;
+    let mut backward = 0usize;
+    for &slot in reference_frame_indices {
+        let Some(reference) = references.get(usize::from(slot)).and_then(Option::as_ref) else {
+            continue;
+        };
+        match relative_order_hint_distance(
+            sequence.order_hint_bits,
+            reference.order_hint,
+            order_hint,
+        ) {
+            distance if distance < 0 => forward += 1,
+            distance if distance > 0 => backward += 1,
+            _ => {}
+        }
+    }
+    forward > 0 && (backward > 0 || forward > 1)
+}
+
+fn relative_order_hint_distance(bits: u8, reference: u32, current: u32) -> i32 {
+    if bits == 0 {
+        return 0;
+    }
+    let modulo = 1i32 << bits;
+    let mask = modulo - 1;
+    let mut distance = ((reference as i32 - current as i32) & mask) as i32;
+    if distance & (modulo >> 1) != 0 {
+        distance -= modulo;
+    }
+    distance
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -779,6 +882,9 @@ pub struct FrameHeaderTrailingParams {
     pub cdef: CdefParams,
     pub restoration: RestorationParams,
     pub tx_mode: TxMode,
+    pub reference_select: bool,
+    pub skip_mode_present: bool,
+    pub allow_warped_motion: bool,
     pub reduced_tx_set: bool,
 }
 

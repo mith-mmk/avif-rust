@@ -1490,8 +1490,9 @@ weakening the same-dimensions requirement for sample-transform operands.
 
 Inter/Switch frame headers now consume the AV1 reference-index signalling,
 `frame_size_with_refs` probe, high-precision-MV, interpolation, motion-mode,
-and reference-frame-MV flags before reaching the existing fail-closed decode
-boundary. The decoder now retains eight reference slots with decoded-frame
-geometry and resolves reference-derived dimensions against those slots.
-Reference-backed motion reconstruction remains the next implementation step;
-no Inter/Switch frame is emitted partially.
+reference-frame-MV, `reference_select`, skip-mode and warped-motion flags
+before reaching the existing fail-closed decode boundary. The decoder now
+retains eight reference slots with decoded-frame geometry and resolves
+reference-derived dimensions against those slots. Global-motion signalling
+and reference-backed motion reconstruction remain the next implementation
+step; no Inter/Switch frame is emitted partially.
