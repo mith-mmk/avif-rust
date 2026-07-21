@@ -1200,3 +1200,10 @@ the payload, dimensions, color metadata, alpha premultiplication flag, and
 applicable `av1C` bytes. This avoids cloning the parent image's complete track
 and auxiliary metadata for every parallel or indexed sample without changing
 the public decode behavior.
+
+AVIS classification now retains the per-sample frame kind and Sequence Header
+presence from one OBU scan. The batch/indexed decode paths reuse that metadata
+when composing sample payloads, avoiding a second parse of each sample. A
+seven-iteration optimized run on a generated 16-frame 1024x1024 all-Key AVIS
+sample measured `153.06 ms` native frame decode and `166.45 ms` RGBA decode;
+this is a host-specific AVIS checkpoint and not a cross-machine speedup claim.

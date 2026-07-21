@@ -21,33 +21,63 @@ pub enum AvifSequenceSampleKind {
     ShowExisting { frame_to_show_map_idx: u8 },
 }
 
+/// Header-only metadata used by the decoder when it needs to inspect a
+/// sequence sample before reconstructing it. Keeping the OBU scan result
+/// together avoids reparsing the same sample to detect both its frame kind and
+/// an optional per-sample sequence header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AvifSequenceSampleInfo {
+    pub kind: Option<AvifSequenceSampleKind>,
+    pub has_sequence_header: bool,
+}
+
 /// Classifies the first coded-frame OBU in one AVIS track sample.
 pub fn classify_av1_sequence_sample(
     payload: &[u8],
 ) -> Result<Option<AvifSequenceSampleKind>, DecoderError> {
+    Ok(inspect_av1_sequence_sample(payload)?.kind)
+}
+
+/// Inspects one AVIS sample once, retaining the small amount of metadata that
+/// the sequence decoder needs for classification and header composition.
+pub(crate) fn inspect_av1_sequence_sample(
+    payload: &[u8],
+) -> Result<AvifSequenceSampleInfo, DecoderError> {
     let obus = parse_obu_stream(payload)?;
+    let has_sequence_header = obus
+        .iter()
+        .any(|obu| obu.obu_type == ObuType::SequenceHeader);
     let Some(frame) = obus
         .iter()
         .find(|obu| matches!(obu.obu_type, ObuType::Frame | ObuType::FrameHeader))
     else {
-        return Ok(None);
+        return Ok(AvifSequenceSampleInfo {
+            kind: None,
+            has_sequence_header,
+        });
     };
     let first = *frame
         .payload
         .first()
         .ok_or_else(|| DecoderError::NotEnoughData("AV1 frame header is empty".to_string()))?;
     if first & 0x80 != 0 {
-        return Ok(Some(AvifSequenceSampleKind::ShowExisting {
-            frame_to_show_map_idx: (first >> 4) & 0x07,
-        }));
+        return Ok(AvifSequenceSampleInfo {
+            kind: Some(AvifSequenceSampleKind::ShowExisting {
+                frame_to_show_map_idx: (first >> 4) & 0x07,
+            }),
+            has_sequence_header,
+        });
     }
-    Ok(Some(match (first >> 5) & 0x03 {
-        0 => AvifSequenceSampleKind::Key,
-        1 => AvifSequenceSampleKind::Inter,
-        2 => AvifSequenceSampleKind::IntraOnly,
-        3 => AvifSequenceSampleKind::Switch,
-        _ => unreachable!("two-bit AV1 frame type is always in range"),
-    }))
+    Ok(AvifSequenceSampleInfo {
+        kind: Some(match (first >> 5) & 0x03 {
+            0 => AvifSequenceSampleKind::Key,
+            1 => AvifSequenceSampleKind::Inter,
+            2 => AvifSequenceSampleKind::IntraOnly,
+            3 => AvifSequenceSampleKind::Switch,
+            _ => unreachable!("two-bit AV1 frame type is always in range"),
+        }),
+        has_sequence_header,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1978,6 +2008,16 @@ mod tests {
                 frame_to_show_map_idx: 2
             })
         );
+    }
+
+    #[test]
+    fn inspects_sequence_header_presence_alongside_frame_kind() {
+        let mut payload = vec![(1 << 3) | 0x02, 1, 0x00];
+        payload.extend_from_slice(&one_frame_obu(6, 0x40));
+        let info = inspect_av1_sequence_sample(&payload).unwrap();
+        assert_eq!(info.kind, Some(AvifSequenceSampleKind::IntraOnly));
+        assert!(info.has_sequence_header);
+        assert_eq!(classify_av1_sequence_sample(&payload).unwrap(), info.kind);
     }
 
     #[test]
