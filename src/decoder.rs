@@ -729,6 +729,20 @@ mod reference_frame_tests {
     }
 
     #[test]
+    fn batch_show_existing_sample_reuses_decoded_key_frame() {
+        let data = include_bytes!("../test_data/images/WML2Viewer.avif");
+        let mut info = parse_avif(data).unwrap();
+        info.major_brand = *b"avis";
+        info.sequence_sample_payloads = vec![
+            info.primary_item_payload.clone(),
+            encode_obu(ObuType::FrameHeader, &[0x80]).unwrap(),
+        ];
+        let expected = decode_frame_bytes(data).unwrap();
+        let frames = decode_sequence_frames_from_info(&info).unwrap();
+        assert_eq!(frames, vec![expected.clone(), expected]);
+    }
+
+    #[test]
     fn indexed_sample_with_own_sequence_header_uses_that_header() {
         let data = include_bytes!("../test_data/images/WML2Viewer.avif");
         let mut info = parse_avif(data).unwrap();

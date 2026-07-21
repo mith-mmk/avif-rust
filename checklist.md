@@ -1207,3 +1207,7 @@ when composing sample payloads, avoiding a second parse of each sample. A
 seven-iteration optimized run on a generated 16-frame 1024x1024 all-Key AVIS
 sample measured `153.06 ms` native frame decode and `166.45 ms` RGBA decode;
 this is a host-specific AVIS checkpoint and not a cross-machine speedup claim.
+
+The AVIS reference regression now covers a batch containing a decoded Key frame
+followed by a `show_existing_frame` sample, verifying that the supported
+reference-slot path returns both frames without partial output.
