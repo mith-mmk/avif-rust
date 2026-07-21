@@ -18,9 +18,10 @@ pub use compat::{
     ResponseCommand, TerminateOptions, VerboseOptions,
 };
 pub use container::{
-    AuxiliaryImage, AvifInfo, AvifSequenceSampleKind, CleanAperture, ColorInformation, GridCell,
-    GridImage, ImageMirror, ImageRotation, ImageSpatialExtents, NclxColorInformation,
-    PixelInformation, classify_av1_sequence_sample,
+    AuxiliaryImage, AvifInfo, AvifSequenceSampleKind, CleanAperture, ColorInformation,
+    GainMapChannel, GainMapMetadata, GainMapRational, GridCell, GridImage, ImageMirror,
+    ImageRotation, ImageSpatialExtents, NclxColorInformation, PixelInformation,
+    classify_av1_sequence_sample, parse_gain_map_metadata,
 };
 pub use decoder::{
     DecodedFrame, decode, decode_frame_bytes, decode_sequence_frame_bytes,

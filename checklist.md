@@ -1314,9 +1314,12 @@ while `a1lx` indexing metadata is retained for future layer-range decode.
 
 Tone-map (`tmap`) primary items now resolve their first referenced base `av01`
 item for complete SDR/native decode, preserving the fallback-image contract.
-Gain-map metadata and alternate HDR rendering remain intentionally un-applied;
-missing or malformed base references fail closed rather than passing the `tmap`
-payload into the AV1 decoder.
+The public `parse_gain_map_metadata` API now parses the ISO 21496 descriptor,
+including common/per-field rationals, multichannel flags, and strict version,
+denominator, range, and gamma validation. Gain-map application and alternate
+HDR rendering remain intentionally un-applied; missing or malformed base
+references fail closed rather than passing the `tmap` payload into the AV1
+decoder.
 
 The coded-frame allocation path now builds only the aligned plane layouts it
 needs instead of cloning the complete frame decode plan (including tile

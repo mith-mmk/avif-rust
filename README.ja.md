@@ -37,7 +37,7 @@ frame AVIF profileに対応します。1 frameの`avis` primary itemも静止画
 | AVISのKey/IntraOnly/show-existing frameをindex指定・一括でデコード | 対応（Inter/Switchはfail-closed） |
 | animated AVIFの複数frame callback出力 | Key／IntraOnly／show-existingに対応（`animation: true`、Inter／Switchはfail-closed） |
 | layered image selector（`a1op=0`、`lsel=0`） | 解析・受理（既定外の層／operating point選択はfail-closed） |
-| `tmap`主画像のbase画像フォールバック | 対応（base `av01`をデコード、Gain Map HDR合成は未適用） |
+| `tmap`主画像のbase画像フォールバック | 対応（base `av01`をデコード、ISO 21496 Gain Mapメタデータは解析可能、HDR合成は未適用） |
 | PQ／HLG transferからbounded SDR RGBA16への変換 | 対応（bounded tone mapping、display固有のcalibrationは未適用） |
 | display固有HDR gamut calibration、matrix-shaper以外のICC表示変換 | 未対応 |
 
