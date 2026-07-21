@@ -1407,8 +1407,26 @@ fn generated_intrabc_sample_matches_ffmpeg(
     plane_lengths: [usize; 3],
     enable_cdef: bool,
 ) {
+    generated_intrabc_sample_matches_ffmpeg_sized(
+        pixel_format,
+        expected_format,
+        plane_lengths,
+        enable_cdef,
+        128,
+        128,
+    );
+}
+
+fn generated_intrabc_sample_matches_ffmpeg_sized(
+    pixel_format: &str,
+    expected_format: &str,
+    plane_lengths: [usize; 3],
+    enable_cdef: bool,
+    width: usize,
+    height: usize,
+) {
     let root = std::env::temp_dir().join(format!(
-        ".test-avif-intrabc-{}-{pixel_format}-cdef{}",
+        ".test-avif-intrabc-{}-{width}x{height}-{pixel_format}-cdef{}",
         std::process::id(),
         u8::from(enable_cdef)
     ));
@@ -1422,7 +1440,8 @@ fn generated_intrabc_sample_matches_ffmpeg(
     );
     let status = Command::new("ffmpeg")
         .args(["-y", "-loglevel", "error"])
-        .args(["-f", "lavfi", "-i", "testsrc2=size=128x128:rate=1"])
+        .args(["-f", "lavfi", "-i"])
+        .arg(format!("testsrc2=size={width}x{height}:rate=1"))
         .args([
             "-frames:v",
             "1",
@@ -1454,9 +1473,9 @@ fn generated_intrabc_sample_matches_ffmpeg(
     }
     let data = std::fs::read(&output_path).expect("generated IntrABC AVIF should be readable");
     let frame = avif_rust::decode_frame_bytes(&data).expect("IntrABC AVIF should decode");
-    assert_eq!((frame.width, frame.height), (128, 128));
+    assert_eq!((frame.width, frame.height), (width, height));
     let image = avif_rust::image_from_bytes(&data).expect("IntrABC public decode should succeed");
-    assert_eq!((image.width, image.height), (128, 128));
+    assert_eq!((image.width, image.height), (width, height));
     if let Some(expected) = ffmpeg_decode_raw(&output_path, expected_format) {
         assert_eq!(expected.len(), plane_lengths.iter().sum());
         let mut plane_start = 0;
@@ -1489,6 +1508,18 @@ fn generated_intrabc_sample_matches_ffmpeg(
         }
     }
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn generated_large_intrabc_sample_matches_ffmpeg_when_encoder_is_present() {
+    generated_intrabc_sample_matches_ffmpeg_sized(
+        "yuv444p",
+        "yuv444p",
+        [256 * 256; 3],
+        false,
+        256,
+        256,
+    );
 }
 
 #[test]

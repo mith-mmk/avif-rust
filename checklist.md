@@ -726,6 +726,11 @@ sample with CDEF and restoration disabled. Native Y/U/V planes match FFmpeg's
 This proves the currently supported low-complexity IntrABC syntax path while
 the high-complexity reference/transform cases remain an explicit follow-up.
 
+The conformance set now also generates a 256x256 YUV444 IntrABC sample. Its
+native planes match FFmpeg exactly and the RGBA path completes, extending the
+IntrABC regression beyond a single 128x128 coding unit while keeping the
+high-complexity reference/transform cases explicitly tracked.
+
 On 2026-07-20, AVIS samples gained a header-level classifier for Key, Inter,
 IntraOnly, Switch and show-existing frames. The generated and external sequence
 fixtures now assert a Key first sample followed by real Inter samples, keeping
