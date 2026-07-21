@@ -1447,8 +1447,9 @@ Monochrome AVIFs carrying a valid GRAY/XYZ ICC profile now apply the profile's
 media white point and tone curve before converting luma to sRGB, while
 preserving alpha. Matrix-shaper and GRAY profiles from the ICC `spac` colour
 space class are accepted alongside display/output classes. Synthetic profile
-vectors cover the transform and malformed profiles remain fail-closed;
-Inter/Switch motion-vector frames are still explicitly unsupported.
+vectors plus a real external ICC AVIF class-mutation sample cover the transform;
+malformed profiles remain fail-closed. Inter/Switch motion-vector frames are
+still explicitly unsupported.
 
 A fresh five-iteration release benchmark measured `170.24 ms` native decode and
 `174.90 ms` RGBA conversion for `WML2Viewer.avif`; this is a same-host

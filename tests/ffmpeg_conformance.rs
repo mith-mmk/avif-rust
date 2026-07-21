@@ -2760,6 +2760,33 @@ fn public_icc_matrix_shaper_sample_applies_profile_when_present() {
 }
 
 #[test]
+fn public_icc_color_space_class_sample_keeps_profile_conversion() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join(
+            "test/images/external/avif/unsupported/red-at-12-oclock-with-color-profile-8bpc.avif",
+        );
+    if !path.is_file() {
+        eprintln!("external ICC sample is unavailable; skipping color-space class check");
+        return;
+    }
+    let original = std::fs::read(&path).expect("ICC AVIF sample should be readable");
+    let baseline = avif_rust::image_from_bytes(&original).expect("ICC AVIF sample should decode");
+    let mut spac = original.clone();
+    let class_offset = spac
+        .windows(4)
+        .enumerate()
+        .find_map(|(offset, bytes)| (bytes == b"mntr").then_some(offset))
+        .expect("ICC sample should contain a profile device class");
+    spac[class_offset..class_offset + 4].copy_from_slice(b"spac");
+
+    let converted =
+        avif_rust::image_from_bytes(&spac).expect("ICC color-space profile class should decode");
+    assert_eq!(converted, baseline);
+}
+
+#[test]
 #[ignore = "single-sample RGB error is diagnostic until plane-level conformance fixtures exist"]
 fn report_current_wml2viewer_rgb_error() {
     let avif_data =
