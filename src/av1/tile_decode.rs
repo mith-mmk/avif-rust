@@ -51,7 +51,7 @@ use diagnostic::{CoeffBaseProbe, CoeffBaseRead, CoeffBrProbe, CoeffSignRead};
 pub(crate) use public_api::decode_luma_root_block_prefix_with_post_filter_state_and_entropy;
 #[cfg(test)]
 pub(crate) use public_api::decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options;
-pub(crate) use public_api::decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references;
+pub(crate) use public_api::decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf;
 pub use public_api::{
     decode_first_luma_block, decode_first_luma_transform, decode_luma_root_block_prefix,
     decode_luma_root_blocks, prepare_tile_entropy, probe_first_block_residuals,
@@ -205,6 +205,15 @@ impl<'a> TileDecoder<'a> {
         frame: &FrameHeader,
         reference_buffers: [Option<Arc<FrameBuffers>>; 8],
     ) -> Result<Self, DecoderError> {
+        Self::new_with_references_and_cdf(payload, frame, reference_buffers, None)
+    }
+
+    pub fn new_with_references_and_cdf(
+        payload: &'a [u8],
+        frame: &FrameHeader,
+        reference_buffers: [Option<Arc<FrameBuffers>>; 8],
+        initial_cdf: Option<CdfContext>,
+    ) -> Result<Self, DecoderError> {
         let mi_cols = usize::try_from(mi_dimension(frame.frame_width))
             .map_err(|_| DecoderError::InvalidParam("AV1 frame width is too large".to_string()))?;
         let mi_rows = usize::try_from(mi_dimension(frame.frame_height))
@@ -214,7 +223,7 @@ impl<'a> TileDecoder<'a> {
         })?;
         Ok(Self {
             reader: EntropyDecoder::new(payload, frame.disable_cdf_update)?,
-            cdf: CdfContext::new(frame.base_q_idx),
+            cdf: initial_cdf.unwrap_or_else(|| CdfContext::new(frame.base_q_idx)),
             mi_cols,
             mi_rows,
             tile_mi_col_start: 0,
@@ -264,6 +273,10 @@ impl<'a> TileDecoder<'a> {
             current_delta_lf: [0; 4],
             reference_buffers,
         })
+    }
+
+    pub(crate) fn cdf_snapshot(&self) -> CdfContext {
+        self.cdf.clone()
     }
 
     pub(super) fn reference_buffer(&self, slot: u8) -> Result<Arc<FrameBuffers>, DecoderError> {

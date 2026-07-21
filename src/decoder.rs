@@ -5,14 +5,14 @@ use crate::av1::alloc_frame_buffers;
 #[cfg(test)]
 use crate::av1::decode_luma_root_block_prefix_with_post_filter_state_and_entropy;
 use crate::av1::{
-    Av1CodecConfiguration, BlockModeProbe, ChromaSamplePosition, ColorConfig, FilmGrainParams,
-    FrameBuffers, FrameDecodePlan, FrameHeader, FrameType, PartitionProbe, PlaneBuffer,
-    PlaneLayout, QuantState, ReferenceFrameState, ResidualProbe, SequenceHeader, TileEntropyState,
-    TileGroup, alloc_coded_frame_buffers, apply_film_grain, apply_superres_horizontal,
-    build_still_decode_plan, cdef_adjust_primary_strength,
+    Av1CodecConfiguration, BlockModeProbe, CdfContext, ChromaSamplePosition, ColorConfig,
+    FilmGrainParams, FrameBuffers, FrameDecodePlan, FrameHeader, FrameType, PartitionProbe,
+    PlaneBuffer, PlaneLayout, QuantState, ReferenceFrameState, ResidualProbe, SequenceHeader,
+    TileEntropyState, TileGroup, alloc_coded_frame_buffers, apply_film_grain,
+    apply_superres_horizontal, build_still_decode_plan, cdef_adjust_primary_strength,
     cdef_filter_block_region_with_edge_mode_into, cdef_find_direction_with_variance,
     crop_frame_buffers_to_plan, deblock_filter_edge_with_visible_bounds,
-    decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references,
+    decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf,
     frame_buffers_to_rgba_16, parse_av1_config, parse_frame_header,
     parse_frame_header_with_references, parse_sequence_header, parse_show_existing_frame_index,
     parse_tile_group, plan_transform_blocks_with_tx_size, prepare_tile_entropy,
@@ -669,6 +669,7 @@ fn decode_sequence_samples_from_info(
         return Ok(vec![decoded]);
     }
     let mut references = FrameReferenceSlots::default();
+    let mut cdf_states: Option<Vec<CdfContext>> = None;
     let mut frames = Vec::new();
     for (((index, sample), sample_info), kind) in samples
         .iter()
@@ -694,7 +695,20 @@ fn decode_sequence_samples_from_info(
                     sample_info.has_sequence_header,
                     av1_config,
                 )?;
-                let decoded = decode_still_frame(&headers, Some(info))?;
+                let (decoded_state, next_cdf_states) =
+                    decode_still_frame_with_filter_policy_and_state_and_references_and_cdf(
+                        &headers,
+                        Some(info),
+                        true,
+                        std::array::from_fn(|_| None),
+                        (!sample_info.has_sequence_header)
+                            .then_some(cdf_states.as_deref())
+                            .flatten(),
+                    )?;
+                let decoded = finish_decoded_still_frame(&headers, decoded_state, true)?;
+                if !headers.frame.disable_frame_end_update_cdf {
+                    cdf_states = Some(next_cdf_states);
+                }
                 references.refresh(headers.frame.refresh_frame_flags, &decoded, &headers.frame);
                 if collect_all {
                     frames.push(decoded);
@@ -724,12 +738,15 @@ fn decode_sequence_samples_from_info(
                     av1_config,
                     &reference_states,
                 )?;
-                let decoded_state =
-                    match decode_still_frame_with_filter_policy_and_state_and_references(
+                let (decoded_state, next_cdf_states) =
+                    match decode_still_frame_with_filter_policy_and_state_and_references_and_cdf(
                         &headers,
                         Some(info),
                         true,
                         references.buffers(),
+                        (!sample_info.has_sequence_header)
+                            .then_some(cdf_states.as_deref())
+                            .flatten(),
                     ) {
                         Ok(decoded) => decoded,
                         Err(DecoderError::Bitstream(_)) | Err(DecoderError::Unsupported(_)) => {
@@ -739,7 +756,10 @@ fn decode_sequence_samples_from_info(
                         }
                         Err(err) => return Err(err),
                     };
-                let decoded = decoded_state.frame;
+                let decoded = finish_decoded_still_frame(&headers, decoded_state, true)?;
+                if !headers.frame.disable_frame_end_update_cdf {
+                    cdf_states = Some(next_cdf_states);
+                }
                 references.refresh(headers.frame.refresh_frame_flags, &decoded, &headers.frame);
                 if collect_all {
                     frames.push(decoded);
@@ -3120,11 +3140,20 @@ fn decode_still_frame_with_filter_policy(
     info: Option<&AvifInfo>,
     validate_filters: bool,
 ) -> Result<DecodedFrame, DecoderError> {
+    let decoded = decode_still_frame_with_filter_policy_and_state(headers, info, validate_filters)?;
+    finish_decoded_still_frame(headers, decoded, validate_filters)
+}
+
+fn finish_decoded_still_frame(
+    headers: &Av1Headers,
+    decoded: DecodedStillFrame,
+    validate_filters: bool,
+) -> Result<DecodedFrame, DecoderError> {
     let DecodedStillFrame {
         mut frame,
         post_filter_state,
         film_grain,
-    } = decode_still_frame_with_filter_policy_and_state(headers, info, validate_filters)?;
+    } = decoded;
     if validate_filters {
         apply_deblock_stage(&mut frame, &headers.frame, &post_filter_state);
         apply_cdef_stage(&mut frame, &headers.frame, &post_filter_state);
@@ -3776,12 +3805,29 @@ fn decode_still_frame_with_filter_policy_and_state_and_references(
     validate_filters: bool,
     reference_buffers: [Option<Arc<FrameBuffers>>; 8],
 ) -> Result<DecodedStillFrame, DecoderError> {
+    decode_still_frame_with_filter_policy_and_state_and_references_and_cdf(
+        headers,
+        info,
+        validate_filters,
+        reference_buffers,
+        None,
+    )
+    .map(|(decoded, _)| decoded)
+}
+
+fn decode_still_frame_with_filter_policy_and_state_and_references_and_cdf(
+    headers: &Av1Headers,
+    info: Option<&AvifInfo>,
+    validate_filters: bool,
+    reference_buffers: [Option<Arc<FrameBuffers>>; 8],
+    initial_cdfs: Option<&[CdfContext]>,
+) -> Result<(DecodedStillFrame, Vec<CdfContext>), DecoderError> {
     if validate_filters {
         validate_public_decode_tools(headers)?;
     }
     let mut buffers = alloc_coded_frame_buffers(&headers.decode_plan)?;
-    let (prefix, post_filter_state) =
-        decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references(
+    let (prefix, post_filter_state, final_cdfs) =
+        decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf(
             &headers.tile_group.tile_data,
             &headers.tile_group.group,
             &headers.sequence,
@@ -3792,6 +3838,7 @@ fn decode_still_frame_with_filter_policy_and_state_and_references(
             validate_filters,
             false,
             reference_buffers,
+            initial_cdfs,
         )?;
     if let Some(err) = prefix.next_unsupported {
         return Err(err);
@@ -3799,21 +3846,24 @@ fn decode_still_frame_with_filter_policy_and_state_and_references(
     if !validate_filters {
         crop_frame_buffers_to_plan(&mut buffers, &headers.decode_plan)?;
     }
-    Ok(DecodedStillFrame {
-        frame: DecodedFrame {
-            width: headers.decode_plan.width,
-            height: headers.decode_plan.height,
-            render_width: headers.decode_plan.render_width,
-            render_height: headers.decode_plan.render_height,
-            bit_depth: headers.decode_plan.bit_depth,
-            color_config: headers.sequence.color_config,
-            color_information: info.and_then(|info| info.color_information.clone()),
-            alpha_premultiplied: info.is_some_and(|info| info.alpha_premultiplied),
-            buffers,
+    Ok((
+        DecodedStillFrame {
+            frame: DecodedFrame {
+                width: headers.decode_plan.width,
+                height: headers.decode_plan.height,
+                render_width: headers.decode_plan.render_width,
+                render_height: headers.decode_plan.render_height,
+                bit_depth: headers.decode_plan.bit_depth,
+                color_config: headers.sequence.color_config,
+                color_information: info.and_then(|info| info.color_information.clone()),
+                alpha_premultiplied: info.is_some_and(|info| info.alpha_premultiplied),
+                buffers,
+            },
+            post_filter_state,
+            film_grain: headers.frame.film_grain,
         },
-        post_filter_state,
-        film_grain: headers.frame.film_grain,
-    })
+        final_cdfs,
+    ))
 }
 
 fn validate_public_container_preflight(

@@ -5,6 +5,7 @@ use super::{
     ResidualProbe, TileDecoder, TileEntropyState,
 };
 use crate::DecoderError;
+use crate::av1::cdf::CdfContext;
 use crate::av1::decode::{FrameBuffers, FrameDecodePlan};
 use crate::av1::entropy::EntropyDecoder;
 use crate::av1::frame::FrameHeader;
@@ -427,7 +428,7 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
     validate_entropy: bool,
     collect_diagnostics: bool,
 ) -> Result<(DecodedBlockPrefix, PostFilterState), DecoderError> {
-    decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references(
+    let (prefix, state, _) = decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf(
         data,
         tile_group,
         sequence,
@@ -438,14 +439,16 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
         validate_entropy,
         collect_diagnostics,
         std::array::from_fn(|_| None),
-    )
+        None,
+    )?;
+    Ok((prefix, state))
 }
 
 #[expect(
     clippy::too_many_arguments,
     reason = "internal prefix decode exposes each independently testable pipeline input"
 )]
-pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references(
+pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf(
     data: &[u8],
     tile_group: &TileGroup,
     sequence: &SequenceHeader,
@@ -456,7 +459,8 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
     validate_entropy: bool,
     collect_diagnostics: bool,
     reference_buffers: [Option<Arc<FrameBuffers>>; 8],
-) -> Result<(DecodedBlockPrefix, PostFilterState), DecoderError> {
+    initial_cdfs: Option<&[CdfContext]>,
+) -> Result<(DecodedBlockPrefix, PostFilterState, Vec<CdfContext>), DecoderError> {
     if tile_group.tiles.is_empty() {
         return Err(DecoderError::Bitstream(
             "AV1 tile group has no tile payloads".to_string(),
@@ -466,19 +470,25 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
     let mut block_budget = max_blocks;
     let mut decoded_block_count = 0;
     let mut post_filter_state = PostFilterState::default();
+    let mut final_cdfs = Vec::with_capacity(tile_group.tiles.len());
 
     for (tile_index, tile_payload) in tile_group.tiles.iter().enumerate() {
         let payload = tile_payload_bytes(data, tile_payload)?;
         let tile_plan = plan.tiles.get(tile_index).ok_or_else(|| {
             DecoderError::Bitstream("AV1 tile decode plan is missing a tile".to_string())
         })?;
-        let mut decoder =
-            TileDecoder::new_with_references(payload, frame, reference_buffers.clone())?;
+        let mut decoder = TileDecoder::new_with_references_and_cdf(
+            payload,
+            frame,
+            reference_buffers.clone(),
+            initial_cdfs.and_then(|cdfs| cdfs.get(tile_index)).cloned(),
+        )?;
         decoder.set_tile_bounds(tile_plan);
         for sb_row in tile_plan.sb_row_start..tile_plan.sb_row_end {
             decoder.reset_left_superblock_contexts();
             for sb_col in tile_plan.sb_col_start..tile_plan.sb_col_end {
                 if block_budget == 0 {
+                    final_cdfs.push(decoder.cdf_snapshot());
                     post_filter_state.merge(decoder.take_post_filter_state());
                     return Ok((
                         DecodedBlockPrefix {
@@ -486,6 +496,7 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
                             next_unsupported: None,
                         },
                         post_filter_state,
+                        final_cdfs,
                     ));
                 }
                 let x = (sb_col as usize * plan.superblock_size).min(plan.width);
@@ -512,6 +523,7 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
                     Err(err @ DecoderError::Unsupported(_))
                         if decoded_block_count > block_start =>
                     {
+                        final_cdfs.push(decoder.cdf_snapshot());
                         post_filter_state.merge(decoder.take_post_filter_state());
                         return Ok((
                             DecodedBlockPrefix {
@@ -519,6 +531,7 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
                                 next_unsupported: Some(err),
                             },
                             post_filter_state,
+                            final_cdfs,
                         ));
                     }
                     Err(err) => return Err(err),
@@ -536,6 +549,7 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
                 ))
             })?;
         }
+        final_cdfs.push(decoder.cdf_snapshot());
         post_filter_state.merge(decoder.take_post_filter_state());
     }
 
@@ -545,6 +559,7 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
             next_unsupported: None,
         },
         post_filter_state,
+        final_cdfs,
     ))
 }
 
