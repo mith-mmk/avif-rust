@@ -3133,6 +3133,51 @@ fn all_official_unsupported_samples_decode_without_partial_output() {
 }
 
 #[test]
+fn every_top_level_external_unsupported_sample_decodes_completely() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("test/images/external/avif/unsupported");
+    let mut paths = std::fs::read_dir(&root)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_file()
+                && path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| {
+                        matches!(extension.to_ascii_lowercase().as_str(), "avif" | "avifs")
+                    })
+        })
+        .collect::<Vec<_>>();
+    if paths.is_empty() {
+        eprintln!("external unsupported sample directory is unavailable; skipping dynamic audit");
+        return;
+    }
+    paths.sort();
+    for path in paths {
+        let data = std::fs::read(&path).expect("external unsupported sample should be readable");
+        let image = avif_rust::image_from_bytes(&data)
+            .unwrap_or_else(|error| panic!("{} should decode completely: {error}", path.display()));
+        assert!(
+            image.width > 0 && image.height > 0,
+            "{} has empty dimensions",
+            path.display()
+        );
+        assert_eq!(
+            image.rgba.len(),
+            image.width * image.height * 4,
+            "{} has partial RGBA output",
+            path.display()
+        );
+    }
+}
+
+#[test]
 fn external_sato_12bit_to_16bit_sample_decodes() {
     let path = std::env::var_os("AVIF_SATO_SAMPLE")
         .map(std::path::PathBuf::from)

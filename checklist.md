@@ -675,6 +675,12 @@ unchanged. Two 11-iteration optimized `WML2Viewer.avif` runs measured
 `288.35/295.41 ms` checkpoint; this is recorded as a repeatable local
 speedup, not a cross-machine guarantee.
 
+The external unsupported-sample audit now also enumerates every top-level
+`.avif`/`.avifs` file in the fixture directory instead of relying only on the
+hard-coded 25-sample list. Each discovered file must produce non-empty
+dimensions and exactly `width * height * 4` RGBA bytes, so adding a new
+unsupported fixture automatically becomes a complete-output regression gate.
+
 The segmentation map reader now follows the normative symbol consumption even
 when `last_active_segment == 0`: segment 0 is still decoded from the full
 8-symbol CDF before negative deinterleaving. A focused regression test pins the
