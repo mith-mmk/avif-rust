@@ -21,7 +21,8 @@ use crate::av1::{
 use crate::compat::{DataMap, DecodeOptions, InitOptions};
 use crate::container::{
     AvifInfo, AvifSequenceSampleInfo, AvifSequenceSampleKind, CleanAperture, ColorInformation,
-    GridCell, ImageMirror, ImageRotation, inspect_av1_sequence_sample, parse_avif,
+    GridCell, ImageMirror, ImageRotation, SampleTransformToken, inspect_av1_sequence_sample,
+    parse_avif, parse_sample_transform,
 };
 use crate::obu::{ObuType, find_obu_payloads, parse_obu_stream};
 use crate::{DecoderError, ImageBuffer, Rgba16ImageBuffer};
@@ -46,6 +47,26 @@ pub fn decode<B: BinaryReader>(
     let data = read_to_end(reader)?;
     let info = parse_avif(&data)?;
     validate_public_container_preflight(&info, true)?;
+    if let Some(frame) = decode_sample_transform_frame(&data, &info)? {
+        let mut image = frame.to_rgba8()?;
+        apply_clean_aperture(&mut image, info.clean_aperture)?;
+        apply_mirror(&mut image, info.mirror)?;
+        apply_rotation(&mut image, info.rotation)?;
+        emit_metadata(&info, None, option)?;
+        option.drawer.init(
+            image.width,
+            image.height,
+            Some(InitOptions {
+                loop_count: 1,
+                animation: false,
+            }),
+        )?;
+        option
+            .drawer
+            .draw(0, 0, image.width, image.height, &image.rgba, None)?;
+        option.drawer.terminate(None)?;
+        return Ok(());
+    }
     if info.primary_grid.is_some() {
         let image = decode_grid_image(&info)?;
         emit_metadata(&info, None, option)?;
@@ -147,6 +168,13 @@ pub fn decode<B: BinaryReader>(
 pub fn decode_bytes(data: &[u8]) -> Result<ImageBuffer, DecoderError> {
     let info = parse_avif(data)?;
     validate_public_container_preflight(&info, true)?;
+    if let Some(frame) = decode_sample_transform_frame(data, &info)? {
+        let mut image = frame.to_rgba8()?;
+        apply_clean_aperture(&mut image, info.clean_aperture)?;
+        apply_mirror(&mut image, info.mirror)?;
+        apply_rotation(&mut image, info.rotation)?;
+        return Ok(image);
+    }
     if info.primary_grid.is_some() {
         return decode_grid_image(&info);
     }
@@ -221,6 +249,9 @@ impl DecodedFrame {
 pub fn decode_frame_bytes(data: &[u8]) -> Result<DecodedFrame, DecoderError> {
     let info = parse_avif(data)?;
     validate_public_container_preflight(&info, false)?;
+    if let Some(frame) = decode_sample_transform_frame(data, &info)? {
+        return Ok(frame);
+    }
     if info.primary_grid.is_some() {
         return decode_grid_frame(&info);
     }
@@ -2348,6 +2379,183 @@ fn decode_still_frame(
     info: Option<&AvifInfo>,
 ) -> Result<DecodedFrame, DecoderError> {
     decode_still_frame_with_filter_policy(headers, info, true)
+}
+
+fn decode_sample_transform_frame(
+    data: &[u8],
+    info: &AvifInfo,
+) -> Result<Option<DecodedFrame>, DecoderError> {
+    let Some(transform) = parse_sample_transform(data)? else {
+        return Ok(None);
+    };
+    if info.primary_grid.is_some()
+        || !info.alpha_auxiliary_items.is_empty()
+        || transform.inputs.iter().any(|input| {
+            input.width != transform.output_width || input.height != transform.output_height
+        })
+    {
+        return Err(DecoderError::Unsupported(
+            "sato grid, alpha, or mismatched dimensions are not supported".to_string(),
+        ));
+    }
+    let mut frames = Vec::with_capacity(transform.inputs.len());
+    for input in &transform.inputs {
+        let input_info = AvifInfo {
+            major_brand: *b"avif",
+            compatible_brands: vec![*b"avif"],
+            primary_item_id: Some(input.item_id),
+            width: Some(input.width),
+            height: Some(input.height),
+            pixel_information: Some(input.pixel_information.clone()),
+            color_information: input.color_information.clone(),
+            alpha_premultiplied: false,
+            alpha_auxiliary_items: Vec::new(),
+            alpha_grid: None,
+            primary_grid: None,
+            clean_aperture: None,
+            rotation: None,
+            mirror: None,
+            av1_config: Some(input.av1_config.clone()),
+            primary_item_payload: input.payload.clone(),
+            sequence_sample_payloads: Vec::new(),
+        };
+        let headers = parse_av1_headers(&input_info)?;
+        frames.push(decode_still_frame(&headers, Some(&input_info))?);
+    }
+    let first = frames
+        .first()
+        .ok_or_else(|| DecoderError::Bitstream("sato has no input frames".to_string()))?;
+    if frames.iter().any(|frame| {
+        frame.width != first.width
+            || frame.height != first.height
+            || frame.buffers.planes.len() != first.buffers.planes.len()
+    }) {
+        return Err(DecoderError::Unsupported(
+            "sato inputs have incompatible decoded planes".to_string(),
+        ));
+    }
+    let output_bit_depth = transform.output_bit_depth;
+    let intermediate_bits = i64::from(transform.intermediate_bit_depth);
+    let intermediate_min = -(1_i64 << (intermediate_bits - 1));
+    let intermediate_max = (1_i64 << (intermediate_bits - 1)) - 1;
+    let output_max = (1_u32 << output_bit_depth) - 1;
+    let mut planes = Vec::with_capacity(first.buffers.planes.len());
+    for (plane_index, first_plane) in first.buffers.planes.iter().enumerate() {
+        let mut samples = Vec::with_capacity(first_plane.samples.len());
+        for sample_index in 0..first_plane.samples.len() {
+            let mut stack = Vec::new();
+            for token in &transform.tokens {
+                match *token {
+                    SampleTransformToken::Constant(value) => stack.push(value),
+                    SampleTransformToken::Input(index) => {
+                        let frame = frames.get(index).ok_or_else(|| {
+                            DecoderError::Bitstream(format!(
+                                "sato input reference {index} is out of range"
+                            ))
+                        })?;
+                        let plane = frame.buffers.planes.get(plane_index).ok_or_else(|| {
+                            DecoderError::Unsupported(
+                                "sato input plane count does not match".to_string(),
+                            )
+                        })?;
+                        let value = *plane.samples.get(sample_index).ok_or_else(|| {
+                            DecoderError::Bitstream(
+                                "sato input plane dimensions do not match".to_string(),
+                            )
+                        })?;
+                        stack.push(i64::from(value));
+                    }
+                    SampleTransformToken::Unary(op) => {
+                        let value = stack.pop().ok_or_else(|| {
+                            DecoderError::Bitstream("sato unary stack underflow".to_string())
+                        })?;
+                        let value = match op {
+                            0 => value.saturating_neg(),
+                            1 => value.saturating_abs(),
+                            2 => !value,
+                            3 => {
+                                if value <= 0 {
+                                    0
+                                } else {
+                                    i64::from(63 - value.leading_zeros())
+                                }
+                            }
+                            _ => unreachable!(),
+                        };
+                        stack.push(value.clamp(intermediate_min, intermediate_max));
+                    }
+                    SampleTransformToken::Binary(op) => {
+                        let right = stack.pop().ok_or_else(|| {
+                            DecoderError::Bitstream("sato binary stack underflow".to_string())
+                        })?;
+                        let left = stack.pop().ok_or_else(|| {
+                            DecoderError::Bitstream("sato binary stack underflow".to_string())
+                        })?;
+                        let value = match op {
+                            0 => left.saturating_add(right),
+                            1 => left.saturating_sub(right),
+                            2 => left.saturating_mul(right),
+                            3 => {
+                                if right == 0 {
+                                    return Err(DecoderError::Bitstream(
+                                        "sato division by zero".to_string(),
+                                    ));
+                                }
+                                left / right
+                            }
+                            4 => left & right,
+                            5 => left | right,
+                            6 => left ^ right,
+                            7 => {
+                                if right < 0 {
+                                    return Err(DecoderError::Unsupported(
+                                        "negative sato exponent is not supported".to_string(),
+                                    ));
+                                }
+                                left.saturating_pow(right as u32)
+                            }
+                            8 => left.min(right),
+                            9 => left.max(right),
+                            _ => unreachable!(),
+                        };
+                        stack.push(value.clamp(intermediate_min, intermediate_max));
+                    }
+                }
+            }
+            let value = stack.pop().ok_or_else(|| {
+                DecoderError::Bitstream("sato expression produced no result".to_string())
+            })?;
+            if !stack.is_empty() {
+                return Err(DecoderError::Bitstream(
+                    "sato expression produced multiple results".to_string(),
+                ));
+            }
+            samples.push(value.clamp(0, i64::from(output_max)) as u16);
+        }
+        planes.push(PlaneBuffer {
+            layout: first_plane.layout,
+            samples,
+        });
+    }
+    let mut color_config = first.color_config;
+    color_config.bit_depth = output_bit_depth;
+    color_config.high_bitdepth = output_bit_depth > 8;
+    color_config.twelve_bit = output_bit_depth == 12;
+    Ok(Some(DecodedFrame {
+        width: transform.output_width as usize,
+        height: transform.output_height as usize,
+        render_width: transform.output_width as usize,
+        render_height: transform.output_height as usize,
+        bit_depth: output_bit_depth,
+        color_config,
+        color_information: first.color_information.clone(),
+        alpha_premultiplied: false,
+        buffers: FrameBuffers {
+            width: transform.output_width as usize,
+            height: transform.output_height as usize,
+            planes,
+        },
+    }))
 }
 
 #[cfg(test)]

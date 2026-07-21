@@ -1236,3 +1236,15 @@ intra-only image-item profile used by newer AVIF writers. A regression test
 mutates the checked-in still-image sample to an `avio` major brand and verifies
 metadata parsing plus full-frame decode; `avis` remains the sequence brand that
 activates track-sample extraction.
+
+AVIF 1.2 Sample Transform (`sato`) support now decodes the official
+`weld_sato_12B_8B_q0.avif` shape: postfix constants, input references, unary
+operators, and binary arithmetic/bitwise operators are validated with a
+fail-closed stack parser, and the still-frame API returns the transformed
+16-bit native planes. The sample is an optional external fixture so CI stays
+reproducible without committing a binary; set `AVIF_SATO_SAMPLE` to run the
+oracle locally. A three-iteration optimized checkpoint measured
+`485.32 ms` native / `500.93 ms` RGBA for the 1024x684 sato sample and
+`309.34/309.18 ms` for `WML2Viewer.avif`; these are host-specific decode
+checkpoints, not stable cross-machine speedup claims. Inter/Switch reference
+reconstruction and 64-bit sato expressions remain explicitly unsupported.

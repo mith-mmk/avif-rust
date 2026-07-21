@@ -3131,3 +3131,26 @@ fn all_official_unsupported_samples_decode_without_partial_output() {
         );
     }
 }
+
+#[test]
+fn external_sato_12bit_to_16bit_sample_decodes() {
+    let path = std::env::var_os("AVIF_SATO_SAMPLE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("workspace root should exist")
+                .join("test/images/external/avif/unsupported/weld_sato_12B_8B_q0.avif")
+        });
+    if !path.is_file() {
+        eprintln!("external sato sample is unavailable; skipping Sample Transform oracle");
+        return;
+    }
+    let data = std::fs::read(&path).expect("sato sample should be readable");
+    let frame = avif_rust::decode_frame_bytes(&data).expect("sato sample should decode");
+    assert_eq!((frame.width, frame.height), (1024, 684));
+    assert_eq!(frame.bit_depth, 16);
+    let image = avif_rust::image_from_bytes(&data).expect("sato RGBA conversion should decode");
+    assert_eq!((image.width, image.height), (1024, 684));
+    assert_eq!(image.rgba.len(), 1024 * 684 * 4);
+}

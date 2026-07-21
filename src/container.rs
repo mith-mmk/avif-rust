@@ -205,6 +205,38 @@ pub struct GridCell {
     pub payload: Vec<u8>,
 }
 
+/// AVIF 1.2 Sample Transform (`sato`) expression associated with a derived
+/// image item. This stays crate-private because it is an implementation detail
+/// of the still-image decoder rather than a new public container API.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SampleTransform {
+    pub output_width: u32,
+    pub output_height: u32,
+    pub output_bit_depth: u8,
+    pub intermediate_bit_depth: u8,
+    pub tokens: Vec<SampleTransformToken>,
+    pub inputs: Vec<SampleTransformInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SampleTransformToken {
+    Constant(i64),
+    Input(usize),
+    Unary(u8),
+    Binary(u8),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SampleTransformInput {
+    pub item_id: u32,
+    pub width: u32,
+    pub height: u32,
+    pub pixel_information: PixelInformation,
+    pub color_information: Option<ColorInformation>,
+    pub av1_config: Vec<u8>,
+    pub payload: Vec<u8>,
+}
+
 /// `clap` clean aperture item property.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CleanAperture {
@@ -385,6 +417,232 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
         primary_item_payload,
         sequence_sample_payloads,
     })
+}
+
+/// Parses the first `sato` derived item that references the primary image.
+///
+/// AVIF permits multiple alternative derived items. The still decoder only
+/// selects a transform whose first `dimg` input is the primary item; this is
+/// the deterministic form emitted by current encoders and avoids silently
+/// applying an unrelated auxiliary transform.
+pub(crate) fn parse_sample_transform(data: &[u8]) -> Result<Option<SampleTransform>, DecoderError> {
+    // Avoid a second full metadata walk for the overwhelmingly common case.
+    // `sato` is an item type, so this cheap byte preflight is only a hint; the
+    // structured parser below still validates every box and reference.
+    if !data.windows(4).any(|window| window == b"sato") {
+        return Ok(None);
+    }
+    let mut meta = MetaState::default();
+    for_each_top_level_box(data, |header| {
+        if &header.box_type == b"meta" {
+            parse_meta(data, header, &mut meta)?;
+        }
+        Ok(())
+    })?;
+    let Some(primary_item_id) = meta.primary_item_id else {
+        return Ok(None);
+    };
+    let Some(sato) = meta.item_infos.iter().find(|item| {
+        item.item_type == *b"sato"
+            && meta.item_references.iter().any(|reference| {
+                reference.reference_type == *b"dimg"
+                    && reference.from_item_id == item.item_id
+                    && reference.to_item_ids.first() == Some(&primary_item_id)
+            })
+    }) else {
+        return Ok(None);
+    };
+    let inputs = meta
+        .item_references
+        .iter()
+        .find(|reference| {
+            reference.reference_type == *b"dimg" && reference.from_item_id == sato.item_id
+        })
+        .map(|reference| reference.to_item_ids.clone())
+        .ok_or_else(|| {
+            DecoderError::Bitstream("sato item is missing dimg input references".to_string())
+        })?;
+    if inputs.is_empty() || inputs.first() != Some(&primary_item_id) {
+        return Err(DecoderError::Unsupported(
+            "sato input does not begin with the primary item".to_string(),
+        ));
+    }
+
+    let output_metadata = item_metadata(&meta, sato.item_id)?;
+    let output_width = output_metadata.width.ok_or_else(|| {
+        DecoderError::Bitstream("sato item is missing ispe dimensions".to_string())
+    })?;
+    let output_height = output_metadata.height.ok_or_else(|| {
+        DecoderError::Bitstream("sato item is missing ispe dimensions".to_string())
+    })?;
+    let output_bit_depth = uniform_bit_depth(output_metadata.pixel_information.as_ref())?;
+    if !(8..=16).contains(&output_bit_depth) {
+        return Err(DecoderError::Unsupported(format!(
+            "sato output bit depth {output_bit_depth} is not supported"
+        )));
+    }
+    let mut transform_inputs = Vec::with_capacity(inputs.len());
+    for item_id in inputs {
+        let item = meta
+            .item_infos
+            .iter()
+            .find(|item| item.item_id == item_id)
+            .ok_or_else(|| {
+                DecoderError::Bitstream(format!("sato input item {item_id} is missing item info"))
+            })?;
+        if item.item_type != *b"av01" {
+            return Err(DecoderError::Unsupported(format!(
+                "sato input item {item_id} has unsupported type {:?}",
+                item.item_type
+            )));
+        }
+        let metadata = item_metadata(&meta, item_id)?;
+        let width = metadata.width.ok_or_else(|| {
+            DecoderError::Bitstream(format!("sato input item {item_id} is missing ispe"))
+        })?;
+        let height = metadata.height.ok_or_else(|| {
+            DecoderError::Bitstream(format!("sato input item {item_id} is missing ispe"))
+        })?;
+        let pixel_information = metadata.pixel_information.ok_or_else(|| {
+            DecoderError::Bitstream(format!("sato input item {item_id} is missing pixi"))
+        })?;
+        let av1_config = metadata.av1_config.ok_or_else(|| {
+            DecoderError::Bitstream(format!("sato input item {item_id} is missing av1C"))
+        })?;
+        transform_inputs.push(SampleTransformInput {
+            item_id,
+            width,
+            height,
+            pixel_information,
+            color_information: metadata.color_information,
+            av1_config,
+            payload: item_payload(data, &meta, item_id)?,
+        });
+    }
+    let payload = item_payload(data, &meta, sato.item_id)?;
+    let (intermediate_bit_depth, tokens) = parse_sample_transform_payload(&payload)?;
+    Ok(Some(SampleTransform {
+        output_width,
+        output_height,
+        output_bit_depth,
+        intermediate_bit_depth,
+        tokens,
+        inputs: transform_inputs,
+    }))
+}
+
+fn uniform_bit_depth(pixi: Option<&PixelInformation>) -> Result<u8, DecoderError> {
+    let pixi =
+        pixi.ok_or_else(|| DecoderError::Bitstream("pixi property is missing".to_string()))?;
+    let Some(&depth) = pixi.bits_per_channel.first() else {
+        return Err(DecoderError::Bitstream("pixi has no channels".to_string()));
+    };
+    if pixi.bits_per_channel.iter().any(|value| *value != depth) {
+        return Err(DecoderError::Unsupported(
+            "sato requires a uniform bit depth across planes".to_string(),
+        ));
+    }
+    Ok(depth)
+}
+
+fn parse_sample_transform_payload(
+    payload: &[u8],
+) -> Result<(u8, Vec<SampleTransformToken>), DecoderError> {
+    if payload.len() < 2 {
+        return Err(DecoderError::NotEnoughData(
+            "sato payload is missing its header".to_string(),
+        ));
+    }
+    let header = payload[0];
+    let version = header >> 6;
+    if version != 0 || header & 0x3c != 0 {
+        return Err(DecoderError::Unsupported(
+            "unsupported sato version or reserved header bits".to_string(),
+        ));
+    }
+    let intermediate_bit_depth = match header & 0x03 {
+        0 => 8,
+        1 => 16,
+        2 => 32,
+        _ => 64,
+    };
+    if intermediate_bit_depth == 64 {
+        return Err(DecoderError::Unsupported(
+            "64-bit sato expressions are not supported".to_string(),
+        ));
+    }
+    let token_count = usize::from(payload[1]);
+    if token_count == 0 || payload.len() < token_count + 2 {
+        return Err(DecoderError::Bitstream(
+            "sato token count exceeds payload".to_string(),
+        ));
+    }
+    let mut cursor = 2usize;
+    let mut stack_depth = 0usize;
+    let mut tokens = Vec::with_capacity(token_count);
+    for _ in 0..token_count {
+        let token = payload[cursor];
+        cursor += 1;
+        match token {
+            0 => {
+                let bytes = usize::from(intermediate_bit_depth / 8);
+                let end = cursor.checked_add(bytes).ok_or_else(|| {
+                    DecoderError::Bitstream("sato constant length overflow".to_string())
+                })?;
+                if end > payload.len() {
+                    return Err(DecoderError::NotEnoughData(
+                        "sato constant is truncated".to_string(),
+                    ));
+                }
+                let value = match bytes {
+                    1 => i64::from(i8::from_be_bytes([payload[cursor]])),
+                    2 => i64::from(i16::from_be_bytes([payload[cursor], payload[cursor + 1]])),
+                    4 => i64::from(i32::from_be_bytes([
+                        payload[cursor],
+                        payload[cursor + 1],
+                        payload[cursor + 2],
+                        payload[cursor + 3],
+                    ])),
+                    _ => unreachable!(),
+                };
+                cursor = end;
+                tokens.push(SampleTransformToken::Constant(value));
+                stack_depth += 1;
+            }
+            1..=32 => {
+                tokens.push(SampleTransformToken::Input(usize::from(token - 1)));
+                stack_depth += 1;
+            }
+            64..=67 => {
+                if stack_depth < 1 {
+                    return Err(DecoderError::Bitstream(
+                        "sato unary stack underflow".to_string(),
+                    ));
+                }
+                tokens.push(SampleTransformToken::Unary(token - 64));
+            }
+            128..=137 => {
+                if stack_depth < 2 {
+                    return Err(DecoderError::Bitstream(
+                        "sato binary stack underflow".to_string(),
+                    ));
+                }
+                stack_depth -= 1;
+                tokens.push(SampleTransformToken::Binary(token - 128));
+            }
+            _ => {
+                return Err(DecoderError::Unsupported(format!(
+                    "reserved sato token {token}"
+                )));
+            }
+        }
+    }
+    if stack_depth != 1 || cursor != payload.len() {
+        return Err(DecoderError::Bitstream(
+            "sato expression does not leave exactly one result".to_string(),
+        ));
+    }
+    Ok((intermediate_bit_depth, tokens))
 }
 
 fn brand_is_avif(brand: &[u8; 4]) -> bool {
@@ -2019,6 +2277,38 @@ mod tests {
         assert_eq!(info.kind, Some(AvifSequenceSampleKind::IntraOnly));
         assert!(info.has_sequence_header);
         assert_eq!(classify_av1_sequence_sample(&payload).unwrap(), info.kind);
+    }
+
+    #[test]
+    fn parses_sato_postfix_expression_with_16_bit_constant() {
+        // input0 * 256 + input1, the canonical 8-bit-to-16-bit suffix.
+        let payload = [1, 5, 1, 0, 1, 0, 130, 2, 128];
+        let (depth, tokens) = parse_sample_transform_payload(&payload).unwrap();
+        assert_eq!(depth, 16);
+        assert_eq!(
+            tokens,
+            vec![
+                SampleTransformToken::Input(0),
+                SampleTransformToken::Constant(256),
+                SampleTransformToken::Binary(2),
+                SampleTransformToken::Input(1),
+                SampleTransformToken::Binary(0),
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_sato_reserved_token_and_stack_leaks() {
+        let reserved = [0, 1, 33];
+        assert!(matches!(
+            parse_sample_transform_payload(&reserved),
+            Err(DecoderError::Unsupported(message)) if message.contains("reserved sato token")
+        ));
+        let leaked = [0, 2, 1, 2];
+        assert!(matches!(
+            parse_sample_transform_payload(&leaked),
+            Err(DecoderError::Bitstream(message)) if message.contains("exactly one result")
+        ));
     }
 
     #[test]
