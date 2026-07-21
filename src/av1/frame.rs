@@ -303,7 +303,7 @@ pub(crate) fn parse_frame_header_with_references(
             &reference_frame_indices,
             references,
         )?;
-        allow_high_precision_mv = if force_integer_mv != 0 {
+        allow_high_precision_mv = if force_integer_mv == 1 {
             false
         } else {
             reader.read_bool("allow_high_precision_mv")?
@@ -333,6 +333,9 @@ pub(crate) fn parse_frame_header_with_references(
         references,
         primary_ref_frame,
     )?;
+    if !frame_is_intra && trailing.allow_warped_motion {
+        read_global_motion_flags(&mut reader)?;
+    }
     let film_grain = parse_film_grain_params(
         &mut reader,
         sequence,
@@ -384,6 +387,17 @@ pub(crate) fn parse_frame_header_with_references(
         uncompressed_header_bits: reader.bit_position(),
         payload_after_header_offset: reader.byte_position_ceil(),
     })
+}
+
+fn read_global_motion_flags(reader: &mut BitReader<'_>) -> Result<(), DecoderError> {
+    for reference in 0..7 {
+        if reader.read_bool("is_global")? {
+            return Err(DecoderError::Unsupported(format!(
+                "AV1 global motion reference {reference} is not supported"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Reads the small prefix that identifies an AV1 `show_existing_frame` OBU.

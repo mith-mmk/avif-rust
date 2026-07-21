@@ -338,6 +338,12 @@ impl<'a> TileDecoder<'a> {
             };
             (motion_vector, None)
         };
+        if frame.is_motion_mode_switchable && block_size.width() >= 8 && block_size.height() >= 8 {
+            let _motion_mode = self.reader.read_symbol(
+                self.cdf
+                    .motion_mode_cdf_mut(block_size.motion_mode_cdf_index()),
+            )?;
+        }
         if is_compound && !skip {
             let masked_compound_used = sequence.enable_masked_compound
                 && block_size.width() >= 8

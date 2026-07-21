@@ -162,6 +162,30 @@ pub const DEFAULT_COMPOUND_IDX_CDF: [[u16; 3]; 6] = [
     [9334, 32768, 0],
     [4644, 32768, 0],
 ];
+pub const DEFAULT_MOTION_MODE_CDF: [[u16; 4]; 22] = [
+    [10923, 21845, 32768, 0],
+    [10923, 21845, 32768, 0],
+    [10923, 21845, 32768, 0],
+    [7651, 24760, 32768, 0],
+    [4738, 24765, 32768, 0],
+    [5391, 25528, 32768, 0],
+    [19419, 26810, 32768, 0],
+    [5123, 23606, 32768, 0],
+    [11606, 24308, 32768, 0],
+    [26260, 29116, 32768, 0],
+    [20360, 28062, 32768, 0],
+    [21679, 26830, 32768, 0],
+    [29516, 30701, 32768, 0],
+    [28898, 30397, 32768, 0],
+    [30878, 31335, 32768, 0],
+    [32507, 32558, 32768, 0],
+    [10923, 21845, 32768, 0],
+    [10923, 21845, 32768, 0],
+    [28799, 31390, 32768, 0],
+    [26431, 30774, 32768, 0],
+    [28973, 31594, 32768, 0],
+    [29742, 31203, 32768, 0],
+];
 
 // AV1 motion-vector CDFs.  These are kept in the frame CDF context because
 // new-MV syntax is adaptive just like the block-mode symbols.  The values
@@ -1968,6 +1992,7 @@ pub struct CdfContext {
     pub switchable_interp: [[u16; 4]; 16],
     pub comp_group_idx: [[u16; 3]; 7],
     pub compound_idx: [[u16; 3]; 6],
+    pub motion_mode: [[u16; 4]; 22],
     pub motion: MotionVectorCdf,
     pub seg_id: [[u16; SEGMENT_IDS + 1]; SEGMENT_ID_CONTEXTS],
     pub delta_q: [u16; 5],
@@ -2047,6 +2072,7 @@ impl CdfContext {
             switchable_interp: DEFAULT_SWITCHABLE_INTERP_CDF,
             comp_group_idx: DEFAULT_COMP_GROUP_IDX_CDF,
             compound_idx: DEFAULT_COMPOUND_IDX_CDF,
+            motion_mode: DEFAULT_MOTION_MODE_CDF,
             motion: MotionVectorCdf::DEFAULT,
             seg_id: DEFAULT_SEG_ID_CDF,
             delta_q: DEFAULT_DELTA_Q_CDF,
@@ -2177,6 +2203,10 @@ impl CdfContext {
 
     pub fn compound_idx_cdf_mut(&mut self, context: usize) -> &mut [u16] {
         &mut self.compound_idx[context]
+    }
+
+    pub fn motion_mode_cdf_mut(&mut self, context: usize) -> &mut [u16] {
+        &mut self.motion_mode[context]
     }
 
     pub fn motion_joint_cdf_mut(&mut self) -> &mut [u16] {

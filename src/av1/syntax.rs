@@ -118,6 +118,13 @@ impl BlockSize {
         4usize << self.height_mi_log2()
     }
 
+    pub fn motion_mode_cdf_index(self) -> usize {
+        match self {
+            Self::Block128x32 | Self::Block128x64 | Self::Block128x128 => 21,
+            _ => self as usize,
+        }
+    }
+
     pub fn size_group(self) -> usize {
         match self.width().max(self.height()) {
             0..=8 => 0,

@@ -480,10 +480,14 @@ fn sequence_api_decodes_inter_sample_without_partial_output() {
         .expect("inter sample should decode without partial output");
     assert_eq!((frame.width, frame.height), (159, 159));
     assert_eq!(frame.buffers.planes[0].samples.len(), 159 * 159);
+    for index in 0..5 {
+        avif_rust::decode_sequence_frame_bytes(&data, index)
+            .unwrap_or_else(|error| panic!("sample {index} should decode: {error}"));
+    }
 }
 
 #[test]
-fn callback_rejects_inter_sequence_before_initialization() {
+fn callback_decodes_inter_sequence_after_initialization() {
     let path = external_star_path();
     if !path.is_file() {
         eprintln!("external AVIS sequence sample is unavailable; skipping callback boundary test");
@@ -492,11 +496,12 @@ fn callback_rejects_inter_sequence_before_initialization() {
     let data = std::fs::read(&path).expect("external AVIS sequence should be readable");
     let mut drawer = RecordingDrawer::default();
     let mut options = DecodeOptions::new(&mut drawer);
-    let error = avif_rust::decode(&mut BytesReader::new(&data), &mut options).unwrap_err();
-    assert!(error.to_string().contains("sample 1") && error.to_string().contains("Inter"));
-    assert!(drawer.init.is_none());
-    assert!(drawer.draw_buffers.is_empty());
-    assert!(!drawer.terminated);
+    avif_rust::decode(&mut BytesReader::new(&data), &mut options)
+        .expect("callback should decode inter sequence");
+    assert!(drawer.init.is_some());
+    assert_eq!(drawer.draw_buffers.len(), 5);
+    assert!(!drawer.draw_buffers.is_empty());
+    assert!(drawer.terminated);
 }
 
 #[test]
