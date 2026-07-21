@@ -217,7 +217,11 @@ impl DecodedFrame {
             .and_then(ColorInformation::icc_profile)
             .is_none()
         {
-            return crate::av1::frame_buffers_to_rgba_8(&self.buffers, &self.color_config);
+            let mut image = crate::av1::frame_buffers_to_rgba_8(&self.buffers, &self.color_config)?;
+            if self.alpha_premultiplied {
+                unpremultiply_rgba8(&mut image.rgba);
+            }
+            return Ok(image);
         }
         let rgba16 = self.to_rgba16()?;
         let rgba = rgba16
@@ -241,7 +245,37 @@ impl DecodedFrame {
         {
             crate::icc::apply_to_rgba16(&mut image.rgba, profile)?;
         }
+        if self.alpha_premultiplied {
+            unpremultiply_rgba16(&mut image.rgba);
+        }
         Ok(image)
+    }
+}
+
+fn unpremultiply_rgba8(rgba: &mut [u8]) {
+    for pixel in rgba.chunks_exact_mut(4) {
+        let alpha = u32::from(pixel[3]);
+        if alpha == 0 {
+            pixel[..3].fill(0);
+            continue;
+        }
+        for channel in &mut pixel[..3] {
+            *channel = ((u32::from(*channel) * 255 + alpha / 2) / alpha).min(255) as u8;
+        }
+    }
+}
+
+fn unpremultiply_rgba16(rgba: &mut [u16]) {
+    for pixel in rgba.chunks_exact_mut(4) {
+        let alpha = u64::from(pixel[3]);
+        if alpha == 0 {
+            pixel[..3].fill(0);
+            continue;
+        }
+        for channel in &mut pixel[..3] {
+            *channel = ((u64::from(*channel) * u64::from(u16::MAX) + alpha / 2) / alpha)
+                .min(u64::from(u16::MAX)) as u16;
+        }
     }
 }
 
@@ -4183,6 +4217,79 @@ mod color_metadata_tests {
         assert!(
             matches!(error, DecoderError::Bitstream(message) if message.contains("does not match"))
         );
+    }
+}
+
+#[cfg(test)]
+mod premultiplied_alpha_tests {
+    use super::*;
+    use crate::av1::ColorDescription;
+
+    fn plane(index: u8, sample: u16) -> PlaneBuffer {
+        PlaneBuffer {
+            layout: PlaneLayout {
+                plane: index,
+                width: 1,
+                height: 1,
+                subsampling_x: 0,
+                subsampling_y: 0,
+                sample_count: 1,
+            },
+            samples: vec![sample],
+        }
+    }
+
+    fn frame() -> DecodedFrame {
+        DecodedFrame {
+            width: 1,
+            height: 1,
+            render_width: 1,
+            render_height: 1,
+            bit_depth: 8,
+            color_config: ColorConfig {
+                high_bitdepth: false,
+                twelve_bit: false,
+                bit_depth: 8,
+                monochrome: false,
+                color_description: Some(ColorDescription {
+                    color_primaries: 1,
+                    transfer_characteristics: 13,
+                    matrix_coefficients: 0,
+                }),
+                color_range: ColorRange::Full,
+                subsampling_x: false,
+                subsampling_y: false,
+                chroma_sample_position: None,
+                separate_uv_delta_q: false,
+            },
+            color_information: None,
+            alpha_premultiplied: true,
+            buffers: FrameBuffers {
+                width: 1,
+                height: 1,
+                // Native identity GBR order is G, B, R, alpha.
+                planes: vec![plane(0, 64), plane(1, 32), plane(2, 16), plane(3, 128)],
+            },
+        }
+    }
+
+    #[test]
+    fn rgba_outputs_unpremultiplied_primary_channels() {
+        let frame = frame();
+        let rgba16 = frame.to_rgba16().unwrap();
+        assert_eq!(rgba16.rgba, vec![8192, 32768, 16384, 32896]);
+        let rgba8 = frame.to_rgba8().unwrap();
+        assert_eq!(rgba8.rgba, vec![32, 128, 64, 128]);
+    }
+
+    #[test]
+    fn zero_alpha_clears_unpremultiplied_channels() {
+        let mut rgba8 = vec![255, 127, 1, 0];
+        unpremultiply_rgba8(&mut rgba8);
+        assert_eq!(rgba8, vec![0, 0, 0, 0]);
+        let mut rgba16 = vec![u16::MAX, 32768, 1, 0];
+        unpremultiply_rgba16(&mut rgba16);
+        assert_eq!(rgba16, vec![0, 0, 0, 0]);
     }
 }
 

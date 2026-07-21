@@ -3439,6 +3439,23 @@ mod tests {
     }
 
     #[test]
+    fn primary_metadata_preserves_premultiplied_alpha_property() {
+        let state = MetaState {
+            item_property_associations: vec![ItemPropertyAssociation {
+                item_id: 7,
+                associations: vec![PropertyAssociation {
+                    index: 1,
+                    essential: false,
+                }],
+            }],
+            item_properties: vec![ItemProperty::Premultiplied],
+            ..MetaState::default()
+        };
+
+        assert!(item_metadata(&state, 7).unwrap().alpha_premultiplied);
+    }
+
+    #[test]
     fn primary_metadata_resolves_only_properties_associated_with_primary_item() {
         let primary_color = ColorInformation {
             color_type: *b"nclx",

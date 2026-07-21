@@ -310,6 +310,9 @@ and RGBA gates.
 - [x] Public alpha auxiliary composition for the 8-bit 4:4:4 sample, including
       optional native `DecodedFrame.buffers.planes[3]` alpha output and RGBA
       conversion coverage.
+- [x] Honour the AVIF `prem` property by unpremultiplying RGB channels at the
+      RGBA8/RGBA16 API boundary while preserving the encoded native planes;
+      zero-alpha and 1x1 identity GBR vectors cover rounding and channel order.
 - [x] Keep the limited SDR BT.601/BT.709 colour-conversion core.
 - [x] Verify the SDR BT.601/BT.709 conversion core with generated BT.709 and
       BT.470 BG AVIF plane/RGBA fixtures against the FFmpeg oracle.
@@ -1292,6 +1295,10 @@ fixtures (including unsupported `tmap` metadata versions). Each file must
 still produce a complete base RGBA image with exact dimensions; HDR gain-map
 tone mapping remains intentionally outside the current RGBA API and is
 tracked separately from AV1 decode support.
+
+The `prem` item property is now honoured at the public RGBA boundary. RGB
+channels are unpremultiplied with bounded integer rounding for RGBA8/RGBA16,
+zero-alpha pixels are cleared, and native decoded planes remain unchanged.
 
 ICC matrix-shaper, LUT, and mAB/mBA profile application now reuse the native
 RGBA16 row-chunk scheduler used by AV1 colour conversion. Large ICC-bearing
