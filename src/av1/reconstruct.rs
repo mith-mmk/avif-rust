@@ -596,7 +596,7 @@ fn frame_buffers_to_rgba_8_sdr(
                     pixel[1] = u16_to_u8(rgb[1]);
                     pixel[2] = u16_to_u8(rgb[2]);
                     pixel[3] = alpha
-                        .map(|plane| u16_to_u8(scale_sample_to_u16(plane.samples[index], 255)))
+                        .map(|plane| plane.samples[index] as u8)
                         .unwrap_or(u8::MAX);
                 }
             },
@@ -638,7 +638,7 @@ fn frame_buffers_to_rgba_8_sdr(
                     pixel[0] = u16_to_u8(rgb[0]);
                     pixel[1] = u16_to_u8(rgb[1]);
                     pixel[2] = u16_to_u8(rgb[2]);
-                    pixel[3] = u16_to_u8(alpha_sample(buffers.planes.get(3), x, y, 255));
+                    pixel[3] = alpha_sample_u8(buffers.planes.get(3), x, y);
                 }
             }
         },
@@ -666,11 +666,11 @@ fn frame_buffers_to_rgba_8_monochrome_sdr(
             for (row_offset, row) in chunk.chunks_exact_mut(buffers.width * 4).enumerate() {
                 let y = first_row + row_offset;
                 for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
-                    let value = u16_to_u8(scale_sample_to_u16(sample_plane(luma, x, y), 255));
+                    let value = sample_plane(luma, x, y) as u8;
                     let alpha = buffers
                         .planes
                         .get(3)
-                        .map(|plane| u16_to_u8(scale_sample_to_u16(sample_plane(plane, x, y), 255)))
+                        .map(|plane| sample_plane(plane, x, y) as u8)
                         .unwrap_or(u8::MAX);
                     pixel[0] = value;
                     pixel[1] = value;
@@ -898,6 +898,13 @@ fn alpha_sample(
     plane
         .map(|plane| scale_sample_to_u16(sample_plane(plane, x, y), max_source))
         .unwrap_or(u16::MAX)
+}
+
+#[inline]
+fn alpha_sample_u8(plane: Option<&super::decode::PlaneBuffer>, x: usize, y: usize) -> u8 {
+    plane
+        .map(|plane| sample_plane(plane, x, y) as u8)
+        .unwrap_or(u8::MAX)
 }
 
 fn sample_chroma_plane(

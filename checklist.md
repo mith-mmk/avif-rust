@@ -1458,3 +1458,10 @@ checkpoint and the GRAY ICC branch is bypassed for ordinary RGB samples.
 After the ICC device-class expansion, a second five-iteration release run
 measured `168.30/169.74 ms` (native/RGBA) for the same sample. This remains a
 same-host no-regression checkpoint rather than a cross-machine speedup claim.
+
+The 8-bit RGBA conversion path now maps native 8-bit alpha and monochrome
+samples directly to `u8`, avoiding an intermediate 16-bit scale/divide while
+preserving the exact existing output. Two five-iteration checks measured
+`2.01/2.13 ms` and `1.92/2.11 ms` (native/RGBA) for the external alpha sample,
+and `56.40/56.31 ms` and `56.02/56.66 ms` for the external monochrome sample;
+these are same-host checkpoints, not cross-machine speedup claims.
