@@ -1417,3 +1417,12 @@ YUV422 in addition to the 10-bit variants. Both native bit-depth assertions
 and FFmpeg RGBA oracles pass; the 12-bit samples measured average/max RGB
 errors `1.4553/38` (420) and `1.2152/10` (422). This closes the previously
 untested 12-bit subsampled decode boundary.
+
+The normal reconstruction path no longer walks each transform geometry once
+just to pre-register a zero-valued filter boundary and then walks it again to
+decode the block. Skip, all-zero, and non-zero transform paths now register
+their boundary at the point where they are processed, preserving post-filter
+state while removing the duplicate iterator/filter pass. The 11-iteration
+release benchmark measured `167.49/168.37 ms` (native/RGBA) for
+`WML2Viewer.avif`; this is a same-host optimization checkpoint, not a
+cross-machine speedup claim.
