@@ -315,6 +315,9 @@ pub(crate) struct SampleTransformInput {
     pub color_information: Option<ColorInformation>,
     pub av1_config: Vec<u8>,
     pub payload: Vec<u8>,
+    /// A `grid` input is composed before the sample-transform expression is
+    /// evaluated. Plain `av01` inputs keep this as `None`.
+    pub grid: Option<GridImage>,
 }
 
 /// `clap` clean aperture item property.
@@ -883,7 +886,7 @@ pub(crate) fn parse_sample_transform(data: &[u8]) -> Result<Option<SampleTransfo
             .ok_or_else(|| {
                 DecoderError::Bitstream(format!("sato input item {item_id} is missing item info"))
             })?;
-        if item.item_type != *b"av01" {
+        if item.item_type != *b"av01" && item.item_type != *b"grid" {
             return Err(DecoderError::Unsupported(format!(
                 "sato input item {item_id} has unsupported type {:?}",
                 item.item_type
@@ -896,20 +899,44 @@ pub(crate) fn parse_sample_transform(data: &[u8]) -> Result<Option<SampleTransfo
         let height = metadata.height.ok_or_else(|| {
             DecoderError::Bitstream(format!("sato input item {item_id} is missing ispe"))
         })?;
-        let pixel_information = metadata.pixel_information.ok_or_else(|| {
-            DecoderError::Bitstream(format!("sato input item {item_id} is missing pixi"))
-        })?;
-        let av1_config = metadata.av1_config.ok_or_else(|| {
-            DecoderError::Bitstream(format!("sato input item {item_id} is missing av1C"))
-        })?;
+        let metadata_pixel_information = metadata.pixel_information;
+        let metadata_av1_config = metadata.av1_config;
+        let color_information = metadata.color_information;
+        let grid = if item.item_type == *b"grid" {
+            let payload = item_payload(data, &meta, item_id)?;
+            Some(parse_grid_item(data, &payload, &meta, item_id)?)
+        } else {
+            None
+        };
+        let av1_config = match metadata_av1_config {
+            Some(config) => config,
+            None => grid
+                .as_ref()
+                .and_then(|grid| grid.cells.first())
+                .and_then(|cell| cell.av1_config.clone())
+                .ok_or_else(|| {
+                    DecoderError::Bitstream(format!("sato input item {item_id} is missing av1C"))
+                })?,
+        };
+        let pixel_information = match metadata_pixel_information {
+            Some(pixel_information) => pixel_information,
+            None => grid
+                .as_ref()
+                .and_then(|grid| grid.cells.first())
+                .and_then(|cell| cell.pixel_information.clone())
+                .ok_or_else(|| {
+                    DecoderError::Bitstream(format!("sato input item {item_id} is missing pixi"))
+                })?,
+        };
         transform_inputs.push(SampleTransformInput {
             item_id,
             width,
             height,
             pixel_information,
-            color_information: metadata.color_information,
+            color_information,
             av1_config,
             payload: item_payload(data, &meta, item_id)?,
+            grid,
         });
     }
     let payload = item_payload(data, &meta, sato.item_id)?;

@@ -1481,3 +1481,9 @@ generated 512x512 10-bit identity-GBR sample measured `20.11/20.57 ms` over
 five iterations (native/RGBA) after the table path; this is a same-host
 checkpoint, not a cross-machine speedup claim. The same generated sample is now part of
 the FFmpeg RGBA oracle suite with native 10-bit and identity-matrix assertions.
+
+SATO inputs may now be `grid` derived image items in addition to direct `av01`
+items. Grid cells are composed through the existing native grid decoder before
+the sample-transform expression runs; malformed or dimension-inconsistent
+inputs remain fail-closed. This covers the AVIF 1.2 grid-input form without
+weakening the same-dimensions requirement for sample-transform operands.

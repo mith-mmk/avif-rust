@@ -21,8 +21,9 @@ use crate::av1::{
 use crate::compat::{DataMap, DecodeOptions, InitOptions};
 use crate::container::{
     AvifInfo, AvifSequenceSampleInfo, AvifSequenceSampleKind, CleanAperture, ColorInformation,
-    GridCell, ImageMirror, ImageRotation, PixelInformation, SampleTransformToken,
-    inspect_av1_sequence_sample, parse_avif, parse_gain_map_image, parse_sample_transform,
+    GridCell, ImageMirror, ImageRotation, PixelInformation, SampleTransformInput,
+    SampleTransformToken, inspect_av1_sequence_sample, parse_avif, parse_gain_map_image,
+    parse_sample_transform,
 };
 use crate::obu::{ObuType, find_obu_payloads_in_parts, parse_obu_stream};
 use crate::{DecoderError, ImageBuffer, Rgba16ImageBuffer};
@@ -871,6 +872,7 @@ impl FrameReferenceSlots {
 #[cfg(test)]
 mod reference_frame_tests {
     use super::*;
+    use crate::container::GridImage;
 
     fn frame(value: u16) -> DecodedFrame {
         DecodedFrame {
@@ -1032,6 +1034,36 @@ mod reference_frame_tests {
             evaluate_sample_transform_expression(&tokens, 64, 65_535, |_| Ok(0), &mut stack)
                 .unwrap();
         assert_eq!(value, 65_535);
+    }
+
+    #[test]
+    fn sato_grid_input_is_routed_through_grid_decoder() {
+        let input = SampleTransformInput {
+            item_id: 7,
+            width: 1,
+            height: 1,
+            pixel_information: PixelInformation {
+                bits_per_channel: vec![8],
+                extended_channels: None,
+            },
+            color_information: None,
+            av1_config: Vec::new(),
+            payload: Vec::new(),
+            grid: Some(GridImage {
+                item_id: 7,
+                rows: 1,
+                columns: 1,
+                output_width: 1,
+                output_height: 1,
+                payload: Vec::new(),
+                cells: Vec::new(),
+            }),
+        };
+        let error = decode_sample_transform_input(&input).unwrap_err();
+        assert!(matches!(
+            error,
+            DecoderError::Bitstream(message) if message.contains("grid has 0 cells")
+        ));
     }
 }
 
@@ -2705,38 +2737,16 @@ fn decode_sample_transform_frame(
     let Some(transform) = parse_sample_transform(data)? else {
         return Ok(None);
     };
-    if info.primary_grid.is_some()
-        || transform.inputs.iter().any(|input| {
-            input.width != transform.output_width || input.height != transform.output_height
-        })
-    {
+    if transform.inputs.iter().any(|input| {
+        input.width != transform.output_width || input.height != transform.output_height
+    }) {
         return Err(DecoderError::Unsupported(
-            "sato grid or mismatched dimensions are not supported".to_string(),
+            "sato input and output dimensions do not match".to_string(),
         ));
     }
     let mut frames = Vec::with_capacity(transform.inputs.len());
     for input in &transform.inputs {
-        let input_info = AvifInfo {
-            major_brand: *b"avif",
-            compatible_brands: vec![*b"avif"],
-            primary_item_id: Some(input.item_id),
-            width: Some(input.width),
-            height: Some(input.height),
-            pixel_information: Some(input.pixel_information.clone()),
-            color_information: input.color_information.clone(),
-            alpha_premultiplied: false,
-            alpha_auxiliary_items: Vec::new(),
-            alpha_grid: None,
-            primary_grid: None,
-            clean_aperture: None,
-            rotation: None,
-            mirror: None,
-            av1_config: Some(input.av1_config.clone()),
-            primary_item_payload: input.payload.clone(),
-            sequence_sample_payloads: Vec::new(),
-        };
-        let headers = parse_av1_headers(&input_info)?;
-        frames.push(decode_still_frame(&headers, Some(&input_info))?);
+        frames.push(decode_sample_transform_input(input)?);
     }
     let first = frames
         .first()
@@ -2814,6 +2824,37 @@ fn decode_sample_transform_frame(
         append_alpha_plane(&mut output, &alpha_frame)?;
     }
     Ok(Some(output))
+}
+
+fn decode_sample_transform_input(
+    input: &SampleTransformInput,
+) -> Result<DecodedFrame, DecoderError> {
+    let mut input_info = AvifInfo {
+        major_brand: *b"avif",
+        compatible_brands: vec![*b"avif"],
+        primary_item_id: Some(input.item_id),
+        width: Some(input.width),
+        height: Some(input.height),
+        pixel_information: Some(input.pixel_information.clone()),
+        color_information: input.color_information.clone(),
+        alpha_premultiplied: false,
+        alpha_auxiliary_items: Vec::new(),
+        alpha_grid: None,
+        primary_grid: None,
+        clean_aperture: None,
+        rotation: None,
+        mirror: None,
+        av1_config: Some(input.av1_config.clone()),
+        primary_item_payload: input.payload.clone(),
+        sequence_sample_payloads: Vec::new(),
+    };
+    if let Some(grid) = input.grid.as_ref() {
+        input_info.primary_grid = Some(grid.clone());
+        decode_grid_frame(&input_info)
+    } else {
+        let headers = parse_av1_headers(&input_info)?;
+        decode_still_frame(&headers, Some(&input_info))
+    }
 }
 
 fn evaluate_sample_transform_expression<F>(
