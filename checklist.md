@@ -1211,3 +1211,10 @@ this is a host-specific AVIS checkpoint and not a cross-machine speedup claim.
 The AVIS reference regression now covers a batch containing a decoded Key frame
 followed by a `show_existing_frame` sample, verifying that the supported
 reference-slot path returns both frames without partial output.
+
+Common AVIS Sequence Header OBU bytes are now encoded once per sequence and
+reused when composing samples that omit their own header. A follow-up
+seven-iteration optimized run on the same generated 16-frame 1024x1024 sample
+measured `151.03 ms` native and `165.27 ms` RGBA (previous checkpoint:
+`153.06/166.45 ms`); host noise is significant, so this remains a local
+allocation/reuse checkpoint rather than a stable percentage claim.

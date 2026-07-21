@@ -366,6 +366,7 @@ fn decode_sequence_samples_from_info(
         .iter()
         .find(|obu| obu.obu_type == ObuType::SequenceHeader)
         .ok_or_else(|| DecoderError::Bitstream("AV1 sequence header OBU is missing".to_string()))?;
+    let sequence_prefix = encode_obu(sequence_obu.obu_type, sequence_obu.payload)?;
     // Classify the requested range before decoding any frame. Besides making
     // the unsupported boundary deterministic, this avoids doing full Key/
     // IntraOnly reconstruction only to discover a later Inter/Switch sample.
@@ -398,14 +399,14 @@ fn decode_sequence_samples_from_info(
         if collect_all {
             return decode_independent_sequence_samples(
                 info,
-                sequence_obu,
+                &sequence_prefix,
                 &samples[..=stop_index],
                 &sample_infos,
             );
         }
         let decoded = decode_independent_sequence_sample(
             info,
-            sequence_obu,
+            &sequence_prefix,
             &samples[stop_index],
             sample_infos[stop_index].has_sequence_header,
         )?;
@@ -423,7 +424,7 @@ fn decode_sequence_samples_from_info(
         match kind {
             AvifSequenceSampleKind::Key | AvifSequenceSampleKind::IntraOnly => {
                 let payload = sample_payload_with_sequence_header(
-                    sequence_obu,
+                    &sequence_prefix,
                     sample,
                     sample_info.has_sequence_header,
                 )?;
@@ -470,7 +471,7 @@ fn decode_sequence_samples_from_info(
 
 fn decode_independent_sequence_samples(
     info: &AvifInfo,
-    sequence_obu: &crate::obu::Obu<'_>,
+    sequence_prefix: &[u8],
     samples: &[Vec<u8>],
     sample_infos: &[AvifSequenceSampleInfo],
 ) -> Result<Vec<DecodedFrame>, DecoderError> {
@@ -491,7 +492,7 @@ fn decode_independent_sequence_samples(
                             .map(|(sample, sample_info)| {
                                 decode_independent_sequence_sample(
                                     info,
-                                    sequence_obu,
+                                    sequence_prefix,
                                     sample,
                                     sample_info.has_sequence_header,
                                 )
@@ -517,7 +518,7 @@ fn decode_independent_sequence_samples(
         .map(|(sample, sample_info)| {
             decode_independent_sequence_sample(
                 info,
-                sequence_obu,
+                sequence_prefix,
                 sample,
                 sample_info.has_sequence_header,
             )
@@ -527,12 +528,12 @@ fn decode_independent_sequence_samples(
 
 fn decode_independent_sequence_sample(
     info: &AvifInfo,
-    sequence_obu: &crate::obu::Obu<'_>,
+    sequence_prefix: &[u8],
     sample: &[u8],
     sample_has_sequence_header: bool,
 ) -> Result<DecodedFrame, DecoderError> {
     let payload =
-        sample_payload_with_sequence_header(sequence_obu, sample, sample_has_sequence_header)?;
+        sample_payload_with_sequence_header(sequence_prefix, sample, sample_has_sequence_header)?;
     let sample_info = sequence_sample_info(
         info,
         payload,
@@ -571,14 +572,15 @@ fn sequence_sample_info(
 }
 
 fn sample_payload_with_sequence_header(
-    sequence_obu: &crate::obu::Obu<'_>,
+    sequence_prefix: &[u8],
     sample: &[u8],
     has_sequence_header: bool,
 ) -> Result<Vec<u8>, DecoderError> {
     if has_sequence_header {
         return Ok(sample.to_vec());
     }
-    let mut payload = encode_obu(sequence_obu.obu_type, sequence_obu.payload)?;
+    let mut payload = Vec::with_capacity(sequence_prefix.len() + sample.len());
+    payload.extend_from_slice(sequence_prefix);
     payload.extend_from_slice(sample);
     Ok(payload)
 }
