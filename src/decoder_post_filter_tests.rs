@@ -109,3 +109,92 @@ fn restoration_units_share_the_same_cdef_source_snapshot() {
 
     assert_eq!(frame.buffers.planes[0].samples, expected);
 }
+
+#[test]
+fn restoration_runs_independently_for_multiple_planes() {
+    let width = 16;
+    let height = 8;
+    let filters = [[[0, -3, 8], [0, 4, -7]], [[0, 5, -9], [0, -2, 6]]];
+    let sources = (0..3)
+        .map(|plane| {
+            (0..width * height)
+                .map(|index| ((index * 17 + plane * 31) & 255) as u16)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let state = PostFilterState {
+        restoration_units: (0..3)
+            .map(|plane| RestorationUnit {
+                x: 0,
+                y: 0,
+                plane,
+                restoration_type: 1,
+                wiener: Some(filters[plane.min(1)]),
+                sgrproj: None,
+                sgrproj_index: None,
+            })
+            .collect(),
+        ..PostFilterState::default()
+    };
+    let layout = |plane: usize| PlaneLayout {
+        plane: plane as u8,
+        width,
+        height,
+        subsampling_x: 0,
+        subsampling_y: 0,
+        sample_count: width * height,
+    };
+    let mut frame = DecodedFrame {
+        width,
+        height,
+        render_width: width,
+        render_height: height,
+        bit_depth: 8,
+        color_config: ColorConfig {
+            high_bitdepth: false,
+            twelve_bit: false,
+            bit_depth: 8,
+            monochrome: false,
+            color_description: None,
+            color_range: ColorRange::Full,
+            subsampling_x: false,
+            subsampling_y: false,
+            chroma_sample_position: None,
+            separate_uv_delta_q: false,
+        },
+        color_information: None,
+        alpha_premultiplied: false,
+        buffers: FrameBuffers {
+            width,
+            height,
+            planes: sources
+                .iter()
+                .enumerate()
+                .map(|(plane, samples)| PlaneBuffer {
+                    layout: layout(plane),
+                    samples: samples.clone(),
+                })
+                .collect(),
+        },
+    };
+
+    apply_loop_restoration_stage(&mut frame, &state, 8, &[1, 2]);
+
+    for (plane, source) in sources.iter().enumerate() {
+        let mut filter = filters[plane.min(1)];
+        if plane > 0 {
+            filter[0][0] = 0;
+            filter[1][0] = 0;
+        }
+        let filtered = wiener_filter_unit(source, width, height, 0, 0, 8, 8, filter);
+        let mut expected = source.clone();
+        for row in 0..height {
+            expected[row * width..row * width + 8]
+                .copy_from_slice(&filtered[row * width..row * width + 8]);
+        }
+        assert_eq!(
+            frame.buffers.planes[plane].samples, expected,
+            "plane {plane} restoration mismatch"
+        );
+    }
+}

@@ -2944,7 +2944,6 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
     let unit_mask = (1usize << frame_header.cdef.bits) - 1;
     let luma_width = frame.buffers.planes[0].layout.width;
     let luma_height = frame.buffers.planes[0].layout.height;
-    let mut source_scratch = Vec::new();
     let cdef_coeff_shift = frame.bit_depth.saturating_sub(8);
     let cdef_units_width = luma_width.div_ceil(64);
     let cdef_units_height = luma_height.div_ceil(64);
@@ -3003,88 +3002,117 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
             cdef_blocks.push((x, y, index, detected_direction, variance));
         }
     }
+    let cdef = frame_header.cdef;
+    let subsampling_x = frame.color_config.subsampling_x;
+    let subsampling_y = frame.color_config.subsampling_y;
+    let cdef_blocks = cdef_blocks.as_slice();
+    // Entropy reconstruction is complete and each plane owns an independent
+    // source/output buffer, so the expensive directional filtering can run
+    // concurrently without sharing mutable state.
+    #[cfg(not(target_family = "wasm"))]
+    if frame.buffers.planes.len() > 1 {
+        std::thread::scope(|scope| {
+            for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
+                scope.spawn(move || {
+                    apply_cdef_plane(
+                        plane,
+                        plane_index,
+                        subsampling_x,
+                        subsampling_y,
+                        cdef,
+                        &cdef_blocks,
+                    );
+                });
+            }
+        });
+        return;
+    }
     for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
-        // Swap the source out before writing the filtered result. The previous
-        // output vector becomes the next iteration's reusable source storage,
-        // avoiding a full-frame clone for luma and chroma alike.
-        std::mem::swap(&mut plane.samples, &mut source_scratch);
-        let source = source_scratch.as_slice();
-        plane.samples.resize(source.len(), 0);
-        plane.samples.copy_from_slice(source);
-        let width = plane.layout.width;
-        let height = plane.layout.height;
-        let subsampling_x = usize::from(plane_index > 0 && frame.color_config.subsampling_x);
-        let subsampling_y = usize::from(plane_index > 0 && frame.color_config.subsampling_y);
-        let scale_x = 1usize << subsampling_x;
-        let scale_y = 1usize << subsampling_y;
-        let mut filtered = vec![0u16; 64];
-        for &(x, y, index, detected_direction, variance) in &cdef_blocks {
-            let plane_x = x / scale_x;
-            let plane_y = y / scale_y;
-            if plane_x >= width || plane_y >= height {
-                continue;
-            }
-            let strength = &frame_header.cdef.strengths[index];
-            let primary_strength = if plane_index == 0 {
-                cdef_adjust_primary_strength(strength.y_pri, variance)
-            } else {
-                strength.uv_pri
-            };
-            // AOM keeps the detected direction when the configured primary
-            // strength is non-zero, even if variance adjustment reduces the
-            // effective luma strength to zero. Chroma uses direction zero
-            // when its configured primary strength is disabled.
-            let configured_primary = if plane_index == 0 {
-                strength.y_pri
-            } else {
-                strength.uv_pri
-            };
-            let direction = if configured_primary == 0 {
-                0
-            } else {
-                detected_direction
-            };
-            let secondary_strength = if plane_index == 0 {
-                strength.y_sec
-            } else {
-                strength.uv_sec
-            };
-            // A zero-strength CDEF index leaves the copied source block
-            // unchanged. Skip the directional filter entirely in this case;
-            // this is common for disabled chroma strengths and avoids the
-            // per-pixel neighborhood work on those blocks.
-            if cdef_strengths_disabled(primary_strength, secondary_strength) {
-                continue;
-            }
-            let damping = frame_header
-                .cdef
-                .damping
-                .saturating_sub(u8::from(plane_index != 0));
-            let block_width = (width - plane_x).min(8usize.div_ceil(scale_x));
-            let block_height = (height - plane_y).min(8usize.div_ceil(scale_y));
-            cdef_filter_block_region_with_edge_mode_into(
-                source,
-                width,
-                height,
-                plane_x,
-                plane_y,
-                block_width,
-                block_height,
-                direction,
-                primary_strength,
-                secondary_strength,
-                damping,
-                true,
-                &mut filtered,
-            );
-            for row in 0..block_height {
-                let start = (plane_y + row) * width + plane_x;
-                let block_start = row * block_width;
-                plane.samples[start..start + block_width]
-                    .copy_from_slice(&filtered[block_start..block_start + block_width]);
-            }
+        apply_cdef_plane(
+            plane,
+            plane_index,
+            subsampling_x,
+            subsampling_y,
+            cdef,
+            &cdef_blocks,
+        );
+    }
+}
+
+fn apply_cdef_plane(
+    plane: &mut PlaneBuffer,
+    plane_index: usize,
+    subsampling_x: bool,
+    subsampling_y: bool,
+    cdef: crate::av1::CdefParams,
+    cdef_blocks: &[(usize, usize, usize, usize, i32)],
+) {
+    let source = std::mem::take(&mut plane.samples);
+    let mut output = vec![0; source.len()];
+    output.copy_from_slice(&source);
+    let width = plane.layout.width;
+    let height = plane.layout.height;
+    let plane_subsampling_x = usize::from(plane_index > 0 && subsampling_x);
+    let plane_subsampling_y = usize::from(plane_index > 0 && subsampling_y);
+    let scale_x = 1usize << plane_subsampling_x;
+    let scale_y = 1usize << plane_subsampling_y;
+    let mut filtered = vec![0u16; 64];
+    for &(x, y, index, detected_direction, variance) in cdef_blocks {
+        let plane_x = x / scale_x;
+        let plane_y = y / scale_y;
+        if plane_x >= width || plane_y >= height {
+            continue;
+        }
+        let strength = &cdef.strengths[index];
+        let primary_strength = if plane_index == 0 {
+            cdef_adjust_primary_strength(strength.y_pri, variance)
+        } else {
+            strength.uv_pri
+        };
+        let configured_primary = if plane_index == 0 {
+            strength.y_pri
+        } else {
+            strength.uv_pri
+        };
+        let direction = if configured_primary == 0 {
+            0
+        } else {
+            detected_direction
+        };
+        let secondary_strength = if plane_index == 0 {
+            strength.y_sec
+        } else {
+            strength.uv_sec
+        };
+        if cdef_strengths_disabled(primary_strength, secondary_strength) {
+            continue;
+        }
+        let damping = cdef.damping.saturating_sub(u8::from(plane_index != 0));
+        let block_width = (width - plane_x).min(8usize.div_ceil(scale_x));
+        let block_height = (height - plane_y).min(8usize.div_ceil(scale_y));
+        cdef_filter_block_region_with_edge_mode_into(
+            &source,
+            width,
+            height,
+            plane_x,
+            plane_y,
+            block_width,
+            block_height,
+            direction,
+            primary_strength,
+            secondary_strength,
+            damping,
+            true,
+            &mut filtered,
+        );
+        for row in 0..block_height {
+            let start = (plane_y + row) * width + plane_x;
+            let block_start = row * block_width;
+            output[start..start + block_width]
+                .copy_from_slice(&filtered[block_start..block_start + block_width]);
         }
     }
+    plane.samples = output;
 }
 
 #[inline]
@@ -3112,7 +3140,6 @@ fn apply_loop_restoration_stage(
     unit_size: usize,
     enabled_types: &[u8],
 ) {
-    const RESTORATION_UNIT_OFFSET: usize = 8;
     if state.restoration_units.is_empty()
         || !state
             .restoration_units
@@ -3121,103 +3148,131 @@ fn apply_loop_restoration_stage(
     {
         return;
     }
-    let mut reusable_output = Vec::new();
+    // Restoration units never cross planes; keep their source snapshots local
+    // to each worker and retain the sequential path for Wasm/single-plane data.
+    #[cfg(not(target_family = "wasm"))]
+    if frame.buffers.planes.len() > 1 {
+        std::thread::scope(|scope| {
+            for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
+                scope.spawn(move || {
+                    apply_loop_restoration_plane(
+                        plane,
+                        plane_index,
+                        state,
+                        unit_size,
+                        enabled_types,
+                    );
+                });
+            }
+        });
+        return;
+    }
     for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
-        if !state
-            .restoration_units
-            .iter()
-            .any(|unit| unit.plane == plane_index && enabled_types.contains(&unit.restoration_type))
-        {
+        apply_loop_restoration_plane(plane, plane_index, state, unit_size, enabled_types);
+    }
+}
+
+fn apply_loop_restoration_plane(
+    plane: &mut PlaneBuffer,
+    plane_index: usize,
+    state: &PostFilterState,
+    unit_size: usize,
+    enabled_types: &[u8],
+) {
+    const RESTORATION_UNIT_OFFSET: usize = 8;
+    if !state
+        .restoration_units
+        .iter()
+        .any(|unit| unit.plane == plane_index && enabled_types.contains(&unit.restoration_type))
+    {
+        return;
+    }
+    let source = std::mem::take(&mut plane.samples);
+    let mut output = vec![0; source.len()];
+    output.copy_from_slice(&source);
+    for unit in state
+        .restoration_units
+        .iter()
+        .filter(|unit| unit.plane == plane_index && enabled_types.contains(&unit.restoration_type))
+    {
+        let remaining_width = plane.layout.width.saturating_sub(unit.x);
+        let unit_width = if remaining_width < unit_size + unit_size / 2 {
+            remaining_width
+        } else {
+            unit_size
+        };
+        let origin_y = unit.y.saturating_sub(RESTORATION_UNIT_OFFSET);
+        let remaining_height = plane.layout.height.saturating_sub(unit.y);
+        let unit_extent = if remaining_height < unit_size + unit_size / 2 {
+            remaining_height
+        } else {
+            unit_size
+        };
+        let end_y = if unit.y + unit_extent < plane.layout.height {
+            unit.y + unit_extent - RESTORATION_UNIT_OFFSET
+        } else {
+            plane.layout.height
+        };
+        let unit_height = end_y.saturating_sub(origin_y);
+        if unit_width == 0 || unit_height == 0 {
             continue;
         }
-        let source = std::mem::take(&mut plane.samples);
-        let mut output = std::mem::take(&mut reusable_output);
-        output.resize(source.len(), 0);
-        output.copy_from_slice(&source);
-        for unit in state.restoration_units.iter().filter(|unit| {
-            unit.plane == plane_index && enabled_types.contains(&unit.restoration_type)
-        }) {
-            let remaining_width = plane.layout.width.saturating_sub(unit.x);
-            let unit_width = if remaining_width < unit_size + unit_size / 2 {
-                remaining_width
-            } else {
-                unit_size
-            };
-            let origin_y = unit.y.saturating_sub(RESTORATION_UNIT_OFFSET);
-            let remaining_height = plane.layout.height.saturating_sub(unit.y);
-            let unit_extent = if remaining_height < unit_size + unit_size / 2 {
-                remaining_height
-            } else {
-                unit_size
-            };
-            let end_y = if unit.y + unit_extent < plane.layout.height {
-                unit.y + unit_extent - RESTORATION_UNIT_OFFSET
-            } else {
-                plane.layout.height
-            };
-            let unit_height = end_y.saturating_sub(origin_y);
-            if unit_width == 0 || unit_height == 0 {
-                continue;
-            }
-            let mut stripe_y = origin_y;
-            while stripe_y < end_y {
-                let frame_stripe = (stripe_y + RESTORATION_UNIT_OFFSET) / 64;
-                let nominal_height = 64 - usize::from(frame_stripe == 0) * RESTORATION_UNIT_OFFSET;
-                let stripe_height = nominal_height.min(end_y - stripe_y);
-                let procunit_width = 64;
-                let mut chunk_x = 0;
-                while chunk_x < unit_width {
-                    let x = unit.x + chunk_x;
-                    let chunk_width = procunit_width.min(unit_width - chunk_x);
-                    match unit.restoration_type {
-                        1 => {
-                            let Some(mut filters) = unit.wiener else {
-                                break;
-                            };
-                            if plane_index > 0 {
-                                filters[0][0] = 0;
-                                filters[1][0] = 0;
-                            }
-                            wiener_filter_unit_into(
-                                &source,
-                                &mut output,
-                                plane.layout.width,
-                                plane.layout.height,
-                                x,
-                                stripe_y,
-                                chunk_width,
-                                stripe_height,
-                                filters,
-                            )
+        let mut stripe_y = origin_y;
+        while stripe_y < end_y {
+            let frame_stripe = (stripe_y + RESTORATION_UNIT_OFFSET) / 64;
+            let nominal_height = 64 - usize::from(frame_stripe == 0) * RESTORATION_UNIT_OFFSET;
+            let stripe_height = nominal_height.min(end_y - stripe_y);
+            let procunit_width = 64;
+            let mut chunk_x = 0;
+            while chunk_x < unit_width {
+                let x = unit.x + chunk_x;
+                let chunk_width = procunit_width.min(unit_width - chunk_x);
+                match unit.restoration_type {
+                    1 => {
+                        let Some(mut filters) = unit.wiener else {
+                            break;
+                        };
+                        if plane_index > 0 {
+                            filters[0][0] = 0;
+                            filters[1][0] = 0;
                         }
-                        2 => {
-                            let (Some(index), Some(xqd)) = (unit.sgrproj_index, unit.sgrproj)
-                            else {
-                                break;
-                            };
-                            sgrproj_filter_unit_into(
-                                &source,
-                                &mut output,
-                                plane.layout.width,
-                                plane.layout.height,
-                                x,
-                                stripe_y,
-                                chunk_width,
-                                stripe_height,
-                                index,
-                                xqd,
-                            )
-                        }
-                        _ => break,
+                        wiener_filter_unit_into(
+                            &source,
+                            &mut output,
+                            plane.layout.width,
+                            plane.layout.height,
+                            x,
+                            stripe_y,
+                            chunk_width,
+                            stripe_height,
+                            filters,
+                        )
                     }
-                    chunk_x += chunk_width;
+                    2 => {
+                        let (Some(index), Some(xqd)) = (unit.sgrproj_index, unit.sgrproj) else {
+                            break;
+                        };
+                        sgrproj_filter_unit_into(
+                            &source,
+                            &mut output,
+                            plane.layout.width,
+                            plane.layout.height,
+                            x,
+                            stripe_y,
+                            chunk_width,
+                            stripe_height,
+                            index,
+                            xqd,
+                        )
+                    }
+                    _ => break,
                 }
-                stripe_y += stripe_height;
+                chunk_x += chunk_width;
             }
+            stripe_y += stripe_height;
         }
-        plane.samples = output;
-        reusable_output = source;
     }
+    plane.samples = output;
 }
 
 fn decode_still_frame_with_filter_policy_and_state(

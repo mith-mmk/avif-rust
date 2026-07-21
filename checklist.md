@@ -666,6 +666,15 @@ decode benchmark remained host-noisy (roughly 300--325 ms native and
 295--322 ms RGBA in seven-iteration runs), so this checkpoint is recorded as
 allocation reduction/no-regression rather than a stable speedup claim.
 
+On 2026-07-21, the native post-filter path now processes CDEF and loop-
+restoration planes concurrently after entropy reconstruction has completed.
+Wasm keeps the sequential path. A three-plane restoration regression test
+checks that per-plane source snapshots and chroma Wiener-center handling stay
+unchanged. Two 11-iteration optimized `WML2Viewer.avif` runs measured
+`261.14/259.43 ms` and `261.85/261.06 ms` (native/RGBA), versus the prior
+`288.35/295.41 ms` checkpoint; this is recorded as a repeatable local
+speedup, not a cross-machine guarantee.
+
 The segmentation map reader now follows the normative symbol consumption even
 when `last_active_segment == 0`: segment 0 is still decoded from the full
 8-symbol CDF before negative deinterleaving. A focused regression test pins the
