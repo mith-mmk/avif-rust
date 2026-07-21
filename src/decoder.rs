@@ -476,7 +476,7 @@ fn decode_independent_sequence_samples(
     sample_infos: &[AvifSequenceSampleInfo],
 ) -> Result<Vec<DecodedFrame>, DecoderError> {
     #[cfg(not(target_family = "wasm"))]
-    if samples.len() > 1 {
+    if samples.len() > 1 && avis_parallel_work_is_large_enough(info, samples.len()) {
         const MAX_WORKERS: usize = 8;
         let worker_count = samples.len().min(MAX_WORKERS);
         let chunk_size = samples.len().div_ceil(worker_count);
@@ -524,6 +524,22 @@ fn decode_independent_sequence_samples(
             )
         })
         .collect()
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn avis_parallel_work_is_large_enough(info: &AvifInfo, sample_count: usize) -> bool {
+    const PARALLEL_AVIS_MIN_PIXELS: usize = 256 * 1024;
+    let Some((width, height)) = info.width.zip(info.height) else {
+        return true;
+    };
+    let frame_pixels = usize::try_from(width).ok().and_then(|width| {
+        usize::try_from(height)
+            .ok()
+            .map(|height| width.saturating_mul(height))
+    });
+    frame_pixels
+        .map(|pixels| pixels.saturating_mul(sample_count) >= PARALLEL_AVIS_MIN_PIXELS)
+        .unwrap_or(true)
 }
 
 fn decode_independent_sequence_sample(
@@ -742,6 +758,18 @@ mod reference_frame_tests {
         let expected = decode_frame_bytes(data).unwrap();
         let frames = decode_sequence_frames_from_info(&info).unwrap();
         assert_eq!(frames, vec![expected.clone(), expected]);
+    }
+
+    #[test]
+    fn small_avis_sequences_avoid_thread_pool_overhead() {
+        let data = include_bytes!("../test_data/images/WML2Viewer.avif");
+        let mut info = parse_avif(data).unwrap();
+        info.width = Some(64);
+        info.height = Some(64);
+        assert!(!avis_parallel_work_is_large_enough(&info, 4));
+        assert!(avis_parallel_work_is_large_enough(&info, 64));
+        info.width = None;
+        assert!(avis_parallel_work_is_large_enough(&info, 1));
     }
 
     #[test]

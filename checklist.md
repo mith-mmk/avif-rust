@@ -731,6 +731,13 @@ native planes match FFmpeg exactly and the RGBA path completes, extending the
 IntrABC regression beyond a single 128x128 coding unit while keeping the
 high-complexity reference/transform cases explicitly tracked.
 
+Native AVIS batch decoding now uses the existing worker pool only when the
+sequence's total pixel work reaches 256K pixels; small sequences stay on the
+caller thread to avoid thread startup/join overhead. A 15-iteration optimized
+run of a generated four-frame 64x64 sequence measured `0.134 ms` native and
+`0.190 ms` RGBA; this is a small-sequence checkpoint, not a stable percentage
+claim.
+
 On 2026-07-20, AVIS samples gained a header-level classifier for Key, Inter,
 IntraOnly, Switch and show-existing frames. The generated and external sequence
 fixtures now assert a Key first sample followed by real Inter samples, keeping
