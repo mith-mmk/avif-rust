@@ -28,6 +28,13 @@ struct MatrixShaperProfile {
 }
 
 #[derive(Debug, Clone)]
+struct GrayProfile {
+    white: [f64; 3],
+    xyz_to_srgb: [[f64; 3]; 3],
+    curve: Curve,
+}
+
+#[derive(Debug, Clone)]
 struct LutProfile {
     matrix: [[f64; 3]; 3],
     xyz_to_srgb: [[f64; 3]; 3],
@@ -43,6 +50,25 @@ struct Clut {
 }
 
 pub(crate) fn apply_to_rgba16(rgba: &mut [u16], profile: &[u8]) -> Result<(), DecoderError> {
+    if profile.get(16..20) == Some(b"GRAY") {
+        let profile = GrayProfile::parse(profile)?;
+        for_each_rgba16_chunk(rgba, |chunk| {
+            for pixel in chunk.chunks_exact_mut(4) {
+                let source = f64::from(pixel[0]) / f64::from(u16::MAX);
+                let linear = profile.curve.decode(source);
+                let xyz = [
+                    profile.white[0] * linear,
+                    profile.white[1] * linear,
+                    profile.white[2] * linear,
+                ];
+                let rgb = multiply(profile.xyz_to_srgb, xyz);
+                pixel[0] = encode_srgb(rgb[0]);
+                pixel[1] = encode_srgb(rgb[1]);
+                pixel[2] = encode_srgb(rgb[2]);
+            }
+        });
+        return Ok(());
+    }
     // Prefer the perceptual rendering table, but accept profiles that only
     // provide one of the other RGB-to-PCS tables.  Compact camera profiles
     // commonly omit A2B0 while still carrying a usable A2B1/A2B2 pipeline.
@@ -94,6 +120,46 @@ pub(crate) fn apply_to_rgba16(rgba: &mut [u16], profile: &[u8]) -> Result<(), De
         }
     });
     Ok(())
+}
+
+impl GrayProfile {
+    fn parse(profile: &[u8]) -> Result<Self, DecoderError> {
+        if profile.len() < 132 {
+            return Err(unsupported("ICC profile header is truncated"));
+        }
+        let declared_size = read_u32(profile, 0)? as usize;
+        if declared_size < 132 || declared_size > profile.len() {
+            return Err(unsupported("ICC profile size is invalid"));
+        }
+        if &profile[12..16] != b"mntr" && &profile[12..16] != b"prtr" {
+            return Err(unsupported(
+                "ICC gray profile device class is not supported",
+            ));
+        }
+        if &profile[16..20] != b"GRAY" || &profile[20..24] != b"XYZ " {
+            return Err(unsupported("ICC gray profile colour space is not GRAY/XYZ"));
+        }
+        let tags = profile_tags(profile, declared_size, &[*b"wtpt", *b"kTRC"])?;
+        let white_tag = tags[0]
+            .ok_or_else(|| unsupported("ICC gray profile media white point tag is missing"))?;
+        let white = read_xyz(profile, white_tag)?;
+        let xyz_to_srgb = if close_to_white(white, [0.9642, 1.0, 0.8249]) {
+            D50_TO_SRGB
+        } else if close_to_white(white, [0.9505, 1.0, 1.0890]) {
+            D65_TO_SRGB
+        } else {
+            return Err(unsupported(
+                "ICC gray profile white point is not D50 or D65",
+            ));
+        };
+        let curve_tag =
+            tags[1].ok_or_else(|| unsupported("ICC gray profile tone curve tag is missing"))?;
+        Ok(Self {
+            white,
+            xyz_to_srgb,
+            curve: read_curve(profile, curve_tag)?,
+        })
+    }
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -621,6 +687,41 @@ fn find_profile_tag(
     Ok(None)
 }
 
+fn profile_tags(
+    profile: &[u8],
+    declared_size: usize,
+    wanted: &[[u8; 4]],
+) -> Result<Vec<Option<(usize, usize)>>, DecoderError> {
+    let tag_count = read_u32(profile, 128)? as usize;
+    let table_end = 132usize
+        .checked_add(
+            tag_count
+                .checked_mul(12)
+                .ok_or_else(|| unsupported("ICC profile tag table is too large"))?,
+        )
+        .ok_or_else(|| unsupported("ICC profile tag table overflows"))?;
+    if table_end > declared_size {
+        return Err(unsupported("ICC profile tag table is truncated"));
+    }
+    let mut tags = vec![None; wanted.len()];
+    for index in 0..tag_count {
+        let entry = 132 + index * 12;
+        let signature = &profile[entry..entry + 4];
+        let offset = read_u32(profile, entry + 4)? as usize;
+        let size = read_u32(profile, entry + 8)? as usize;
+        let end = offset
+            .checked_add(size)
+            .ok_or_else(|| unsupported("ICC profile tag overflows"))?;
+        if offset < 132 || end > declared_size || size < 8 {
+            return Err(unsupported("ICC profile tag is outside the profile"));
+        }
+        if let Some(slot) = wanted.iter().position(|wanted| signature == wanted) {
+            tags[slot] = Some((offset, size));
+        }
+    }
+    Ok(tags)
+}
+
 fn mab_element_offset(
     profile: &[u8],
     tag_offset: usize,
@@ -1054,6 +1155,34 @@ mod tests {
         [0.0139322, 0.0971045, 0.7141733],
     ];
 
+    fn synthetic_gray_profile() -> Vec<u8> {
+        let white_offset = 156usize;
+        let curve_offset = white_offset + 20;
+        let mut profile = vec![0; curve_offset + 14];
+        profile[12..16].copy_from_slice(b"mntr");
+        profile[16..20].copy_from_slice(b"GRAY");
+        profile[20..24].copy_from_slice(b"XYZ ");
+        profile[128..132].copy_from_slice(&2_u32.to_be_bytes());
+        profile[132..136].copy_from_slice(b"wtpt");
+        profile[136..140].copy_from_slice(&(white_offset as u32).to_be_bytes());
+        profile[140..144].copy_from_slice(&20_u32.to_be_bytes());
+        profile[144..148].copy_from_slice(b"kTRC");
+        profile[148..152].copy_from_slice(&(curve_offset as u32).to_be_bytes());
+        profile[152..156].copy_from_slice(&14_u32.to_be_bytes());
+        profile[white_offset..white_offset + 4].copy_from_slice(b"XYZ ");
+        for (index, value) in [0.9642_f64, 1.0, 0.8249].into_iter().enumerate() {
+            let fixed = (value * 65_536.0).round() as i32;
+            profile[white_offset + 8 + index * 4..white_offset + 12 + index * 4]
+                .copy_from_slice(&fixed.to_be_bytes());
+        }
+        profile[curve_offset..curve_offset + 4].copy_from_slice(b"curv");
+        profile[curve_offset + 8..curve_offset + 12].copy_from_slice(&1_u32.to_be_bytes());
+        profile[curve_offset + 12..curve_offset + 14].copy_from_slice(&256_u16.to_be_bytes());
+        let profile_size = profile.len() as u32;
+        profile[0..4].copy_from_slice(&profile_size.to_be_bytes());
+        profile
+    }
+
     fn synthetic_lut_profile(signature: &[u8; 4], grid_points: u8, entries: u16) -> Vec<u8> {
         let (input_entries, output_entries, bytes_per_value) = if signature == b"mft1" {
             (256usize, 256usize, 1usize)
@@ -1325,6 +1454,20 @@ mod tests {
     fn white_point_tolerance_accepts_standard_profiles() {
         assert!(close_to_white([0.9642, 1.0, 0.8249], [0.9642, 1.0, 0.8249]));
         assert!(!close_to_white([0.9, 1.0, 0.9], [0.9642, 1.0, 0.8249]));
+    }
+
+    #[test]
+    fn gray_profile_applies_tone_curve_and_preserves_alpha() {
+        let profile = synthetic_gray_profile();
+        let mut rgba = [32_768, 32_768, 32_768, 12_345];
+
+        apply_to_rgba16(&mut rgba, &profile).unwrap();
+
+        assert!(rgba[..3].iter().all(|value| *value > 40_000));
+        let min = *rgba[..3].iter().min().unwrap();
+        let max = *rgba[..3].iter().max().unwrap();
+        assert!(max - min < 512);
+        assert_eq!(rgba[3], 12_345);
     }
 
     #[test]

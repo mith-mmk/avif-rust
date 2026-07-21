@@ -1442,3 +1442,13 @@ state while removing the duplicate iterator/filter pass. The 11-iteration
 release benchmark measured `167.49/168.37 ms` (native/RGBA) for
 `WML2Viewer.avif`; this is a same-host optimization checkpoint, not a
 cross-machine speedup claim.
+
+Monochrome AVIFs carrying a valid GRAY/XYZ ICC profile now apply the profile's
+media white point and tone curve before converting luma to sRGB, while
+preserving alpha. A synthetic profile vector covers the transform and malformed
+profiles remain fail-closed; Inter/Switch motion-vector frames are still
+explicitly unsupported.
+
+A fresh five-iteration release benchmark measured `170.24 ms` native decode and
+`174.90 ms` RGBA conversion for `WML2Viewer.avif`; this is a same-host
+checkpoint and the GRAY ICC branch is bypassed for ordinary RGB samples.
