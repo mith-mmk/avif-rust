@@ -6,17 +6,18 @@ use crate::av1::alloc_frame_buffers;
 use crate::av1::decode_luma_root_block_prefix_with_post_filter_state_and_entropy;
 use crate::av1::{
     Av1CodecConfiguration, BlockModeProbe, ChromaSamplePosition, ColorConfig, FilmGrainParams,
-    FrameBuffers, FrameDecodePlan, FrameHeader, PartitionProbe, PlaneBuffer, PlaneLayout,
-    QuantState, ResidualProbe, SequenceHeader, TileEntropyState, TileGroup,
-    alloc_coded_frame_buffers, apply_film_grain, apply_superres_horizontal,
+    FrameBuffers, FrameDecodePlan, FrameHeader, FrameType, PartitionProbe, PlaneBuffer,
+    PlaneLayout, QuantState, ReferenceFrameState, ResidualProbe, SequenceHeader, TileEntropyState,
+    TileGroup, alloc_coded_frame_buffers, apply_film_grain, apply_superres_horizontal,
     build_still_decode_plan, cdef_adjust_primary_strength,
     cdef_filter_block_region_with_edge_mode_into, cdef_find_direction_with_variance,
     crop_frame_buffers_to_plan, deblock_filter_edge_with_visible_bounds,
     decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options,
-    frame_buffers_to_rgba_16, parse_av1_config, parse_frame_header, parse_sequence_header,
-    parse_show_existing_frame_index, parse_tile_group, plan_transform_blocks_with_tx_size,
-    prepare_tile_entropy, probe_first_block_residuals, probe_tile_block_modes,
-    probe_tile_partitions, sgrproj_filter_unit_into, wiener_filter_unit_into,
+    frame_buffers_to_rgba_16, parse_av1_config, parse_frame_header,
+    parse_frame_header_with_references, parse_sequence_header, parse_show_existing_frame_index,
+    parse_tile_group, plan_transform_blocks_with_tx_size, prepare_tile_entropy,
+    probe_first_block_residuals, probe_tile_block_modes, probe_tile_partitions,
+    sgrproj_filter_unit_into, wiener_filter_unit_into,
 };
 use crate::compat::{DataMap, DecodeOptions, InitOptions};
 use crate::container::{
@@ -694,7 +695,7 @@ fn decode_sequence_samples_from_info(
                     av1_config,
                 )?;
                 let decoded = decode_still_frame(&headers, Some(info))?;
-                references.refresh(headers.frame.refresh_frame_flags, &decoded);
+                references.refresh(headers.frame.refresh_frame_flags, &decoded, &headers.frame);
                 if collect_all {
                     frames.push(decoded);
                 } else if index == stop_index {
@@ -711,6 +712,23 @@ fn decode_sequence_samples_from_info(
                 }
             }
             AvifSequenceSampleKind::Inter | AvifSequenceSampleKind::Switch => {
+                let av1_config = (!sample_info.has_sequence_header)
+                    .then_some(info.av1_config.as_deref())
+                    .flatten();
+                let reference_states = references.states();
+                // Parse the complete frame header against the slots already
+                // refreshed by preceding coded frames. Reconstruction remains
+                // fail-closed until inter block syntax and prediction are
+                // connected, but header errors are no longer reported as a
+                // generic unsupported frame before reference validation.
+                let _headers = parse_av1_sequence_sample_headers_with_references(
+                    info,
+                    &sequence_prefix,
+                    sample,
+                    sample_info.has_sequence_header,
+                    av1_config,
+                    &reference_states,
+                )?;
                 return Err(DecoderError::Unsupported(format!(
                     "AVIS sample {index} uses {kind:?} frame prediction"
                 )));
@@ -819,10 +837,33 @@ fn parse_av1_sequence_sample_headers(
     sample_has_sequence_header: bool,
     av1_config: Option<&[u8]>,
 ) -> Result<Av1Headers, DecoderError> {
+    parse_av1_sequence_sample_headers_with_references(
+        info,
+        sequence_prefix,
+        sample,
+        sample_has_sequence_header,
+        av1_config,
+        &[None; 8],
+    )
+}
+
+fn parse_av1_sequence_sample_headers_with_references(
+    info: &AvifInfo,
+    sequence_prefix: &[u8],
+    sample: &[u8],
+    sample_has_sequence_header: bool,
+    av1_config: Option<&[u8]>,
+    references: &[Option<ReferenceFrameState>; 8],
+) -> Result<Av1Headers, DecoderError> {
     if sample_has_sequence_header {
-        parse_av1_headers_from_parts(info, &[sample], av1_config)
+        parse_av1_headers_from_parts_with_references(info, &[sample], av1_config, references)
     } else {
-        parse_av1_headers_from_parts(info, &[sequence_prefix, sample], av1_config)
+        parse_av1_headers_from_parts_with_references(
+            info,
+            &[sequence_prefix, sample],
+            av1_config,
+            references,
+        )
     }
 }
 
@@ -837,30 +878,76 @@ fn first_show_existing_index(sample: &[u8]) -> Result<u8, DecoderError> {
         })
 }
 
-/// The eight AV1 reference slots used by a sequence.  The current public
-/// decoder still accepts only intra/key coded frames, but keeping the slot
-/// state separate makes `show_existing_frame` reuse explicit and prevents a
-/// future inter-frame path from smuggling references through tile state.
+/// The eight AV1 reference slots used by a sequence.  Each slot keeps the
+/// decoded planes together with the frame-header geometry needed by
+/// `frame_size_with_refs` and motion-compensated prediction.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct FrameReferenceSlots {
-    slots: [Option<Arc<DecodedFrame>>; 8],
+    slots: [Option<ReferenceFrame>; 8],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReferenceFrame {
+    decoded: Arc<DecodedFrame>,
+    frame_width: u32,
+    frame_height: u32,
+    upscaled_width: u32,
+    render_width: u32,
+    render_height: u32,
+    order_hint: u32,
+    frame_type: FrameType,
 }
 
 impl FrameReferenceSlots {
-    fn refresh(&mut self, refresh_frame_flags: u8, frame: &DecodedFrame) {
+    fn refresh(&mut self, refresh_frame_flags: u8, frame: &DecodedFrame, header: &FrameHeader) {
         let shared = Arc::new(frame.clone());
         for (index, slot) in self.slots.iter_mut().enumerate() {
             if refresh_frame_flags & (1 << index) != 0 {
-                *slot = Some(Arc::clone(&shared));
+                *slot = Some(ReferenceFrame {
+                    decoded: Arc::clone(&shared),
+                    frame_width: header.frame_width,
+                    frame_height: header.frame_height,
+                    upscaled_width: header.upscaled_width,
+                    render_width: header.render_width,
+                    render_height: header.render_height,
+                    order_hint: header.order_hint,
+                    frame_type: header.frame_type,
+                });
             }
         }
+    }
+
+    fn get(&self, index: u8) -> Result<&ReferenceFrame, DecoderError> {
+        self.slots
+            .get(usize::from(index))
+            .and_then(Option::as_ref)
+            .ok_or_else(|| {
+                DecoderError::Unsupported(format!(
+                    "AV1 reference frame slot {index} has no decoded reference"
+                ))
+            })
+    }
+
+    fn states(&self) -> [Option<ReferenceFrameState>; 8] {
+        std::array::from_fn(|index| {
+            self.slots[index]
+                .as_ref()
+                .and_then(|_| self.get(index as u8).ok())
+                .map(|reference| ReferenceFrameState {
+                    frame_width: reference.frame_width,
+                    frame_height: reference.frame_height,
+                    upscaled_width: reference.upscaled_width,
+                    render_width: reference.render_width,
+                    render_height: reference.render_height,
+                })
+        })
     }
 
     fn frame_to_show(&self, index: u8) -> Result<DecodedFrame, DecoderError> {
         self.slots
             .get(usize::from(index))
             .and_then(Option::as_ref)
-            .map(|frame| frame.as_ref().clone())
+            .map(|reference| reference.decoded.as_ref().clone())
             .ok_or_else(|| {
                 DecoderError::Unsupported(format!(
                     "AV1 show_existing_frame slot {index} has no decoded reference"
@@ -916,7 +1003,8 @@ mod reference_frame_tests {
     #[test]
     fn refresh_flags_store_and_replace_reference_slots() {
         let mut slots = FrameReferenceSlots::default();
-        slots.refresh(0b0000_0101, &frame(10));
+        let header = reference_header();
+        slots.refresh(0b0000_0101, &frame(10), &header);
         assert_eq!(
             slots.frame_to_show(0).unwrap().buffers.planes[0].samples,
             [10]
@@ -927,7 +1015,7 @@ mod reference_frame_tests {
         );
         assert!(slots.frame_to_show(1).is_err());
 
-        slots.refresh(0b0000_0100, &frame(20));
+        slots.refresh(0b0000_0100, &frame(20), &header);
         assert_eq!(
             slots.frame_to_show(0).unwrap().buffers.planes[0].samples,
             [10]
@@ -936,6 +1024,31 @@ mod reference_frame_tests {
             slots.frame_to_show(2).unwrap().buffers.planes[0].samples,
             [20]
         );
+    }
+
+    #[test]
+    fn refreshed_reference_keeps_frame_geometry_for_future_motion_compensation() {
+        let mut slots = FrameReferenceSlots::default();
+        let mut header = reference_header();
+        header.frame_width = 32;
+        header.frame_height = 24;
+        header.upscaled_width = 40;
+        header.render_width = 30;
+        header.render_height = 20;
+        header.order_hint = 7;
+        slots.refresh(1, &frame(3), &header);
+        let reference = slots.get(0).unwrap();
+        assert_eq!(reference.frame_width, 32);
+        assert_eq!(reference.frame_height, 24);
+        assert_eq!(reference.upscaled_width, 40);
+        assert_eq!((reference.render_width, reference.render_height), (30, 20));
+        assert_eq!(reference.order_hint, 7);
+    }
+
+    fn reference_header() -> FrameHeader {
+        let data = include_bytes!("../test_data/images/WML2Viewer.avif");
+        let info = parse_avif(data).unwrap();
+        parse_av1_headers(&info).unwrap().frame
     }
 
     #[test]
@@ -1133,7 +1246,11 @@ fn decode_hidden_key_frame_show_existing(
     let hidden_headers = parse_av1_headers(&hidden_info)?;
     let hidden_frame = decode_still_frame(&hidden_headers, Some(&hidden_info))?;
     let mut references = FrameReferenceSlots::default();
-    references.refresh(hidden_headers.frame.refresh_frame_flags, &hidden_frame);
+    references.refresh(
+        hidden_headers.frame.refresh_frame_flags,
+        &hidden_frame,
+        &hidden_headers.frame,
+    );
     references.frame_to_show(show_existing_index).map(Some)
 }
 
@@ -1168,17 +1285,19 @@ fn encode_obu(obu_type: ObuType, payload: &[u8]) -> Result<Vec<u8>, DecoderError
 }
 
 fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
-    parse_av1_headers_from_parts(
+    parse_av1_headers_from_parts_with_references(
         info,
         &[&info.primary_item_payload],
         info.av1_config.as_deref(),
+        &[None; 8],
     )
 }
 
-fn parse_av1_headers_from_parts(
+fn parse_av1_headers_from_parts_with_references(
     info: &AvifInfo,
     payloads: &[&[u8]],
     av1_config: Option<&[u8]>,
+    references: &[Option<ReferenceFrameState>; 8],
 ) -> Result<Av1Headers, DecoderError> {
     let [
         sequence_payload,
@@ -1204,7 +1323,7 @@ fn parse_av1_headers_from_parts(
         validate_av1_config(&config, &sequence)?;
     }
     let (frame, tile_group_payload) = if let Some(frame_payload) = frame_payload {
-        let frame = parse_frame_header(frame_payload, &sequence)?;
+        let frame = parse_frame_header_with_references(frame_payload, &sequence, references)?;
         if frame.payload_after_header_offset > frame_payload.len() {
             return Err(DecoderError::Bitstream(
                 "AV1 frame payload offset points outside OBU_FRAME".to_string(),
@@ -1241,7 +1360,8 @@ fn parse_av1_headers_from_parts(
         let frame_header_payload = frame_header_payload.ok_or_else(|| {
             DecoderError::Bitstream("AV1 frame header OBU is missing".to_string())
         })?;
-        let frame = parse_frame_header(frame_header_payload, &sequence)?;
+        let frame =
+            parse_frame_header_with_references(frame_header_payload, &sequence, references)?;
         // A primary item may carry an AV1 sequence. The still-image API
         // exposes the first frame, so stop collecting tiles at the next
         // frame boundary instead of mixing subsequent frames into it.

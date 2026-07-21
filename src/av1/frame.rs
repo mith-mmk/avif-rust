@@ -69,6 +69,18 @@ pub struct FrameHeader {
     pub payload_after_header_offset: usize,
 }
 
+/// Geometry metadata retained for resolving AV1 `frame_size_with_refs`.
+/// Pixel planes are owned by the sequence decoder; this small copy is kept in
+/// the bitstream layer so frame-header parsing remains independent of buffers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ReferenceFrameState {
+    pub frame_width: u32,
+    pub frame_height: u32,
+    pub upscaled_width: u32,
+    pub render_width: u32,
+    pub render_height: u32,
+}
+
 impl FrameHeader {
     pub(crate) fn coded_lossless(&self) -> bool {
         self.quantization.coded_lossless()
@@ -122,6 +134,14 @@ impl SegmentationParams {
 pub fn parse_frame_header(
     data: &[u8],
     sequence: &SequenceHeader,
+) -> Result<FrameHeader, DecoderError> {
+    parse_frame_header_with_references(data, sequence, &[None; 8])
+}
+
+pub(crate) fn parse_frame_header_with_references(
+    data: &[u8],
+    sequence: &SequenceHeader,
+    references: &[Option<ReferenceFrameState>; 8],
 ) -> Result<FrameHeader, DecoderError> {
     let mut reader = BitReader::new(data);
 
@@ -261,23 +281,14 @@ pub fn parse_frame_header(
                 "AV1 inter-frame ids are not supported yet".to_string(),
             ));
         }
-        let frame_size = if frame_size_override_flag && !error_resilient_mode {
-            let mut found_ref = false;
-            for _ in 0..7 {
-                if reader.read_bool("found_ref")? {
-                    found_ref = true;
-                }
-            }
-            if found_ref {
-                return Err(DecoderError::Unsupported(
-                    "AV1 frame_size_with_refs needs reference dimensions".to_string(),
-                ));
-            }
-            parse_frame_size(&mut reader, sequence, frame_size_override_flag)?
-        } else {
-            parse_frame_size(&mut reader, sequence, frame_size_override_flag)?
-        };
-        let render_size = parse_render_size(&mut reader, frame_size.width, frame_size.height)?;
+        let (frame_size, render_size) = parse_inter_frame_size(
+            &mut reader,
+            sequence,
+            frame_size_override_flag,
+            error_resilient_mode,
+            &reference_frame_indices,
+            references,
+        )?;
         allow_high_precision_mv = if force_integer_mv != 0 {
             false
         } else {
@@ -604,17 +615,86 @@ fn parse_frame_size(
     } else {
         8
     };
+    Ok(frame_size_from_upscaled_width(
+        upscaled_width,
+        height,
+        superres_denom,
+    ))
+}
+
+fn frame_size_from_upscaled_width(
+    upscaled_width: u32,
+    height: u32,
+    superres_denom: u32,
+) -> FrameSize {
     let width = if superres_denom == 8 {
         upscaled_width
     } else {
         (upscaled_width * 8 + (superres_denom / 2)) / superres_denom
     };
-
-    Ok(FrameSize {
+    FrameSize {
         width,
         height,
         upscaled_width,
-    })
+    }
+}
+
+fn parse_inter_frame_size(
+    reader: &mut BitReader<'_>,
+    sequence: &SequenceHeader,
+    frame_size_override_flag: bool,
+    error_resilient_mode: bool,
+    reference_frame_indices: &[u8; 7],
+    references: &[Option<ReferenceFrameState>; 8],
+) -> Result<(FrameSize, RenderSize), DecoderError> {
+    if !(frame_size_override_flag && !error_resilient_mode) {
+        let frame_size = parse_frame_size(reader, sequence, frame_size_override_flag)?;
+        let render_size = parse_render_size(reader, frame_size.width, frame_size.height)?;
+        return Ok((frame_size, render_size));
+    }
+
+    let mut found_reference = None;
+    for reference in 0..7 {
+        if reader.read_bool("found_ref")? {
+            found_reference = Some(reference);
+            break;
+        }
+    }
+    // The syntax still carries the remaining found_ref flags even after the
+    // first set bit; consume them before resolving the inferred dimensions.
+    if let Some(index) = found_reference {
+        for _ in 0..(6 - index) {
+            let _ = reader.read_bool("found_ref")?;
+        }
+    }
+    let Some(reference) = found_reference else {
+        let frame_size = parse_frame_size(reader, sequence, true)?;
+        let render_size = parse_render_size(reader, frame_size.width, frame_size.height)?;
+        return Ok((frame_size, render_size));
+    };
+    let slot = usize::from(reference_frame_indices[reference]);
+    let state = references
+        .get(slot)
+        .and_then(Option::as_ref)
+        .ok_or_else(|| {
+            DecoderError::Unsupported(format!(
+                "AV1 frame_size_with_refs reference slot {slot} has no decoded reference"
+            ))
+        })?;
+    let superres_denom = if sequence.enable_superres && reader.read_bool("use_superres")? {
+        reader.read_bits(3, "coded_denom")? + 9
+    } else {
+        8
+    };
+    let frame_size =
+        frame_size_from_upscaled_width(state.upscaled_width, state.frame_height, superres_denom);
+    Ok((
+        frame_size,
+        RenderSize {
+            width: state.render_width,
+            height: state.render_height,
+        },
+    ))
 }
 
 fn parse_inter_reference_indices(
@@ -660,7 +740,7 @@ fn parse_frame_header_trailing_params(
     reader: &mut BitReader<'_>,
     sequence: &SequenceHeader,
     allow_intrabc: bool,
-    frame_is_intra: bool,
+    _frame_is_intra: bool,
     primary_ref_frame: u8,
 ) -> Result<FrameHeaderTrailingParams, DecoderError> {
     let quantization = parse_quantization_params(reader, sequence)?;
@@ -676,11 +756,6 @@ fn parse_frame_header_trailing_params(
     let restoration = parse_lr_params(reader, sequence, coded_lossless, allow_intrabc)?;
     let tx_mode = parse_tx_mode(reader, coded_lossless)?;
     let reduced_tx_set = reader.read_bool("reduced_tx_set")?;
-    if !frame_is_intra {
-        return Err(DecoderError::Unsupported(
-            "inter frame header trailing parameters are not supported yet".to_string(),
-        ));
-    }
     Ok(FrameHeaderTrailingParams {
         quantization,
         segmentation,

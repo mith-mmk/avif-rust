@@ -34,6 +34,7 @@ pub use frame::{
     CdefStrength, FilmGrainParams, FrameHeader, FrameType, SegmentationParams, TxMode,
     parse_frame_header,
 };
+pub(crate) use frame::{ReferenceFrameState, parse_frame_header_with_references};
 pub use predict::{IntraEdges, predict_intra};
 pub use quant::{PlaneQuant, QuantState, dequantize_coefficients};
 pub use reconstruct::{
