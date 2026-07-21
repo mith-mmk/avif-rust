@@ -98,6 +98,73 @@ pub const DEFAULT_COMP_INTER_CDF: [[u16; 3]; 5] = [
     [2842, 32768, 0],
 ];
 
+// AV1 motion-vector CDFs.  These are kept in the frame CDF context because
+// new-MV syntax is adaptive just like the block-mode symbols.  The values
+// match the normative AOM default_nmv_context tables.
+pub const DEFAULT_MV_JOINT_CDF: [u16; 5] = [4096, 11264, 19328, 32768, 0];
+pub const DEFAULT_MV_CLASSES_CDF: [u16; 12] = [
+    28672, 30976, 31858, 32320, 32551, 32656, 32740, 32757, 32762, 32767, 32768, 0,
+];
+pub const DEFAULT_MV_CLASS0_CDF: [u16; 3] = [27648, 32768, 0];
+pub const DEFAULT_MV_BITS_CDF: [[u16; 3]; 10] = [
+    [17408, 32768, 0],
+    [17920, 32768, 0],
+    [18944, 32768, 0],
+    [20480, 32768, 0],
+    [22528, 32768, 0],
+    [24576, 32768, 0],
+    [28672, 32768, 0],
+    [29952, 32768, 0],
+    [29952, 32768, 0],
+    [30720, 32768, 0],
+];
+pub const DEFAULT_MV_CLASS0_FP_CDF: [[u16; 5]; 2] = [
+    [16384, 24576, 26624, 32768, 0],
+    [12288, 21248, 24128, 32768, 0],
+];
+pub const DEFAULT_MV_FP_CDF: [u16; 5] = [8192, 17408, 21248, 32768, 0];
+pub const DEFAULT_MV_CLASS0_HP_CDF: [u16; 3] = [20480, 32768, 0];
+pub const DEFAULT_MV_HP_CDF: [u16; 3] = [16384, 32768, 0];
+pub const DEFAULT_MV_SIGN_CDF: [u16; 3] = [16384, 32768, 0];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MotionVectorComponentCdf {
+    pub sign: [u16; 3],
+    pub classes: [u16; 12],
+    pub class0: [u16; 3],
+    pub bits: [[u16; 3]; 10],
+    pub class0_fp: [[u16; 5]; 2],
+    pub fp: [u16; 5],
+    pub class0_hp: [u16; 3],
+    pub hp: [u16; 3],
+}
+
+impl MotionVectorComponentCdf {
+    const DEFAULT: Self = Self {
+        sign: DEFAULT_MV_SIGN_CDF,
+        classes: DEFAULT_MV_CLASSES_CDF,
+        class0: DEFAULT_MV_CLASS0_CDF,
+        bits: DEFAULT_MV_BITS_CDF,
+        class0_fp: DEFAULT_MV_CLASS0_FP_CDF,
+        fp: DEFAULT_MV_FP_CDF,
+        class0_hp: DEFAULT_MV_CLASS0_HP_CDF,
+        hp: DEFAULT_MV_HP_CDF,
+    };
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MotionVectorCdf {
+    pub joint: [u16; 5],
+    pub components: [MotionVectorComponentCdf; 2],
+}
+
+impl MotionVectorCdf {
+    const DEFAULT: Self = Self {
+        joint: DEFAULT_MV_JOINT_CDF,
+        components: [MotionVectorComponentCdf::DEFAULT; 2],
+    };
+}
+
 const DEFAULT_SEG_ID_CDF: [[u16; SEGMENT_IDS + 1]; SEGMENT_ID_CONTEXTS] = [
     [5622, 7893, 16093, 18233, 27809, 28373, 32533, 32768, 0],
     [14274, 18230, 22557, 24935, 29980, 30851, 32344, 32768, 0],
@@ -1828,6 +1895,7 @@ pub struct CdfContext {
     pub refmv: [[u16; 3]; 6],
     pub single_ref: [[[u16; 3]; 6]; 5],
     pub comp_inter: [[u16; 3]; 5],
+    pub motion: MotionVectorCdf,
     pub seg_id: [[u16; SEGMENT_IDS + 1]; SEGMENT_ID_CONTEXTS],
     pub delta_q: [u16; 5],
     pub delta_lf: [u16; 5],
@@ -1898,6 +1966,7 @@ impl CdfContext {
             refmv: DEFAULT_REFMV_CDF,
             single_ref: DEFAULT_SINGLE_REF_CDF,
             comp_inter: DEFAULT_COMP_INTER_CDF,
+            motion: MotionVectorCdf::DEFAULT,
             seg_id: DEFAULT_SEG_ID_CDF,
             delta_q: DEFAULT_DELTA_Q_CDF,
             delta_lf: DEFAULT_DELTA_LF_CDF,
@@ -1995,6 +2064,14 @@ impl CdfContext {
 
     pub fn comp_inter_cdf_mut(&mut self, context: usize) -> &mut [u16] {
         &mut self.comp_inter[context]
+    }
+
+    pub fn motion_joint_cdf_mut(&mut self) -> &mut [u16] {
+        &mut self.motion.joint
+    }
+
+    pub fn motion_component_cdf_mut(&mut self, component: usize) -> &mut MotionVectorComponentCdf {
+        &mut self.motion.components[component]
     }
 
     pub fn seg_id_cdf_mut(&mut self, context: usize) -> &mut [u16] {

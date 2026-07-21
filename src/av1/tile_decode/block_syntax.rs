@@ -327,34 +327,33 @@ impl<'a> TileDecoder<'a> {
             .get(reference_type)
             .ok_or_else(|| DecoderError::Bitstream("AV1 reference type is invalid".to_string()))?;
 
-        // Inter mode is a small decision tree.  The zero-MV branch is the
-        // first useful compatibility slice: it needs no motion-vector
-        // payload, and reconstruction can copy the corresponding reference.
+        // Inter mode is a small decision tree.  New-MV is decoded against the
+        // block's motion-vector predictor; the first compatibility predictor
+        // is the zero vector, which is normative for a block without usable
+        // neighbouring candidates.  The resulting vector is retained in the
+        // block probe so reconstruction can apply the reference prediction.
         let mode_context = self.intra_inter_context(x, y).min(5);
         let new_mv = self
             .reader
             .read_symbol(self.cdf.newmv_cdf_mut(mode_context))?
             == 0;
-        let zero_mv = if new_mv {
-            false
+        let motion_vector = if new_mv {
+            self.read_new_mv((0, 0), frame)?
         } else {
-            self.reader
-                .read_symbol(self.cdf.zeromv_cdf_mut(mode_context.min(1)))?
-                == 0
-        };
-        if new_mv {
-            return Err(DecoderError::Unsupported(
-                "AV1 inter new-MV prediction is not supported yet".to_string(),
-            ));
-        }
-        if !zero_mv {
-            let _nearest = self
+            let zero_mv = self
                 .reader
-                .read_symbol(self.cdf.refmv_cdf_mut(mode_context))?;
-            return Err(DecoderError::Unsupported(
-                "AV1 inter nearest/near-MV prediction is not supported yet".to_string(),
-            ));
-        }
+                .read_symbol(self.cdf.zeromv_cdf_mut(mode_context.min(1)))?
+                == 0;
+            if !zero_mv {
+                let _nearest = self
+                    .reader
+                    .read_symbol(self.cdf.refmv_cdf_mut(mode_context))?;
+                return Err(DecoderError::Unsupported(
+                    "AV1 inter nearest/near-MV prediction is not supported yet".to_string(),
+                ));
+            }
+            (0, 0)
+        };
 
         self.set_inter_context(x, y, block_size, true);
         self.set_smooth_context(x, y, block_size, false, false);
@@ -378,7 +377,7 @@ impl<'a> TileDecoder<'a> {
             skip,
             is_inter: true,
             reference_frame: Some(reference_frame),
-            motion_vector: Some((0, 0)),
+            motion_vector: Some(motion_vector),
             use_intrabc: false,
             intra_block_copy_mv: None,
             cdef_idx,
@@ -399,6 +398,76 @@ impl<'a> TileDecoder<'a> {
             tx_size,
             bit_position_after: self.reader.bit_position(),
         })
+    }
+
+    fn read_new_mv(
+        &mut self,
+        predictor: (i32, i32),
+        frame: &FrameHeader,
+    ) -> Result<(i32, i32), DecoderError> {
+        let joint = self.reader.read_symbol(self.cdf.motion_joint_cdf_mut())?;
+        let mut delta = [0i32; 2];
+        if matches!(joint, 2 | 3) {
+            delta[0] = self.read_mv_component(0, frame)?;
+        }
+        if matches!(joint, 1 | 3) {
+            delta[1] = self.read_mv_component(1, frame)?;
+        }
+        Ok((
+            predictor
+                .0
+                .checked_add(delta[0])
+                .ok_or_else(|| DecoderError::Bitstream("AV1 inter row MV overflows".to_string()))?,
+            predictor.1.checked_add(delta[1]).ok_or_else(|| {
+                DecoderError::Bitstream("AV1 inter column MV overflows".to_string())
+            })?,
+        ))
+    }
+
+    fn read_mv_component(
+        &mut self,
+        component: usize,
+        frame: &FrameHeader,
+    ) -> Result<i32, DecoderError> {
+        let cdf = self.cdf.motion_component_cdf_mut(component);
+        let sign = self.reader.read_symbol(&mut cdf.sign)?;
+        let mv_class = self.reader.read_symbol(&mut cdf.classes)?;
+        let integer_mv = frame.force_integer_mv == 1;
+        let magnitude = if mv_class == 0 {
+            let class0_bit = self.reader.read_symbol(&mut cdf.class0)?;
+            let fractional = if integer_mv {
+                3
+            } else {
+                self.reader.read_symbol(&mut cdf.class0_fp[class0_bit])?
+            };
+            let high_precision = if integer_mv || !frame.allow_high_precision_mv {
+                1
+            } else {
+                self.reader.read_symbol(&mut cdf.class0_hp)?
+            };
+            ((class0_bit << 3) | (fractional << 1) | high_precision) + 1
+        } else {
+            let mut offset = 0usize;
+            for bit in 0..mv_class {
+                offset |= self.reader.read_symbol(&mut cdf.bits[bit])? << bit;
+            }
+            let fractional = if integer_mv {
+                3
+            } else {
+                self.reader.read_symbol(&mut cdf.fp)?
+            };
+            let high_precision = if integer_mv || !frame.allow_high_precision_mv {
+                1
+            } else {
+                self.reader.read_symbol(&mut cdf.hp)?
+            };
+            (1usize << (mv_class + 2))
+                .saturating_add((offset << 3) | (fractional << 1) | high_precision)
+                .saturating_add(1)
+        };
+        let magnitude = i32::try_from(magnitude)
+            .map_err(|_| DecoderError::Bitstream("AV1 inter MV magnitude overflows".to_string()))?;
+        Ok(if sign == 0 { magnitude } else { -magnitude })
     }
 
     fn read_intrabc_mv(&mut self, predictor: (i32, i32)) -> Result<(i32, i32), DecoderError> {

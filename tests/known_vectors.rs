@@ -59,6 +59,12 @@ fn cdf_known_vectors_match_default_av1_tables() {
     assert_eq!(context.partition_w64[0][9], 32768);
     assert_eq!(context.partition_w128[0][7], 32768);
     assert_eq!(context.skip[0][1], 32768);
+    assert_eq!(context.motion.joint, [4096, 11264, 19328, 32768, 0]);
+    assert_eq!(context.motion.components[0].classes[10], 32768);
+    assert_eq!(
+        context.motion.components[1].class0_fp[0],
+        [16384, 24576, 26624, 32768, 0]
+    );
     assert_eq!(context.txb_skip[0][0][1], 32768);
     assert_eq!(context.eob_pt_16[0][0][4], 32768);
     assert_eq!(context.eob_pt_1024[1][1][10], 32768);

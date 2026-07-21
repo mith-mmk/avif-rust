@@ -749,7 +749,7 @@ fn decode_sequence_samples_from_info(
                             .flatten(),
                     ) {
                         Ok(decoded) => decoded,
-                        Err(DecoderError::Bitstream(_)) | Err(DecoderError::Unsupported(_)) => {
+                        Err(DecoderError::Bitstream(_) | DecoderError::Unsupported(_)) => {
                             return Err(DecoderError::Unsupported(format!(
                                 "AVIS sample {index} uses {kind:?} frame prediction"
                             )));

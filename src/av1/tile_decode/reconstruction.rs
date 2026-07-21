@@ -713,47 +713,84 @@ fn predict_inter_block_into(
             "AV1 inter prediction buffer has an invalid size".to_string(),
         ));
     }
-    let scale_x = 8i32.checked_shl(subsampling_x as u32).ok_or_else(|| {
-        DecoderError::Bitstream("AV1 inter horizontal MV scale overflows".to_string())
-    })?;
-    let scale_y = 8i32.checked_shl(subsampling_y as u32).ok_or_else(|| {
-        DecoderError::Bitstream("AV1 inter vertical MV scale overflows".to_string())
-    })?;
-    if mv.0 % scale_y != 0 || mv.1 % scale_x != 0 {
-        return Err(DecoderError::Unsupported(
-            "AV1 fractional inter motion vectors are not supported yet".to_string(),
-        ));
+    let mv_x = i64::from(mv.1) / (1_i64 << subsampling_x);
+    let mv_y = i64::from(mv.0) / (1_i64 << subsampling_y);
+    let integer_mv = mv_x % 8 == 0 && mv_y % 8 == 0;
+    if integer_mv {
+        let source_x = i64::try_from(x)
+            .ok()
+            .and_then(|value| value.checked_add(mv_x / 8))
+            .ok_or_else(|| DecoderError::Bitstream("AV1 inter source x overflows".to_string()))?;
+        let source_y = i64::try_from(y)
+            .ok()
+            .and_then(|value| value.checked_add(mv_y / 8))
+            .ok_or_else(|| DecoderError::Bitstream("AV1 inter source y overflows".to_string()))?;
+        let source_x = usize::try_from(source_x)
+            .map_err(|_| DecoderError::Bitstream("AV1 inter source x is negative".to_string()))?;
+        let source_y = usize::try_from(source_y)
+            .map_err(|_| DecoderError::Bitstream("AV1 inter source y is negative".to_string()))?;
+        let source_right = source_x
+            .checked_add(width)
+            .ok_or_else(|| DecoderError::Bitstream("AV1 inter source x overflows".to_string()))?;
+        let source_bottom = source_y
+            .checked_add(height)
+            .ok_or_else(|| DecoderError::Bitstream("AV1 inter source y overflows".to_string()))?;
+        if source_right > reference.layout.width || source_bottom > reference.layout.height {
+            return Err(DecoderError::Bitstream(
+                "AV1 inter reference block is outside the reference frame".to_string(),
+            ));
+        }
+        for row in 0..height {
+            let source_start = (source_y + row) * reference.layout.width + source_x;
+            let target_start = row * width;
+            output[target_start..target_start + width]
+                .copy_from_slice(&reference.samples[source_start..source_start + width]);
+        }
+        return Ok(());
     }
-    let source_x = i64::try_from(x)
-        .ok()
-        .and_then(|value| value.checked_add(i64::from(mv.1 / scale_x)))
-        .ok_or_else(|| DecoderError::Bitstream("AV1 inter source x overflows".to_string()))?;
-    let source_y = i64::try_from(y)
-        .ok()
-        .and_then(|value| value.checked_add(i64::from(mv.0 / scale_y)))
-        .ok_or_else(|| DecoderError::Bitstream("AV1 inter source y overflows".to_string()))?;
-    let source_x = usize::try_from(source_x)
-        .map_err(|_| DecoderError::Bitstream("AV1 inter source x is negative".to_string()))?;
-    let source_y = usize::try_from(source_y)
-        .map_err(|_| DecoderError::Bitstream("AV1 inter source y is negative".to_string()))?;
-    let source_right = source_x
-        .checked_add(width)
-        .ok_or_else(|| DecoderError::Bitstream("AV1 inter source x overflows".to_string()))?;
-    let source_bottom = source_y
-        .checked_add(height)
-        .ok_or_else(|| DecoderError::Bitstream("AV1 inter source y overflows".to_string()))?;
-    if source_right > reference.layout.width || source_bottom > reference.layout.height {
-        return Err(DecoderError::Bitstream(
-            "AV1 inter reference block is outside the reference frame".to_string(),
-        ));
-    }
+
+    // A bilinear fallback covers the fractional phases used by ordinary
+    // low-complexity AVIF animation streams while keeping the integer path
+    // allocation-free.  The AV1 regular 8-tap kernel can be added without
+    // changing the fixed-point coordinate contract used here.
     for row in 0..height {
-        let source_start = (source_y + row) * reference.layout.width + source_x;
-        let target_start = row * width;
-        output[target_start..target_start + width]
-            .copy_from_slice(&reference.samples[source_start..source_start + width]);
+        let y_fixed = (i64::try_from(y).unwrap_or(i64::MAX) << 3)
+            .checked_add(mv_y)
+            .ok_or_else(|| DecoderError::Bitstream("AV1 inter source y overflows".to_string()))?
+            + (row as i64 * 8);
+        let y0 = floor_div_eight(y_fixed);
+        let fy = y_fixed - y0 * 8;
+        let y1 = y0.saturating_add(1);
+        for col in 0..width {
+            let x_fixed = (i64::try_from(x).unwrap_or(i64::MAX) << 3)
+                .checked_add(mv_x)
+                .ok_or_else(|| {
+                    DecoderError::Bitstream("AV1 inter source x overflows".to_string())
+                })?
+                + (col as i64 * 8);
+            let x0 = floor_div_eight(x_fixed);
+            let fx = x_fixed - x0 * 8;
+            let x1 = x0.saturating_add(1);
+            let sample = |sx: i64, sy: i64| -> u16 {
+                let sx = sx.clamp(0, reference.layout.width.saturating_sub(1) as i64) as usize;
+                let sy = sy.clamp(0, reference.layout.height.saturating_sub(1) as i64) as usize;
+                reference.samples[sy * reference.layout.width + sx]
+            };
+            let top = i64::from(sample(x0, y0)) * (8 - fx) + i64::from(sample(x1, y0)) * fx;
+            let bottom = i64::from(sample(x0, y1)) * (8 - fx) + i64::from(sample(x1, y1)) * fx;
+            let value = (top * (8 - fy) + bottom * fy + 32) >> 6;
+            output[row * width + col] = value.clamp(0, i64::from(u16::MAX)) as u16;
+        }
     }
     Ok(())
+}
+
+fn floor_div_eight(value: i64) -> i64 {
+    if value >= 0 {
+        value / 8
+    } else {
+        -((-value + 7) / 8)
+    }
 }
 
 #[expect(
@@ -1313,7 +1350,7 @@ mod tests {
     }
 
     #[test]
-    fn inter_prediction_rejects_fractional_motion_until_filtering_exists() {
+    fn inter_prediction_bilinearly_filters_fractional_motion() {
         let reference = PlaneBuffer {
             layout: crate::av1::decode::PlaneLayout {
                 plane: 0,
@@ -1323,11 +1360,10 @@ mod tests {
                 subsampling_y: 0,
                 sample_count: 16,
             },
-            samples: vec![0; 16],
+            samples: (0..16).collect(),
         };
         let mut output = [0; 4];
-        let error = predict_inter_block_into(&reference, 0, 0, 2, 2, (1, 0), 0, 0, &mut output)
-            .unwrap_err();
-        assert!(error.to_string().contains("fractional inter"));
+        predict_inter_block_into(&reference, 0, 0, 2, 2, (4, 4), 0, 0, &mut output).unwrap();
+        assert_eq!(output, [3, 4, 7, 8]);
     }
 }
