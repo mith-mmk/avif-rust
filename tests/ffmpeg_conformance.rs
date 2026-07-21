@@ -3210,6 +3210,21 @@ fn external_sato_12bit_to_16bit_sample_decodes() {
 }
 
 #[test]
+fn gain_map_frame_api_is_absent_without_tmap() {
+    let path = sample_path("WML2Viewer.avif");
+    if !path.is_file() {
+        eprintln!("WML2Viewer sample is unavailable; skipping gain-map API smoke test");
+        return;
+    }
+    let data = std::fs::read(path).expect("WML2Viewer sample should be readable");
+    assert!(
+        avif_rust::decode_gain_map_frame_bytes(&data)
+            .expect("ordinary AVIF should parse without a gain-map item")
+            .is_none()
+    );
+}
+
+#[test]
 fn external_gainmap_samples_keep_complete_base_decode() {
     let root = std::env::var_os("AVIF_GAINMAP_SAMPLE_DIR")
         .map(std::path::PathBuf::from)
@@ -3260,6 +3275,14 @@ fn external_gainmap_samples_keep_complete_base_decode() {
                     .is_some(),
                 "{name} should expose a tmap descriptor"
             );
+            let gain_map = avif_rust::decode_gain_map_frame_bytes(&data)
+                .unwrap_or_else(|error| panic!("{name} gain-map item should decode: {error}"))
+                .expect("supported gain-map sample should expose its AV1 map item");
+            assert_eq!(
+                (gain_map.frame.width, gain_map.frame.height),
+                (width, height)
+            );
+            assert!(matches!(gain_map.metadata.channel_count(), 1 | 3));
         } else if name == "unsupported_gainmap_minimum_version.avif" {
             assert!(
                 matches!(

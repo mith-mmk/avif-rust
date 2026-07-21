@@ -37,7 +37,7 @@ passes the FFmpeg RGB oracle (average absolute error about 0.075, maximum 6).
 | AVIS Key/IntraOnly/show-existing sample decode by index or batch | Supported (Inter/Switch remain fail-closed) |
 | Animated AVIF multi-frame callback output | Supported for Key/IntraOnly/show-existing samples (`animation: true`); Inter/Switch remain fail-closed |
 | Layered-image selectors (`a1op=0`, `lsel=0`) | Parsed and accepted; non-default layer/operating-point selection remains fail-closed |
-| `tmap` primary item base-image fallback | Supported (base `av01` decode); ISO 21496 gain-map metadata can be inspected, but HDR application is not performed |
+| `tmap` primary item base-image fallback | Supported (base `av01` decode); ISO 21496 gain-map metadata and the referenced AV1 gain-map item can be inspected/decoded; explicit base-colour-space HDR application is supported |
 | PQ/HLG transfer to bounded SDR RGBA16 | Supported (bounded tone mapping; no display-specific calibration) |
 | Display-specific HDR gamut calibration and non-matrix ICC display conversion | Not yet supported |
 
@@ -107,6 +107,11 @@ The lower-level `parse_info` and `decode` functions accept a
 `bin-rs::reader::BinaryReader`. `decode` preserves the `wml2` callback order:
 `init -> draw -> terminate`; supported multi-frame AVIS sequences emit one
 `draw` call per frame with `InitOptions { animation: true, .. }`.
+
+For a `tmap` image, `decode_gain_map_frame_bytes` returns the referenced AV1
+gain-map item and its `GainMapMetadata` without changing the default base-image
+decode. Call `DecodedFrame::to_rgba16_with_gain_map` with a selected display
+headroom to apply the explicit base-colour-space composition path.
 
 ## Validation
 

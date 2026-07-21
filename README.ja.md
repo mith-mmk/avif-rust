@@ -38,7 +38,7 @@ frame AVIF profileに対応します。1 frameの`avis` primary itemも静止画
 | AVISのKey/IntraOnly/show-existing frameをindex指定・一括でデコード | 対応（Inter/Switchはfail-closed） |
 | animated AVIFの複数frame callback出力 | Key／IntraOnly／show-existingに対応（`animation: true`、Inter／Switchはfail-closed） |
 | layered image selector（`a1op=0`、`lsel=0`） | 解析・受理（既定外の層／operating point選択はfail-closed） |
-| `tmap`主画像のbase画像フォールバック | 対応（base `av01`をデコード、ISO 21496 Gain Mapメタデータは解析可能、HDR合成は未適用） |
+| `tmap`主画像のbase画像フォールバック | 対応（base `av01`をデコード、ISO 21496 Gain Mapメタデータと参照AV1 gain-map itemを解析・デコード可能、base色空間の明示的なHDR合成に対応） |
 | PQ／HLG transferからbounded SDR RGBA16への変換 | 対応（bounded tone mapping、display固有のcalibrationは未適用） |
 | display固有HDR gamut calibration、matrix-shaper以外のICC表示変換 | 未対応 |
 
@@ -105,6 +105,11 @@ Inter／Switchサンプルは`DecoderError::Unsupported`を返します。
 `decode`は`wml2`互換の`init -> draw -> terminate` callback順序を維持し、
 対応する複数frame AVISでは`InitOptions { animation: true, .. }`と各frameの
 `draw`を出力します。
+
+`tmap`画像では、`decode_gain_map_frame_bytes`によって参照されたAV1 gain-map
+itemと`GainMapMetadata`を取得できます。既定のbase画像デコードは変更せず、
+`DecodedFrame::to_rgba16_with_gain_map`へdisplay headroomを渡すことで、base色空間
+の明示的なHDR合成を適用できます。
 
 ## 検証
 

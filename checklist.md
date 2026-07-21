@@ -1384,3 +1384,20 @@ matrix. The complete-output and dimension checks remain unchanged. A fresh
 five-iteration benchmark measured `243.25/241.89 ms` for `WML2Viewer.avif`
 and `0.0102/0.0105 ms` for `extended_pixi.avif` (native/RGBA); these are local
 checkpoints and show no regression from the audit-only changes.
+
+The gain-map boundary now exposes `decode_gain_map_frame_bytes`, which locates
+the second `dimg` input of a `tmap` item, validates that it is an AV1 item with
+matching dimensions and required `ispe`/`pixi`/`av1C` metadata, and decodes its
+native frame alongside `GainMapMetadata`. `DecodedFrame::to_rgba16_with_gain_map`
+now applies the ISO 21496 log2 gain formula for the base colour space, keeps
+alpha unchanged, and returns the base image through an exact fast path when the
+selected headroom is zero. Alternate-colour-space composition remains
+fail-closed. The optional gain-map conformance test now checks the decoded item
+whenever the external fixture set is available, and synthetic vectors cover
+headroom, gain, alpha, and rejection behavior.
+
+Gain-map composition now converts its per-channel rational coefficients once
+before walking the RGBA pixels, avoiding repeated metadata division in the
+post-decode loop. A fresh five-iteration `WML2Viewer.avif` release benchmark
+measured `248.24/243.45 ms` (native/RGBA); this path does not change ordinary
+decode output and remains a host-specific checkpoint.

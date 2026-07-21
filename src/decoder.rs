@@ -22,7 +22,7 @@ use crate::compat::{DataMap, DecodeOptions, InitOptions};
 use crate::container::{
     AvifInfo, AvifSequenceSampleInfo, AvifSequenceSampleKind, CleanAperture, ColorInformation,
     GridCell, ImageMirror, ImageRotation, PixelInformation, SampleTransformToken,
-    inspect_av1_sequence_sample, parse_avif, parse_sample_transform,
+    inspect_av1_sequence_sample, parse_avif, parse_gain_map_image, parse_sample_transform,
 };
 use crate::obu::{ObuType, find_obu_payloads_in_parts, parse_obu_stream};
 use crate::{DecoderError, ImageBuffer, Rgba16ImageBuffer};
@@ -209,6 +209,17 @@ pub struct DecodedFrame {
     pub buffers: FrameBuffers,
 }
 
+/// A decoded ISO 21496 gain-map image and its descriptor.
+///
+/// Gain-map pixels are returned as a normal native AV1 frame so applications
+/// can apply display-headroom policy themselves. The default still-image API
+/// intentionally continues to return only the base image.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedGainMapFrame {
+    pub metadata: crate::container::GainMapMetadata,
+    pub frame: DecodedFrame,
+}
+
 impl DecodedFrame {
     pub fn to_rgba8(&self) -> Result<ImageBuffer, DecoderError> {
         if self
@@ -249,6 +260,136 @@ impl DecodedFrame {
             unpremultiply_rgba16(&mut image.rgba);
         }
         Ok(image)
+    }
+
+    /// Applies an explicitly decoded ISO 21496 gain map to this frame.
+    ///
+    /// The base and gain-map frames must have matching dimensions and the
+    /// metadata must use the base colour space. `hdr_headroom` is expressed in
+    /// log2 headroom units; a value at the base headroom returns the base RGBA16
+    /// image unchanged. The default AVIF decode path never applies this method
+    /// implicitly.
+    pub fn to_rgba16_with_gain_map(
+        &self,
+        gain_map: &DecodedGainMapFrame,
+        hdr_headroom: f32,
+    ) -> Result<Rgba16ImageBuffer, DecoderError> {
+        if !hdr_headroom.is_finite() || hdr_headroom < 0.0 {
+            return Err(DecoderError::InvalidParam(
+                "gain-map HDR headroom must be finite and non-negative".to_string(),
+            ));
+        }
+        if !gain_map.metadata.use_base_colour_space {
+            return Err(DecoderError::Unsupported(
+                "gain-map composition in an alternate colour space is not supported".to_string(),
+            ));
+        }
+        if self.width != gain_map.frame.width || self.height != gain_map.frame.height {
+            return Err(DecoderError::Bitstream(
+                "gain-map and base frame dimensions do not match".to_string(),
+            ));
+        }
+        let weight = gain_map_weight(hdr_headroom, &gain_map.metadata)?;
+        let mut base = self.to_rgba16()?;
+        if weight == 0.0 {
+            return Ok(base);
+        }
+        let map = gain_map.frame.to_rgba16()?;
+        if map.rgba.len() != base.rgba.len() {
+            return Err(DecoderError::Bitstream(
+                "gain-map and base RGBA buffers do not match".to_string(),
+            ));
+        }
+        let channels = gain_map.metadata.channels.as_slice();
+        if !matches!(channels.len(), 1 | 3) {
+            return Err(DecoderError::Unsupported(format!(
+                "gain-map channel count {} is not supported",
+                channels.len()
+            )));
+        }
+        let mut gamma = [0.0; 3];
+        let mut minimum = [0.0; 3];
+        let mut maximum = [0.0; 3];
+        let mut base_offset = [0.0; 3];
+        let mut alternate_offset = [0.0; 3];
+        for channel in 0..3 {
+            let metadata = channels[if channels.len() == 1 { 0 } else { channel }];
+            gamma[channel] = rational_to_f64(metadata.gamma, "gain-map gamma")?;
+            if gamma[channel] <= 0.0 {
+                return Err(DecoderError::Bitstream(
+                    "gain-map gamma must be positive".to_string(),
+                ));
+            }
+            minimum[channel] = rational_to_f64(metadata.gain_map_min, "gain-map minimum")?;
+            maximum[channel] = rational_to_f64(metadata.gain_map_max, "gain-map maximum")?;
+            base_offset[channel] = rational_to_f64(metadata.base_offset, "base offset")?;
+            alternate_offset[channel] =
+                rational_to_f64(metadata.alternate_offset, "alternate offset")?;
+        }
+        for (base_pixel, map_pixel) in base.rgba.chunks_exact_mut(4).zip(map.rgba.chunks_exact(4)) {
+            let base_linear = [
+                srgb_to_linear(f64::from(base_pixel[0]) / f64::from(u16::MAX)),
+                srgb_to_linear(f64::from(base_pixel[1]) / f64::from(u16::MAX)),
+                srgb_to_linear(f64::from(base_pixel[2]) / f64::from(u16::MAX)),
+            ];
+            for channel in 0..3 {
+                let map_value = f64::from(map_pixel[channel]) / f64::from(u16::MAX);
+                let gain_map_log2 = minimum[channel]
+                    + (maximum[channel] - minimum[channel]) * map_value.powf(1.0 / gamma[channel]);
+                let tone_mapped = (base_linear[channel] + base_offset[channel])
+                    * (gain_map_log2 * f64::from(weight)).exp2()
+                    - alternate_offset[channel];
+                base_pixel[channel] = (linear_to_srgb(tone_mapped.max(0.0)) * f64::from(u16::MAX))
+                    .round()
+                    .clamp(0.0, f64::from(u16::MAX)) as u16;
+            }
+        }
+        Ok(base)
+    }
+}
+
+fn gain_map_weight(
+    hdr_headroom: f32,
+    metadata: &crate::container::GainMapMetadata,
+) -> Result<f32, DecoderError> {
+    let base = rational_to_f64(metadata.base_hdr_headroom, "base HDR headroom")?;
+    let alternate = rational_to_f64(metadata.alternate_hdr_headroom, "alternate HDR headroom")?;
+    if (alternate - base).abs() < f64::EPSILON {
+        return Ok(0.0);
+    }
+    let normalized = ((f64::from(hdr_headroom) - base) / (alternate - base)).clamp(0.0, 1.0);
+    Ok(if metadata.backward_direction {
+        -(normalized as f32)
+    } else {
+        normalized as f32
+    })
+}
+
+fn rational_to_f64(
+    rational: crate::container::GainMapRational,
+    name: &str,
+) -> Result<f64, DecoderError> {
+    if rational.denominator == 0 {
+        return Err(DecoderError::Bitstream(format!(
+            "{name} denominator is zero"
+        )));
+    }
+    Ok(rational.numerator as f64 / f64::from(rational.denominator))
+}
+
+fn srgb_to_linear(encoded: f64) -> f64 {
+    if encoded <= 0.04045 {
+        encoded / 12.92
+    } else {
+        ((encoded + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn linear_to_srgb(linear: f64) -> f64 {
+    if linear <= 0.0031308 {
+        linear * 12.92
+    } else {
+        1.055 * linear.powf(1.0 / 2.4) - 0.055
     }
 }
 
@@ -300,6 +441,45 @@ pub fn decode_frame_bytes(data: &[u8]) -> Result<DecodedFrame, DecoderError> {
         append_alpha_plane(&mut frame, &alpha_frame)?;
     }
     Ok(frame)
+}
+
+/// Decodes the AV1 gain-map item referenced by a `tmap` derived image.
+///
+/// `Ok(None)` means that the input has no `tmap` item. Unsupported gain-map
+/// item layouts fail closed while the ordinary [`decode_frame_bytes`] API
+/// remains available for the base image.
+pub fn decode_gain_map_frame_bytes(
+    data: &[u8],
+) -> Result<Option<DecodedGainMapFrame>, DecoderError> {
+    let Some(gain_map) = parse_gain_map_image(data)? else {
+        return Ok(None);
+    };
+    let info = AvifInfo {
+        major_brand: *b"avif",
+        compatible_brands: vec![*b"avif"],
+        primary_item_id: None,
+        width: Some(gain_map.width),
+        height: Some(gain_map.height),
+        pixel_information: Some(gain_map.pixel_information),
+        color_information: gain_map.color_information,
+        alpha_premultiplied: false,
+        alpha_auxiliary_items: Vec::new(),
+        alpha_grid: None,
+        primary_grid: None,
+        clean_aperture: None,
+        rotation: None,
+        mirror: None,
+        av1_config: Some(gain_map.av1_config),
+        primary_item_payload: gain_map.payload,
+        sequence_sample_payloads: Vec::new(),
+    };
+    validate_public_container_preflight(&info, false)?;
+    let headers = parse_av1_headers(&info)?;
+    let frame = decode_still_frame(&headers, Some(&info))?;
+    Ok(Some(DecodedGainMapFrame {
+        metadata: gain_map.metadata,
+        frame,
+    }))
 }
 
 /// Decodes one sample from an AVIS sequence into source planes.
@@ -2778,6 +2958,9 @@ fn apply_deblock_stage(
     frame_header: &FrameHeader,
     state: &PostFilterState,
 ) {
+    if state.block_filter_states.is_empty() || state.transform_boundaries.is_empty() {
+        return;
+    }
     const FILTER_GRID_STEP: usize = 8;
     let filter_grid_width = frame.width.div_ceil(FILTER_GRID_STEP);
     let filter_grid_height = frame.height.div_ceil(FILTER_GRID_STEP);
@@ -5397,6 +5580,133 @@ mod tile_group_merge_tests {
         let decoded = crate::image_from_bytes(&split).unwrap();
         assert_eq!(decoded, original);
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod gain_map_tests {
+    use super::*;
+
+    fn identity_frame(value: u16) -> DecodedFrame {
+        let color_config = ColorConfig {
+            high_bitdepth: false,
+            twelve_bit: false,
+            bit_depth: 8,
+            monochrome: false,
+            color_description: Some(crate::av1::ColorDescription {
+                color_primaries: 1,
+                transfer_characteristics: 13,
+                matrix_coefficients: 0,
+            }),
+            color_range: ColorRange::Full,
+            subsampling_x: false,
+            subsampling_y: false,
+            chroma_sample_position: None,
+            separate_uv_delta_q: false,
+        };
+        let plane = |index| PlaneBuffer {
+            layout: PlaneLayout {
+                plane: index,
+                width: 1,
+                height: 1,
+                subsampling_x: 0,
+                subsampling_y: 0,
+                sample_count: 1,
+            },
+            samples: vec![value],
+        };
+        DecodedFrame {
+            width: 1,
+            height: 1,
+            render_width: 1,
+            render_height: 1,
+            bit_depth: 8,
+            color_config,
+            color_information: None,
+            alpha_premultiplied: false,
+            buffers: FrameBuffers {
+                width: 1,
+                height: 1,
+                planes: vec![plane(0), plane(1), plane(2)],
+            },
+        }
+    }
+
+    fn metadata(use_base_colour_space: bool) -> crate::container::GainMapMetadata {
+        crate::container::GainMapMetadata {
+            minimum_version: 0,
+            writer_version: 0,
+            is_multichannel: false,
+            use_base_colour_space,
+            backward_direction: false,
+            base_hdr_headroom: crate::container::GainMapRational {
+                numerator: 0,
+                denominator: 1,
+            },
+            alternate_hdr_headroom: crate::container::GainMapRational {
+                numerator: 1,
+                denominator: 1,
+            },
+            channels: vec![crate::container::GainMapChannel {
+                gain_map_min: crate::container::GainMapRational {
+                    numerator: 0,
+                    denominator: 1,
+                },
+                gain_map_max: crate::container::GainMapRational {
+                    numerator: 1,
+                    denominator: 1,
+                },
+                gamma: crate::container::GainMapRational {
+                    numerator: 1,
+                    denominator: 1,
+                },
+                base_offset: crate::container::GainMapRational {
+                    numerator: 0,
+                    denominator: 1,
+                },
+                alternate_offset: crate::container::GainMapRational {
+                    numerator: 0,
+                    denominator: 1,
+                },
+            }],
+        }
+    }
+
+    #[test]
+    fn gain_map_base_headroom_is_an_exact_fast_path() {
+        let base = identity_frame(128);
+        let gain_map = DecodedGainMapFrame {
+            metadata: metadata(true),
+            frame: identity_frame(255),
+        };
+        let expected = base.to_rgba16().unwrap();
+        let actual = base.to_rgba16_with_gain_map(&gain_map, 0.0).unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn gain_map_applies_log2_gain_and_preserves_alpha() {
+        let base = identity_frame(128);
+        let gain_map = DecodedGainMapFrame {
+            metadata: metadata(true),
+            frame: identity_frame(255),
+        };
+        let mapped = base.to_rgba16_with_gain_map(&gain_map, 1.0).unwrap();
+        assert!(mapped.rgba[0] > base.to_rgba16().unwrap().rgba[0]);
+        assert_eq!(mapped.rgba[3], u16::MAX);
+    }
+
+    #[test]
+    fn gain_map_rejects_alternate_colour_space_composition() {
+        let base = identity_frame(128);
+        let gain_map = DecodedGainMapFrame {
+            metadata: metadata(false),
+            frame: identity_frame(255),
+        };
+        assert!(matches!(
+            base.to_rgba16_with_gain_map(&gain_map, 1.0),
+            Err(DecoderError::Unsupported(message)) if message.contains("alternate colour space")
+        ));
     }
 }
 

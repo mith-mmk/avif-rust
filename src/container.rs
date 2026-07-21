@@ -245,6 +245,22 @@ impl GainMapMetadata {
     }
 }
 
+/// Decodable AV1 gain-map item paired with a `tmap` descriptor.
+///
+/// The item is exposed separately from the base image so callers can choose
+/// whether and how much HDR headroom to apply. The default RGBA API continues
+/// to return the base image unchanged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GainMapImage {
+    pub metadata: GainMapMetadata,
+    pub width: u32,
+    pub height: u32,
+    pub pixel_information: PixelInformation,
+    pub color_information: Option<ColorInformation>,
+    pub av1_config: Vec<u8>,
+    pub payload: Vec<u8>,
+}
+
 /// Parsed AVIF image grid derived item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GridImage {
@@ -501,6 +517,14 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
 /// fall back to the base image, while malformed supported-version payloads
 /// are rejected as bitstream errors.
 pub fn parse_gain_map_metadata(data: &[u8]) -> Result<Option<GainMapMetadata>, DecoderError> {
+    let Some((meta, item_id)) = gain_map_meta_state(data)? else {
+        return Ok(None);
+    };
+    let payload = item_payload(data, &meta, item_id)?;
+    Ok(Some(parse_gain_map_metadata_payload(&payload)?))
+}
+
+fn gain_map_meta_state(data: &[u8]) -> Result<Option<(MetaState, u32)>, DecoderError> {
     if !data.windows(4).any(|window| window == b"tmap") {
         return Ok(None);
     }
@@ -519,8 +543,73 @@ pub fn parse_gain_map_metadata(data: &[u8]) -> Result<Option<GainMapMetadata>, D
     else {
         return Ok(None);
     };
-    let payload = item_payload(data, &meta, item_id)?;
-    Ok(Some(parse_gain_map_metadata_payload(&payload)?))
+    Ok(Some((meta, item_id)))
+}
+
+/// Locates and parses the AV1 image referenced as the second `tmap` input.
+pub(crate) fn parse_gain_map_image(data: &[u8]) -> Result<Option<GainMapImage>, DecoderError> {
+    let Some((meta, tmap_id)) = gain_map_meta_state(data)? else {
+        return Ok(None);
+    };
+    let reference = meta
+        .item_references
+        .iter()
+        .find(|reference| reference.reference_type == *b"dimg" && reference.from_item_id == tmap_id)
+        .ok_or_else(|| {
+            DecoderError::Bitstream("tmap item is missing dimg input references".to_string())
+        })?;
+    if reference.to_item_ids.len() != 2 {
+        return Err(DecoderError::Bitstream(
+            "tmap item must reference one base image and one gain map".to_string(),
+        ));
+    }
+    let base_id = reference.to_item_ids[0];
+    let gain_map_id = reference.to_item_ids[1];
+    let gain_map_item = meta
+        .item_infos
+        .iter()
+        .find(|item| item.item_id == gain_map_id)
+        .ok_or_else(|| {
+            DecoderError::Bitstream(format!(
+                "tmap gain map item {gain_map_id} is missing item info"
+            ))
+        })?;
+    if gain_map_item.item_type != *b"av01" {
+        return Err(DecoderError::Unsupported(format!(
+            "tmap gain map item {gain_map_id} has unsupported type {:?}",
+            gain_map_item.item_type
+        )));
+    }
+    let base_metadata = item_metadata(&meta, base_id)?;
+    let gain_metadata = item_metadata(&meta, gain_map_id)?;
+    let width = gain_metadata.width.ok_or_else(|| {
+        DecoderError::Bitstream("tmap gain map item is missing ispe dimensions".to_string())
+    })?;
+    let height = gain_metadata.height.ok_or_else(|| {
+        DecoderError::Bitstream("tmap gain map item is missing ispe dimensions".to_string())
+    })?;
+    if Some(width) != base_metadata.width || Some(height) != base_metadata.height {
+        return Err(DecoderError::Bitstream(
+            "tmap gain map dimensions do not match the base image".to_string(),
+        ));
+    }
+    let pixel_information = gain_metadata
+        .pixel_information
+        .ok_or_else(|| DecoderError::Bitstream("tmap gain map item is missing pixi".to_string()))?;
+    let av1_config = gain_metadata
+        .av1_config
+        .ok_or_else(|| DecoderError::Bitstream("tmap gain map item is missing av1C".to_string()))?;
+    let tmap_payload = item_payload(data, &meta, tmap_id)?;
+    let metadata = parse_gain_map_metadata_payload(&tmap_payload)?;
+    Ok(Some(GainMapImage {
+        metadata,
+        width,
+        height,
+        pixel_information,
+        color_information: gain_metadata.color_information,
+        av1_config,
+        payload: item_payload(data, &meta, gain_map_id)?,
+    }))
 }
 
 fn parse_gain_map_metadata_payload(payload: &[u8]) -> Result<GainMapMetadata, DecoderError> {

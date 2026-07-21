@@ -24,8 +24,8 @@ pub use container::{
     PixelInformation, PixelSubsampling, classify_av1_sequence_sample, parse_gain_map_metadata,
 };
 pub use decoder::{
-    DecodedFrame, decode, decode_frame_bytes, decode_sequence_frame_bytes,
-    decode_sequence_frames_bytes, parse_info,
+    DecodedFrame, DecodedGainMapFrame, decode, decode_frame_bytes, decode_gain_map_frame_bytes,
+    decode_sequence_frame_bytes, decode_sequence_frames_bytes, parse_info,
 };
 pub use error::DecoderError;
 pub use image::{ImageBuffer, Rgba16ImageBuffer};
