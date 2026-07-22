@@ -3,7 +3,7 @@ use super::{
 };
 use crate::DecoderError;
 use crate::av1::decode::{FrameBuffers, FrameDecodePlan, PlaneBuffer};
-use crate::av1::frame::FrameHeader;
+use crate::av1::frame::{FrameHeader, InterpolationFilter};
 use crate::av1::predict::{IntraEdges, predict_filter_intra, predict_intra_with_edge_filter_into};
 use crate::av1::quant::QuantState;
 use crate::av1::reconstruct::{read_intra_edges_into, write_plane_block};
@@ -613,6 +613,9 @@ fn predict_plane_block_into(
             block_mode.motion_vector_secondary,
             subsampling_x,
             subsampling_y,
+            block_mode
+                .interpolation_filter
+                .unwrap_or((InterpolationFilter::Regular, InterpolationFilter::Regular)),
             output,
         )?;
     } else if let Some(mv) = intra_block_copy_mv {
@@ -718,6 +721,7 @@ fn predict_inter_block_into(
     secondary_mv: Option<(i32, i32)>,
     subsampling_x: usize,
     subsampling_y: usize,
+    interpolation_filters: (InterpolationFilter, InterpolationFilter),
     output: &mut [u16],
 ) -> Result<(), DecoderError> {
     let expected_len = width.checked_mul(height).ok_or_else(|| {
@@ -761,6 +765,7 @@ fn predict_inter_block_into(
                 Some(secondary_mv),
                 subsampling_x,
                 subsampling_y,
+                interpolation_filters,
                 output,
             );
         }
@@ -807,6 +812,7 @@ fn predict_inter_block_into(
                     Some(secondary_mv),
                     subsampling_x,
                     subsampling_y,
+                    interpolation_filters,
                     output,
                 );
             }
@@ -899,13 +905,21 @@ fn predict_inter_block_into(
         for row in 0..height {
             for col in 0..width {
                 output[row * width + col] = average_prediction(
-                    predict_inter_sample(reference, x0[col], y0[row], fx[col], fy[row]),
+                    predict_inter_sample(
+                        reference,
+                        x0[col],
+                        y0[row],
+                        fx[col],
+                        fy[row],
+                        interpolation_filters,
+                    ),
                     predict_inter_sample(
                         secondary,
                         secondary_x0[col],
                         secondary_y0[row],
                         secondary_fx[col],
                         secondary_fy[row],
+                        interpolation_filters,
                     ),
                 );
             }
@@ -913,8 +927,14 @@ fn predict_inter_block_into(
     } else {
         for row in 0..height {
             for col in 0..width {
-                output[row * width + col] =
-                    predict_inter_sample(reference, x0[col], y0[row], fx[col], fy[row]);
+                output[row * width + col] = predict_inter_sample(
+                    reference,
+                    x0[col],
+                    y0[row],
+                    fx[col],
+                    fy[row],
+                    interpolation_filters,
+                );
             }
         }
     }
@@ -937,6 +957,7 @@ fn predict_inter_block_into_fractional(
     secondary_mv: Option<(i32, i32)>,
     subsampling_x: usize,
     subsampling_y: usize,
+    interpolation_filters: (InterpolationFilter, InterpolationFilter),
     output: &mut [u16],
 ) -> Result<(), DecoderError> {
     let mv_x = i64::from(mv.1) / (1_i64 << subsampling_x);
@@ -976,7 +997,7 @@ fn predict_inter_block_into_fractional(
             let fx = x_fixed - x0 * 8;
             let secondary_x0 = floor_div_eight(secondary_x_fixed);
             let secondary_fx = secondary_x_fixed - secondary_x0 * 8;
-            let first = predict_inter_sample(reference, x0, y0, fx, fy);
+            let first = predict_inter_sample(reference, x0, y0, fx, fy, interpolation_filters);
             output[row * width + col] = secondary_reference
                 .map(|secondary| {
                     average_prediction(
@@ -987,6 +1008,7 @@ fn predict_inter_block_into_fractional(
                             secondary_y0,
                             secondary_fx,
                             secondary_fy,
+                            interpolation_filters,
                         ),
                     )
                 })
@@ -1015,6 +1037,75 @@ const AV1_REGULAR_SUBPEL_FILTERS: [[i16; 8]; 16] = [
     [0, 0, -2, 8, 126, -6, 2, 0],
 ];
 
+const AV1_SMOOTH_SUBPEL_FILTERS: [[i16; 8]; 16] = [
+    [0, 0, 0, 128, 0, 0, 0, 0],
+    [0, 2, 28, 62, 34, 2, 0, 0],
+    [0, 0, 26, 62, 36, 4, 0, 0],
+    [0, 0, 22, 62, 40, 4, 0, 0],
+    [0, 0, 20, 60, 42, 6, 0, 0],
+    [0, 0, 18, 58, 44, 8, 0, 0],
+    [0, 0, 16, 56, 46, 10, 0, 0],
+    [0, -2, 16, 54, 48, 12, 0, 0],
+    [0, -2, 14, 52, 52, 14, -2, 0],
+    [0, 0, 12, 48, 54, 16, -2, 0],
+    [0, 0, 10, 46, 56, 16, 0, 0],
+    [0, 0, 8, 44, 58, 18, 0, 0],
+    [0, 0, 6, 42, 60, 20, 0, 0],
+    [0, 0, 4, 40, 62, 22, 0, 0],
+    [0, 0, 4, 36, 62, 26, 0, 0],
+    [0, 0, 2, 34, 62, 28, 2, 0],
+];
+
+const AV1_SHARP_SUBPEL_FILTERS: [[i16; 8]; 16] = [
+    [0, 0, 0, 128, 0, 0, 0, 0],
+    [-2, 2, -6, 126, 8, -2, 2, 0],
+    [-2, 6, -12, 124, 16, -6, 4, -2],
+    [-2, 8, -18, 120, 26, -10, 6, -2],
+    [-4, 10, -22, 116, 38, -14, 6, -2],
+    [-4, 10, -22, 108, 48, -18, 8, -2],
+    [-4, 10, -24, 100, 60, -20, 8, -2],
+    [-4, 10, -24, 90, 70, -22, 10, -2],
+    [-4, 12, -24, 80, 80, -24, 12, -4],
+    [-2, 10, -22, 70, 90, -24, 10, -4],
+    [-2, 8, -20, 60, 100, -24, 10, -4],
+    [-2, 8, -18, 48, 108, -22, 10, -4],
+    [-2, 6, -14, 38, 116, -22, 10, -4],
+    [-2, 6, -10, 26, 120, -18, 8, -2],
+    [-2, 4, -6, 16, 124, -12, 6, -2],
+    [0, 2, -2, 8, 126, -6, 2, -2],
+];
+
+const AV1_BILINEAR_SUBPEL_FILTERS: [[i16; 8]; 16] = [
+    [0, 0, 0, 128, 0, 0, 0, 0],
+    [0, 0, 0, 120, 8, 0, 0, 0],
+    [0, 0, 0, 112, 16, 0, 0, 0],
+    [0, 0, 0, 104, 24, 0, 0, 0],
+    [0, 0, 0, 96, 32, 0, 0, 0],
+    [0, 0, 0, 88, 40, 0, 0, 0],
+    [0, 0, 0, 80, 48, 0, 0, 0],
+    [0, 0, 0, 72, 56, 0, 0, 0],
+    [0, 0, 0, 64, 64, 0, 0, 0],
+    [0, 0, 0, 56, 72, 0, 0, 0],
+    [0, 0, 0, 48, 80, 0, 0, 0],
+    [0, 0, 0, 40, 88, 0, 0, 0],
+    [0, 0, 0, 32, 96, 0, 0, 0],
+    [0, 0, 0, 24, 104, 0, 0, 0],
+    [0, 0, 0, 16, 112, 0, 0, 0],
+    [0, 0, 0, 8, 120, 0, 0, 0],
+];
+
+#[inline]
+fn interpolation_kernel(filter: InterpolationFilter, phase: usize) -> [i16; 8] {
+    match filter {
+        InterpolationFilter::Regular | InterpolationFilter::Switchable => {
+            AV1_REGULAR_SUBPEL_FILTERS[phase]
+        }
+        InterpolationFilter::Smooth => AV1_SMOOTH_SUBPEL_FILTERS[phase],
+        InterpolationFilter::Sharp => AV1_SHARP_SUBPEL_FILTERS[phase],
+        InterpolationFilter::Bilinear => AV1_BILINEAR_SUBPEL_FILTERS[phase],
+    }
+}
+
 #[inline]
 fn round_filter_sum(sum: i64) -> i64 {
     if sum >= 0 {
@@ -1031,9 +1122,10 @@ fn predict_inter_sample(
     source_y: i64,
     subpel_x: i64,
     subpel_y: i64,
+    interpolation_filters: (InterpolationFilter, InterpolationFilter),
 ) -> u16 {
-    let horizontal = AV1_REGULAR_SUBPEL_FILTERS[subpel_x as usize];
-    let vertical = AV1_REGULAR_SUBPEL_FILTERS[subpel_y as usize];
+    let horizontal = interpolation_kernel(interpolation_filters.0, subpel_x as usize);
+    let vertical = interpolation_kernel(interpolation_filters.1, subpel_y as usize);
     let mut intermediate = [0i64; 8];
     for (row, value) in intermediate.iter_mut().enumerate() {
         let sy = (source_y + row as i64 - 3).clamp(0, plane.layout.height.saturating_sub(1) as i64)
@@ -1625,6 +1717,7 @@ mod tests {
             None,
             0,
             0,
+            (InterpolationFilter::Regular, InterpolationFilter::Regular),
             &mut output,
         )
         .unwrap();
@@ -1660,6 +1753,7 @@ mod tests {
             Some((0, 8)),
             0,
             0,
+            (InterpolationFilter::Regular, InterpolationFilter::Regular),
             &mut output,
         )
         .unwrap();
@@ -1691,6 +1785,7 @@ mod tests {
             None,
             0,
             0,
+            (InterpolationFilter::Regular, InterpolationFilter::Regular),
             &mut output,
         )
         .unwrap();

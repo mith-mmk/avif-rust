@@ -1,7 +1,7 @@
 use super::{BlockModeProbe, CflParams, TileDecoder};
 use crate::DecoderError;
 use crate::av1::decode::TileDecodePlan;
-use crate::av1::frame::{FrameHeader, FrameType, TxMode};
+use crate::av1::frame::{FrameHeader, FrameType, InterpolationFilter, TxMode};
 use crate::av1::sequence::SequenceHeader;
 use crate::av1::syntax::{BlockSize, PredictionMode, TxSize, UvPredictionMode};
 use crate::av1::tile_decode::context_grid::{
@@ -225,6 +225,7 @@ impl<'a> TileDecoder<'a> {
             reference_frame_secondary: None,
             motion_vector: None,
             motion_vector_secondary: None,
+            interpolation_filter: None,
             use_intrabc,
             intra_block_copy_mv,
             cdef_idx,
@@ -440,17 +441,25 @@ impl<'a> TileDecoder<'a> {
                 let _compound_idx = self.reader.read_symbol(self.cdf.compound_idx_cdf_mut(0))?;
             }
         }
-        if frame.is_filter_switchable {
+        let interpolation_filter = if frame.is_filter_switchable {
             let filter_context = mode_context.min(15);
-            let _vertical_filter = self
-                .reader
-                .read_symbol(self.cdf.switchable_interp_cdf_mut(filter_context))?;
-            if sequence.enable_dual_filter {
-                let _horizontal_filter = self
-                    .reader
-                    .read_symbol(self.cdf.switchable_interp_cdf_mut(filter_context))?;
-            }
-        }
+            let vertical = InterpolationFilter::from_switchable_symbol(
+                self.reader
+                    .read_symbol(self.cdf.switchable_interp_cdf_mut(filter_context))?,
+            )?;
+            let horizontal = if sequence.enable_dual_filter {
+                InterpolationFilter::from_switchable_symbol(
+                    self.reader
+                        .read_symbol(self.cdf.switchable_interp_cdf_mut(filter_context))?,
+                )?
+            } else {
+                vertical
+            };
+            // Keep the pair in (horizontal, vertical) order for sampling.
+            Some((horizontal, vertical))
+        } else {
+            Some((frame.interpolation_filter, frame.interpolation_filter))
+        };
 
         self.set_inter_context(x, y, block_size, true);
         self.set_inter_mv(
@@ -486,6 +495,7 @@ impl<'a> TileDecoder<'a> {
             reference_frame_secondary,
             motion_vector: Some(motion_vector),
             motion_vector_secondary,
+            interpolation_filter,
             use_intrabc: false,
             intra_block_copy_mv: None,
             cdef_idx,

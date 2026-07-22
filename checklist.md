@@ -1588,3 +1588,12 @@ second frame against FFmpeg (average RGB error `42.44` on this host). The
 external inter oracle remains a quality gate at average error `64` while
 compound weighting, switchable filter selection, and warped/OBMC prediction
 are completed.
+
+The inter predictor now retains the frame's fixed interpolation filter and
+the per-block switchable/dual-filter symbols. Regular, smooth, sharp and
+bilinear kernels are selected on the horizontal/vertical axes instead of
+being consumed and discarded. Filter-symbol mapping has a focused unit test;
+the 401-test lib suite and external unsupported gate remain green. A fresh
+five-iteration release benchmark measured `92.56/87.17 ms` for
+`WML2Viewer.avif` and `1.24/1.55 ms` for `star-8bpc.avifs` (native/RGBA), a
+same-host checkpoint.

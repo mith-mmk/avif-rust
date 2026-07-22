@@ -12,6 +12,41 @@ pub enum FrameType {
     Switch,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterpolationFilter {
+    Regular,
+    Smooth,
+    Sharp,
+    Bilinear,
+    /// The filter is selected per inter block by the switchable filter CDF.
+    Switchable,
+}
+
+impl InterpolationFilter {
+    fn from_bits(value: u32) -> Result<Self, DecoderError> {
+        match value {
+            0 => Ok(Self::Regular),
+            1 => Ok(Self::Smooth),
+            2 => Ok(Self::Sharp),
+            3 => Ok(Self::Bilinear),
+            _ => Err(DecoderError::Bitstream(format!(
+                "interpolation_filter {value} is reserved"
+            ))),
+        }
+    }
+
+    pub(crate) fn from_switchable_symbol(value: usize) -> Result<Self, DecoderError> {
+        match value {
+            0 => Ok(Self::Regular),
+            1 => Ok(Self::Smooth),
+            2 => Ok(Self::Sharp),
+            _ => Err(DecoderError::Bitstream(format!(
+                "switchable interpolation filter {value} is invalid"
+            ))),
+        }
+    }
+}
+
 /// AV1 global-motion model signalled for each of the seven inter references.
 /// The matrices use the codec's 16-bit warped-model precision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +109,7 @@ pub struct FrameHeader {
     pub frame_id: Option<u16>,
     pub allow_high_precision_mv: bool,
     pub is_filter_switchable: bool,
+    pub interpolation_filter: InterpolationFilter,
     pub is_motion_mode_switchable: bool,
     pub use_ref_frame_mvs: bool,
     pub reference_select: bool,
@@ -236,6 +272,7 @@ pub(crate) fn parse_frame_header_with_references(
             frame_id: None,
             allow_high_precision_mv: false,
             is_filter_switchable: false,
+            interpolation_filter: InterpolationFilter::Regular,
             is_motion_mode_switchable: false,
             use_ref_frame_mvs: false,
             reference_select: false,
@@ -317,6 +354,7 @@ pub(crate) fn parse_frame_header_with_references(
     let mut frame_refs_short_signaling = false;
     let mut allow_high_precision_mv = false;
     let mut is_filter_switchable = false;
+    let mut interpolation_filter = InterpolationFilter::Regular;
     let mut is_motion_mode_switchable = false;
     let mut use_ref_frame_mvs = false;
 
@@ -348,9 +386,11 @@ pub(crate) fn parse_frame_header_with_references(
             reader.read_bool("allow_high_precision_mv")?
         };
         is_filter_switchable = reader.read_bool("is_filter_switchable")?;
-        if !is_filter_switchable {
-            let _interpolation_filter = reader.read_bits(2, "interpolation_filter")?;
-        }
+        interpolation_filter = if is_filter_switchable {
+            InterpolationFilter::Switchable
+        } else {
+            InterpolationFilter::from_bits(reader.read_bits(2, "interpolation_filter")?)?
+        };
         is_motion_mode_switchable = reader.read_bool("is_motion_mode_switchable")?;
         use_ref_frame_mvs = if error_resilient_mode || !sequence.enable_ref_frame_mvs {
             false
@@ -408,6 +448,7 @@ pub(crate) fn parse_frame_header_with_references(
         frame_id,
         allow_high_precision_mv,
         is_filter_switchable,
+        interpolation_filter,
         is_motion_mode_switchable,
         use_ref_frame_mvs,
         reference_select: trailing.reference_select,
@@ -1788,14 +1829,40 @@ fn frame_type_is_intra(frame_type: FrameType) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        FilmGrainParams, FrameType, GlobalMotionParams, GlobalMotionType, LoopFilterParams,
-        ReferenceFrameState, SegmentationParams, parse_film_grain_params,
+        FilmGrainParams, FrameType, GlobalMotionParams, GlobalMotionType, InterpolationFilter,
+        LoopFilterParams, ReferenceFrameState, SegmentationParams, parse_film_grain_params,
         parse_inter_reference_indices, parse_segmentation_params, parse_show_existing_frame_index,
         read_current_frame_id, read_global_motion_params, read_inv_signed_literal,
         read_signed_delta, validate_reference_frame_ids,
     };
     use crate::DecoderError;
     use crate::av1::bitstream::BitReader;
+
+    #[test]
+    fn interpolation_filter_symbols_follow_av1_order() {
+        assert_eq!(
+            InterpolationFilter::from_bits(0).unwrap(),
+            InterpolationFilter::Regular
+        );
+        assert_eq!(
+            InterpolationFilter::from_bits(1).unwrap(),
+            InterpolationFilter::Smooth
+        );
+        assert_eq!(
+            InterpolationFilter::from_bits(2).unwrap(),
+            InterpolationFilter::Sharp
+        );
+        assert_eq!(
+            InterpolationFilter::from_bits(3).unwrap(),
+            InterpolationFilter::Bilinear
+        );
+        assert!(InterpolationFilter::from_bits(4).is_err());
+        assert_eq!(
+            InterpolationFilter::from_switchable_symbol(2).unwrap(),
+            InterpolationFilter::Sharp
+        );
+        assert!(InterpolationFilter::from_switchable_symbol(3).is_err());
+    }
     use crate::av1::syntax::BlockSize;
 
     fn bits_to_bytes(bits: &[bool]) -> Vec<u8> {

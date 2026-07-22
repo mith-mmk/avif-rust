@@ -1,4 +1,5 @@
 use super::PaletteBlockInfo;
+use crate::av1::frame::InterpolationFilter;
 use crate::av1::syntax::{BlockSize, Partition, PredictionMode, TxSize, TxType, UvPredictionMode};
 use crate::av1::transform::TransformBlock;
 
@@ -35,6 +36,7 @@ pub struct BlockModeProbe {
     pub reference_frame_secondary: Option<u8>,
     pub motion_vector: Option<(i32, i32)>,
     pub motion_vector_secondary: Option<(i32, i32)>,
+    pub interpolation_filter: Option<(InterpolationFilter, InterpolationFilter)>,
     pub use_intrabc: bool,
     pub intra_block_copy_mv: Option<(i32, i32)>,
     pub cdef_idx: Option<u32>,

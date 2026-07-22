@@ -3,7 +3,8 @@ use super::tx_type_syntax::{
 };
 use crate::av1::frame::{
     CdefParams, DeltaLfParams, DeltaQParams, FrameHeader, FrameType, GlobalMotionParams,
-    LoopFilterParams, QuantizationParams, RestorationParams, SegmentationParams, TxMode,
+    InterpolationFilter, LoopFilterParams, QuantizationParams, RestorationParams,
+    SegmentationParams, TxMode,
 };
 use crate::av1::syntax::{TxSize, TxType};
 use crate::av1::tile::TileInfo;
@@ -107,6 +108,7 @@ fn sample_frame(base_q_idx: u8) -> FrameHeader {
         frame_id: None,
         allow_high_precision_mv: false,
         is_filter_switchable: false,
+        interpolation_filter: InterpolationFilter::Regular,
         is_motion_mode_switchable: false,
         use_ref_frame_mvs: false,
         reference_select: false,
