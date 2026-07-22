@@ -1579,3 +1579,12 @@ the common single-tile path. A same-host seven-iteration release benchmark
 measured `88.20/86.88 ms` (native/RGBA) for `WML2Viewer.avif` and
 `1.30/1.62 ms` for `star-8bpc.avifs`; these are local checkpoints, not
 cross-machine speedup claims.
+
+On 2026-07-22, fractional inter prediction now uses the AV1 regular 8-tap
+sub-pel kernel in both the in-bounds and edge-extension paths instead of the
+previous bilinear approximation. A focused fractional-motion vector pins the
+filter output, and the generated two-frame inter fixture now compares its
+second frame against FFmpeg (average RGB error `42.44` on this host). The
+external inter oracle remains a quality gate at average error `64` while
+compound weighting, switchable filter selection, and warped/OBMC prediction
+are completed.

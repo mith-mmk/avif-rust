@@ -835,10 +835,10 @@ fn predict_inter_block_into(
         return Ok(());
     }
 
-    // A bilinear fallback covers the fractional phases used by ordinary
-    // low-complexity AVIF animation streams while keeping the integer path
-    // allocation-free.  The AV1 regular 8-tap kernel can be added without
-    // changing the fixed-point coordinate contract used here.
+    // The integer path above is allocation-free. Fractional motion uses the
+    // normative AV1 regular 8-tap separable kernel; keeping the source
+    // coordinate arrays per block avoids redoing fixed-point division for
+    // every row/column sample.
     const MAX_INTER_BLOCK_DIMENSION: usize = 128;
     if width > MAX_INTER_BLOCK_DIMENSION || height > MAX_INTER_BLOCK_DIMENSION {
         return Err(DecoderError::Bitstream(
@@ -869,18 +869,6 @@ fn predict_inter_block_into(
         y0[row] = source;
         fy[row] = fixed - source * 8;
     }
-    let sample = |plane: &PlaneBuffer, sx: i64, sy: i64| -> u16 {
-        let sx = sx.clamp(0, plane.layout.width.saturating_sub(1) as i64) as usize;
-        let sy = sy.clamp(0, plane.layout.height.saturating_sub(1) as i64) as usize;
-        plane.samples[sy * plane.layout.width + sx]
-    };
-    let predict = |plane: &PlaneBuffer, sx: i64, sy: i64, fx: i64, fy: i64| {
-        let top = i64::from(sample(plane, sx, sy)) * (8 - fx)
-            + i64::from(sample(plane, sx.saturating_add(1), sy)) * fx;
-        let bottom = i64::from(sample(plane, sx, sy.saturating_add(1))) * (8 - fx)
-            + i64::from(sample(plane, sx.saturating_add(1), sy.saturating_add(1))) * fx;
-        ((top * (8 - fy) + bottom * fy + 32) >> 6).clamp(0, i64::from(u16::MAX)) as u16
-    };
     if let Some(secondary) = secondary_reference {
         let secondary_base_x = (i64::try_from(x).unwrap_or(i64::MAX) << 3)
             .checked_add(secondary_mv_x)
@@ -911,8 +899,8 @@ fn predict_inter_block_into(
         for row in 0..height {
             for col in 0..width {
                 output[row * width + col] = average_prediction(
-                    predict(reference, x0[col], y0[row], fx[col], fy[row]),
-                    predict(
+                    predict_inter_sample(reference, x0[col], y0[row], fx[col], fy[row]),
+                    predict_inter_sample(
                         secondary,
                         secondary_x0[col],
                         secondary_y0[row],
@@ -925,7 +913,8 @@ fn predict_inter_block_into(
     } else {
         for row in 0..height {
             for col in 0..width {
-                output[row * width + col] = predict(reference, x0[col], y0[row], fx[col], fy[row]);
+                output[row * width + col] =
+                    predict_inter_sample(reference, x0[col], y0[row], fx[col], fy[row]);
             }
         }
     }
@@ -987,24 +976,12 @@ fn predict_inter_block_into_fractional(
             let fx = x_fixed - x0 * 8;
             let secondary_x0 = floor_div_eight(secondary_x_fixed);
             let secondary_fx = secondary_x_fixed - secondary_x0 * 8;
-            let sample = |plane: &PlaneBuffer, sx: i64, sy: i64| -> u16 {
-                let sx = sx.clamp(0, plane.layout.width.saturating_sub(1) as i64) as usize;
-                let sy = sy.clamp(0, plane.layout.height.saturating_sub(1) as i64) as usize;
-                plane.samples[sy * plane.layout.width + sx]
-            };
-            let predict = |plane: &PlaneBuffer, sx: i64, sy: i64, fx: i64, fy: i64| {
-                let top = i64::from(sample(plane, sx, sy)) * (8 - fx)
-                    + i64::from(sample(plane, sx.saturating_add(1), sy)) * fx;
-                let bottom = i64::from(sample(plane, sx, sy.saturating_add(1))) * (8 - fx)
-                    + i64::from(sample(plane, sx.saturating_add(1), sy.saturating_add(1))) * fx;
-                ((top * (8 - fy) + bottom * fy + 32) >> 6).clamp(0, i64::from(u16::MAX)) as u16
-            };
-            let first = predict(reference, x0, y0, fx, fy);
+            let first = predict_inter_sample(reference, x0, y0, fx, fy);
             output[row * width + col] = secondary_reference
                 .map(|secondary| {
                     average_prediction(
                         first,
-                        predict(
+                        predict_inter_sample(
                             secondary,
                             secondary_x0,
                             secondary_y0,
@@ -1017,6 +994,64 @@ fn predict_inter_block_into_fractional(
         }
     }
     Ok(())
+}
+
+const AV1_REGULAR_SUBPEL_FILTERS: [[i16; 8]; 16] = [
+    [0, 0, 0, 128, 0, 0, 0, 0],
+    [0, 2, -6, 126, 8, -2, 0, 0],
+    [0, 2, -10, 122, 18, -4, 0, 0],
+    [0, 2, -12, 116, 28, -8, 2, 0],
+    [0, 2, -14, 110, 38, -10, 2, 0],
+    [0, 2, -14, 102, 48, -12, 2, 0],
+    [0, 2, -16, 94, 58, -12, 2, 0],
+    [0, 2, -14, 84, 66, -12, 2, 0],
+    [0, 2, -14, 76, 76, -14, 2, 0],
+    [0, 2, -12, 66, 84, -14, 2, 0],
+    [0, 2, -12, 58, 94, -16, 2, 0],
+    [0, 2, -12, 48, 102, -14, 2, 0],
+    [0, 2, -10, 38, 110, -14, 2, 0],
+    [0, 2, -8, 28, 116, -12, 2, 0],
+    [0, 0, -4, 18, 122, -10, 2, 0],
+    [0, 0, -2, 8, 126, -6, 2, 0],
+];
+
+#[inline]
+fn round_filter_sum(sum: i64) -> i64 {
+    if sum >= 0 {
+        (sum + 64) >> 7
+    } else {
+        -(((-sum) + 64) >> 7)
+    }
+}
+
+#[inline]
+fn predict_inter_sample(
+    plane: &PlaneBuffer,
+    source_x: i64,
+    source_y: i64,
+    subpel_x: i64,
+    subpel_y: i64,
+) -> u16 {
+    let horizontal = AV1_REGULAR_SUBPEL_FILTERS[subpel_x as usize];
+    let vertical = AV1_REGULAR_SUBPEL_FILTERS[subpel_y as usize];
+    let mut intermediate = [0i64; 8];
+    for (row, value) in intermediate.iter_mut().enumerate() {
+        let sy = (source_y + row as i64 - 3).clamp(0, plane.layout.height.saturating_sub(1) as i64)
+            as usize;
+        let mut sum = 0i64;
+        for (tap, coefficient) in horizontal.iter().enumerate() {
+            let sx = (source_x + tap as i64 - 3)
+                .clamp(0, plane.layout.width.saturating_sub(1) as i64)
+                as usize;
+            sum += i64::from(plane.samples[sy * plane.layout.width + sx]) * i64::from(*coefficient);
+        }
+        *value = round_filter_sum(sum);
+    }
+    let mut sum = 0i64;
+    for (tap, coefficient) in vertical.iter().enumerate() {
+        sum += intermediate[tap] * i64::from(*coefficient);
+    }
+    round_filter_sum(sum).clamp(0, i64::from(u16::MAX)) as u16
 }
 
 fn floor_div_eight(value: i64) -> i64 {
@@ -1632,7 +1667,7 @@ mod tests {
     }
 
     #[test]
-    fn inter_prediction_bilinearly_filters_fractional_motion() {
+    fn inter_prediction_regular_filters_fractional_motion() {
         let reference = PlaneBuffer {
             layout: crate::av1::decode::PlaneLayout {
                 plane: 0,
@@ -1659,6 +1694,6 @@ mod tests {
             &mut output,
         )
         .unwrap();
-        assert_eq!(output, [3, 4, 7, 8]);
+        assert_eq!(output, [1, 2, 5, 6]);
     }
 }

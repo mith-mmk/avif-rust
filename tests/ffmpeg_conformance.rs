@@ -551,6 +551,23 @@ fn generated_inter_sequence_sample_is_classified_for_decoder_gate_when_encoder_p
         .expect("generated inter sample should decode without partial output");
     assert_eq!((decoded.width, decoded.height), (64, 64));
     assert_eq!(decoded.buffers.planes[0].samples.len(), 64 * 64);
+    if let Some(expected) = ffmpeg_decode_rgba_stream_frame(&output_path, 1, 1, 64, 64) {
+        let actual = decoded
+            .to_rgba8()
+            .expect("generated inter sample should convert to RGBA8")
+            .rgba;
+        let metrics = diff_rgb_dynamic(&actual, &expected);
+        eprintln!(
+            "generated inter frame: average RGB absolute error={}, max={}",
+            metrics.average_rgb_abs, metrics.max_rgb_abs
+        );
+        assert!(
+            metrics.average_rgb_abs <= 64.0,
+            "generated inter FFmpeg RGB error average={} max={}",
+            metrics.average_rgb_abs,
+            metrics.max_rgb_abs
+        );
+    }
     let _ = std::fs::remove_dir_all(&root);
 }
 
