@@ -1,5 +1,6 @@
 use super::{
-    BlockModeProbe, DecodedTransform, PalettePlaneInfo, TileDecoder, coefficient_entropy_context,
+    BlockModeProbe, CompoundMask, DecodedTransform, PalettePlaneInfo, TileDecoder,
+    coefficient_entropy_context,
 };
 use crate::DecoderError;
 use crate::av1::decode::{FrameBuffers, FrameDecodePlan, PlaneBuffer};
@@ -617,6 +618,8 @@ fn predict_plane_block_into(
                 .interpolation_filter
                 .unwrap_or((InterpolationFilter::Regular, InterpolationFilter::Regular)),
             block_mode.compound_weight,
+            block_mode.compound_mask,
+            bit_depth,
             output,
         )?;
     } else if let Some(mv) = intra_block_copy_mv {
@@ -724,6 +727,8 @@ fn predict_inter_block_into(
     subsampling_y: usize,
     interpolation_filters: (InterpolationFilter, InterpolationFilter),
     compound_weight: Option<u8>,
+    compound_mask: Option<CompoundMask>,
+    bit_depth: u8,
     output: &mut [u16],
 ) -> Result<(), DecoderError> {
     let expected_len = width.checked_mul(height).ok_or_else(|| {
@@ -769,6 +774,8 @@ fn predict_inter_block_into(
                 subsampling_y,
                 interpolation_filters,
                 compound_weight,
+                compound_mask,
+                bit_depth,
                 output,
             );
         }
@@ -817,6 +824,8 @@ fn predict_inter_block_into(
                     subsampling_y,
                     interpolation_filters,
                     compound_weight,
+                    compound_mask,
+                    bit_depth,
                     output,
                 );
             }
@@ -832,6 +841,8 @@ fn predict_inter_block_into(
                         reference.samples[source_start + col],
                         secondary.samples[secondary_start + col],
                         compound_weight,
+                        compound_mask,
+                        bit_depth,
                     );
                 }
             }
@@ -927,6 +938,8 @@ fn predict_inter_block_into(
                         interpolation_filters,
                     ),
                     compound_weight,
+                    compound_mask,
+                    bit_depth,
                 );
             }
         }
@@ -953,7 +966,20 @@ fn average_prediction(first: u16, second: u16) -> u16 {
 }
 
 #[inline]
-fn blend_compound_prediction(first: u16, second: u16, primary_weight: Option<u8>) -> u16 {
+fn blend_compound_prediction(
+    first: u16,
+    second: u16,
+    primary_weight: Option<u8>,
+    compound_mask: Option<CompoundMask>,
+    bit_depth: u8,
+) -> u16 {
+    if let Some(CompoundMask::DifferenceWeighted { inverse }) = compound_mask {
+        let shift = u32::from(bit_depth.saturating_sub(8));
+        let diff = u32::from(first.abs_diff(second)) >> shift;
+        let mask = (38 + diff / 16).min(64);
+        let mask = if inverse { 64 - mask } else { mask };
+        return ((u32::from(first) * mask + u32::from(second) * (64 - mask) + 32) >> 6) as u16;
+    }
     let Some(primary_weight) = primary_weight else {
         return average_prediction(first, second);
     };
@@ -975,6 +1001,8 @@ fn predict_inter_block_into_fractional(
     subsampling_y: usize,
     interpolation_filters: (InterpolationFilter, InterpolationFilter),
     compound_weight: Option<u8>,
+    compound_mask: Option<CompoundMask>,
+    bit_depth: u8,
     output: &mut [u16],
 ) -> Result<(), DecoderError> {
     let mv_x = i64::from(mv.1) / (1_i64 << subsampling_x);
@@ -1028,6 +1056,8 @@ fn predict_inter_block_into_fractional(
                             interpolation_filters,
                         ),
                         compound_weight,
+                        compound_mask,
+                        bit_depth,
                     )
                 })
                 .unwrap_or(first);
@@ -1760,6 +1790,8 @@ mod tests {
             0,
             (InterpolationFilter::Regular, InterpolationFilter::Regular),
             None,
+            None,
+            8,
             &mut output,
         )
         .unwrap();
@@ -1797,6 +1829,8 @@ mod tests {
             0,
             (InterpolationFilter::Regular, InterpolationFilter::Regular),
             None,
+            None,
+            8,
             &mut output,
         )
         .unwrap();
@@ -1805,8 +1839,18 @@ mod tests {
 
     #[test]
     fn compound_prediction_applies_distance_weight() {
-        assert_eq!(blend_compound_prediction(10, 100, Some(48)), 33);
-        assert_eq!(blend_compound_prediction(10, 100, None), 55);
+        assert_eq!(blend_compound_prediction(10, 100, Some(48), None, 8), 33);
+        assert_eq!(blend_compound_prediction(10, 100, None, None, 8), 55);
+        assert_eq!(
+            blend_compound_prediction(
+                0,
+                255,
+                None,
+                Some(CompoundMask::DifferenceWeighted { inverse: false }),
+                8,
+            ),
+            44
+        );
     }
 
     #[test]
@@ -1836,6 +1880,8 @@ mod tests {
             0,
             (InterpolationFilter::Regular, InterpolationFilter::Regular),
             None,
+            None,
+            8,
             &mut output,
         )
         .unwrap();
@@ -1869,6 +1915,8 @@ mod tests {
             0,
             (InterpolationFilter::Bilinear, InterpolationFilter::Bilinear),
             None,
+            None,
+            8,
             &mut output,
         )
         .unwrap();

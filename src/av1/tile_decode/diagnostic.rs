@@ -40,6 +40,8 @@ pub struct BlockModeProbe {
     /// Weight applied to the primary prediction for distance-weighted
     /// compound blocks; `None` selects equal averaging.
     pub compound_weight: Option<u8>,
+    /// Pixel mask used by the masked compound prediction group.
+    pub compound_mask: Option<CompoundMask>,
     pub use_intrabc: bool,
     pub intra_block_copy_mv: Option<(i32, i32)>,
     pub cdef_idx: Option<u32>,
@@ -59,6 +61,12 @@ pub struct BlockModeProbe {
     pub tx_size_symbol: Option<usize>,
     pub tx_size: TxSize,
     pub bit_position_after: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompoundMask {
+    DifferenceWeighted { inverse: bool },
+    Wedge { index: u8, inverse: bool },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

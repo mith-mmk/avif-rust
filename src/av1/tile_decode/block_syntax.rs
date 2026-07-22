@@ -1,4 +1,4 @@
-use super::{BlockModeProbe, CflParams, TileDecoder};
+use super::{BlockModeProbe, CflParams, CompoundMask, TileDecoder};
 use crate::DecoderError;
 use crate::av1::decode::TileDecodePlan;
 use crate::av1::frame::{FrameHeader, FrameType, InterpolationFilter, TxMode};
@@ -227,6 +227,7 @@ impl<'a> TileDecoder<'a> {
             motion_vector_secondary: None,
             interpolation_filter: None,
             compound_weight: None,
+            compound_mask: None,
             use_intrabc,
             intra_block_copy_mv,
             cdef_idx,
@@ -429,6 +430,7 @@ impl<'a> TileDecoder<'a> {
             )?;
         }
         let mut compound_weight = None;
+        let mut compound_mask = None;
         if is_compound && !skip {
             let masked_compound_used = sequence.enable_masked_compound
                 && block_size.width() >= 8
@@ -448,6 +450,28 @@ impl<'a> TileDecoder<'a> {
                         reference_type,
                         reference_type_secondary.unwrap_or(reference_type),
                     ));
+                }
+            } else if comp_group_idx == 1 {
+                let compound_type = self
+                    .reader
+                    .read_symbol(self.cdf.compound_type_cdf_mut(block_size as usize))?;
+                match compound_type {
+                    0 => {
+                        let wedge_index = self
+                            .reader
+                            .read_symbol(self.cdf.wedge_idx_cdf_mut(block_size as usize))?
+                            as u8;
+                        let inverse = self.reader.read_bool()? != 0;
+                        compound_mask = Some(CompoundMask::Wedge {
+                            index: wedge_index,
+                            inverse,
+                        });
+                    }
+                    1 => {
+                        let inverse = self.reader.read_bool()? != 0;
+                        compound_mask = Some(CompoundMask::DifferenceWeighted { inverse });
+                    }
+                    _ => unreachable!("compound_type CDF has only two symbols"),
                 }
             }
         }
@@ -507,6 +531,7 @@ impl<'a> TileDecoder<'a> {
             motion_vector_secondary,
             interpolation_filter,
             compound_weight,
+            compound_mask,
             use_intrabc: false,
             intra_block_copy_mv: None,
             cdef_idx,

@@ -572,6 +572,60 @@ fn generated_inter_sequence_sample_is_classified_for_decoder_gate_when_encoder_p
 }
 
 #[test]
+fn generated_difference_weighted_compound_sample_matches_ffmpeg_when_encoder_present() {
+    let root =
+        std::env::temp_dir().join(format!(".test-avif-diff-weighted-{}", std::process::id()));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary AVIF difference-weighted directory: {err}");
+    }
+    let output_path = root.join("diff-weighted.avifs");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .args(["-f", "lavfi", "-i", "testsrc2=size=128x128:rate=1"])
+        .args(["-t", "4", "-c:v", "libaom-av1", "-cpu-used", "6", "-crf", "25"])
+        .args(["-g", "30", "-frame-parallel", "0"])
+        .args(["-aom-params", "enable-cdef=0:enable-restoration=0:enable-masked-comp=1:enable-diff-wtd-comp=1:enable-interinter-wedge=0:enable-dist-wtd-comp=0:enable-obmc=0"])
+        .args(["-f", "avif"])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated diff-weighted sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom diff-weighted encoder options are unavailable; skipping sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let data =
+        std::fs::read(&output_path).expect("generated diff-weighted AVIS should be readable");
+    let decoded = avif_rust::decode_sequence_frame_bytes(&data, 1)
+        .expect("generated diff-weighted inter sample should decode");
+    assert_eq!((decoded.width, decoded.height), (128, 128));
+    if let Some(expected) = ffmpeg_decode_rgba_stream_frame(&output_path, 1, 1, 128, 128) {
+        let metrics = diff_rgb_dynamic(
+            &decoded
+                .to_rgba8()
+                .expect("generated diff-weighted sample should convert to RGBA8")
+                .rgba,
+            &expected,
+        );
+        eprintln!(
+            "generated diff-weighted frame: average RGB absolute error={}, max={}",
+            metrics.average_rgb_abs, metrics.max_rgb_abs
+        );
+        assert!(
+            metrics.average_rgb_abs <= 64.0,
+            "generated diff-weighted FFmpeg RGB error average={} max={}",
+            metrics.average_rgb_abs,
+            metrics.max_rgb_abs
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn generated_cdef_sample_matches_explicit_ffmpeg_yuv_oracle_when_encoder_present() {
     let root = std::env::temp_dir().join(format!(".test-avif-cdef-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {

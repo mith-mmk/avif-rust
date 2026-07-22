@@ -43,8 +43,8 @@ use coefficient_context::{
     TxbContext, coefficient_entropy_context, set_txb_entropy_context, txb_context,
 };
 pub use diagnostic::{
-    BlockModeProbe, DecodedBlockPrefix, DecodedLumaBlock, DecodedTransform, PartitionProbe,
-    ResidualProbe, TileEntropyState,
+    BlockModeProbe, CompoundMask, DecodedBlockPrefix, DecodedLumaBlock, DecodedTransform,
+    PartitionProbe, ResidualProbe, TileEntropyState,
 };
 use diagnostic::{CoeffBaseProbe, CoeffBaseRead, CoeffBrProbe, CoeffSignRead};
 #[cfg(test)]

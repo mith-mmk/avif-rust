@@ -1612,3 +1612,13 @@ intermediate buffer while preserving the AV1 bilinear rounding rule. A focused
 4x4 ramp vector covers half-pel output. The five-iteration release benchmark
 measured `83.40/83.60 ms` for `WML2Viewer.avif` and `1.37/1.72 ms` for
 `star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
+
+On 2026-07-23, masked compound syntax now consumes the AV1 compound-type
+group with the normative compound-type and wedge-index CDFs. Difference-weighted
+compound builds the A64 luma mask (`38 + abs(pred0-pred1)/16`), including the
+inverse mask flag and high-bit-depth scaling; wedge syntax is retained for the
+next mask-table reconstruction step. A generated libaom AVIS sample with
+distance weighting and wedge disabled now decodes completely and stays within
+the existing inter oracle threshold. The five-iteration release benchmark
+measured `84.99/86.32 ms` for `WML2Viewer.avif` and `1.36/1.67 ms` for
+`star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
