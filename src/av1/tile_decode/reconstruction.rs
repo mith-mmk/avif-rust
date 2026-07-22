@@ -1113,14 +1113,14 @@ const AV1_BILINEAR_SUBPEL_FILTERS: [[i16; 8]; 16] = [
 ];
 
 #[inline]
-fn interpolation_kernel(filter: InterpolationFilter, phase: usize) -> [i16; 8] {
+fn interpolation_kernel(filter: InterpolationFilter, phase: usize) -> &'static [i16; 8] {
     match filter {
         InterpolationFilter::Regular | InterpolationFilter::Switchable => {
-            AV1_REGULAR_SUBPEL_FILTERS[phase]
+            &AV1_REGULAR_SUBPEL_FILTERS[phase]
         }
-        InterpolationFilter::Smooth => AV1_SMOOTH_SUBPEL_FILTERS[phase],
-        InterpolationFilter::Sharp => AV1_SHARP_SUBPEL_FILTERS[phase],
-        InterpolationFilter::Bilinear => AV1_BILINEAR_SUBPEL_FILTERS[phase],
+        InterpolationFilter::Smooth => &AV1_SMOOTH_SUBPEL_FILTERS[phase],
+        InterpolationFilter::Sharp => &AV1_SHARP_SUBPEL_FILTERS[phase],
+        InterpolationFilter::Bilinear => &AV1_BILINEAR_SUBPEL_FILTERS[phase],
     }
 }
 
@@ -1142,6 +1142,9 @@ fn predict_inter_sample(
     subpel_y: i64,
     interpolation_filters: (InterpolationFilter, InterpolationFilter),
 ) -> u16 {
+    if interpolation_filters == (InterpolationFilter::Bilinear, InterpolationFilter::Bilinear) {
+        return predict_inter_sample_bilinear(plane, source_x, source_y, subpel_x, subpel_y);
+    }
     let horizontal = interpolation_kernel(interpolation_filters.0, subpel_x as usize);
     let vertical = interpolation_kernel(interpolation_filters.1, subpel_y as usize);
     let mut intermediate = [0i64; 8];
@@ -1162,6 +1165,26 @@ fn predict_inter_sample(
         sum += intermediate[tap] * i64::from(*coefficient);
     }
     round_filter_sum(sum).clamp(0, i64::from(u16::MAX)) as u16
+}
+
+#[inline]
+fn predict_inter_sample_bilinear(
+    plane: &PlaneBuffer,
+    source_x: i64,
+    source_y: i64,
+    subpel_x: i64,
+    subpel_y: i64,
+) -> u16 {
+    let sample = |x: i64, y: i64| {
+        let x = x.clamp(0, plane.layout.width.saturating_sub(1) as i64) as usize;
+        let y = y.clamp(0, plane.layout.height.saturating_sub(1) as i64) as usize;
+        i64::from(plane.samples[y * plane.layout.width + x])
+    };
+    let top =
+        sample(source_x, source_y) * (8 - subpel_x) + sample(source_x + 1, source_y) * subpel_x;
+    let bottom = sample(source_x, source_y + 1) * (8 - subpel_x)
+        + sample(source_x + 1, source_y + 1) * subpel_x;
+    ((top * (8 - subpel_y) + bottom * subpel_y + 32) >> 6).clamp(0, i64::from(u16::MAX)) as u16
 }
 
 fn floor_div_eight(value: i64) -> i64 {
@@ -1817,5 +1840,38 @@ mod tests {
         )
         .unwrap();
         assert_eq!(output, [1, 2, 5, 6]);
+    }
+
+    #[test]
+    fn inter_prediction_bilinear_filters_fractional_motion() {
+        let reference = PlaneBuffer {
+            layout: crate::av1::decode::PlaneLayout {
+                plane: 0,
+                width: 4,
+                height: 4,
+                subsampling_x: 0,
+                subsampling_y: 0,
+                sample_count: 16,
+            },
+            samples: (0..16).collect(),
+        };
+        let mut output = [0; 4];
+        predict_inter_block_into(
+            &reference,
+            None,
+            0,
+            0,
+            2,
+            2,
+            (4, 4),
+            None,
+            0,
+            0,
+            (InterpolationFilter::Bilinear, InterpolationFilter::Bilinear),
+            None,
+            &mut output,
+        )
+        .unwrap();
+        assert_eq!(output, [3, 4, 7, 8]);
     }
 }

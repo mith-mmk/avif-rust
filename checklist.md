@@ -1605,3 +1605,10 @@ remains the explicit `compound_idx=1` path. A focused reconstruction vector
 covers weighted and average output, while the inter oracle and complete
 unsupported-sample gate remain green. Wedge/diff-weighted masked compound and
 warped/OBMC modes remain the next unsupported boundary.
+
+On 2026-07-23, the all-bilinear fractional inter path now uses a dedicated
+2x2 two-tap reconstruction fast path, avoiding the generic eight-tap
+intermediate buffer while preserving the AV1 bilinear rounding rule. A focused
+4x4 ramp vector covers half-pel output. The five-iteration release benchmark
+measured `83.40/83.60 ms` for `WML2Viewer.avif` and `1.37/1.72 ms` for
+`star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
