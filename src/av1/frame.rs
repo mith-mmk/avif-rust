@@ -84,6 +84,7 @@ pub(crate) struct ReferenceFrameState {
     pub render_width: u32,
     pub render_height: u32,
     pub order_hint: u32,
+    pub film_grain: Option<FilmGrainParams>,
 }
 
 impl FrameHeader {
@@ -103,7 +104,8 @@ impl FrameHeader {
 /// no-op form, `ALT_Q`/`ALT_LF` deltas and the still-image-safe `SKIP` feature
 /// on the current segmentation map. Reference-frame and GLOBALMV feature
 /// values are also consumed for still-image headers; inter-frame prediction is
-/// rejected before reconstruction, so those values have no effect here.
+/// still fail-closed before reconstruction, while inherited film-grain
+/// parameters are resolved from the stored reference metadata.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SegmentationParams {
     pub enabled: bool,
@@ -176,8 +178,14 @@ pub(crate) fn parse_frame_header_with_references(
             &[None; 8],
             7,
         )?;
-        let film_grain =
-            parse_film_grain_params(&mut reader, sequence, FrameType::Key, true, false)?;
+        let film_grain = parse_film_grain_params(
+            &mut reader,
+            sequence,
+            FrameType::Key,
+            true,
+            false,
+            &[None; 8],
+        )?;
         return Ok(FrameHeader {
             frame_type: FrameType::Key,
             show_existing_frame: false,
@@ -342,6 +350,7 @@ pub(crate) fn parse_frame_header_with_references(
         frame_type,
         show_frame,
         showable_frame,
+        references,
     )?;
     Ok(FrameHeader {
         frame_type,
@@ -444,6 +453,7 @@ fn parse_film_grain_params(
     frame_type: FrameType,
     show_frame: bool,
     showable_frame: bool,
+    references: &[Option<ReferenceFrameState>; 8],
 ) -> Result<Option<FilmGrainParams>, DecoderError> {
     if !sequence.film_grain_params_present || (!show_frame && !showable_frame) {
         return Ok(None);
@@ -458,10 +468,19 @@ fn parse_film_grain_params(
         true
     };
     if !update_parameters {
-        let _reference_index = reader.read_bits(3, "film_grain_params_ref_idx")?;
-        return Err(DecoderError::Unsupported(
-            "inherited AV1 film grain parameters are not supported yet".to_string(),
-        ));
+        let reference_index = reader.read_bits(3, "film_grain_params_ref_idx")? as usize;
+        let reference = references
+            .get(reference_index)
+            .and_then(Option::as_ref)
+            .and_then(|reference| reference.film_grain)
+            .ok_or_else(|| {
+                DecoderError::Unsupported(format!(
+                    "AV1 inherited film grain reference slot {reference_index} is unavailable"
+                ))
+            })?;
+        let mut inherited = reference;
+        inherited.random_seed = random_seed;
+        return Ok(Some(inherited));
     }
     let num_y_points = reader.read_bits(4, "num_y_points")? as u8;
     if num_y_points > 14 {
@@ -1396,9 +1415,9 @@ fn frame_type_is_intra(frame_type: FrameType) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        LoopFilterParams, SegmentationParams, parse_inter_reference_indices,
-        parse_segmentation_params, parse_show_existing_frame_index, read_inv_signed_literal,
-        read_signed_delta,
+        FilmGrainParams, FrameType, LoopFilterParams, ReferenceFrameState, SegmentationParams,
+        parse_film_grain_params, parse_inter_reference_indices, parse_segmentation_params,
+        parse_show_existing_frame_index, read_inv_signed_literal, read_signed_delta,
     };
     use crate::av1::bitstream::BitReader;
 
@@ -1443,6 +1462,74 @@ mod tests {
             value
         };
         push_unsigned(bits, encoded as u32, width);
+    }
+
+    #[test]
+    fn inherited_film_grain_reuses_reference_parameters_with_new_seed() {
+        let data = include_bytes!("../../test_data/images/WML2Viewer.avif");
+        let info = crate::container::parse_avif(data).unwrap();
+        let sequence_payload = crate::obu::find_obu_payload(
+            &info.primary_item_payload,
+            crate::obu::ObuType::SequenceHeader,
+        )
+        .unwrap()
+        .unwrap();
+        let mut sequence = super::super::sequence::parse_sequence_header(sequence_payload).unwrap();
+        sequence.film_grain_params_present = true;
+
+        let reference_grain = FilmGrainParams {
+            random_seed: 0x1111,
+            num_y_points: 1,
+            scaling_points_y: [[12, 34]; 14],
+            chroma_scaling_from_luma: true,
+            num_cb_points: 0,
+            scaling_points_cb: [[0, 0]; 10],
+            num_cr_points: 0,
+            scaling_points_cr: [[0, 0]; 10],
+            scaling_shift: 8,
+            ar_coeff_lag: 0,
+            ar_coeffs_y: [0; 24],
+            ar_coeffs_cb: [0; 25],
+            ar_coeffs_cr: [0; 25],
+            ar_coeff_shift: 6,
+            grain_scale_shift: 0,
+            cb_mult: 0,
+            cb_luma_mult: 0,
+            cb_offset: 0,
+            cr_mult: 0,
+            cr_luma_mult: 0,
+            cr_offset: 0,
+            overlap_flag: false,
+            clip_to_restricted_range: false,
+        };
+        let mut references = [None; 8];
+        references[3] = Some(ReferenceFrameState {
+            frame_width: 1,
+            frame_height: 1,
+            upscaled_width: 1,
+            render_width: 1,
+            render_height: 1,
+            order_hint: 0,
+            film_grain: Some(reference_grain),
+        });
+        let mut bits = vec![true];
+        push_unsigned(&mut bits, 0x2345, 16);
+        bits.push(false);
+        push_unsigned(&mut bits, 3, 3);
+        let parsed = parse_film_grain_params(
+            &mut BitReader::new(&bits_to_bytes(&bits)),
+            &sequence,
+            FrameType::Inter,
+            true,
+            false,
+            &references,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(parsed.random_seed, 0x2345);
+        let mut expected = reference_grain;
+        expected.random_seed = 0x2345;
+        assert_eq!(parsed, expected);
     }
 
     #[test]

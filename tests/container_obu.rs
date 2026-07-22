@@ -132,6 +132,50 @@ fn generated_all_key_avis_sample() -> Option<Vec<u8>> {
     Some(data)
 }
 
+fn generated_film_grain_avis_sample() -> Option<Vec<u8>> {
+    let root = std::env::temp_dir().join(format!(
+        ".test-avif-film-grain-{}-{}",
+        std::process::id(),
+        NEXT_AVIS_SAMPLE.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&root)
+        .expect("temporary film-grain AVIS directory should be creatable");
+    let output = root.join("film-grain.avifs");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .args(["-f", "lavfi", "-i", "color=c=gray:size=64x64:rate=2"])
+        .args(["-frames:v", "3", "-c:v", "libaom-av1"])
+        .args([
+            "-still-picture",
+            "0",
+            "-g",
+            "3",
+            "-lag-in-frames",
+            "0",
+            "-auto-alt-ref",
+            "0",
+            "-aom-params",
+            "film-grain-test=1",
+            "-f",
+            "avif",
+        ])
+        .arg(&output)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated film-grain sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return None;
+    };
+    if !status.success() {
+        eprintln!("libaom film-grain encoder option is unavailable; skipping sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return None;
+    }
+    let data = std::fs::read(&output).expect("generated film-grain AVIS should be readable");
+    let _ = std::fs::remove_dir_all(&root);
+    Some(data)
+}
+
 #[test]
 fn sample_container_metadata_is_exposed_through_public_api() {
     let data = sample_avif();
@@ -430,6 +474,30 @@ fn generated_all_key_avis_samples_emit_animation_callback_frames() {
             .all(|pair| pair[0] == pair[1])
     );
     assert!(drawer.terminated);
+}
+
+#[test]
+fn generated_film_grain_avis_samples_decode_with_reference_parameters() {
+    let Some(data) = generated_film_grain_avis_sample() else {
+        return;
+    };
+    let info = parse_avif(&data).expect("generated film-grain AVIS metadata should parse");
+    assert!(info.sequence_sample_payloads.len() >= 2);
+    assert!(matches!(
+        classify_av1_sequence_sample(&info.sequence_sample_payloads[0]).unwrap(),
+        Some(AvifSequenceSampleKind::Key)
+    ));
+    assert!(info.sequence_sample_payloads.iter().skip(1).any(|payload| {
+        matches!(
+            classify_av1_sequence_sample(payload).unwrap(),
+            Some(AvifSequenceSampleKind::Inter)
+        )
+    }));
+    for index in 0..info.sequence_sample_payloads.len() {
+        let frame = avif_rust::decode_sequence_frame_bytes(&data, index)
+            .unwrap_or_else(|error| panic!("film-grain sample {index} should decode: {error}"));
+        assert_eq!((frame.width, frame.height), (64, 64));
+    }
 }
 
 #[test]

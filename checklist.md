@@ -614,9 +614,10 @@ partial PNGs). The
 remaining AV1 `Unsupported` branches were reviewed against the frame/tile
 parser and grouped as follows:
 
-- `show_existing_frame`, inter-frame reference tools and inherited inter-frame
-  film grain still require reference-frame storage and are intentionally
-  rejected before reconstruction.
+- `show_existing_frame` and the remaining inter-frame reference tools still
+  require reference-frame reconstruction; inherited inter-frame film grain is
+  now resolved from stored reference metadata and no longer rejected for that
+  reason.
 - No-op segmentation signalling, still-image `ALT_Q` deltas and the
   pre-skip `SKIP` feature are parsed; multi-segment map/CDF state is decoded
   for these still-image-safe features, including segment-level loop-filter
@@ -763,6 +764,19 @@ reference measurements, not a cross-machine speedup claim.
 
 This proves the currently supported low-complexity IntrABC syntax path while
 the high-complexity reference/transform cases remain an explicit follow-up.
+
+On 2026-07-22, inter-frame film grain inheritance was promoted from the
+unsupported boundary. Reference slots now retain the decoded grain parameters;
+an inter frame with `update_parameters=0` reuses the selected slot and applies
+the current frame's random seed. A generated libaom AVIS fixture exercises a
+Key followed by Inter samples with `film-grain-test=1`, and all generated
+frames decode at complete 64x64 dimensions. Missing or non-grain reference
+slots remain explicit `Unsupported` errors.
+
+The post-change 11-iteration release benchmark remains in the same range:
+`2.88/3.19 ms` for `star-8bpc.avifs` and `185.89/187.32 ms` for
+`WML2Viewer.avif` (native/RGBA). This is a same-host reference checkpoint,
+not a cross-machine percentage claim.
 
 The conformance set now also generates a 256x256 YUV444 IntrABC sample. Its
 native planes match FFmpeg exactly and the RGBA path completes, extending the

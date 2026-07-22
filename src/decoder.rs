@@ -941,6 +941,7 @@ struct ReferenceFrame {
     render_height: u32,
     order_hint: u32,
     frame_type: FrameType,
+    film_grain: Option<FilmGrainParams>,
 }
 
 impl FrameReferenceSlots {
@@ -971,6 +972,7 @@ impl FrameReferenceSlots {
                     render_height: header.render_height,
                     order_hint: header.order_hint,
                     frame_type: header.frame_type,
+                    film_grain: header.film_grain,
                 });
             }
         }
@@ -999,6 +1001,7 @@ impl FrameReferenceSlots {
                     render_width: reference.render_width,
                     render_height: reference.render_height,
                     order_hint: reference.order_hint,
+                    film_grain: reference.film_grain,
                 })
         })
     }
