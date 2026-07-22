@@ -1507,3 +1507,12 @@ average RGB error of about `52` to `39` on this host; strict entropy validation
 still remains fail-closed while motion-mode/compound predictor parity is
 completed. A five-iteration release benchmark measured `2.74 ms` native and
 `3.15 ms` RGBA for the 159x159 AVIS sample.
+
+Compound inter reconstruction now applies the independently decoded secondary
+motion vector instead of reusing the primary vector, and both primary and
+secondary reference/MV grids are retained for later candidate prediction.
+Intra blocks clear stale inter candidates from the MI grid. A focused dual-MV
+prediction vector and the existing external inter oracle cover this path. A
+five-iteration release benchmark measured `2.74 ms` native and `3.13 ms` RGBA
+for the same 159x159 sample; strict entropy validation and warped/global-motion
+parity remain future work.

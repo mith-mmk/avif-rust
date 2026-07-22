@@ -27,6 +27,7 @@ impl<'a> TileDecoder<'a> {
         y: usize,
         block_size: BlockSize,
         reference_frame: u8,
+        secondary: bool,
     ) -> [Option<(i32, i32)>; 4] {
         let mi_col = x >> 2;
         let mi_row = y >> 2;
@@ -41,6 +42,16 @@ impl<'a> TileDecoder<'a> {
             ),
         ];
         let mut values = [None; 4];
+        let reference_grid = if secondary {
+            &self.reference_frame_secondary_grid
+        } else {
+            &self.reference_frame_grid
+        };
+        let motion_grid = if secondary {
+            &self.motion_vector_secondary_grid
+        } else {
+            &self.motion_vector_grid
+        };
         for (candidate_index, (candidate_col, candidate_row)) in candidates.into_iter().enumerate()
         {
             if candidate_col < self.tile_mi_col_start
@@ -51,8 +62,8 @@ impl<'a> TileDecoder<'a> {
                 continue;
             }
             let index = candidate_row * self.mi_cols + candidate_col;
-            if self.reference_frame_grid[index] == Some(reference_frame) {
-                values[candidate_index] = self.motion_vector_grid[index];
+            if reference_grid[index] == Some(reference_frame) {
+                values[candidate_index] = motion_grid[index];
             }
         }
         values
@@ -65,7 +76,21 @@ impl<'a> TileDecoder<'a> {
         block_size: BlockSize,
         reference_frame: u8,
     ) -> (i32, i32) {
-        self.inter_mv_neighbor_candidates(x, y, block_size, reference_frame)
+        self.inter_mv_neighbor_candidates(x, y, block_size, reference_frame, false)
+            .into_iter()
+            .flatten()
+            .next()
+            .unwrap_or((0, 0))
+    }
+
+    pub(super) fn inter_mv_predictor_secondary(
+        &self,
+        x: usize,
+        y: usize,
+        block_size: BlockSize,
+        reference_frame: u8,
+    ) -> (i32, i32) {
+        self.inter_mv_neighbor_candidates(x, y, block_size, reference_frame, true)
             .into_iter()
             .flatten()
             .next()
@@ -79,14 +104,19 @@ impl<'a> TileDecoder<'a> {
         block_size: BlockSize,
         reference_frame: u8,
         candidate_index: usize,
+        secondary: bool,
     ) -> (i32, i32) {
         if candidate_index == 0 {
-            return self.inter_mv_predictor(x, y, block_size, reference_frame);
+            return if secondary {
+                self.inter_mv_predictor_secondary(x, y, block_size, reference_frame)
+            } else {
+                self.inter_mv_predictor(x, y, block_size, reference_frame)
+            };
         }
         let mut seen = [(0, 0); 4];
         let mut seen_len = 0;
         for mv in self
-            .inter_mv_neighbor_candidates(x, y, block_size, reference_frame)
+            .inter_mv_neighbor_candidates(x, y, block_size, reference_frame, secondary)
             .into_iter()
             .flatten()
         {
@@ -107,11 +137,12 @@ impl<'a> TileDecoder<'a> {
         y: usize,
         block_size: BlockSize,
         reference_frame: u8,
+        secondary: bool,
     ) -> usize {
         let mut seen = [(0, 0); 4];
         let mut seen_len = 0;
         for mv in self
-            .inter_mv_neighbor_candidates(x, y, block_size, reference_frame)
+            .inter_mv_neighbor_candidates(x, y, block_size, reference_frame, secondary)
             .into_iter()
             .flatten()
         {
@@ -130,6 +161,8 @@ impl<'a> TileDecoder<'a> {
         block_size: BlockSize,
         reference_frame: u8,
         motion_vector: (i32, i32),
+        reference_frame_secondary: Option<u8>,
+        motion_vector_secondary: Option<(i32, i32)>,
     ) {
         super::context_grid::fill_mi_grid(
             &mut self.reference_frame_grid,
@@ -148,6 +181,63 @@ impl<'a> TileDecoder<'a> {
             y,
             block_size,
             motion_vector,
+        );
+        super::context_grid::fill_mi_grid_clone(
+            &mut self.reference_frame_secondary_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            reference_frame_secondary,
+        );
+        super::context_grid::fill_mi_grid_clone(
+            &mut self.motion_vector_secondary_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            motion_vector_secondary,
+        );
+    }
+
+    pub(super) fn clear_inter_mv(&mut self, x: usize, y: usize, block_size: BlockSize) {
+        super::context_grid::fill_mi_grid_clone(
+            &mut self.reference_frame_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            None,
+        );
+        super::context_grid::fill_mi_grid_clone(
+            &mut self.motion_vector_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            None,
+        );
+        super::context_grid::fill_mi_grid_clone(
+            &mut self.reference_frame_secondary_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            None,
+        );
+        super::context_grid::fill_mi_grid_clone(
+            &mut self.motion_vector_secondary_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            None,
         );
     }
 

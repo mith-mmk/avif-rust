@@ -209,6 +209,7 @@ impl<'a> TileDecoder<'a> {
         self.read_palette_tokens(sequence, block_size, x, y, &mut palette)?;
         let (tx_size_context, tx_size_symbol, tx_size) =
             self.read_intra_tx_size(frame, block_size, skip, use_intrabc, x, y)?;
+        self.clear_inter_mv(x, y, block_size);
 
         Ok(BlockModeProbe {
             tile_id: tile.tile_id,
@@ -299,9 +300,9 @@ impl<'a> TileDecoder<'a> {
         let mode_context = self.intra_inter_context(x, y).min(5);
         let primary_predictor = self.inter_mv_predictor(x, y, block_size, reference_frame);
         let primary_candidate_count =
-            self.inter_mv_candidate_count(x, y, block_size, reference_frame);
+            self.inter_mv_candidate_count(x, y, block_size, reference_frame, false);
         let secondary_predictor = reference_frame_secondary
-            .map(|reference| self.inter_mv_predictor(x, y, block_size, reference));
+            .map(|reference| self.inter_mv_predictor_secondary(x, y, block_size, reference));
         let (motion_vector, motion_vector_secondary) = if is_compound {
             let mode = if skip {
                 1
@@ -320,13 +321,13 @@ impl<'a> TileDecoder<'a> {
             let second_new = matches!(mode, 2 | 4 | 7);
             let first = if first_new {
                 let predictor = if matches!(mode, 5 | 7) {
-                    self.inter_mv_candidate(x, y, block_size, reference_frame, ref_mv_index)
+                    self.inter_mv_candidate(x, y, block_size, reference_frame, ref_mv_index, false)
                 } else {
                     primary_predictor
                 };
                 self.read_new_mv(predictor, frame)?
             } else {
-                self.inter_mv_candidate(x, y, block_size, reference_frame, ref_mv_index)
+                self.inter_mv_candidate(x, y, block_size, reference_frame, ref_mv_index, false)
             };
             let second = if second_new {
                 let predictor = if matches!(mode, 4 | 7) {
@@ -336,6 +337,7 @@ impl<'a> TileDecoder<'a> {
                         block_size,
                         reference_frame_secondary.unwrap_or(reference_frame),
                         ref_mv_index,
+                        true,
                     )
                 } else {
                     secondary_predictor.unwrap_or((0, 0))
@@ -350,6 +352,7 @@ impl<'a> TileDecoder<'a> {
                             block_size,
                             reference_frame_secondary.unwrap_or(reference_frame),
                             ref_mv_index,
+                            true,
                         )
                     })
                     .unwrap_or((0, 0))
@@ -363,7 +366,7 @@ impl<'a> TileDecoder<'a> {
             let motion_vector = if new_mv {
                 let ref_mv_index = self.read_drl_index(0, primary_candidate_count)?;
                 self.read_new_mv(
-                    self.inter_mv_candidate(x, y, block_size, reference_frame, ref_mv_index),
+                    self.inter_mv_candidate(x, y, block_size, reference_frame, ref_mv_index, false),
                     frame,
                 )?
             } else {
@@ -380,7 +383,7 @@ impl<'a> TileDecoder<'a> {
                     } else {
                         self.read_drl_index(1, primary_candidate_count)?
                     };
-                    self.inter_mv_candidate(x, y, block_size, reference_frame, ref_mv_index)
+                    self.inter_mv_candidate(x, y, block_size, reference_frame, ref_mv_index, false)
                 } else {
                     (0, 0)
                 }
@@ -420,7 +423,15 @@ impl<'a> TileDecoder<'a> {
         }
 
         self.set_inter_context(x, y, block_size, true);
-        self.set_inter_mv(x, y, block_size, reference_frame, motion_vector);
+        self.set_inter_mv(
+            x,
+            y,
+            block_size,
+            reference_frame,
+            motion_vector,
+            reference_frame_secondary,
+            motion_vector_secondary,
+        );
         self.set_smooth_context(x, y, block_size, false, false);
         self.set_skip_context(x, y, block_size, skip);
         let (tx_size_context, tx_size_symbol, tx_size) =
