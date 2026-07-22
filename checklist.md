@@ -1613,6 +1613,19 @@ intermediate buffer while preserving the AV1 bilinear rounding rule. A focused
 measured `83.40/83.60 ms` for `WML2Viewer.avif` and `1.37/1.72 ms` for
 `star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
 
+On 2026-07-23, wedge compound prediction now reconstructs the AV1 master
+mask from the dimension-specific HGTW/HLTW/HEQW codebooks, direction tables,
+and sign-flip rules. The luma 8–32 pixel block shapes use the generated A64
+mask during prediction; unsupported shapes continue to fail closed to the
+existing average path. A focused 8×8 mask vector covers orientation and
+weighted output, and the 404-test lib suite plus 75-test FFmpeg conformance
+suite remain green. Warped motion and OBMC remain the next unsupported
+prediction boundary.
+
+The post-wedge five-iteration release benchmark measured `87.23/89.47 ms`
+for `WML2Viewer.avif` and `1.35/1.70 ms` for `star-8bpc.avifs`
+(native/RGBA), a same-host checkpoint.
+
 On 2026-07-23, masked compound syntax now consumes the AV1 compound-type
 group with the normative compound-type and wedge-index CDFs. Difference-weighted
 compound builds the A64 luma mask (`38 + abs(pred0-pred1)/16`), including the

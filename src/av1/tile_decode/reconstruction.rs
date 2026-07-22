@@ -843,6 +843,10 @@ fn predict_inter_block_into(
                         compound_weight,
                         compound_mask,
                         bit_depth,
+                        col,
+                        row,
+                        width,
+                        height,
                     );
                 }
             }
@@ -940,6 +944,10 @@ fn predict_inter_block_into(
                     compound_weight,
                     compound_mask,
                     bit_depth,
+                    col,
+                    row,
+                    width,
+                    height,
                 );
             }
         }
@@ -965,6 +973,350 @@ fn average_prediction(first: u16, second: u16) -> u16 {
     ((u32::from(first) + u32::from(second) + 1) / 2) as u16
 }
 
+const WEDGE_MASTER_EVEN: [u8; 64] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 4,
+    11, 27, 46, 58, 62, 63, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+    64, 64, 64, 64, 64, 64, 64, 64,
+];
+const WEDGE_MASTER_ODD: [u8; 64] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2,
+    6, 18, 37, 53, 60, 63, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+    64, 64, 64, 64, 64, 64, 64, 64,
+];
+const WEDGE_MASTER_VERTICAL: [u8; 64] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 7,
+    21, 43, 57, 62, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+    64, 64, 64, 64, 64, 64, 64, 64,
+];
+
+#[derive(Clone, Copy)]
+struct WedgeCode {
+    direction: u8,
+    x_offset: u8,
+    y_offset: u8,
+}
+
+const WEDGE_CODEBOOK_HGTW: [WedgeCode; 16] = [
+    WedgeCode {
+        direction: 0,
+        x_offset: 4,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 1,
+        x_offset: 4,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 2,
+        x_offset: 4,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 3,
+        x_offset: 4,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 4,
+        x_offset: 4,
+        y_offset: 2,
+    },
+    WedgeCode {
+        direction: 4,
+        x_offset: 4,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 4,
+        x_offset: 4,
+        y_offset: 6,
+    },
+    WedgeCode {
+        direction: 5,
+        x_offset: 4,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 0,
+        x_offset: 4,
+        y_offset: 2,
+    },
+    WedgeCode {
+        direction: 0,
+        x_offset: 4,
+        y_offset: 6,
+    },
+    WedgeCode {
+        direction: 3,
+        x_offset: 4,
+        y_offset: 2,
+    },
+    WedgeCode {
+        direction: 3,
+        x_offset: 4,
+        y_offset: 6,
+    },
+    WedgeCode {
+        direction: 1,
+        x_offset: 2,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 1,
+        x_offset: 6,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 2,
+        x_offset: 2,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 2,
+        x_offset: 6,
+        y_offset: 4,
+    },
+];
+const WEDGE_CODEBOOK_HLTW: [WedgeCode; 16] = [
+    WedgeCode {
+        direction: 0,
+        x_offset: 4,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 1,
+        x_offset: 4,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 2,
+        x_offset: 4,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 3,
+        x_offset: 4,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 5,
+        x_offset: 2,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 5,
+        x_offset: 4,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 5,
+        x_offset: 6,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 4,
+        x_offset: 4,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 0,
+        x_offset: 4,
+        y_offset: 2,
+    },
+    WedgeCode {
+        direction: 0,
+        x_offset: 4,
+        y_offset: 6,
+    },
+    WedgeCode {
+        direction: 3,
+        x_offset: 4,
+        y_offset: 2,
+    },
+    WedgeCode {
+        direction: 3,
+        x_offset: 4,
+        y_offset: 6,
+    },
+    WedgeCode {
+        direction: 1,
+        x_offset: 2,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 1,
+        x_offset: 6,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 2,
+        x_offset: 2,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 2,
+        x_offset: 6,
+        y_offset: 4,
+    },
+];
+const WEDGE_CODEBOOK_HEQW: [WedgeCode; 16] = [
+    WedgeCode {
+        direction: 0,
+        x_offset: 4,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 1,
+        x_offset: 4,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 2,
+        x_offset: 4,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 3,
+        x_offset: 4,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 4,
+        x_offset: 4,
+        y_offset: 2,
+    },
+    WedgeCode {
+        direction: 4,
+        x_offset: 4,
+        y_offset: 6,
+    },
+    WedgeCode {
+        direction: 5,
+        x_offset: 2,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 5,
+        x_offset: 6,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 0,
+        x_offset: 4,
+        y_offset: 2,
+    },
+    WedgeCode {
+        direction: 0,
+        x_offset: 4,
+        y_offset: 6,
+    },
+    WedgeCode {
+        direction: 3,
+        x_offset: 4,
+        y_offset: 2,
+    },
+    WedgeCode {
+        direction: 3,
+        x_offset: 4,
+        y_offset: 6,
+    },
+    WedgeCode {
+        direction: 1,
+        x_offset: 2,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 1,
+        x_offset: 6,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 2,
+        x_offset: 2,
+        y_offset: 4,
+    },
+    WedgeCode {
+        direction: 2,
+        x_offset: 6,
+        y_offset: 4,
+    },
+];
+
+fn wedge_code(width: usize, height: usize, index: usize) -> Option<(WedgeCode, bool)> {
+    let (codes, sign_flips) = match (width, height) {
+        (8, 16) | (16, 32) | (8, 32) => (
+            &WEDGE_CODEBOOK_HGTW,
+            &[1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1][..],
+        ),
+        (16, 8) | (32, 16) | (32, 8) => (
+            &WEDGE_CODEBOOK_HLTW,
+            &[1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1][..],
+        ),
+        (8, 8) | (16, 16) | (32, 32) => (
+            &WEDGE_CODEBOOK_HEQW,
+            &[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1][..],
+        ),
+        _ => return None,
+    };
+    codes
+        .get(index)
+        .copied()
+        .zip(sign_flips.get(index).copied().map(|v| v != 0))
+}
+
+#[inline]
+fn wedge_oblique63(row: usize, column: usize) -> u8 {
+    let shift = 16_i32 - i32::try_from((row + 1) / 2).unwrap_or(i32::MAX);
+    let source = if row & 1 == 0 {
+        &WEDGE_MASTER_EVEN
+    } else {
+        &WEDGE_MASTER_ODD
+    };
+    let source_index = (i32::try_from(column).unwrap_or(i32::MAX) - shift).clamp(0, 63);
+    source[usize::try_from(source_index).unwrap_or(63)]
+}
+
+#[inline]
+fn wedge_master_value(direction: u8, inverse: bool, row: usize, column: usize) -> u8 {
+    let row = row.min(63);
+    let column = column.min(63);
+    let (value, base_inverse) = match direction {
+        0 => (wedge_oblique63(column, row), false),
+        1 => (wedge_oblique63(row, column), false),
+        2 => (wedge_oblique63(row, 63 - column), true),
+        3 => (wedge_oblique63(63 - column, row), true),
+        4 => (WEDGE_MASTER_VERTICAL[row], false),
+        5 => (WEDGE_MASTER_VERTICAL[column], false),
+        _ => return 32,
+    };
+    if inverse ^ base_inverse {
+        64 - value
+    } else {
+        value
+    }
+}
+
+#[inline]
+fn wedge_mask_value(
+    width: usize,
+    height: usize,
+    index: u8,
+    inverse: bool,
+    x: usize,
+    y: usize,
+) -> Option<u8> {
+    let (code, sign_flip) = wedge_code(width, height, usize::from(index))?;
+    let woff = (usize::from(code.x_offset) * width) >> 3;
+    let hoff = (usize::from(code.y_offset) * height) >> 3;
+    Some(wedge_master_value(
+        code.direction,
+        inverse ^ sign_flip,
+        32 - hoff + y,
+        32 - woff + x,
+    ))
+}
+
 #[inline]
 fn blend_compound_prediction(
     first: u16,
@@ -972,6 +1324,10 @@ fn blend_compound_prediction(
     primary_weight: Option<u8>,
     compound_mask: Option<CompoundMask>,
     bit_depth: u8,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
 ) -> u16 {
     if let Some(CompoundMask::DifferenceWeighted { inverse }) = compound_mask {
         let shift = u32::from(bit_depth.saturating_sub(8));
@@ -979,6 +1335,14 @@ fn blend_compound_prediction(
         let mask = (38 + diff / 16).min(64);
         let mask = if inverse { 64 - mask } else { mask };
         return ((u32::from(first) * mask + u32::from(second) * (64 - mask) + 32) >> 6) as u16;
+    }
+    if let Some(CompoundMask::Wedge { index, inverse }) = compound_mask
+        && let Some(mask) = wedge_mask_value(width, height, index, inverse, x, y)
+    {
+        return ((u32::from(first) * u32::from(mask)
+            + u32::from(second) * u32::from(64 - mask)
+            + 32)
+            >> 6) as u16;
     }
     let Some(primary_weight) = primary_weight else {
         return average_prediction(first, second);
@@ -1058,6 +1422,10 @@ fn predict_inter_block_into_fractional(
                         compound_weight,
                         compound_mask,
                         bit_depth,
+                        col,
+                        row,
+                        width,
+                        height,
                     )
                 })
                 .unwrap_or(first);
@@ -1839,8 +2207,14 @@ mod tests {
 
     #[test]
     fn compound_prediction_applies_distance_weight() {
-        assert_eq!(blend_compound_prediction(10, 100, Some(48), None, 8), 33);
-        assert_eq!(blend_compound_prediction(10, 100, None, None, 8), 55);
+        assert_eq!(
+            blend_compound_prediction(10, 100, Some(48), None, 8, 0, 0, 2, 2),
+            33
+        );
+        assert_eq!(
+            blend_compound_prediction(10, 100, None, None, 8, 0, 0, 2, 2),
+            55
+        );
         assert_eq!(
             blend_compound_prediction(
                 0,
@@ -1848,8 +2222,38 @@ mod tests {
                 None,
                 Some(CompoundMask::DifferenceWeighted { inverse: false }),
                 8,
+                0,
+                0,
+                2,
+                2,
             ),
             44
+        );
+    }
+
+    #[test]
+    fn wedge_prediction_uses_dimension_specific_mask() {
+        let first = wedge_mask_value(8, 8, 0, false, 0, 0).unwrap();
+        let opposite = wedge_mask_value(8, 8, 0, false, 7, 7).unwrap();
+        assert!(first <= 64);
+        assert!(opposite <= 64);
+        assert_ne!(first, opposite);
+        assert_eq!(
+            blend_compound_prediction(
+                0,
+                64,
+                None,
+                Some(CompoundMask::Wedge {
+                    index: 0,
+                    inverse: false,
+                }),
+                8,
+                0,
+                0,
+                8,
+                8,
+            ),
+            u16::from(64 - first)
         );
     }
 
