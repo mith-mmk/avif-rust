@@ -304,6 +304,7 @@ pub(crate) fn parse_frame_header_with_references(
     } else {
         (frame_refs_short_signaling, reference_frame_indices) =
             parse_inter_reference_indices(&mut reader, sequence.enable_order_hint)?;
+        validate_reference_frame_ids(frame_id, sequence, &reference_frame_indices, references)?;
         let (frame_size, render_size) = parse_inter_frame_size(
             &mut reader,
             sequence,
@@ -411,6 +412,38 @@ fn read_current_frame_id(
     } else {
         Ok(None)
     }
+}
+
+fn validate_reference_frame_ids(
+    current_frame_id: Option<u16>,
+    sequence: &SequenceHeader,
+    reference_frame_indices: &[u8; 7],
+    references: &[Option<ReferenceFrameState>; 8],
+) -> Result<(), DecoderError> {
+    let Some(current_frame_id) = current_frame_id else {
+        return Ok(());
+    };
+    let modulus = 1u32 << sequence.frame_id_length;
+    let max_age = 1u32 << sequence.delta_frame_id_length;
+    let current = u32::from(current_frame_id);
+    for &slot in reference_frame_indices {
+        let Some(reference) = references.get(usize::from(slot)).and_then(Option::as_ref) else {
+            continue;
+        };
+        let Some(reference_frame_id) = reference.frame_id else {
+            return Err(DecoderError::Bitstream(format!(
+                "AV1 reference frame slot {slot} has no frame ID"
+            )));
+        };
+        let reference = u32::from(reference_frame_id);
+        let age = (current + modulus - reference) % modulus;
+        if age > max_age {
+            return Err(DecoderError::Bitstream(format!(
+                "AV1 reference frame slot {slot} has stale frame ID {reference_frame_id}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn read_global_motion_flags(reader: &mut BitReader<'_>) -> Result<(), DecoderError> {
@@ -1433,7 +1466,7 @@ mod tests {
         FilmGrainParams, FrameType, LoopFilterParams, ReferenceFrameState, SegmentationParams,
         parse_film_grain_params, parse_inter_reference_indices, parse_segmentation_params,
         parse_show_existing_frame_index, read_current_frame_id, read_inv_signed_literal,
-        read_signed_delta,
+        read_signed_delta, validate_reference_frame_ids,
     };
     use crate::av1::bitstream::BitReader;
 
@@ -1568,6 +1601,41 @@ mod tests {
         assert_eq!(
             read_current_frame_id(&mut reader, &sequence).unwrap(),
             Some(0b1010)
+        );
+    }
+
+    #[test]
+    fn rejects_reference_frame_ids_outside_the_allowed_age_window() {
+        let data = include_bytes!("../../test_data/images/WML2Viewer.avif");
+        let info = crate::container::parse_avif(data).unwrap();
+        let sequence_payload = crate::obu::find_obu_payload(
+            &info.primary_item_payload,
+            crate::obu::ObuType::SequenceHeader,
+        )
+        .unwrap()
+        .unwrap();
+        let mut sequence = super::super::sequence::parse_sequence_header(sequence_payload).unwrap();
+        sequence.frame_id_numbers_present = true;
+        sequence.frame_id_length = 4;
+        sequence.delta_frame_id_length = 2;
+        let mut references = [None; 8];
+        references[0] = Some(ReferenceFrameState {
+            frame_width: 1,
+            frame_height: 1,
+            upscaled_width: 1,
+            render_width: 1,
+            render_height: 1,
+            order_hint: 0,
+            film_grain: None,
+            frame_id: Some(1),
+        });
+        let indices = [0; 7];
+        assert!(validate_reference_frame_ids(Some(3), &sequence, &indices, &references).is_ok());
+        references[0].as_mut().unwrap().frame_id = Some(9);
+        let error =
+            validate_reference_frame_ids(Some(3), &sequence, &indices, &references).unwrap_err();
+        assert!(
+            matches!(error, crate::DecoderError::Bitstream(message) if message.contains("stale frame ID"))
         );
     }
 

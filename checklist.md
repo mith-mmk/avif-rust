@@ -1549,7 +1549,9 @@ unsupported header boundary. The parser now retains the normative
 `delta_frame_id_length`/`frame_id_length` values, consumes `current_frame_id`
 before inter-frame sizing, and carries the ID through reference-slot state.
 Synthetic sequence-header and current-ID vectors cover enabled and disabled
-signalling; full frame-ID age validation remains a follow-up once the broader
-inter reference lifecycle is complete. A seven-iteration release benchmark
+signalling; referenced slots are now rejected when their frame ID falls
+outside the normative age window. Previous-frame monotonicity checks remain a
+follow-up once the broader inter reference lifecycle is complete. A
+seven-iteration release benchmark
 after the header change measured `169.95/174.24 ms` for `WML2Viewer.avif` and
 `2.6765/3.0943 ms` for `star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
