@@ -44,6 +44,8 @@ fn sample_sequence_header() -> SequenceHeader {
         max_frame_width: 64,
         max_frame_height: 64,
         frame_id_numbers_present: false,
+        frame_id_length: 0,
+        delta_frame_id_length: 0,
         use_128x128_superblock: false,
         enable_filter_intra: true,
         enable_intra_edge_filter: true,

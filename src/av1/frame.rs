@@ -43,6 +43,9 @@ pub struct FrameHeader {
     /// correspond to LAST..ALTREF in AV1 reference-frame order.
     pub reference_frame_indices: [u8; 7],
     pub frame_refs_short_signaling: bool,
+    /// Current frame identifier when sequence-level frame-id signalling is
+    /// enabled. `None` means the sequence does not carry frame IDs.
+    pub frame_id: Option<u16>,
     pub allow_high_precision_mv: bool,
     pub is_filter_switchable: bool,
     pub is_motion_mode_switchable: bool,
@@ -85,6 +88,7 @@ pub(crate) struct ReferenceFrameState {
     pub render_height: u32,
     pub order_hint: u32,
     pub film_grain: Option<FilmGrainParams>,
+    pub frame_id: Option<u16>,
 }
 
 impl FrameHeader {
@@ -201,6 +205,7 @@ pub(crate) fn parse_frame_header_with_references(
             refresh_frame_flags: 0xff,
             reference_frame_indices: [0; 7],
             frame_refs_short_signaling: false,
+            frame_id: None,
             allow_high_precision_mv: false,
             is_filter_switchable: false,
             is_motion_mode_switchable: false,
@@ -276,6 +281,7 @@ pub(crate) fn parse_frame_header_with_references(
     } else {
         reader.read_bits(8, "refresh_frame_flags")? as u8
     };
+    let frame_id = read_current_frame_id(&mut reader, sequence)?;
 
     let frame_is_intra = frame_type_is_intra(frame_type);
     let mut reference_frame_indices = [0; 7];
@@ -298,11 +304,6 @@ pub(crate) fn parse_frame_header_with_references(
     } else {
         (frame_refs_short_signaling, reference_frame_indices) =
             parse_inter_reference_indices(&mut reader, sequence.enable_order_hint)?;
-        if sequence.frame_id_numbers_present {
-            return Err(DecoderError::Unsupported(
-                "AV1 inter-frame ids are not supported yet".to_string(),
-            ));
-        }
         let (frame_size, render_size) = parse_inter_frame_size(
             &mut reader,
             sequence,
@@ -367,6 +368,7 @@ pub(crate) fn parse_frame_header_with_references(
         refresh_frame_flags,
         reference_frame_indices,
         frame_refs_short_signaling,
+        frame_id,
         allow_high_precision_mv,
         is_filter_switchable,
         is_motion_mode_switchable,
@@ -396,6 +398,19 @@ pub(crate) fn parse_frame_header_with_references(
         uncompressed_header_bits: reader.bit_position(),
         payload_after_header_offset: reader.byte_position_ceil(),
     })
+}
+
+fn read_current_frame_id(
+    reader: &mut BitReader<'_>,
+    sequence: &SequenceHeader,
+) -> Result<Option<u16>, DecoderError> {
+    if sequence.frame_id_numbers_present {
+        Ok(Some(
+            reader.read_bits(sequence.frame_id_length as usize, "current_frame_id")? as u16,
+        ))
+    } else {
+        Ok(None)
+    }
 }
 
 fn read_global_motion_flags(reader: &mut BitReader<'_>) -> Result<(), DecoderError> {
@@ -1417,7 +1432,8 @@ mod tests {
     use super::{
         FilmGrainParams, FrameType, LoopFilterParams, ReferenceFrameState, SegmentationParams,
         parse_film_grain_params, parse_inter_reference_indices, parse_segmentation_params,
-        parse_show_existing_frame_index, read_inv_signed_literal, read_signed_delta,
+        parse_show_existing_frame_index, read_current_frame_id, read_inv_signed_literal,
+        read_signed_delta,
     };
     use crate::av1::bitstream::BitReader;
 
@@ -1511,6 +1527,7 @@ mod tests {
             render_height: 1,
             order_hint: 0,
             film_grain: Some(reference_grain),
+            frame_id: None,
         });
         let mut bits = vec![true];
         push_unsigned(&mut bits, 0x2345, 16);
@@ -1530,6 +1547,28 @@ mod tests {
         let mut expected = reference_grain;
         expected.random_seed = 0x2345;
         assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn reads_current_frame_id_only_when_sequence_signals_ids() {
+        let data = include_bytes!("../../test_data/images/WML2Viewer.avif");
+        let info = crate::container::parse_avif(data).unwrap();
+        let sequence_payload = crate::obu::find_obu_payload(
+            &info.primary_item_payload,
+            crate::obu::ObuType::SequenceHeader,
+        )
+        .unwrap()
+        .unwrap();
+        let mut sequence = super::super::sequence::parse_sequence_header(sequence_payload).unwrap();
+        let mut reader = BitReader::new(&[0b1010_0000]);
+        assert_eq!(read_current_frame_id(&mut reader, &sequence).unwrap(), None);
+        sequence.frame_id_numbers_present = true;
+        sequence.frame_id_length = 4;
+        let mut reader = BitReader::new(&[0b1010_0000]);
+        assert_eq!(
+            read_current_frame_id(&mut reader, &sequence).unwrap(),
+            Some(0b1010)
+        );
     }
 
     #[test]

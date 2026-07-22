@@ -104,6 +104,7 @@ fn sample_frame(base_q_idx: u8) -> FrameHeader {
         refresh_frame_flags: 0xff,
         reference_frame_indices: [0; 7],
         frame_refs_short_signaling: false,
+        frame_id: None,
         allow_high_precision_mv: false,
         is_filter_switchable: false,
         is_motion_mode_switchable: false,

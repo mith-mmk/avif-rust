@@ -942,6 +942,7 @@ struct ReferenceFrame {
     order_hint: u32,
     frame_type: FrameType,
     film_grain: Option<FilmGrainParams>,
+    frame_id: Option<u16>,
 }
 
 impl FrameReferenceSlots {
@@ -973,6 +974,7 @@ impl FrameReferenceSlots {
                     order_hint: header.order_hint,
                     frame_type: header.frame_type,
                     film_grain: header.film_grain,
+                    frame_id: header.frame_id,
                 });
             }
         }
@@ -1002,6 +1004,7 @@ impl FrameReferenceSlots {
                     render_height: reference.render_height,
                     order_hint: reference.order_hint,
                     film_grain: reference.film_grain,
+                    frame_id: reference.frame_id,
                 })
         })
     }
@@ -4894,6 +4897,8 @@ mod av1_config_tests {
             max_frame_width: 64,
             max_frame_height: 64,
             frame_id_numbers_present: false,
+            frame_id_length: 0,
+            delta_frame_id_length: 0,
             use_128x128_superblock: false,
             enable_filter_intra: false,
             enable_intra_edge_filter: false,

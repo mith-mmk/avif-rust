@@ -58,6 +58,10 @@ pub struct SequenceHeader {
     pub max_frame_width: u32,
     pub max_frame_height: u32,
     pub frame_id_numbers_present: bool,
+    /// Number of bits used for the current frame identifier.
+    pub frame_id_length: u8,
+    /// Number of bits used for reference-frame age checks.
+    pub delta_frame_id_length: u8,
     pub use_128x128_superblock: bool,
     pub enable_filter_intra: bool,
     pub enable_intra_edge_filter: bool,
@@ -103,12 +107,20 @@ pub fn parse_sequence_header(data: &[u8]) -> Result<SequenceHeader, DecoderError
 
     let frame_id_numbers_present =
         !reduced_still_picture_header && reader.read_bool("frame_id_numbers_present_flag")?;
-    if frame_id_numbers_present {
-        let _delta_frame_id_length_minus_2 =
-            reader.read_bits(4, "delta_frame_id_length_minus_2")?;
-        let _additional_frame_id_length_minus_1 =
-            reader.read_bits(3, "additional_frame_id_length_minus_1")?;
-    }
+    let (delta_frame_id_length, frame_id_length) = if frame_id_numbers_present {
+        let delta_frame_id_length = reader.read_bits(4, "delta_frame_id_length_minus_2")? as u8 + 2;
+        let frame_id_length = reader.read_bits(3, "additional_frame_id_length_minus_1")? as u8
+            + delta_frame_id_length
+            + 1;
+        if frame_id_length > 16 {
+            return Err(DecoderError::Bitstream(
+                "frame_id_length exceeds 16 bits".to_string(),
+            ));
+        }
+        (delta_frame_id_length, frame_id_length)
+    } else {
+        (0, 0)
+    };
 
     let use_128x128_superblock = reader.read_bool("use_128x128_superblock")?;
     let enable_filter_intra = reader.read_bool("enable_filter_intra")?;
@@ -136,6 +148,8 @@ pub fn parse_sequence_header(data: &[u8]) -> Result<SequenceHeader, DecoderError
         max_frame_width,
         max_frame_height,
         frame_id_numbers_present,
+        frame_id_length,
+        delta_frame_id_length,
         use_128x128_superblock,
         enable_filter_intra,
         enable_intra_edge_filter,
@@ -406,4 +420,55 @@ fn read_color_range(reader: &mut BitReader<'_>) -> Result<ColorRange, DecoderErr
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use super::parse_sequence_header;
+
+    fn push_bits(bits: &mut Vec<bool>, value: u32, width: usize) {
+        for shift in (0..width).rev() {
+            bits.push(((value >> shift) & 1) != 0);
+        }
+    }
+
+    fn bits_to_bytes(bits: &[bool]) -> Vec<u8> {
+        let mut bytes = vec![0; bits.len().div_ceil(8)];
+        for (index, bit) in bits.iter().copied().enumerate() {
+            if bit {
+                bytes[index / 8] |= 1 << (7 - index % 8);
+            }
+        }
+        bytes
+    }
+
+    #[test]
+    fn parses_frame_id_lengths_from_non_reduced_sequence_header() {
+        let mut bits = Vec::new();
+        push_bits(&mut bits, 0, 3); // seq_profile
+        bits.extend([false, false]); // still_picture, reduced_still_picture_header
+        bits.push(false); // timing_info_present_flag
+        bits.push(false); // initial_display_delay_present_flag
+        push_bits(&mut bits, 0, 5); // operating_points_cnt_minus_1
+        push_bits(&mut bits, 0, 12); // operating_point_idc
+        push_bits(&mut bits, 5, 5); // seq_level_idx
+        push_bits(&mut bits, 5, 4); // frame_width_bits_minus_1
+        push_bits(&mut bits, 5, 4); // frame_height_bits_minus_1
+        push_bits(&mut bits, 31, 6); // max_frame_width_minus_1 (6-bit width)
+        push_bits(&mut bits, 31, 6); // max_frame_height_minus_1
+        bits.push(true); // frame_id_numbers_present_flag
+        push_bits(&mut bits, 0, 4); // delta_frame_id_length_minus_2 => 2
+        push_bits(&mut bits, 1, 3); // additional_frame_id_length_minus_1 => 4 total bits
+        bits.extend([false, false, false]); // superblock/filter-intra/edge-filter
+        bits.extend([false, false, false, false, false]); // inter tools
+        bits.push(false); // seq_choose_screen_content_tools
+        bits.push(false); // seq_force_screen_content_tools
+        bits.extend([false, false, false]); // superres/cdef/restoration
+        bits.extend([false, false, false, false]); // color config prefix
+        bits.extend([false, false]); // chroma sample position
+        bits.push(false); // separate_uv_delta_q
+        bits.push(false); // film_grain_params_present
+
+        let sequence = parse_sequence_header(&bits_to_bytes(&bits)).unwrap();
+        assert!(sequence.frame_id_numbers_present);
+        assert_eq!(sequence.delta_frame_id_length, 2);
+        assert_eq!(sequence.frame_id_length, 4);
+    }
+}
