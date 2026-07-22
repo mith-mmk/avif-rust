@@ -103,6 +103,9 @@ pub struct FrameHeader {
     /// Reference slots signalled by an inter/switch frame.  The seven entries
     /// correspond to LAST..ALTREF in AV1 reference-frame order.
     pub reference_frame_indices: [u8; 7],
+    /// Order hints for the seven reference types, retained for compound
+    /// distance-weighted blending.
+    pub reference_order_hints: [Option<u32>; 7],
     pub frame_refs_short_signaling: bool,
     /// Current frame identifier when sequence-level frame-id signalling is
     /// enabled. `None` means the sequence does not carry frame IDs.
@@ -268,6 +271,7 @@ pub(crate) fn parse_frame_header_with_references(
             primary_ref_frame: 7,
             refresh_frame_flags: 0xff,
             reference_frame_indices: [0; 7],
+            reference_order_hints: [None; 7],
             frame_refs_short_signaling: false,
             frame_id: None,
             allow_high_precision_mv: false,
@@ -351,6 +355,7 @@ pub(crate) fn parse_frame_header_with_references(
 
     let frame_is_intra = frame_type_is_intra(frame_type);
     let mut reference_frame_indices = [0; 7];
+    let mut reference_order_hints = [None; 7];
     let mut frame_refs_short_signaling = false;
     let mut allow_high_precision_mv = false;
     let mut is_filter_switchable = false;
@@ -371,6 +376,12 @@ pub(crate) fn parse_frame_header_with_references(
     } else {
         (frame_refs_short_signaling, reference_frame_indices) =
             parse_inter_reference_indices(&mut reader, sequence.enable_order_hint)?;
+        reference_order_hints = std::array::from_fn(|index| {
+            references
+                .get(usize::from(reference_frame_indices[index]))
+                .and_then(|reference| reference.as_ref())
+                .map(|reference| reference.order_hint)
+        });
         validate_reference_frame_ids(frame_id, sequence, &reference_frame_indices, references)?;
         let (frame_size, render_size) = parse_inter_frame_size(
             &mut reader,
@@ -444,6 +455,7 @@ pub(crate) fn parse_frame_header_with_references(
         primary_ref_frame,
         refresh_frame_flags,
         reference_frame_indices,
+        reference_order_hints,
         frame_refs_short_signaling,
         frame_id,
         allow_high_precision_mv,

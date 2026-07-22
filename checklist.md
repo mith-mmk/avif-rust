@@ -1597,3 +1597,11 @@ the 401-test lib suite and external unsupported gate remain green. A fresh
 five-iteration release benchmark measured `92.56/87.17 ms` for
 `WML2Viewer.avif` and `1.24/1.55 ms` for `star-8bpc.avifs` (native/RGBA), a
 same-host checkpoint.
+
+Compound inter blocks now retain reference order hints from the eight-slot
+state. When `compound_idx=0` selects distance-weighted blending, the primary
+prediction weight is derived with AV1 order-hint wraparound; average blending
+remains the explicit `compound_idx=1` path. A focused reconstruction vector
+covers weighted and average output, while the inter oracle and complete
+unsupported-sample gate remain green. Wedge/diff-weighted masked compound and
+warped/OBMC modes remain the next unsupported boundary.

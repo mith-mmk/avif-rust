@@ -226,6 +226,7 @@ impl<'a> TileDecoder<'a> {
             motion_vector: None,
             motion_vector_secondary: None,
             interpolation_filter: None,
+            compound_weight: None,
             use_intrabc,
             intra_block_copy_mv,
             cdef_idx,
@@ -427,6 +428,7 @@ impl<'a> TileDecoder<'a> {
                     .motion_mode_cdf_mut(block_size.motion_mode_cdf_index()),
             )?;
         }
+        let mut compound_weight = None;
         if is_compound && !skip {
             let masked_compound_used = sequence.enable_masked_compound
                 && block_size.width() >= 8
@@ -438,7 +440,15 @@ impl<'a> TileDecoder<'a> {
                 0
             };
             if comp_group_idx == 0 && sequence.enable_dist_wtd_comp {
-                let _compound_idx = self.reader.read_symbol(self.cdf.compound_idx_cdf_mut(0))?;
+                let compound_idx = self.reader.read_symbol(self.cdf.compound_idx_cdf_mut(0))?;
+                if compound_idx == 0 {
+                    compound_weight = Some(distance_weighted_compound_weight(
+                        sequence,
+                        frame,
+                        reference_type,
+                        reference_type_secondary.unwrap_or(reference_type),
+                    ));
+                }
             }
         }
         let interpolation_filter = if frame.is_filter_switchable {
@@ -496,6 +506,7 @@ impl<'a> TileDecoder<'a> {
             motion_vector: Some(motion_vector),
             motion_vector_secondary,
             interpolation_filter,
+            compound_weight,
             use_intrabc: false,
             intra_block_copy_mv: None,
             cdef_idx,
@@ -1179,6 +1190,41 @@ fn validate_intrabc_mv(
         )));
     }
     Ok(())
+}
+
+fn distance_weighted_compound_weight(
+    sequence: &SequenceHeader,
+    frame: &FrameHeader,
+    primary_type: usize,
+    secondary_type: usize,
+) -> u8 {
+    let current = frame.order_hint;
+    let primary = frame.reference_order_hints[primary_type].unwrap_or(current);
+    let secondary = frame.reference_order_hints[secondary_type].unwrap_or(current);
+    let primary_distance =
+        relative_order_distance(sequence.order_hint_bits, primary, current).abs();
+    let secondary_distance =
+        relative_order_distance(sequence.order_hint_bits, secondary, current).abs();
+    let total = primary_distance.saturating_add(secondary_distance);
+    if total == 0 {
+        return 32;
+    }
+    u8::try_from((i64::from(secondary_distance) * 64 + i64::from(total / 2)) / i64::from(total))
+        .unwrap_or(32)
+        .min(64)
+}
+
+fn relative_order_distance(bits: u8, reference: u32, current: u32) -> i32 {
+    if bits == 0 {
+        return 0;
+    }
+    let modulo = 1i32 << bits;
+    let mask = modulo - 1;
+    let mut distance = ((reference as i32 - current as i32) & mask) as i32;
+    if distance & (modulo >> 1) != 0 {
+        distance -= modulo;
+    }
+    distance
 }
 
 pub(super) fn cfl_signs(joint_sign: usize) -> Result<(usize, usize), DecoderError> {

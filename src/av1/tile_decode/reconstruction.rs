@@ -616,6 +616,7 @@ fn predict_plane_block_into(
             block_mode
                 .interpolation_filter
                 .unwrap_or((InterpolationFilter::Regular, InterpolationFilter::Regular)),
+            block_mode.compound_weight,
             output,
         )?;
     } else if let Some(mv) = intra_block_copy_mv {
@@ -722,6 +723,7 @@ fn predict_inter_block_into(
     subsampling_x: usize,
     subsampling_y: usize,
     interpolation_filters: (InterpolationFilter, InterpolationFilter),
+    compound_weight: Option<u8>,
     output: &mut [u16],
 ) -> Result<(), DecoderError> {
     let expected_len = width.checked_mul(height).ok_or_else(|| {
@@ -766,6 +768,7 @@ fn predict_inter_block_into(
                 subsampling_x,
                 subsampling_y,
                 interpolation_filters,
+                compound_weight,
                 output,
             );
         }
@@ -813,6 +816,7 @@ fn predict_inter_block_into(
                     subsampling_x,
                     subsampling_y,
                     interpolation_filters,
+                    compound_weight,
                     output,
                 );
             }
@@ -824,9 +828,10 @@ fn predict_inter_block_into(
                     (secondary_source_y + row) * secondary.layout.width + secondary_source_x;
                 let target_start = row * width;
                 for col in 0..width {
-                    output[target_start + col] = average_prediction(
+                    output[target_start + col] = blend_compound_prediction(
                         reference.samples[source_start + col],
                         secondary.samples[secondary_start + col],
+                        compound_weight,
                     );
                 }
             }
@@ -904,7 +909,7 @@ fn predict_inter_block_into(
         }
         for row in 0..height {
             for col in 0..width {
-                output[row * width + col] = average_prediction(
+                output[row * width + col] = blend_compound_prediction(
                     predict_inter_sample(
                         reference,
                         x0[col],
@@ -921,6 +926,7 @@ fn predict_inter_block_into(
                         secondary_fy[row],
                         interpolation_filters,
                     ),
+                    compound_weight,
                 );
             }
         }
@@ -946,6 +952,16 @@ fn average_prediction(first: u16, second: u16) -> u16 {
     ((u32::from(first) + u32::from(second) + 1) / 2) as u16
 }
 
+#[inline]
+fn blend_compound_prediction(first: u16, second: u16, primary_weight: Option<u8>) -> u16 {
+    let Some(primary_weight) = primary_weight else {
+        return average_prediction(first, second);
+    };
+    let secondary_weight = 64 - u32::from(primary_weight);
+    ((u32::from(first) * u32::from(primary_weight) + u32::from(second) * secondary_weight + 32)
+        >> 6) as u16
+}
+
 fn predict_inter_block_into_fractional(
     reference: &PlaneBuffer,
     secondary_reference: Option<&PlaneBuffer>,
@@ -958,6 +974,7 @@ fn predict_inter_block_into_fractional(
     subsampling_x: usize,
     subsampling_y: usize,
     interpolation_filters: (InterpolationFilter, InterpolationFilter),
+    compound_weight: Option<u8>,
     output: &mut [u16],
 ) -> Result<(), DecoderError> {
     let mv_x = i64::from(mv.1) / (1_i64 << subsampling_x);
@@ -1000,7 +1017,7 @@ fn predict_inter_block_into_fractional(
             let first = predict_inter_sample(reference, x0, y0, fx, fy, interpolation_filters);
             output[row * width + col] = secondary_reference
                 .map(|secondary| {
-                    average_prediction(
+                    blend_compound_prediction(
                         first,
                         predict_inter_sample(
                             secondary,
@@ -1010,6 +1027,7 @@ fn predict_inter_block_into_fractional(
                             secondary_fy,
                             interpolation_filters,
                         ),
+                        compound_weight,
                     )
                 })
                 .unwrap_or(first);
@@ -1718,6 +1736,7 @@ mod tests {
             0,
             0,
             (InterpolationFilter::Regular, InterpolationFilter::Regular),
+            None,
             &mut output,
         )
         .unwrap();
@@ -1754,10 +1773,17 @@ mod tests {
             0,
             0,
             (InterpolationFilter::Regular, InterpolationFilter::Regular),
+            None,
             &mut output,
         )
         .unwrap();
         assert_eq!(output, [56, 57, 60, 61]);
+    }
+
+    #[test]
+    fn compound_prediction_applies_distance_weight() {
+        assert_eq!(blend_compound_prediction(10, 100, Some(48)), 33);
+        assert_eq!(blend_compound_prediction(10, 100, None), 55);
     }
 
     #[test]
@@ -1786,6 +1812,7 @@ mod tests {
             0,
             0,
             (InterpolationFilter::Regular, InterpolationFilter::Regular),
+            None,
             &mut output,
         )
         .unwrap();
