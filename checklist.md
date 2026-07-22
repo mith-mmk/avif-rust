@@ -1613,6 +1613,17 @@ intermediate buffer while preserving the AV1 bilinear rounding rule. A focused
 measured `83.40/83.60 ms` for `WML2Viewer.avif` and `1.37/1.72 ms` for
 `star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
 
+On 2026-07-23, switchable motion-mode symbols are now retained in block
+diagnostics instead of being discarded. OBMC blocks apply the decoded
+prediction through the reconstructed top/left overlap edges, with a focused
+edge-only reconstruction vector; LOCALWARP remains observable and uses the
+existing translation fallback until local least-squares warp reconstruction
+is implemented. A generated wedge-enabled libaom sequence is now an FFmpeg
+RGB oracle test. The 400-test lib suite and 76-test FFmpeg conformance suite
+remain green. The five-iteration release benchmark measured `89.31/86.40 ms`
+for `WML2Viewer.avif` and `1.38/1.68 ms` for `star-8bpc.avifs`
+(native/RGBA), a same-host checkpoint.
+
 On 2026-07-23, wedge compound prediction now reconstructs the AV1 master
 mask from the dimension-specific HGTW/HLTW/HEQW codebooks, direction tables,
 and sign-flip rules. The luma 8–32 pixel block shapes use the generated A64

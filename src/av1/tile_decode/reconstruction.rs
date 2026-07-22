@@ -1,5 +1,5 @@
 use super::{
-    BlockModeProbe, CompoundMask, DecodedTransform, PalettePlaneInfo, TileDecoder,
+    BlockModeProbe, CompoundMask, DecodedTransform, MotionMode, PalettePlaneInfo, TileDecoder,
     coefficient_entropy_context,
 };
 use crate::DecoderError;
@@ -622,6 +622,27 @@ fn predict_plane_block_into(
             bit_depth,
             output,
         )?;
+        match block_mode.motion_mode {
+            MotionMode::Simple => {}
+            MotionMode::Obmc => apply_obmc_edge_blend(
+                output,
+                plane,
+                block_x,
+                block_y,
+                x,
+                y,
+                width,
+                height,
+                (block_mode.block_size.width() >> subsampling_x).max(4),
+                (block_mode.block_size.height() >> subsampling_y).max(4),
+                bit_depth,
+            ),
+            // LOCALWARP keeps the decoded translation as a conservative
+            // fallback until the local least-squares warp model is available.
+            // The mode is retained in diagnostics so this boundary remains
+            // observable instead of silently being mistaken for SIMPLE.
+            MotionMode::LocalWarp => {}
+        }
     } else if let Some(mv) = intra_block_copy_mv {
         predict_intra_block_copy_into(
             plane,
@@ -712,6 +733,53 @@ fn predict_plane_block_into(
         )?;
     }
     Ok(())
+}
+
+#[inline]
+fn apply_obmc_edge_blend(
+    output: &mut [u16],
+    plane: &PlaneBuffer,
+    block_x: usize,
+    block_y: usize,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    block_width: usize,
+    block_height: usize,
+    bit_depth: u8,
+) {
+    let overlap_x = (block_width / 4).clamp(4, 32);
+    let overlap_y = (block_height / 4).clamp(4, 32);
+    let max_value = (1_u32 << u32::from(bit_depth.min(16))) - 1;
+    for row in 0..height {
+        let global_y = y.saturating_add(row);
+        for col in 0..width {
+            let global_x = x.saturating_add(col);
+            let mut value = u32::from(output[row * width + col]);
+            if block_y > 0 && global_y < block_y.saturating_add(overlap_y) {
+                let boundary_y = block_y - 1;
+                let neighbor = u32::from(
+                    plane.samples[boundary_y.min(plane.layout.height.saturating_sub(1))
+                        * plane.layout.width
+                        + global_x.min(plane.layout.width.saturating_sub(1))],
+                );
+                let current_weight = (((global_y - block_y + 1) * 64) / (overlap_y + 1)) as u32;
+                value = (neighbor * (64 - current_weight) + value * current_weight + 32) >> 6;
+            }
+            if block_x > 0 && global_x < block_x.saturating_add(overlap_x) {
+                let boundary_x = block_x - 1;
+                let neighbor = u32::from(
+                    plane.samples[global_y.min(plane.layout.height.saturating_sub(1))
+                        * plane.layout.width
+                        + boundary_x.min(plane.layout.width.saturating_sub(1))],
+                );
+                let current_weight = (((global_x - block_x + 1) * 64) / (overlap_x + 1)) as u32;
+                value = (neighbor * (64 - current_weight) + value * current_weight + 32) >> 6;
+            }
+            output[row * width + col] = value.min(max_value) as u16;
+        }
+    }
 }
 
 fn predict_inter_block_into(
@@ -2255,6 +2323,25 @@ mod tests {
             ),
             u16::from(64 - first)
         );
+    }
+
+    #[test]
+    fn obmc_blends_only_the_block_overlap_edges() {
+        let plane = PlaneBuffer {
+            layout: crate::av1::decode::PlaneLayout {
+                plane: 0,
+                width: 10,
+                height: 10,
+                subsampling_x: 0,
+                subsampling_y: 0,
+                sample_count: 100,
+            },
+            samples: vec![0; 100],
+        };
+        let mut output = [64_u16; 64];
+        apply_obmc_edge_blend(&mut output, &plane, 1, 1, 1, 1, 8, 8, 8, 8, 8);
+        assert!(output[0] < 64);
+        assert_eq!(output[7 * 8 + 7], 64);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use super::{BlockModeProbe, CflParams, CompoundMask, TileDecoder};
+use super::{BlockModeProbe, CflParams, CompoundMask, MotionMode, TileDecoder};
 use crate::DecoderError;
 use crate::av1::decode::TileDecodePlan;
 use crate::av1::frame::{FrameHeader, FrameType, InterpolationFilter, TxMode};
@@ -225,6 +225,7 @@ impl<'a> TileDecoder<'a> {
             reference_frame_secondary: None,
             motion_vector: None,
             motion_vector_secondary: None,
+            motion_mode: MotionMode::Simple,
             interpolation_filter: None,
             compound_weight: None,
             compound_mask: None,
@@ -423,12 +424,26 @@ impl<'a> TileDecoder<'a> {
             };
             (motion_vector, None)
         };
-        if frame.is_motion_mode_switchable && block_size.width() >= 8 && block_size.height() >= 8 {
-            let _motion_mode = self.reader.read_symbol(
+        let motion_mode = if frame.is_motion_mode_switchable
+            && block_size.width() >= 8
+            && block_size.height() >= 8
+        {
+            match self.reader.read_symbol(
                 self.cdf
                     .motion_mode_cdf_mut(block_size.motion_mode_cdf_index()),
-            )?;
-        }
+            )? {
+                0 => MotionMode::Simple,
+                1 => MotionMode::Obmc,
+                2 => MotionMode::LocalWarp,
+                symbol => {
+                    return Err(DecoderError::Bitstream(format!(
+                        "AV1 motion mode symbol {symbol} is invalid"
+                    )));
+                }
+            }
+        } else {
+            MotionMode::Simple
+        };
         let mut compound_weight = None;
         let mut compound_mask = None;
         if is_compound && !skip {
@@ -529,6 +544,7 @@ impl<'a> TileDecoder<'a> {
             reference_frame_secondary,
             motion_vector: Some(motion_vector),
             motion_vector_secondary,
+            motion_mode,
             interpolation_filter,
             compound_weight,
             compound_mask,

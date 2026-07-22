@@ -36,6 +36,7 @@ pub struct BlockModeProbe {
     pub reference_frame_secondary: Option<u8>,
     pub motion_vector: Option<(i32, i32)>,
     pub motion_vector_secondary: Option<(i32, i32)>,
+    pub motion_mode: MotionMode,
     pub interpolation_filter: Option<(InterpolationFilter, InterpolationFilter)>,
     /// Weight applied to the primary prediction for distance-weighted
     /// compound blocks; `None` selects equal averaging.
@@ -67,6 +68,13 @@ pub struct BlockModeProbe {
 pub enum CompoundMask {
     DifferenceWeighted { inverse: bool },
     Wedge { index: u8, inverse: bool },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MotionMode {
+    Simple,
+    Obmc,
+    LocalWarp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

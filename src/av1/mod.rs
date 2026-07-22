@@ -61,10 +61,10 @@ pub(crate) use tile_decode::decode_luma_root_block_prefix_with_post_filter_state
 pub(crate) use tile_decode::wiener_filter_unit;
 pub use tile_decode::{
     BlockModeProbe, CompoundMask, DecodedBlockPrefix, DecodedLumaBlock, DecodedTransform,
-    PartitionProbe, ResidualProbe, TileDecoder, TileEntropyState, decode_first_luma_block,
-    decode_first_luma_transform, decode_luma_root_block_prefix, decode_luma_root_blocks,
-    prepare_tile_entropy, probe_first_block_residuals, probe_tile_block_modes,
-    probe_tile_partitions,
+    MotionMode, PartitionProbe, ResidualProbe, TileDecoder, TileEntropyState,
+    decode_first_luma_block, decode_first_luma_transform, decode_luma_root_block_prefix,
+    decode_luma_root_blocks, prepare_tile_entropy, probe_first_block_residuals,
+    probe_tile_block_modes, probe_tile_partitions,
 };
 pub(crate) use tile_decode::{
     cdef_adjust_primary_strength, cdef_filter_block_region_with_edge_mode_into,
