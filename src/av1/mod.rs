@@ -31,8 +31,8 @@ pub(crate) use film_grain::apply as apply_film_grain;
 pub(crate) use frame::CdefParams;
 pub(crate) use frame::parse_show_existing_frame_index;
 pub use frame::{
-    CdefStrength, FilmGrainParams, FrameHeader, FrameType, SegmentationParams, TxMode,
-    parse_frame_header,
+    CdefStrength, FilmGrainParams, FrameHeader, FrameType, GlobalMotionParams, GlobalMotionType,
+    SegmentationParams, TxMode, parse_frame_header,
 };
 pub(crate) use frame::{ReferenceFrameState, parse_frame_header_with_references};
 pub use predict::{IntraEdges, predict_intra};

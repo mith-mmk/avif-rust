@@ -1139,6 +1139,13 @@ pub(crate) struct PostFilterState {
 
 impl PostFilterState {
     pub(crate) fn merge(&mut self, other: Self) {
+        if self.is_empty() {
+            *self = other;
+            return;
+        }
+        if other.is_empty() {
+            return;
+        }
         for unit in other.cdef_units {
             if let Some(existing) = self
                 .cdef_units
@@ -1192,6 +1199,14 @@ impl PostFilterState {
                 self.block_filter_states.push(state);
             }
         }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.cdef_units.is_empty()
+            && self.cdef_blocks.is_empty()
+            && self.transform_boundaries.is_empty()
+            && self.restoration_units.is_empty()
+            && self.block_filter_states.is_empty()
     }
 
     pub(crate) fn record_luma_blocks(&mut self, blocks: &[DecodedLumaBlock]) {

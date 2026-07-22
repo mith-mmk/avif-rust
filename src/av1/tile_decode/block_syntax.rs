@@ -344,18 +344,41 @@ impl<'a> TileDecoder<'a> {
                 };
                 self.read_new_mv(predictor, frame)?
             } else {
-                secondary_predictor
-                    .map(|_| {
-                        self.inter_mv_candidate(
-                            x,
-                            y,
-                            block_size,
-                            reference_frame_secondary.unwrap_or(reference_frame),
-                            ref_mv_index,
-                            true,
-                        )
-                    })
-                    .unwrap_or((0, 0))
+                if mode == 6 {
+                    frame.global_motion.motion_vector(
+                        reference_type_secondary.unwrap_or(reference_type),
+                        block_size,
+                        x,
+                        y,
+                        frame.allow_high_precision_mv,
+                        frame.force_integer_mv == 1,
+                    )?
+                } else {
+                    secondary_predictor
+                        .map(|_| {
+                            self.inter_mv_candidate(
+                                x,
+                                y,
+                                block_size,
+                                reference_frame_secondary.unwrap_or(reference_frame),
+                                ref_mv_index,
+                                true,
+                            )
+                        })
+                        .unwrap_or((0, 0))
+                }
+            };
+            let first = if mode == 6 {
+                frame.global_motion.motion_vector(
+                    reference_type,
+                    block_size,
+                    x,
+                    y,
+                    frame.allow_high_precision_mv,
+                    frame.force_integer_mv == 1,
+                )?
+            } else {
+                first
             };
             (first, Some(second))
         } else {
@@ -385,7 +408,14 @@ impl<'a> TileDecoder<'a> {
                     };
                     self.inter_mv_candidate(x, y, block_size, reference_frame, ref_mv_index, false)
                 } else {
-                    (0, 0)
+                    frame.global_motion.motion_vector(
+                        reference_type,
+                        block_size,
+                        x,
+                        y,
+                        frame.allow_high_precision_mv,
+                        frame.force_integer_mv == 1,
+                    )?
                 }
             };
             (motion_vector, None)

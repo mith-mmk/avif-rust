@@ -6,9 +6,9 @@ use crate::av1::alloc_frame_buffers;
 use crate::av1::decode_luma_root_block_prefix_with_post_filter_state_and_entropy;
 use crate::av1::{
     Av1CodecConfiguration, BlockModeProbe, CdfContext, ChromaSamplePosition, ColorConfig,
-    FilmGrainParams, FrameBuffers, FrameDecodePlan, FrameHeader, FrameType, PartitionProbe,
-    PlaneBuffer, PlaneLayout, QuantState, ReferenceFrameState, ResidualProbe, SequenceHeader,
-    TileEntropyState, TileGroup, alloc_coded_frame_buffers, apply_film_grain,
+    FilmGrainParams, FrameBuffers, FrameDecodePlan, FrameHeader, FrameType, GlobalMotionParams,
+    PartitionProbe, PlaneBuffer, PlaneLayout, QuantState, ReferenceFrameState, ResidualProbe,
+    SequenceHeader, TileEntropyState, TileGroup, alloc_coded_frame_buffers, apply_film_grain,
     apply_superres_horizontal, build_still_decode_plan, cdef_adjust_primary_strength,
     cdef_filter_block_region_with_edge_mode_into, cdef_find_direction_with_variance,
     crop_frame_buffers_to_plan, deblock_filter_edge_with_visible_bounds,
@@ -943,6 +943,7 @@ struct ReferenceFrame {
     frame_type: FrameType,
     film_grain: Option<FilmGrainParams>,
     frame_id: Option<u16>,
+    global_motion: GlobalMotionParams,
 }
 
 impl FrameReferenceSlots {
@@ -975,6 +976,7 @@ impl FrameReferenceSlots {
                     frame_type: header.frame_type,
                     film_grain: header.film_grain,
                     frame_id: header.frame_id,
+                    global_motion: header.global_motion,
                 });
             }
         }
@@ -1005,6 +1007,7 @@ impl FrameReferenceSlots {
                     order_hint: reference.order_hint,
                     film_grain: reference.film_grain,
                     frame_id: reference.frame_id,
+                    global_motion: reference.global_motion,
                 })
         })
     }

@@ -1,5 +1,6 @@
 use super::bitstream::BitReader;
 use super::sequence::SequenceHeader;
+use super::syntax::BlockSize;
 use super::tile::{TileInfo, parse_tile_info};
 use crate::DecoderError;
 
@@ -33,14 +34,6 @@ impl Default for GlobalMotionParams {
             types: [GlobalMotionType::Identity; 7],
             matrices: [[0, 0, 1 << 16, 0, 0, 1 << 16]; 7],
         }
-    }
-}
-
-impl GlobalMotionParams {
-    fn has_non_identity(self) -> bool {
-        self.types
-            .iter()
-            .any(|motion_type| *motion_type != GlobalMotionType::Identity)
     }
 }
 
@@ -123,6 +116,7 @@ pub(crate) struct ReferenceFrameState {
     pub order_hint: u32,
     pub film_grain: Option<FilmGrainParams>,
     pub frame_id: Option<u16>,
+    pub global_motion: GlobalMotionParams,
 }
 
 impl FrameHeader {
@@ -378,16 +372,16 @@ pub(crate) fn parse_frame_header_with_references(
         references,
         primary_ref_frame,
     )?;
-    let global_motion = if !frame_is_intra && trailing.allow_warped_motion {
-        read_global_motion_params(&mut reader, allow_high_precision_mv)?
+    let global_motion = if !frame_is_intra {
+        read_global_motion_params(
+            &mut reader,
+            allow_high_precision_mv,
+            &reference_frame_indices,
+            references,
+        )?
     } else {
         GlobalMotionParams::default()
     };
-    if global_motion.has_non_identity() {
-        return Err(DecoderError::Unsupported(
-            "AV1 non-identity global motion reconstruction is not supported yet".to_string(),
-        ));
-    }
     let film_grain = parse_film_grain_params(
         &mut reader,
         sequence,
@@ -492,6 +486,8 @@ fn validate_reference_frame_ids(
 fn read_global_motion_params(
     reader: &mut BitReader<'_>,
     allow_high_precision_mv: bool,
+    reference_frame_indices: &[u8; 7],
+    references: &[Option<ReferenceFrameState>; 8],
 ) -> Result<GlobalMotionParams, DecoderError> {
     const WARPEDMODEL_PREC_BITS: i32 = 16;
     const GM_ALPHA_MAX: i32 = 1 << 12;
@@ -520,7 +516,17 @@ fn read_global_motion_params(
         } else {
             GlobalMotionType::Affine
         };
-        let mut matrix = result.matrices[reference];
+        let mut matrix = references
+            .get(usize::from(
+                *reference_frame_indices.get(reference).ok_or_else(|| {
+                    DecoderError::Bitstream(
+                        "AV1 global motion reference index is invalid".to_string(),
+                    )
+                })?,
+            ))
+            .and_then(Option::as_ref)
+            .map(|state| state.global_motion.matrices[reference])
+            .unwrap_or(result.matrices[reference]);
         match motion_type {
             GlobalMotionType::Identity => {}
             GlobalMotionType::RotZoom | GlobalMotionType::Affine => {
@@ -693,6 +699,86 @@ fn inv_recenter_finite_nonneg(n: usize, reference: usize, value: usize) -> usize
         inv_recenter(reference, value)
     } else {
         n - 1 - inv_recenter(n - 1 - reference, value)
+    }
+}
+
+impl GlobalMotionParams {
+    pub(crate) fn motion_vector(
+        &self,
+        reference: usize,
+        block_size: BlockSize,
+        x: usize,
+        y: usize,
+        allow_high_precision_mv: bool,
+        force_integer_mv: bool,
+    ) -> Result<(i32, i32), DecoderError> {
+        let motion_type = *self.types.get(reference).ok_or_else(|| {
+            DecoderError::Bitstream("AV1 global motion reference is invalid".to_string())
+        })?;
+        let matrix = *self.matrices.get(reference).ok_or_else(|| {
+            DecoderError::Bitstream("AV1 global motion matrix is invalid".to_string())
+        })?;
+        if motion_type == GlobalMotionType::Identity {
+            return Ok((0, 0));
+        }
+        if motion_type == GlobalMotionType::Translation {
+            let row = matrix[0] >> 13;
+            let col = matrix[1] >> 13;
+            return Ok(if force_integer_mv {
+                (round_mv_to_integer(row), round_mv_to_integer(col))
+            } else {
+                (row, col)
+            });
+        }
+
+        let center_x = i64::try_from(x)
+            .map_err(|_| DecoderError::InvalidParam("AV1 global motion x overflows".to_string()))?
+            + i64::try_from(block_size.width() / 2 - 1)
+                .map_err(|_| DecoderError::InvalidParam("AV1 block width overflows".to_string()))?;
+        let center_y = i64::try_from(y)
+            .map_err(|_| DecoderError::InvalidParam("AV1 global motion y overflows".to_string()))?
+            + i64::try_from(block_size.height() / 2 - 1).map_err(|_| {
+                DecoderError::InvalidParam("AV1 block height overflows".to_string())
+            })?;
+        let xc = (i64::from(matrix[2]) - (1_i64 << 16)) * center_x
+            + i64::from(matrix[3]) * center_y
+            + i64::from(matrix[0]);
+        let yc = i64::from(matrix[4]) * center_x
+            + (i64::from(matrix[5]) - (1_i64 << 16)) * center_y
+            + i64::from(matrix[1]);
+        let precision = if allow_high_precision_mv { 13 } else { 14 };
+        let mut row = round_power_of_two_signed(yc, precision);
+        let mut col = round_power_of_two_signed(xc, precision);
+        if !allow_high_precision_mv {
+            row *= 2;
+            col *= 2;
+        }
+        if force_integer_mv {
+            row = round_mv_to_integer(row);
+            col = round_mv_to_integer(col);
+        }
+        Ok((row, col))
+    }
+}
+
+fn round_power_of_two_signed(value: i64, bits: u32) -> i32 {
+    let offset = 1_i64 << bits.saturating_sub(1);
+    let rounded = if value < 0 {
+        -((-value + offset) >> bits)
+    } else {
+        (value + offset) >> bits
+    };
+    rounded.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
+}
+
+fn round_mv_to_integer(value: i32) -> i32 {
+    let remainder = value % 8;
+    if remainder == 0 {
+        value
+    } else if remainder.abs() > 4 {
+        value - remainder + if remainder > 0 { 8 } else { -8 }
+    } else {
+        value - remainder
     }
 }
 
@@ -1702,14 +1788,15 @@ fn frame_type_is_intra(frame_type: FrameType) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        FilmGrainParams, FrameType, GlobalMotionParams, LoopFilterParams, ReferenceFrameState,
-        SegmentationParams, parse_film_grain_params, parse_inter_reference_indices,
-        parse_segmentation_params, parse_show_existing_frame_index, read_current_frame_id,
-        read_global_motion_params, read_inv_signed_literal, read_signed_delta,
-        validate_reference_frame_ids,
+        FilmGrainParams, FrameType, GlobalMotionParams, GlobalMotionType, LoopFilterParams,
+        ReferenceFrameState, SegmentationParams, parse_film_grain_params,
+        parse_inter_reference_indices, parse_segmentation_params, parse_show_existing_frame_index,
+        read_current_frame_id, read_global_motion_params, read_inv_signed_literal,
+        read_signed_delta, validate_reference_frame_ids,
     };
     use crate::DecoderError;
     use crate::av1::bitstream::BitReader;
+    use crate::av1::syntax::BlockSize;
 
     fn bits_to_bytes(bits: &[bool]) -> Vec<u8> {
         let mut data = vec![0u8; bits.len().div_ceil(8)];
@@ -1802,6 +1889,7 @@ mod tests {
             order_hint: 0,
             film_grain: Some(reference_grain),
             frame_id: None,
+            global_motion: GlobalMotionParams::default(),
         });
         let mut bits = vec![true];
         push_unsigned(&mut bits, 0x2345, 16);
@@ -1869,6 +1957,7 @@ mod tests {
             order_hint: 0,
             film_grain: None,
             frame_id: Some(1),
+            global_motion: GlobalMotionParams::default(),
         });
         let indices = [0; 7];
         assert!(validate_reference_frame_ids(Some(3), &sequence, &indices, &references).is_ok());
@@ -2084,7 +2173,7 @@ mod tests {
     #[test]
     fn global_motion_identity_vector_consumes_all_reference_types() {
         let mut reader = BitReader::new(&[0; 1]);
-        let params = read_global_motion_params(&mut reader, false).unwrap();
+        let params = read_global_motion_params(&mut reader, false, &[0; 7], &[None; 8]).unwrap();
         assert_eq!(params, GlobalMotionParams::default());
         assert_eq!(reader.bit_position(), 7);
     }
@@ -2092,7 +2181,43 @@ mod tests {
     #[test]
     fn global_motion_parser_rejects_truncated_non_identity_model() {
         let mut reader = BitReader::new(&[0b1000_0000]);
-        let error = read_global_motion_params(&mut reader, false).unwrap_err();
+        let error = read_global_motion_params(&mut reader, false, &[0; 7], &[None; 8]).unwrap_err();
         assert!(matches!(error, DecoderError::NotEnoughData(_)));
+    }
+
+    #[test]
+    fn global_motion_vectors_follow_translation_and_block_center_models() {
+        let mut params = GlobalMotionParams::default();
+        params.types[0] = GlobalMotionType::Translation;
+        params.matrices[0][0] = 8_192;
+        params.matrices[0][1] = -16_384;
+        assert_eq!(
+            params
+                .motion_vector(0, BlockSize::Block8x8, 0, 0, false, false)
+                .unwrap(),
+            (1, -2)
+        );
+
+        params.types[0] = GlobalMotionType::Affine;
+        params.matrices[0] = [8_192, -8_192, 65_536, 0, 0, 65_536];
+        assert_eq!(
+            params
+                .motion_vector(0, BlockSize::Block8x8, 0, 0, true, false)
+                .unwrap(),
+            (-1, 1)
+        );
+    }
+
+    #[test]
+    fn global_motion_parser_decodes_zero_translation_model() {
+        let mut bits = vec![true, false, true];
+        bits.extend([false; 8]);
+        bits.extend([false; 6]);
+        let data = bits_to_bytes(&bits);
+        let mut reader = BitReader::new(&data);
+        let params = read_global_motion_params(&mut reader, false, &[0; 7], &[None; 8]).unwrap();
+        assert_eq!(params.types[0], GlobalMotionType::Translation);
+        assert_eq!(params.matrices[0], [0, 0, 1 << 16, 0, 0, 1 << 16]);
+        assert_eq!(reader.bit_position(), 17);
     }
 }

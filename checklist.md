@@ -1563,3 +1563,19 @@ are retained on `FrameHeader`; non-identity models still fail closed until
 reference-backed warped reconstruction is wired into block prediction. Two
 synthetic parser vectors cover the all-identity and truncated-model cases.
 The 35-sample external compatibility gate remains green with zero partial PNGs.
+
+On 2026-07-22, non-identity global motion was connected to inter-block
+prediction. Reference slots now retain the prior frame's global matrices so
+delta-coded models can be resolved; GLOBALMV and GLOBAL_GLOBALMV select the
+translation/rotzoom/affine motion vector at the block centre, including AV1
+high-precision and integer-MV rounding. Translation and affine unit vectors
+cover the matrix-to-MV path. Global-motion parameters are consumed for every
+inter frame, including frames whose `allow_warped_motion` flag is false, while
+the existing inter oracle remains green.
+
+The post-filter state merge now moves the first tile's vectors directly when
+the destination is empty, avoiding duplicate origin scans and allocations on
+the common single-tile path. A same-host seven-iteration release benchmark
+measured `88.20/86.88 ms` (native/RGBA) for `WML2Viewer.avif` and
+`1.30/1.62 ms` for `star-8bpc.avifs`; these are local checkpoints, not
+cross-machine speedup claims.
