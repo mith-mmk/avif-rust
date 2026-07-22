@@ -187,6 +187,14 @@ pub const DEFAULT_MOTION_MODE_CDF: [[u16; 4]; 22] = [
     [29742, 31203, 32768, 0],
 ];
 
+pub const DEFAULT_DRL_CDF: [[u16; 3]; 5] = [
+    [15_232, 32_768, 0],
+    [16_384, 32_768, 0],
+    [24_192, 32_768, 0],
+    [17_152, 32_768, 0],
+    [16_384, 32_768, 0],
+];
+
 // AV1 motion-vector CDFs.  These are kept in the frame CDF context because
 // new-MV syntax is adaptive just like the block-mode symbols.  The values
 // match the normative AOM default_nmv_context tables.
@@ -1982,6 +1990,7 @@ pub struct CdfContext {
     pub newmv: [[u16; 3]; 6],
     pub zeromv: [[u16; 3]; 2],
     pub refmv: [[u16; 3]; 6],
+    pub drl: [[u16; 3]; 5],
     pub single_ref: [[[u16; 3]; 6]; 5],
     pub comp_inter: [[u16; 3]; 5],
     pub comp_ref_type: [[u16; 3]; 5],
@@ -2062,6 +2071,7 @@ impl CdfContext {
             newmv: DEFAULT_NEWMV_CDF,
             zeromv: DEFAULT_ZEROMV_CDF,
             refmv: DEFAULT_REFMV_CDF,
+            drl: DEFAULT_DRL_CDF,
             single_ref: DEFAULT_SINGLE_REF_CDF,
             comp_inter: DEFAULT_COMP_INTER_CDF,
             comp_ref_type: DEFAULT_COMP_REF_TYPE_CDF,
@@ -2163,6 +2173,10 @@ impl CdfContext {
 
     pub fn refmv_cdf_mut(&mut self, context: usize) -> &mut [u16] {
         &mut self.refmv[context]
+    }
+
+    pub fn drl_cdf_mut(&mut self, context: usize) -> &mut [u16] {
+        &mut self.drl[context]
     }
 
     pub fn single_ref_cdf_mut(&mut self, context: usize, index: usize) -> &mut [u16] {
@@ -2439,6 +2453,7 @@ mod tests {
         assert_eq!(context.partition_w64[0][9], 32768);
         assert_eq!(context.partition_w128[0][7], 32768);
         assert_eq!(context.skip[0][1], 32768);
+        assert_eq!(context.drl[0][1], 32768);
         assert_eq!(context.delta_q[3], 32768);
         assert_eq!(context.delta_lf[3], 32768);
         assert_eq!(context.delta_lf_multi[3][3], 32768);

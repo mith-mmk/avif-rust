@@ -491,8 +491,8 @@ fn generated_sequence_sample_decodes_first_frame_when_encoder_present() {
 
 #[test]
 fn generated_inter_sequence_sample_is_classified_for_decoder_gate_when_encoder_present() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(format!(".test-avif-sequence-inter-{}", std::process::id()));
+    let root =
+        std::env::temp_dir().join(format!(".test-avif-sequence-inter-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {
         panic!("failed to create temporary AVIF sequence directory: {err}");
     }
@@ -547,6 +547,10 @@ fn generated_inter_sequence_sample_is_classified_for_decoder_gate_when_encoder_p
         avif_rust::classify_av1_sequence_sample(inter_sample).unwrap(),
         Some(avif_rust::AvifSequenceSampleKind::Inter)
     );
+    let decoded = avif_rust::decode_sequence_frame_bytes(&data, 1)
+        .expect("generated inter sample should decode without partial output");
+    assert_eq!((decoded.width, decoded.height), (64, 64));
+    assert_eq!(decoded.buffers.planes[0].samples.len(), 64 * 64);
     let _ = std::fs::remove_dir_all(&root);
 }
 

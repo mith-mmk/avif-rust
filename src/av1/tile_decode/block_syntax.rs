@@ -292,11 +292,16 @@ impl<'a> TileDecoder<'a> {
         }
 
         // Inter mode is a small decision tree.  New-MV is decoded against the
-        // block's motion-vector predictor; the first compatibility predictor
-        // is the zero vector, which is normative for a block without usable
-        // neighbouring candidates.  The resulting vector is retained in the
-        // block probe so reconstruction can apply the reference prediction.
+        // Decode MVs against the nearest usable same-reference neighbours.
+        // Keeping the predictor in the MI grid is required for ordinary
+        // NEWMV/NEARMV inter blocks and avoids treating every delta as an
+        // absolute vector.
         let mode_context = self.intra_inter_context(x, y).min(5);
+        let primary_predictor = self.inter_mv_predictor(x, y, block_size, reference_frame);
+        let primary_candidate_count =
+            self.inter_mv_candidate_count(x, y, block_size, reference_frame);
+        let secondary_predictor = reference_frame_secondary
+            .map(|reference| self.inter_mv_predictor(x, y, block_size, reference));
         let (motion_vector, motion_vector_secondary) = if is_compound {
             let mode = if skip {
                 1
@@ -304,17 +309,50 @@ impl<'a> TileDecoder<'a> {
                 self.reader
                     .read_symbol(self.cdf.inter_compound_mode_cdf_mut(mode_context))?
             };
-            let first_new = matches!(mode, 2 | 5 | 7);
-            let second_new = matches!(mode, 2 | 4 | 6);
-            let first = if first_new {
-                self.read_new_mv((0, 0), frame)?
+            let ref_mv_index = if matches!(mode, 1 | 4 | 5) {
+                self.read_drl_index(1, primary_candidate_count)?
+            } else if mode == 7 {
+                self.read_drl_index(0, primary_candidate_count)?
             } else {
-                (0, 0)
+                0
+            };
+            let first_new = matches!(mode, 3 | 5 | 7);
+            let second_new = matches!(mode, 2 | 4 | 7);
+            let first = if first_new {
+                let predictor = if matches!(mode, 5 | 7) {
+                    self.inter_mv_candidate(x, y, block_size, reference_frame, ref_mv_index)
+                } else {
+                    primary_predictor
+                };
+                self.read_new_mv(predictor, frame)?
+            } else {
+                self.inter_mv_candidate(x, y, block_size, reference_frame, ref_mv_index)
             };
             let second = if second_new {
-                self.read_new_mv((0, 0), frame)?
+                let predictor = if matches!(mode, 4 | 7) {
+                    self.inter_mv_candidate(
+                        x,
+                        y,
+                        block_size,
+                        reference_frame_secondary.unwrap_or(reference_frame),
+                        ref_mv_index,
+                    )
+                } else {
+                    secondary_predictor.unwrap_or((0, 0))
+                };
+                self.read_new_mv(predictor, frame)?
             } else {
-                (0, 0)
+                secondary_predictor
+                    .map(|_| {
+                        self.inter_mv_candidate(
+                            x,
+                            y,
+                            block_size,
+                            reference_frame_secondary.unwrap_or(reference_frame),
+                            ref_mv_index,
+                        )
+                    })
+                    .unwrap_or((0, 0))
             };
             (first, Some(second))
         } else {
@@ -323,18 +361,29 @@ impl<'a> TileDecoder<'a> {
                 .read_symbol(self.cdf.newmv_cdf_mut(mode_context))?
                 == 0;
             let motion_vector = if new_mv {
-                self.read_new_mv((0, 0), frame)?
+                let ref_mv_index = self.read_drl_index(0, primary_candidate_count)?;
+                self.read_new_mv(
+                    self.inter_mv_candidate(x, y, block_size, reference_frame, ref_mv_index),
+                    frame,
+                )?
             } else {
                 let zero_mv = self
                     .reader
                     .read_symbol(self.cdf.zeromv_cdf_mut(mode_context.min(1)))?
                     == 0;
                 if !zero_mv {
-                    let _nearest_or_near = self
+                    let nearest_or_near = self
                         .reader
                         .read_symbol(self.cdf.refmv_cdf_mut(mode_context))?;
+                    let ref_mv_index = if nearest_or_near == 0 {
+                        0
+                    } else {
+                        self.read_drl_index(1, primary_candidate_count)?
+                    };
+                    self.inter_mv_candidate(x, y, block_size, reference_frame, ref_mv_index)
+                } else {
+                    (0, 0)
                 }
-                (0, 0)
             };
             (motion_vector, None)
         };
@@ -371,6 +420,7 @@ impl<'a> TileDecoder<'a> {
         }
 
         self.set_inter_context(x, y, block_size, true);
+        self.set_inter_mv(x, y, block_size, reference_frame, motion_vector);
         self.set_smooth_context(x, y, block_size, false, false);
         self.set_skip_context(x, y, block_size, skip);
         let (tx_size_context, tx_size_symbol, tx_size) =
@@ -542,6 +592,25 @@ impl<'a> TileDecoder<'a> {
                 DecoderError::Bitstream("AV1 inter column MV overflows".to_string())
             })?,
         ))
+    }
+
+    fn read_drl_index(
+        &mut self,
+        start: usize,
+        candidate_count: usize,
+    ) -> Result<usize, DecoderError> {
+        let mut index = start;
+        for context in 0..2 {
+            if start + context >= candidate_count {
+                break;
+            }
+            let symbol = self.reader.read_symbol(self.cdf.drl_cdf_mut(context))?;
+            index += symbol;
+            if symbol == 0 {
+                break;
+            }
+        }
+        Ok(index)
     }
 
     fn read_mv_component(

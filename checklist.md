@@ -1496,3 +1496,14 @@ retains eight reference slots with decoded-frame geometry and resolves
 reference-derived dimensions against those slots. Global-motion signalling
 and reference-backed motion reconstruction remain the next implementation
 step; no Inter/Switch frame is emitted partially.
+
+The inter-frame path now retains primary reference-frame IDs and decoded motion
+vectors on the MI grid. Single-reference NEWMV/NEARMV and compound modes consume
+the normative DRL index symbols with candidate-count bounds, then use the
+nearest same-reference neighbours as predictors. The generated libaom inter
+sequence test now decodes its actual second sample and checks complete native
+plane dimensions. The external `star-8bpc.avifs` inter oracle improved from an
+average RGB error of about `52` to `39` on this host; strict entropy validation
+still remains fail-closed while motion-mode/compound predictor parity is
+completed. A five-iteration release benchmark measured `2.74 ms` native and
+`3.15 ms` RGBA for the 159x159 AVIS sample.

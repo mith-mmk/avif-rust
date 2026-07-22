@@ -21,6 +21,136 @@ fn intra_bc_candidate_offsets(block_size: BlockSize) -> [(isize, isize); 9] {
 }
 
 impl<'a> TileDecoder<'a> {
+    fn inter_mv_neighbor_candidates(
+        &self,
+        x: usize,
+        y: usize,
+        block_size: BlockSize,
+        reference_frame: u8,
+    ) -> [Option<(i32, i32)>; 4] {
+        let mi_col = x >> 2;
+        let mi_row = y >> 2;
+        let block_mi_width = (block_size.width() / 4).max(1);
+        let candidates = [
+            (mi_col, mi_row.saturating_sub(1)),
+            (mi_col.saturating_sub(1), mi_row),
+            (mi_col.saturating_sub(1), mi_row.saturating_sub(1)),
+            (
+                mi_col.saturating_add(block_mi_width),
+                mi_row.saturating_sub(1),
+            ),
+        ];
+        let mut values = [None; 4];
+        for (candidate_index, (candidate_col, candidate_row)) in candidates.into_iter().enumerate()
+        {
+            if candidate_col < self.tile_mi_col_start
+                || candidate_row < self.tile_mi_row_start
+                || candidate_col >= self.mi_cols
+                || candidate_row >= self.mi_rows
+            {
+                continue;
+            }
+            let index = candidate_row * self.mi_cols + candidate_col;
+            if self.reference_frame_grid[index] == Some(reference_frame) {
+                values[candidate_index] = self.motion_vector_grid[index];
+            }
+        }
+        values
+    }
+
+    pub(super) fn inter_mv_predictor(
+        &self,
+        x: usize,
+        y: usize,
+        block_size: BlockSize,
+        reference_frame: u8,
+    ) -> (i32, i32) {
+        self.inter_mv_neighbor_candidates(x, y, block_size, reference_frame)
+            .into_iter()
+            .flatten()
+            .next()
+            .unwrap_or((0, 0))
+    }
+
+    pub(super) fn inter_mv_candidate(
+        &self,
+        x: usize,
+        y: usize,
+        block_size: BlockSize,
+        reference_frame: u8,
+        candidate_index: usize,
+    ) -> (i32, i32) {
+        if candidate_index == 0 {
+            return self.inter_mv_predictor(x, y, block_size, reference_frame);
+        }
+        let mut seen = [(0, 0); 4];
+        let mut seen_len = 0;
+        for mv in self
+            .inter_mv_neighbor_candidates(x, y, block_size, reference_frame)
+            .into_iter()
+            .flatten()
+        {
+            if !seen[..seen_len].contains(&mv) {
+                if seen_len == candidate_index {
+                    return mv;
+                }
+                seen[seen_len] = mv;
+                seen_len += 1;
+            }
+        }
+        (0, 0)
+    }
+
+    pub(super) fn inter_mv_candidate_count(
+        &self,
+        x: usize,
+        y: usize,
+        block_size: BlockSize,
+        reference_frame: u8,
+    ) -> usize {
+        let mut seen = [(0, 0); 4];
+        let mut seen_len = 0;
+        for mv in self
+            .inter_mv_neighbor_candidates(x, y, block_size, reference_frame)
+            .into_iter()
+            .flatten()
+        {
+            if !seen[..seen_len].contains(&mv) {
+                seen[seen_len] = mv;
+                seen_len += 1;
+            }
+        }
+        seen_len.max(1)
+    }
+
+    pub(super) fn set_inter_mv(
+        &mut self,
+        x: usize,
+        y: usize,
+        block_size: BlockSize,
+        reference_frame: u8,
+        motion_vector: (i32, i32),
+    ) {
+        super::context_grid::fill_mi_grid(
+            &mut self.reference_frame_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            reference_frame,
+        );
+        super::context_grid::fill_mi_grid(
+            &mut self.motion_vector_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            motion_vector,
+        );
+    }
+
     pub(super) fn intra_bc_mv_predictor(
         &self,
         x: usize,
