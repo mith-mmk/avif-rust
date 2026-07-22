@@ -2,8 +2,8 @@ use super::tx_type_syntax::{
     filter_intra_mode_to_tx_cdf_mode, fixed_tx_type, intra_ext_tx_set_context,
 };
 use crate::av1::frame::{
-    CdefParams, DeltaLfParams, DeltaQParams, FrameHeader, FrameType, LoopFilterParams,
-    QuantizationParams, RestorationParams, SegmentationParams, TxMode,
+    CdefParams, DeltaLfParams, DeltaQParams, FrameHeader, FrameType, GlobalMotionParams,
+    LoopFilterParams, QuantizationParams, RestorationParams, SegmentationParams, TxMode,
 };
 use crate::av1::syntax::{TxSize, TxType};
 use crate::av1::tile::TileInfo;
@@ -112,6 +112,7 @@ fn sample_frame(base_q_idx: u8) -> FrameHeader {
         reference_select: false,
         skip_mode_present: false,
         allow_warped_motion: false,
+        global_motion: GlobalMotionParams::default(),
         frame_width: 64,
         frame_height: 64,
         upscaled_width: 64,

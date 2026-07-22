@@ -1555,3 +1555,11 @@ follow-up once the broader inter reference lifecycle is complete. A
 seven-iteration release benchmark
 after the header change measured `169.95/174.24 ms` for `WML2Viewer.avif` and
 `2.6765/3.0943 ms` for `star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
+
+On 2026-07-22, the warped-motion header boundary was hardened to consume the
+full AV1 global-motion model syntax (identity, translation, rotzoom and affine
+matrix parameters, including signed reference subexp values). Identity models
+are retained on `FrameHeader`; non-identity models still fail closed until
+reference-backed warped reconstruction is wired into block prediction. Two
+synthetic parser vectors cover the all-identity and truncated-model cases.
+The 35-sample external compatibility gate remains green with zero partial PNGs.

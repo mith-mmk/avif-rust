@@ -11,6 +11,39 @@ pub enum FrameType {
     Switch,
 }
 
+/// AV1 global-motion model signalled for each of the seven inter references.
+/// The matrices use the codec's 16-bit warped-model precision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GlobalMotionType {
+    Identity,
+    Translation,
+    RotZoom,
+    Affine,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GlobalMotionParams {
+    pub types: [GlobalMotionType; 7],
+    pub matrices: [[i32; 6]; 7],
+}
+
+impl Default for GlobalMotionParams {
+    fn default() -> Self {
+        Self {
+            types: [GlobalMotionType::Identity; 7],
+            matrices: [[0, 0, 1 << 16, 0, 0, 1 << 16]; 7],
+        }
+    }
+}
+
+impl GlobalMotionParams {
+    fn has_non_identity(self) -> bool {
+        self.types
+            .iter()
+            .any(|motion_type| *motion_type != GlobalMotionType::Identity)
+    }
+}
+
 impl FrameType {
     fn from_bits(value: u32) -> Result<Self, DecoderError> {
         match value {
@@ -53,6 +86,7 @@ pub struct FrameHeader {
     pub reference_select: bool,
     pub skip_mode_present: bool,
     pub allow_warped_motion: bool,
+    pub global_motion: GlobalMotionParams,
     pub frame_width: u32,
     pub frame_height: u32,
     pub upscaled_width: u32,
@@ -213,6 +247,7 @@ pub(crate) fn parse_frame_header_with_references(
             reference_select: false,
             skip_mode_present: false,
             allow_warped_motion: false,
+            global_motion: GlobalMotionParams::default(),
             frame_width: frame_size.width,
             frame_height: frame_size.height,
             upscaled_width: frame_size.upscaled_width,
@@ -343,8 +378,15 @@ pub(crate) fn parse_frame_header_with_references(
         references,
         primary_ref_frame,
     )?;
-    if !frame_is_intra && trailing.allow_warped_motion {
-        read_global_motion_flags(&mut reader)?;
+    let global_motion = if !frame_is_intra && trailing.allow_warped_motion {
+        read_global_motion_params(&mut reader, allow_high_precision_mv)?
+    } else {
+        GlobalMotionParams::default()
+    };
+    if global_motion.has_non_identity() {
+        return Err(DecoderError::Unsupported(
+            "AV1 non-identity global motion reconstruction is not supported yet".to_string(),
+        ));
     }
     let film_grain = parse_film_grain_params(
         &mut reader,
@@ -377,6 +419,7 @@ pub(crate) fn parse_frame_header_with_references(
         reference_select: trailing.reference_select,
         skip_mode_present: trailing.skip_mode_present,
         allow_warped_motion: trailing.allow_warped_motion,
+        global_motion,
         frame_width: frame_size.width,
         frame_height: frame_size.height,
         upscaled_width: frame_size.upscaled_width,
@@ -446,15 +489,211 @@ fn validate_reference_frame_ids(
     Ok(())
 }
 
-fn read_global_motion_flags(reader: &mut BitReader<'_>) -> Result<(), DecoderError> {
+fn read_global_motion_params(
+    reader: &mut BitReader<'_>,
+    allow_high_precision_mv: bool,
+) -> Result<GlobalMotionParams, DecoderError> {
+    const WARPEDMODEL_PREC_BITS: i32 = 16;
+    const GM_ALPHA_MAX: i32 = 1 << 12;
+    const GM_ALPHA_PREC_BITS: i32 = 15;
+    const GM_ALPHA_PREC_DIFF: i32 = WARPEDMODEL_PREC_BITS - GM_ALPHA_PREC_BITS;
+    const GM_ALPHA_DECODE_FACTOR: i32 = 1 << GM_ALPHA_PREC_DIFF;
+    const GM_ABS_TRANS_ONLY_BITS: usize = 9;
+    const GM_TRANS_ONLY_DECODE_FACTOR: i32 = 1 << 13;
+    const GM_TRANS_ONLY_PREC_DIFF: i32 = 13;
+    const GM_ABS_TRANS_BITS: usize = 12;
+    const GM_TRANS_DECODE_FACTOR: i32 = 1 << 10;
+    const GM_TRANS_PREC_DIFF: i32 = 10;
+    const SUBEXP_K: usize = 3;
+
+    let mut result = GlobalMotionParams::default();
     for reference in 0..7 {
-        if reader.read_bool("is_global")? {
-            return Err(DecoderError::Unsupported(format!(
-                "AV1 global motion reference {reference} is not supported"
-            )));
+        // The first bit is the identity/non-identity discriminator.  AOM's
+        // decoder names this `type` rather than `is_global`.
+        if !reader.read_bool("global_motion_type")? {
+            continue;
         }
+        let motion_type = if reader.read_bool("global_motion_is_rot_zoom")? {
+            GlobalMotionType::RotZoom
+        } else if reader.read_bool("global_motion_is_translation")? {
+            GlobalMotionType::Translation
+        } else {
+            GlobalMotionType::Affine
+        };
+        let mut matrix = result.matrices[reference];
+        match motion_type {
+            GlobalMotionType::Identity => {}
+            GlobalMotionType::RotZoom | GlobalMotionType::Affine => {
+                let alpha_n = (GM_ALPHA_MAX + 1) as usize;
+                let alpha_ref = (matrix[2] >> GM_ALPHA_PREC_DIFF) - (1 << GM_ALPHA_PREC_BITS);
+                matrix[2] = read_signed_primitive_refsubexpfin(
+                    reader,
+                    alpha_n,
+                    SUBEXP_K,
+                    alpha_ref,
+                    "global_motion_alpha",
+                )? * GM_ALPHA_DECODE_FACTOR
+                    + (1 << WARPEDMODEL_PREC_BITS);
+                let alpha_ref = matrix[3] >> GM_ALPHA_PREC_DIFF;
+                matrix[3] = read_signed_primitive_refsubexpfin(
+                    reader,
+                    alpha_n,
+                    SUBEXP_K,
+                    alpha_ref,
+                    "global_motion_alpha",
+                )? * GM_ALPHA_DECODE_FACTOR;
+            }
+            GlobalMotionType::Translation => {}
+        }
+        if motion_type == GlobalMotionType::Affine {
+            let alpha_n = (GM_ALPHA_MAX + 1) as usize;
+            let alpha_ref = matrix[4] >> GM_ALPHA_PREC_DIFF;
+            matrix[4] = read_signed_primitive_refsubexpfin(
+                reader,
+                alpha_n,
+                SUBEXP_K,
+                alpha_ref,
+                "global_motion_alpha",
+            )? * GM_ALPHA_DECODE_FACTOR;
+            let alpha_ref = (matrix[5] >> GM_ALPHA_PREC_DIFF) - (1 << GM_ALPHA_PREC_BITS);
+            matrix[5] = read_signed_primitive_refsubexpfin(
+                reader,
+                alpha_n,
+                SUBEXP_K,
+                alpha_ref,
+                "global_motion_alpha",
+            )? * GM_ALPHA_DECODE_FACTOR
+                + (1 << WARPEDMODEL_PREC_BITS);
+        } else if motion_type == GlobalMotionType::RotZoom {
+            matrix[4] = -matrix[3];
+            matrix[5] = matrix[2];
+        }
+        if matches!(
+            motion_type,
+            GlobalMotionType::Translation | GlobalMotionType::RotZoom | GlobalMotionType::Affine
+        ) {
+            let (trans_bits, trans_factor, trans_prec_diff) =
+                if motion_type == GlobalMotionType::Translation {
+                    (
+                        GM_ABS_TRANS_ONLY_BITS - usize::from(!allow_high_precision_mv),
+                        GM_TRANS_ONLY_DECODE_FACTOR * (1 << usize::from(!allow_high_precision_mv)),
+                        GM_TRANS_ONLY_PREC_DIFF + i32::from(!allow_high_precision_mv),
+                    )
+                } else {
+                    (
+                        GM_ABS_TRANS_BITS,
+                        GM_TRANS_DECODE_FACTOR,
+                        GM_TRANS_PREC_DIFF,
+                    )
+                };
+            let trans_n = (1usize << trans_bits) + 1;
+            for index in 0..2 {
+                let trans_ref = matrix[index] >> trans_prec_diff;
+                matrix[index] = read_signed_primitive_refsubexpfin(
+                    reader,
+                    trans_n,
+                    SUBEXP_K,
+                    trans_ref,
+                    "global_motion_translation",
+                )? * trans_factor;
+            }
+        }
+        result.types[reference] = motion_type;
+        result.matrices[reference] = matrix;
     }
-    Ok(())
+    Ok(result)
+}
+
+fn read_signed_primitive_refsubexpfin(
+    reader: &mut BitReader<'_>,
+    n: usize,
+    k: usize,
+    reference: i32,
+    name: &str,
+) -> Result<i32, DecoderError> {
+    let reference = reference
+        .checked_add(
+            i32::try_from(n - 1)
+                .map_err(|_| DecoderError::InvalidParam(format!("{name} range is too large")))?,
+        )
+        .ok_or_else(|| DecoderError::Bitstream(format!("{name} reference overflows")))?;
+    let scaled_n = n
+        .checked_mul(2)
+        .and_then(|value| value.checked_sub(1))
+        .ok_or_else(|| DecoderError::InvalidParam(format!("{name} range is too large")))?;
+    let value = read_primitive_refsubexpfin(reader, scaled_n, k, reference as usize, name)?;
+    Ok(i32::try_from(value)
+        .map_err(|_| DecoderError::Bitstream(format!("{name} value overflows")))?
+        - i32::try_from(n - 1)
+            .map_err(|_| DecoderError::InvalidParam(format!("{name} range is too large")))?)
+}
+
+fn read_primitive_refsubexpfin(
+    reader: &mut BitReader<'_>,
+    n: usize,
+    k: usize,
+    reference: usize,
+    name: &str,
+) -> Result<usize, DecoderError> {
+    let value = read_primitive_subexpfin(reader, n, k, name)?;
+    Ok(inv_recenter_finite_nonneg(n, reference.min(n - 1), value))
+}
+
+fn read_primitive_subexpfin(
+    reader: &mut BitReader<'_>,
+    n: usize,
+    k: usize,
+    name: &str,
+) -> Result<usize, DecoderError> {
+    let mut index = 0usize;
+    let mut mk = 0usize;
+    loop {
+        let bits = if index == 0 { k } else { k + index - 1 };
+        let step = 1usize << bits;
+        if n <= mk + 3 * step {
+            return read_primitive_quniform(reader, n - mk, name).map(|value| value + mk);
+        }
+        if !reader.read_bool(name)? {
+            return Ok(reader.read_bits(bits, name)? as usize + mk);
+        }
+        index += 1;
+        mk += step;
+    }
+}
+
+fn read_primitive_quniform(
+    reader: &mut BitReader<'_>,
+    n: usize,
+    name: &str,
+) -> Result<usize, DecoderError> {
+    if n <= 1 {
+        return Ok(0);
+    }
+    let bits = usize::BITS as usize - n.leading_zeros() as usize;
+    let threshold = (1usize << bits) - n;
+    let value = reader.read_bits(bits - 1, name)? as usize;
+    if value < threshold {
+        Ok(value)
+    } else {
+        Ok((value << 1) - threshold + reader.read_bits(1, name)? as usize)
+    }
+}
+
+fn inv_recenter_finite_nonneg(n: usize, reference: usize, value: usize) -> usize {
+    let inv_recenter = |r: usize, v: usize| {
+        if v > (r << 1) {
+            v
+        } else if v & 1 == 0 {
+            (v >> 1) + r
+        } else {
+            r - ((v + 1) >> 1)
+        }
+    };
+    if (reference << 1) <= n {
+        inv_recenter(reference, value)
+    } else {
+        n - 1 - inv_recenter(n - 1 - reference, value)
+    }
 }
 
 /// Reads the small prefix that identifies an AV1 `show_existing_frame` OBU.
@@ -1463,11 +1702,13 @@ fn frame_type_is_intra(frame_type: FrameType) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        FilmGrainParams, FrameType, LoopFilterParams, ReferenceFrameState, SegmentationParams,
-        parse_film_grain_params, parse_inter_reference_indices, parse_segmentation_params,
-        parse_show_existing_frame_index, read_current_frame_id, read_inv_signed_literal,
-        read_signed_delta, validate_reference_frame_ids,
+        FilmGrainParams, FrameType, GlobalMotionParams, LoopFilterParams, ReferenceFrameState,
+        SegmentationParams, parse_film_grain_params, parse_inter_reference_indices,
+        parse_segmentation_params, parse_show_existing_frame_index, read_current_frame_id,
+        read_global_motion_params, read_inv_signed_literal, read_signed_delta,
+        validate_reference_frame_ids,
     };
+    use crate::DecoderError;
     use crate::av1::bitstream::BitReader;
 
     fn bits_to_bytes(bits: &[bool]) -> Vec<u8> {
@@ -1838,5 +2079,20 @@ mod tests {
             parse_show_existing_frame_index(&[0b0100_0000]).unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn global_motion_identity_vector_consumes_all_reference_types() {
+        let mut reader = BitReader::new(&[0; 1]);
+        let params = read_global_motion_params(&mut reader, false).unwrap();
+        assert_eq!(params, GlobalMotionParams::default());
+        assert_eq!(reader.bit_position(), 7);
+    }
+
+    #[test]
+    fn global_motion_parser_rejects_truncated_non_identity_model() {
+        let mut reader = BitReader::new(&[0b1000_0000]);
+        let error = read_global_motion_params(&mut reader, false).unwrap_err();
+        assert!(matches!(error, DecoderError::NotEnoughData(_)));
     }
 }
