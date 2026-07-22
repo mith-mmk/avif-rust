@@ -748,6 +748,19 @@ item combination while keeping the existing external alpha fixtures intact.
 The generated conformance set now includes a 128x128 libaom AV1 IntrABC
 sample with CDEF and restoration disabled. Native Y/U/V planes match FFmpeg's
 `yuv444p` output exactly, and the public RGBA path completes successfully.
+
+On 2026-07-22, fractional inter prediction now precomputes the fixed-point
+source coordinates once per block and reuses the bilinear sampler across rows
+and columns. This removes per-pixel division and closure construction from the
+hot path while preserving the existing scalar output. The path is bounded by
+the AV1 128-pixel maximum block dimension and fails closed on coordinate
+overflow. Reconstruction tests, the public inter-frame oracle, and the full
+unsupported-sample gate all pass; an 11-iteration release recheck measured
+`2.83/3.19 ms` for `star-8bpc.avifs` and `186.09/192.54 ms` for
+`WML2Viewer.avif` (native/RGBA); a second same-host run measured
+`2.89/3.32 ms` and `178.66/175.31 ms`, respectively. These are same-host
+reference measurements, not a cross-machine speedup claim.
+
 This proves the currently supported low-complexity IntrABC syntax path while
 the high-complexity reference/transform cases remain an explicit follow-up.
 

@@ -839,67 +839,94 @@ fn predict_inter_block_into(
     // low-complexity AVIF animation streams while keeping the integer path
     // allocation-free.  The AV1 regular 8-tap kernel can be added without
     // changing the fixed-point coordinate contract used here.
+    const MAX_INTER_BLOCK_DIMENSION: usize = 128;
+    if width > MAX_INTER_BLOCK_DIMENSION || height > MAX_INTER_BLOCK_DIMENSION {
+        return Err(DecoderError::Bitstream(
+            "AV1 inter prediction block exceeds the supported dimension".to_string(),
+        ));
+    }
     let secondary_mv_x = i64::from(secondary_mv.1) / (1_i64 << subsampling_x);
     let secondary_mv_y = i64::from(secondary_mv.0) / (1_i64 << subsampling_y);
+    let base_x = (i64::try_from(x).unwrap_or(i64::MAX) << 3)
+        .checked_add(mv_x)
+        .ok_or_else(|| DecoderError::Bitstream("AV1 inter source x overflows".to_string()))?;
+    let base_y = (i64::try_from(y).unwrap_or(i64::MAX) << 3)
+        .checked_add(mv_y)
+        .ok_or_else(|| DecoderError::Bitstream("AV1 inter source y overflows".to_string()))?;
+    let mut x0 = [0i64; MAX_INTER_BLOCK_DIMENSION];
+    let mut fx = [0i64; MAX_INTER_BLOCK_DIMENSION];
+    for col in 0..width {
+        let fixed = base_x + col as i64 * 8;
+        let source = floor_div_eight(fixed);
+        x0[col] = source;
+        fx[col] = fixed - source * 8;
+    }
+    let mut y0 = [0i64; MAX_INTER_BLOCK_DIMENSION];
+    let mut fy = [0i64; MAX_INTER_BLOCK_DIMENSION];
     for row in 0..height {
-        let y_fixed = (i64::try_from(y).unwrap_or(i64::MAX) << 3)
-            .checked_add(mv_y)
-            .ok_or_else(|| DecoderError::Bitstream("AV1 inter source y overflows".to_string()))?
-            + (row as i64 * 8);
-        let secondary_y_fixed = (i64::try_from(y).unwrap_or(i64::MAX) << 3)
+        let fixed = base_y + row as i64 * 8;
+        let source = floor_div_eight(fixed);
+        y0[row] = source;
+        fy[row] = fixed - source * 8;
+    }
+    let sample = |plane: &PlaneBuffer, sx: i64, sy: i64| -> u16 {
+        let sx = sx.clamp(0, plane.layout.width.saturating_sub(1) as i64) as usize;
+        let sy = sy.clamp(0, plane.layout.height.saturating_sub(1) as i64) as usize;
+        plane.samples[sy * plane.layout.width + sx]
+    };
+    let predict = |plane: &PlaneBuffer, sx: i64, sy: i64, fx: i64, fy: i64| {
+        let top = i64::from(sample(plane, sx, sy)) * (8 - fx)
+            + i64::from(sample(plane, sx.saturating_add(1), sy)) * fx;
+        let bottom = i64::from(sample(plane, sx, sy.saturating_add(1))) * (8 - fx)
+            + i64::from(sample(plane, sx.saturating_add(1), sy.saturating_add(1))) * fx;
+        ((top * (8 - fy) + bottom * fy + 32) >> 6).clamp(0, i64::from(u16::MAX)) as u16
+    };
+    if let Some(secondary) = secondary_reference {
+        let secondary_base_x = (i64::try_from(x).unwrap_or(i64::MAX) << 3)
+            .checked_add(secondary_mv_x)
+            .ok_or_else(|| {
+                DecoderError::Bitstream("AV1 secondary inter source x overflows".to_string())
+            })?;
+        let secondary_base_y = (i64::try_from(y).unwrap_or(i64::MAX) << 3)
             .checked_add(secondary_mv_y)
             .ok_or_else(|| {
                 DecoderError::Bitstream("AV1 secondary inter source y overflows".to_string())
-            })?
-            + (row as i64 * 8);
-        let y0 = floor_div_eight(y_fixed);
-        let fy = y_fixed - y0 * 8;
-        let secondary_y0 = floor_div_eight(secondary_y_fixed);
-        let secondary_fy = secondary_y_fixed - secondary_y0 * 8;
+            })?;
+        let mut secondary_x0 = [0i64; MAX_INTER_BLOCK_DIMENSION];
+        let mut secondary_fx = [0i64; MAX_INTER_BLOCK_DIMENSION];
         for col in 0..width {
-            let x_fixed = (i64::try_from(x).unwrap_or(i64::MAX) << 3)
-                .checked_add(mv_x)
-                .ok_or_else(|| {
-                    DecoderError::Bitstream("AV1 inter source x overflows".to_string())
-                })?
-                + (col as i64 * 8);
-            let secondary_x_fixed = (i64::try_from(x).unwrap_or(i64::MAX) << 3)
-                .checked_add(secondary_mv_x)
-                .ok_or_else(|| {
-                    DecoderError::Bitstream("AV1 secondary inter source x overflows".to_string())
-                })?
-                + (col as i64 * 8);
-            let x0 = floor_div_eight(x_fixed);
-            let fx = x_fixed - x0 * 8;
-            let secondary_x0 = floor_div_eight(secondary_x_fixed);
-            let secondary_fx = secondary_x_fixed - secondary_x0 * 8;
-            let sample = |plane: &PlaneBuffer, sx: i64, sy: i64| -> u16 {
-                let sx = sx.clamp(0, plane.layout.width.saturating_sub(1) as i64) as usize;
-                let sy = sy.clamp(0, plane.layout.height.saturating_sub(1) as i64) as usize;
-                plane.samples[sy * plane.layout.width + sx]
-            };
-            let predict = |plane: &PlaneBuffer, sx: i64, sy: i64, fx: i64, fy: i64| {
-                let top = i64::from(sample(plane, sx, sy)) * (8 - fx)
-                    + i64::from(sample(plane, sx.saturating_add(1), sy)) * fx;
-                let bottom = i64::from(sample(plane, sx, sy.saturating_add(1))) * (8 - fx)
-                    + i64::from(sample(plane, sx.saturating_add(1), sy.saturating_add(1))) * fx;
-                ((top * (8 - fy) + bottom * fy + 32) >> 6).clamp(0, i64::from(u16::MAX)) as u16
-            };
-            let first = predict(reference, x0, y0, fx, fy);
-            output[row * width + col] = secondary_reference
-                .map(|secondary| {
-                    average_prediction(
-                        first,
-                        predict(
-                            secondary,
-                            secondary_x0,
-                            secondary_y0,
-                            secondary_fx,
-                            secondary_fy,
-                        ),
-                    )
-                })
-                .unwrap_or(first);
+            let fixed = secondary_base_x + col as i64 * 8;
+            let source = floor_div_eight(fixed);
+            secondary_x0[col] = source;
+            secondary_fx[col] = fixed - source * 8;
+        }
+        let mut secondary_y0 = [0i64; MAX_INTER_BLOCK_DIMENSION];
+        let mut secondary_fy = [0i64; MAX_INTER_BLOCK_DIMENSION];
+        for row in 0..height {
+            let fixed = secondary_base_y + row as i64 * 8;
+            let source = floor_div_eight(fixed);
+            secondary_y0[row] = source;
+            secondary_fy[row] = fixed - source * 8;
+        }
+        for row in 0..height {
+            for col in 0..width {
+                output[row * width + col] = average_prediction(
+                    predict(reference, x0[col], y0[row], fx[col], fy[row]),
+                    predict(
+                        secondary,
+                        secondary_x0[col],
+                        secondary_y0[row],
+                        secondary_fx[col],
+                        secondary_fy[row],
+                    ),
+                );
+            }
+        }
+    } else {
+        for row in 0..height {
+            for col in 0..width {
+                output[row * width + col] = predict(reference, x0[col], y0[row], fx[col], fy[row]);
+            }
         }
     }
     Ok(())
