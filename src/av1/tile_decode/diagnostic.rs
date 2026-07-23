@@ -37,6 +37,8 @@ pub struct BlockModeProbe {
     pub motion_vector: Option<(i32, i32)>,
     pub motion_vector_secondary: Option<(i32, i32)>,
     pub motion_mode: MotionMode,
+    pub interintra_mode: Option<InterIntraMode>,
+    pub interintra_wedge_index: Option<u8>,
     pub interpolation_filter: Option<(InterpolationFilter, InterpolationFilter)>,
     /// Weight applied to the primary prediction for distance-weighted
     /// compound blocks; `None` selects equal averaging.
@@ -75,6 +77,14 @@ pub enum MotionMode {
     Simple,
     Obmc,
     LocalWarp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterIntraMode {
+    Dc,
+    Vertical,
+    Horizontal,
+    Smooth,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

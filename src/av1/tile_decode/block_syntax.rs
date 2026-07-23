@@ -1,4 +1,4 @@
-use super::{BlockModeProbe, CflParams, CompoundMask, MotionMode, TileDecoder};
+use super::{BlockModeProbe, CflParams, CompoundMask, InterIntraMode, MotionMode, TileDecoder};
 use crate::DecoderError;
 use crate::av1::decode::TileDecodePlan;
 use crate::av1::frame::{FrameHeader, FrameType, InterpolationFilter, TxMode};
@@ -226,6 +226,8 @@ impl<'a> TileDecoder<'a> {
             motion_vector: None,
             motion_vector_secondary: None,
             motion_mode: MotionMode::Simple,
+            interintra_mode: None,
+            interintra_wedge_index: None,
             interpolation_filter: None,
             compound_weight: None,
             compound_mask: None,
@@ -424,7 +426,50 @@ impl<'a> TileDecoder<'a> {
             };
             (motion_vector, None)
         };
-        let motion_mode = if frame.is_motion_mode_switchable
+        let (interintra_mode, interintra_wedge_index) = if sequence.enable_interintra_compound
+            && !is_compound
+            && !skip
+            && block_size.width() >= 8
+            && block_size.height() >= 8
+        {
+            let interintra = self
+                .reader
+                .read_symbol(self.cdf.interintra_cdf_mut(block_size.size_group()))?;
+            if interintra == 0 {
+                (None, None)
+            } else {
+                let mode = match self
+                    .reader
+                    .read_symbol(self.cdf.interintra_mode_cdf_mut(block_size.size_group()))?
+                {
+                    0 => InterIntraMode::Dc,
+                    1 => InterIntraMode::Vertical,
+                    2 => InterIntraMode::Horizontal,
+                    3 => InterIntraMode::Smooth,
+                    symbol => {
+                        return Err(DecoderError::Bitstream(format!(
+                            "AV1 inter-intra mode symbol {symbol} is invalid"
+                        )));
+                    }
+                };
+                let use_wedge = self
+                    .reader
+                    .read_symbol(self.cdf.wedge_interintra_cdf_mut(block_size as usize))?
+                    != 0;
+                let wedge_index = use_wedge.then(|| {
+                    self.reader
+                        .read_symbol(self.cdf.wedge_idx_cdf_mut(block_size as usize))
+                        .map(|symbol| symbol as u8)
+                });
+                let wedge_index = wedge_index.transpose()?;
+                (Some(mode), wedge_index)
+            }
+        } else {
+            (None, None)
+        };
+        let motion_mode = if interintra_mode.is_some() {
+            MotionMode::Simple
+        } else if frame.is_motion_mode_switchable
             && block_size.width() >= 8
             && block_size.height() >= 8
         {
@@ -545,6 +590,8 @@ impl<'a> TileDecoder<'a> {
             motion_vector: Some(motion_vector),
             motion_vector_secondary,
             motion_mode,
+            interintra_mode,
+            interintra_wedge_index,
             interpolation_filter,
             compound_weight,
             compound_mask,

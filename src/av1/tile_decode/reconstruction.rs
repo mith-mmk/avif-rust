@@ -1,6 +1,6 @@
 use super::{
-    BlockModeProbe, CompoundMask, DecodedTransform, MotionMode, PalettePlaneInfo, TileDecoder,
-    coefficient_entropy_context,
+    BlockModeProbe, CompoundMask, DecodedTransform, InterIntraMode, MotionMode, PalettePlaneInfo,
+    TileDecoder, coefficient_entropy_context,
 };
 use crate::DecoderError;
 use crate::av1::decode::{FrameBuffers, FrameDecodePlan, PlaneBuffer};
@@ -642,6 +642,54 @@ fn predict_plane_block_into(
             // The mode is retained in diagnostics so this boundary remains
             // observable instead of silently being mistaken for SIMPLE.
             MotionMode::LocalWarp => {}
+        }
+        if let Some(interintra_mode) = block_mode.interintra_mode {
+            let mut intra_prediction = vec![0_u16; output.len()];
+            let prediction_mode = match interintra_mode {
+                InterIntraMode::Dc => PredictionMode::Dc,
+                InterIntraMode::Vertical => PredictionMode::Vertical,
+                InterIntraMode::Horizontal => PredictionMode::Horizontal,
+                InterIntraMode::Smooth => PredictionMode::Smooth,
+            };
+            if prediction_mode == PredictionMode::Dc {
+                predict_dc_block_into(plane, x, y, width, height, bit_depth, &mut intra_prediction);
+            } else {
+                predict_block_into(
+                    plane,
+                    prediction_mode,
+                    x,
+                    y,
+                    width,
+                    height,
+                    None,
+                    None,
+                    bit_depth,
+                    enable_intra_edge_filter,
+                    false,
+                    top_right_available,
+                    bottom_left_available,
+                    &mut intra_prediction,
+                )?;
+            }
+            let wedge_index = block_mode.interintra_wedge_index;
+            for (sample_index, sample) in output.iter_mut().enumerate() {
+                let mask = wedge_index
+                    .and_then(|wedge_idx| {
+                        wedge_mask_value(
+                            width,
+                            height,
+                            wedge_idx,
+                            false,
+                            sample_index % width,
+                            sample_index / width,
+                        )
+                    })
+                    .unwrap_or(32);
+                *sample = ((u32::from(*sample) * u32::from(mask)
+                    + u32::from(intra_prediction[sample_index]) * u32::from(64 - mask)
+                    + 32)
+                    >> 6) as u16;
+            }
         }
     } else if let Some(mv) = intra_block_copy_mv {
         predict_intra_block_copy_into(

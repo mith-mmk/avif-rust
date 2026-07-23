@@ -52,6 +52,7 @@ fn sample_sequence_header() -> SequenceHeader {
         enable_order_hint: true,
         enable_dual_filter: false,
         enable_masked_compound: false,
+        enable_interintra_compound: false,
         enable_dist_wtd_comp: false,
         enable_warped_motion: false,
         order_hint_bits: 7,

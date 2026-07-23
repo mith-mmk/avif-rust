@@ -1613,6 +1613,16 @@ intermediate buffer while preserving the AV1 bilinear rounding rule. A focused
 measured `83.40/83.60 ms` for `WML2Viewer.avif` and `1.37/1.72 ms` for
 `star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
 
+On 2026-07-23, the sequence inter-intra flag and normative inter-intra CDFs
+are retained. Inter-intra mode and optional wedge syntax are consumed and
+blended with DC/vertical/horizontal/smooth intra prediction; the generated
+libaom inter-intra sequence is now an FFmpeg RGB oracle test. The 400-test lib
+suite and 77-test FFmpeg conformance suite remain green. The five-iteration
+release benchmark measured `85.25/87.19 ms` for `WML2Viewer.avif` and
+`1.35/1.76 ms` for `star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
+LOCALWARP still uses the observable translation fallback pending local warp
+model reconstruction.
+
 On 2026-07-23, switchable motion-mode symbols are now retained in block
 diagnostics instead of being discarded. OBMC blocks apply the decoded
 prediction through the reconstructed top/left overlap edges, with a focused

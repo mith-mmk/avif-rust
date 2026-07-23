@@ -186,6 +186,42 @@ pub const DEFAULT_COMPOUND_TYPE_CDF: [[u16; 3]; 22] = [
     [16384, 32768, 0],
     [16384, 32768, 0],
 ];
+pub const DEFAULT_INTERINTRA_CDF: [[u16; 3]; 4] = [
+    [16384, 32768, 0],
+    [26887, 32768, 0],
+    [27597, 32768, 0],
+    [30237, 32768, 0],
+];
+pub const DEFAULT_INTERINTRA_MODE_CDF: [[u16; 5]; 4] = [
+    [8192, 16384, 24576, 32768, 0],
+    [1875, 11082, 27332, 32768, 0],
+    [2473, 9996, 26388, 32768, 0],
+    [4238, 11537, 25926, 32768, 0],
+];
+pub const DEFAULT_WEDGE_INTERINTRA_CDF: [[u16; 3]; 22] = [
+    [16384, 32768, 0],
+    [16384, 32768, 0],
+    [16384, 32768, 0],
+    [20036, 32768, 0],
+    [24957, 32768, 0],
+    [26704, 32768, 0],
+    [27530, 32768, 0],
+    [29564, 32768, 0],
+    [29444, 32768, 0],
+    [26872, 32768, 0],
+    [16384, 32768, 0],
+    [16384, 32768, 0],
+    [16384, 32768, 0],
+    [16384, 32768, 0],
+    [16384, 32768, 0],
+    [16384, 32768, 0],
+    [16384, 32768, 0],
+    [16384, 32768, 0],
+    [16384, 32768, 0],
+    [16384, 32768, 0],
+    [16384, 32768, 0],
+    [16384, 32768, 0],
+];
 pub const DEFAULT_WEDGE_IDX_CDF: [[u16; 17]; 22] = [
     [
         2048, 4096, 6144, 8192, 10240, 12288, 14336, 16384, 18432, 20480, 22528, 24576, 26624,
@@ -2116,6 +2152,9 @@ pub struct CdfContext {
     pub comp_group_idx: [[u16; 3]; 7],
     pub compound_idx: [[u16; 3]; 6],
     pub compound_type: [[u16; 3]; 22],
+    pub interintra: [[u16; 3]; 4],
+    pub interintra_mode: [[u16; 5]; 4],
+    pub wedge_interintra: [[u16; 3]; 22],
     pub wedge_idx: [[u16; 17]; 22],
     pub motion_mode: [[u16; 4]; 22],
     pub motion: MotionVectorCdf,
@@ -2199,6 +2238,9 @@ impl CdfContext {
             comp_group_idx: DEFAULT_COMP_GROUP_IDX_CDF,
             compound_idx: DEFAULT_COMPOUND_IDX_CDF,
             compound_type: DEFAULT_COMPOUND_TYPE_CDF,
+            interintra: DEFAULT_INTERINTRA_CDF,
+            interintra_mode: DEFAULT_INTERINTRA_MODE_CDF,
+            wedge_interintra: DEFAULT_WEDGE_INTERINTRA_CDF,
             wedge_idx: DEFAULT_WEDGE_IDX_CDF,
             motion_mode: DEFAULT_MOTION_MODE_CDF,
             motion: MotionVectorCdf::DEFAULT,
@@ -2339,6 +2381,18 @@ impl CdfContext {
 
     pub fn compound_type_cdf_mut(&mut self, block_size: usize) -> &mut [u16] {
         &mut self.compound_type[block_size]
+    }
+
+    pub fn interintra_cdf_mut(&mut self, context: usize) -> &mut [u16] {
+        &mut self.interintra[context]
+    }
+
+    pub fn interintra_mode_cdf_mut(&mut self, context: usize) -> &mut [u16] {
+        &mut self.interintra_mode[context]
+    }
+
+    pub fn wedge_interintra_cdf_mut(&mut self, block_size: usize) -> &mut [u16] {
+        &mut self.wedge_interintra[block_size]
     }
 
     pub fn wedge_idx_cdf_mut(&mut self, block_size: usize) -> &mut [u16] {
@@ -2581,6 +2635,9 @@ mod tests {
         assert_eq!(context.skip[0][1], 32768);
         assert_eq!(context.drl[0][1], 32768);
         assert_eq!(context.compound_type[0][1], 32768);
+        assert_eq!(context.interintra[0][1], 32768);
+        assert_eq!(context.interintra_mode[0][3], 32768);
+        assert_eq!(context.wedge_interintra[0][1], 32768);
         assert_eq!(context.wedge_idx[0][15], 32768);
         assert_eq!(context.delta_q[3], 32768);
         assert_eq!(context.delta_lf[3], 32768);

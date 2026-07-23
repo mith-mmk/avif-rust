@@ -4908,6 +4908,7 @@ mod av1_config_tests {
             enable_order_hint: false,
             enable_dual_filter: false,
             enable_masked_compound: false,
+            enable_interintra_compound: false,
             enable_dist_wtd_comp: false,
             enable_warped_motion: false,
             order_hint_bits: 0,

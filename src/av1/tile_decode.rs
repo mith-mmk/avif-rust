@@ -44,7 +44,7 @@ use coefficient_context::{
 };
 pub use diagnostic::{
     BlockModeProbe, CompoundMask, DecodedBlockPrefix, DecodedLumaBlock, DecodedTransform,
-    MotionMode, PartitionProbe, ResidualProbe, TileEntropyState,
+    InterIntraMode, MotionMode, PartitionProbe, ResidualProbe, TileEntropyState,
 };
 use diagnostic::{CoeffBaseProbe, CoeffBaseRead, CoeffBrProbe, CoeffSignRead};
 #[cfg(test)]

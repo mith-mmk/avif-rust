@@ -67,6 +67,7 @@ pub struct SequenceHeader {
     pub enable_intra_edge_filter: bool,
     pub enable_dual_filter: bool,
     pub enable_masked_compound: bool,
+    pub enable_interintra_compound: bool,
     pub enable_dist_wtd_comp: bool,
     pub enable_order_hint: bool,
     pub enable_warped_motion: bool,
@@ -155,6 +156,7 @@ pub fn parse_sequence_header(data: &[u8]) -> Result<SequenceHeader, DecoderError
         enable_intra_edge_filter,
         enable_dual_filter: inter_tools.enable_dual_filter,
         enable_masked_compound: inter_tools.enable_masked_compound,
+        enable_interintra_compound: inter_tools.enable_interintra_compound,
         enable_dist_wtd_comp: inter_tools.enable_dist_wtd_comp,
         enable_order_hint: inter_tools.enable_order_hint,
         enable_warped_motion: inter_tools.enable_warped_motion,
@@ -230,6 +232,7 @@ fn parse_operating_points(reader: &mut BitReader<'_>) -> Result<u8, DecoderError
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct InterTools {
+    enable_interintra_compound: bool,
     enable_order_hint: bool,
     enable_warped_motion: bool,
     enable_dual_filter: bool,
@@ -252,7 +255,7 @@ impl InterTools {
 }
 
 fn parse_inter_tools(reader: &mut BitReader<'_>) -> Result<InterTools, DecoderError> {
-    let _enable_interintra_compound = reader.read_bool("enable_interintra_compound")?;
+    let enable_interintra_compound = reader.read_bool("enable_interintra_compound")?;
     let enable_masked_compound = reader.read_bool("enable_masked_compound")?;
     let enable_warped_motion = reader.read_bool("enable_warped_motion")?;
     let enable_dual_filter = reader.read_bool("enable_dual_filter")?;
@@ -285,6 +288,7 @@ fn parse_inter_tools(reader: &mut BitReader<'_>) -> Result<InterTools, DecoderEr
         0
     };
     Ok(InterTools {
+        enable_interintra_compound,
         enable_order_hint,
         enable_warped_motion,
         enable_dual_filter,
