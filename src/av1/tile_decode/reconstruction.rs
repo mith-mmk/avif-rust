@@ -11,6 +11,7 @@ use crate::av1::reconstruct::{read_intra_edges_into, write_plane_block};
 use crate::av1::sequence::SequenceHeader;
 use crate::av1::syntax::{PredictionMode, TxSize, TxType};
 use crate::av1::tile_decode::palette::PALETTE_MAX_SIZE;
+use crate::av1::tile_decode::warped_filter::AV1_WARPED_FILTERS;
 use crate::av1::transform::{
     iter_transform_blocks_with_tx_size, reconstruct_lossless_transform_block_parts_into,
     reconstruct_transform_block_parts_into,
@@ -667,9 +668,7 @@ fn predict_plane_block_into(
                     mv,
                     subsampling_x,
                     subsampling_y,
-                    block_mode
-                        .interpolation_filter
-                        .unwrap_or((InterpolationFilter::Regular, InterpolationFilter::Regular)),
+                    bit_depth,
                     block_mode.local_warp_samples,
                 )?;
             }
@@ -880,7 +879,7 @@ fn apply_local_warp_prediction(
     base_mv: (i32, i32),
     subsampling_x: usize,
     subsampling_y: usize,
-    interpolation_filters: (InterpolationFilter, InterpolationFilter),
+    bit_depth: u8,
     samples: [Option<LocalWarpSample>; 8],
 ) -> Result<(), DecoderError> {
     let block_x_luma = i64::try_from(block_x)
@@ -912,47 +911,181 @@ fn apply_local_warp_prediction(
         // interpolation result for the identity local model.
         return Ok(());
     }
-    for row in 0..height {
-        let global_y = y.saturating_add(row);
-        let source_y_luma = i64::try_from(global_y)
-            .map_err(|_| DecoderError::Bitstream("AV1 local warp source y overflows".to_string()))?
-            .checked_shl(u32::try_from(subsampling_y).unwrap_or(0))
-            .ok_or_else(|| {
-                DecoderError::Bitstream("AV1 local warp source y overflows".to_string())
-            })?;
-        for col in 0..width {
-            let global_x = x.saturating_add(col);
-            let source_x_luma = i64::try_from(global_x)
-                .map_err(|_| {
-                    DecoderError::Bitstream("AV1 local warp source x overflows".to_string())
-                })?
-                .checked_shl(u32::try_from(subsampling_x).unwrap_or(0))
-                .ok_or_else(|| {
-                    DecoderError::Bitstream("AV1 local warp source x overflows".to_string())
-                })?;
-            let warped_x = params
-                .alpha
-                .checked_mul(source_x_luma)
-                .and_then(|value| value.checked_add(params.beta.checked_mul(source_y_luma)?))
-                .and_then(|value| value.checked_add(params.translation_x))
-                .ok_or_else(|| DecoderError::Bitstream("AV1 local warp x overflows".to_string()))?;
-            let warped_y = params
-                .gamma
-                .checked_mul(source_x_luma)
-                .and_then(|value| value.checked_add(params.delta.checked_mul(source_y_luma)?))
-                .and_then(|value| value.checked_add(params.translation_y))
-                .ok_or_else(|| DecoderError::Bitstream("AV1 local warp y overflows".to_string()))?;
-            let source_x_fixed = fixed_warp_to_plane_eighth(warped_x, subsampling_x);
-            let source_y_fixed = fixed_warp_to_plane_eighth(warped_y, subsampling_y);
-            let source_x = floor_div_eight(source_x_fixed);
-            let source_y = floor_div_eight(source_y_fixed);
-            let fx = source_x_fixed - source_x * 8;
-            let fy = source_y_fixed - source_y * 8;
-            output[row * width + col] =
-                predict_inter_sample(reference, source_x, source_y, fx, fy, interpolation_filters);
+    let Some((warp_alpha, warp_beta, warp_gamma, warp_delta)) = setup_warp_shear(&params) else {
+        return Ok(());
+    };
+    let (inter_round0, inter_round1) = if bit_depth == 12 { (5, 9) } else { (3, 11) };
+    for row in (0..height).step_by(8) {
+        for col in (0..width).step_by(8) {
+            predict_warped_block_into(
+                output,
+                reference,
+                x,
+                y,
+                width,
+                height,
+                row,
+                col,
+                subsampling_x,
+                subsampling_y,
+                &params,
+                warp_alpha,
+                warp_beta,
+                warp_gamma,
+                warp_delta,
+                inter_round0,
+                inter_round1,
+                bit_depth,
+            );
         }
     }
     Ok(())
+}
+
+fn setup_warp_shear(params: &LocalWarpParams) -> Option<(i64, i64, i64, i64)> {
+    const MODEL_BITS: i64 = 16;
+    const PARAM_REDUCE_BITS: u32 = 6;
+    const NONDIAG_CLAMP: i64 = 1 << 15;
+    let alpha = (params.alpha - (1 << MODEL_BITS)).clamp(-NONDIAG_CLAMP, NONDIAG_CLAMP - 1);
+    let beta = params.beta.clamp(-NONDIAG_CLAMP, NONDIAG_CLAMP - 1);
+    if params.alpha == 0 {
+        return None;
+    }
+    let gamma = round_div_signed(params.gamma << MODEL_BITS, params.alpha)?
+        .clamp(-NONDIAG_CLAMP, NONDIAG_CLAMP - 1);
+    let delta = (params.delta
+        - round_div_signed(params.beta.checked_mul(params.gamma)?, params.alpha)?
+        - (1 << MODEL_BITS))
+        .clamp(-NONDIAG_CLAMP, NONDIAG_CLAMP - 1);
+    let reduce =
+        |value: i64| round_div_power_of_two_signed(value, PARAM_REDUCE_BITS) << PARAM_REDUCE_BITS;
+    let (alpha, beta, gamma, delta) = (reduce(alpha), reduce(beta), reduce(gamma), reduce(delta));
+    if 4 * alpha.abs() + 7 * beta.abs() >= (1 << MODEL_BITS)
+        || 4 * gamma.abs() + 4 * delta.abs() >= (1 << MODEL_BITS)
+    {
+        return None;
+    }
+    Some((alpha, beta, gamma, delta))
+}
+
+#[inline]
+fn round_div_power_of_two_signed(value: i64, bits: u32) -> i64 {
+    if bits == 0 {
+        value
+    } else {
+        let half = 1_i64 << (bits - 1);
+        if value < 0 {
+            (value - half) >> bits
+        } else {
+            (value + half) >> bits
+        }
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "AV1 warped block filtering keeps geometry and rounding explicit"
+)]
+fn predict_warped_block_into(
+    output: &mut [u16],
+    reference: &PlaneBuffer,
+    origin_x: usize,
+    origin_y: usize,
+    output_width: usize,
+    output_height: usize,
+    row: usize,
+    col: usize,
+    subsampling_x: usize,
+    subsampling_y: usize,
+    params: &LocalWarpParams,
+    alpha: i64,
+    beta: i64,
+    gamma: i64,
+    delta: i64,
+    inter_round0: u32,
+    inter_round1: u32,
+    bit_depth: u8,
+) {
+    const MODEL_BITS: u32 = 16;
+    const DIFF_BITS: u32 = 10;
+    const PIXEL_SHIFT: i64 = 64;
+    let src_x = i64::try_from(origin_x + col + 4)
+        .ok()
+        .and_then(|value| value.checked_shl(u32::try_from(subsampling_x).ok()?))
+        .unwrap_or(i64::MAX);
+    let src_y = i64::try_from(origin_y + row + 4)
+        .ok()
+        .and_then(|value| value.checked_shl(u32::try_from(subsampling_y).ok()?))
+        .unwrap_or(i64::MAX);
+    let dst_x = params
+        .alpha
+        .saturating_mul(src_x)
+        .saturating_add(params.beta.saturating_mul(src_y))
+        .saturating_add(params.translation_x);
+    let dst_y = params
+        .gamma
+        .saturating_mul(src_x)
+        .saturating_add(params.delta.saturating_mul(src_y))
+        .saturating_add(params.translation_y);
+    let x4 = dst_x >> subsampling_x;
+    let y4 = dst_y >> subsampling_y;
+    let ix4 = floor_div_power_of_two(x4, MODEL_BITS);
+    let iy4 = floor_div_power_of_two(y4, MODEL_BITS);
+    let sx4 = ((x4 & ((1_i64 << MODEL_BITS) - 1)) - 4 * alpha - 4 * beta) & !63;
+    let sy4 = ((y4 & ((1_i64 << MODEL_BITS) - 1)) - 4 * gamma - 4 * delta) & !63;
+    let offset_bits_horiz = u32::from(bit_depth) + 7 - 1;
+    let offset_bits_vert = u32::from(bit_depth) + 14 - inter_round0;
+    let mut intermediate = [0_i64; 15 * 8];
+    for k in -7_i64..8 {
+        let iy = (iy4 + k).clamp(0, reference.layout.height.saturating_sub(1) as i64) as usize;
+        for l in -4_i64..4 {
+            let sx = sx4 + alpha * l + beta * (k + 4);
+            let offset =
+                (round_div_power_of_two_signed(sx, DIFF_BITS) + PIXEL_SHIFT).clamp(0, 192) as usize;
+            let coeffs = &AV1_WARPED_FILTERS[offset];
+            let mut sum = 1_i64 << offset_bits_horiz;
+            for (tap, coeff) in coeffs.iter().enumerate() {
+                let ix = (ix4 + l - 3 + tap as i64)
+                    .clamp(0, reference.layout.width.saturating_sub(1) as i64)
+                    as usize;
+                sum += i64::from(*coeff)
+                    * i64::from(reference.samples[iy * reference.layout.width + ix]);
+            }
+            intermediate[(k + 7) as usize * 8 + (l + 4) as usize] =
+                round_div_power_of_two_unsigned(sum, inter_round0);
+        }
+    }
+    let output_height = output_height.saturating_sub(row).min(8);
+    let output_width = output_width.saturating_sub(col).min(8);
+    for out_row in 0..output_height {
+        let k = out_row as i64 - 4;
+        for out_col in 0..output_width {
+            let l = out_col as i64 - 4;
+            let sy = sy4 + delta * (k + 4) + gamma * l;
+            let offset =
+                (round_div_power_of_two_signed(sy, DIFF_BITS) + PIXEL_SHIFT).clamp(0, 192) as usize;
+            let coeffs = &AV1_WARPED_FILTERS[offset];
+            let mut sum = 1_i64 << offset_bits_vert;
+            for (tap, coeff) in coeffs.iter().enumerate() {
+                sum += i64::from(*coeff)
+                    * intermediate[(k + tap as i64 + 4) as usize * 8 + (l + 4) as usize];
+            }
+            let pixel = (round_div_power_of_two_unsigned(sum, inter_round1)
+                - (1_i64 << (u32::from(bit_depth) - 1))
+                - (1_i64 << u32::from(bit_depth)))
+            .clamp(0, (1_i64 << bit_depth.min(16)) - 1) as u16;
+            output[(row + out_row) * output_width + col + out_col] = pixel;
+        }
+    }
+}
+
+#[inline]
+fn round_div_power_of_two_unsigned(value: i64, bits: u32) -> i64 {
+    if bits == 0 {
+        value
+    } else {
+        (value + (1_i64 << (bits - 1))) >> bits
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1093,6 +1226,7 @@ fn round_div_signed(numerator: i64, denominator: i64) -> Option<i64> {
     adjusted.checked_div(denominator)
 }
 
+#[cfg(test)]
 fn fixed_warp_to_plane_eighth(value: i64, subsampling: usize) -> i64 {
     let shift = 13_u32.saturating_add(u32::try_from(subsampling).unwrap_or(0));
     floor_div_power_of_two(value, shift)
@@ -2732,6 +2866,16 @@ mod tests {
         assert!(params.beta.abs() > 0);
         assert!(params.gamma.abs() > 0);
         assert_eq!(fixed_warp_to_plane_eighth(-1, 0), -1);
+    }
+
+    #[test]
+    fn warped_filter_bank_matches_av1_shape_and_normalization() {
+        assert_eq!(AV1_WARPED_FILTERS.len(), 193);
+        for row in AV1_WARPED_FILTERS {
+            assert_eq!(row.iter().map(|value| i32::from(*value)).sum::<i32>(), 128);
+        }
+        assert_eq!(AV1_WARPED_FILTERS[0], [0, 0, 127, 1, 0, 0, 0, 0]);
+        assert_eq!(AV1_WARPED_FILTERS[192], [0, 0, 0, 0, 2, 127, -1, 0]);
     }
 
     #[test]

@@ -1613,6 +1613,17 @@ intermediate buffer while preserving the AV1 bilinear rounding rule. A focused
 measured `83.40/83.60 ms` for `WML2Viewer.avif` and `1.37/1.72 ms` for
 `star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
 
+On 2026-07-23, LOCALWARP now has the AV1 warped-motion 193-phase filter bank
+and two-pass horizontal/vertical reconstruction path, including shear setup,
+signed model reduction, bit-depth rounding, and edge clamping. The generated
+libaom LOCALWARP oracle remains diagnostic while block-center alignment is
+refined: this path measured average RGB absolute error `40.74` and max `255`
+(the prior regular sub-pel path measured `40.75`). The filter-bank unit vector,
+403-test lib suite, and 80-test FFmpeg conformance suite are green. A
+ten-iteration release benchmark measured `82.88/84.37 ms` for
+`WML2Viewer.avif` (native/RGBA); the next precision/speed boundary is further
+reuse of block-local intermediate rows and broader LOCALWARP fixtures.
+
 On 2026-07-23, compound-mask geometry now uses the complete block-relative
 coordinates for both integer and fractional inter prediction, including
 inter-intra wedge blending; this avoids restarting the A64 mask at each

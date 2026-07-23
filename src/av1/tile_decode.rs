@@ -37,6 +37,7 @@ mod residual_state;
 mod restoration_syntax;
 mod syntax_helpers;
 mod tx_type_syntax;
+mod warped_filter;
 
 use coefficient::CoefficientScanCache;
 use coefficient_context::{
