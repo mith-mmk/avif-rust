@@ -562,7 +562,7 @@ fn generated_inter_sequence_sample_is_classified_for_decoder_gate_when_encoder_p
             metrics.average_rgb_abs, metrics.max_rgb_abs
         );
         assert!(
-            metrics.average_rgb_abs <= 64.0,
+            metrics.average_rgb_abs <= 48.0,
             "generated inter FFmpeg RGB error average={} max={}",
             metrics.average_rgb_abs,
             metrics.max_rgb_abs
@@ -3167,9 +3167,9 @@ fn public_sequence_inter_sample_decodes_when_present() {
         "sequence inter frame: average RGB absolute error={}, max={}",
         metrics.average_rgb_abs, metrics.max_rgb_abs
     );
-    // The current inter predictor intentionally keeps unsupported compound and
-    // warped modes fail-closed; this gate catches catastrophic corruption while
-    // allowing the known quality gap until those predictors are implemented.
+    // The external sequence contains compound/warped blocks, so this remains a
+    // broad quality gate while generated simple-inter coverage uses the tighter
+    // threshold above.
     assert!(metrics.average_rgb_abs <= 64.0);
 }
 

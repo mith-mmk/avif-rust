@@ -1624,6 +1624,19 @@ conformance suite remain green. A five-iteration release benchmark measured
 neighbor parity and a dedicated fixture that forces the new neighbor path remain
 follow-ups.
 
+On 2026-07-23, AVIS inter/switch reconstruction now runs the normal deblock,
+CDEF and restoration pipeline before refreshing reference slots and before
+returning the decoded inter frame. This keeps motion compensation on the
+post-filtered reference image instead of the raw reconstruction buffer. The
+generated 64x64 inter fixture tightened its RGB oracle from average error `64`
+to `48` and measured `42.561767578125`; the external five-sample sequence
+remains a broad `64` average-error gate because it contains compound and warped
+blocks. Entropy validation remains a separate follow-up for inter samples whose
+current CDF/trailing-bit state is not yet stable. A five-iteration release
+benchmark measured `81.1587/85.3834 ms` for `WML2Viewer.avif` and
+`1.3135/1.6506 ms` for `star-8bpc.avifs` (native/RGBA); this is a same-host
+no-regression checkpoint because the still-image hot path is unchanged.
+
 On 2026-07-23, inter-intra prediction stopped allocating a temporary `Vec`
 for every transform block and now uses a TileDecoder-owned 64x64 scratch
 buffer. The existing inter-intra oracle remains green, and a rotated

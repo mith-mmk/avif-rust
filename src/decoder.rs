@@ -702,6 +702,7 @@ fn decode_sequence_samples_from_info(
                         (!sample_info.has_sequence_header)
                             .then_some(cdf_states.as_deref())
                             .flatten(),
+                        true,
                     )?;
                 let decoded = finish_decoded_still_frame(&headers, decoded_state, true)?;
                 if !headers.frame.disable_frame_end_update_cdf {
@@ -740,11 +741,12 @@ fn decode_sequence_samples_from_info(
                     match decode_still_frame_with_filter_policy_and_state_and_references_and_cdf(
                         &headers,
                         Some(info),
-                        false,
+                        true,
                         references.buffers(),
                         (!sample_info.has_sequence_header)
                             .then_some(cdf_states.as_deref())
                             .flatten(),
+                        false,
                     ) {
                         Ok(decoded) => decoded,
                         Err(DecoderError::Bitstream(_) | DecoderError::Unsupported(_)) => {
@@ -3855,6 +3857,7 @@ fn decode_still_frame_with_filter_policy_and_state_and_references(
         validate_filters,
         reference_buffers,
         None,
+        true,
     )
     .map(|(decoded, _)| decoded)
 }
@@ -3865,6 +3868,7 @@ fn decode_still_frame_with_filter_policy_and_state_and_references_and_cdf(
     validate_filters: bool,
     reference_buffers: [Option<Arc<FrameBuffers>>; 8],
     initial_cdfs: Option<&[CdfContext]>,
+    validate_entropy: bool,
 ) -> Result<(DecodedStillFrame, Vec<CdfContext>), DecoderError> {
     if validate_filters {
         validate_public_decode_tools(headers)?;
@@ -3879,7 +3883,7 @@ fn decode_still_frame_with_filter_policy_and_state_and_references_and_cdf(
             &headers.decode_plan,
             &mut buffers,
             usize::MAX,
-            validate_filters,
+            validate_entropy,
             false,
             reference_buffers,
             initial_cdfs,
