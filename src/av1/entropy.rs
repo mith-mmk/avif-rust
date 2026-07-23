@@ -239,7 +239,7 @@ fn update_cdf(cdf: &mut [u16], symbol: usize) {
         + u16::from(count > 31)
         + floor_log2(symbol_count as u32).min(2) as u16;
     // CDF tables are stored in the normal cumulative form, while AOM's
-    // reader updates inverse CDF values.  Convert that update direction
+    // reader updates inverse CDF values. Convert that update direction
     // directly: entries before the decoded symbol move toward zero and the
     // remaining cumulative entries move toward CDF_PROB_TOP.
     for (index, entry) in cdf.iter_mut().take(symbol_count - 1).enumerate() {
@@ -280,6 +280,15 @@ mod tests {
     fn rejects_short_tile_payload() {
         let err = EntropyDecoder::new(&[0], false).unwrap_err();
         assert!(err.to_string().contains("too short"));
+    }
+
+    #[test]
+    fn updates_cdf_toward_decoded_symbol() {
+        let mut cdf = [1000, 20_000, 32_768, 0];
+
+        update_cdf(&mut cdf, 1);
+
+        assert_eq!(cdf, [938, 20_798, 32_768, 1]);
     }
 
     #[test]

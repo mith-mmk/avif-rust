@@ -1840,3 +1840,9 @@ sample OBU stream during reconstruction. The indexed and batch show-existing
 tests, generated all-key AVIS sequence gate, and focused library suite remain
 green; the full frame-header parser stays fail-closed because sequence
 dispatch resolves this prefix before coded-frame parsing.
+
+On 2026-07-24, the entropy regression suite now pins the cumulative-CDF update
+direction and the count/rate transition with an exact three-symbol vector. The
+generated two-frame Inter sample remains green, while strict tile trailing-bit
+validation stays diagnostic-only for Inter/Switch samples until the remaining
+motion/CDF bit-consumption boundary is resolved.
