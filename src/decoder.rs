@@ -3333,10 +3333,9 @@ fn apply_deblock_stage(
                     edge_y << subsampling_y
                 };
                 let filter_state = block_filter_state_at(luma_x, luma_y);
-                // Still-image decode only has intra blocks, so the applicable
-                // delta is the INTRA_FRAME reference delta. The mode deltas
-                // are still parsed for bitstream alignment and future inter
-                // frame support, but do not apply to intra blocks.
+                // Select the per-block reference/motion deltas for both still
+                // images and AVIS inter frames. Intra blocks use the
+                // INTRA_FRAME reference slot and zero-MV mode delta.
                 let delta_lf_index = if plane_index == 0 {
                     usize::from(!vertical)
                 } else {
@@ -3354,11 +3353,19 @@ fn apply_deblock_stage(
                     })
                     .map(|deltas| deltas[delta_lf_index])
                     .unwrap_or(0);
+                let reference_delta_index = loop_filter_reference_delta_index(
+                    filter_state.is_some_and(|state| state.is_inter),
+                    filter_state.and_then(|state| state.reference_frame),
+                );
+                let mode_delta_index = loop_filter_mode_delta_index(
+                    filter_state.is_some_and(|state| state.is_inter),
+                    filter_state.is_some_and(|state| state.has_nonzero_mv),
+                );
                 let level = apply_loop_filter_deltas(
                     base_level,
                     frame_header.loop_filter.delta_enabled,
-                    frame_header.loop_filter.ref_deltas[0],
-                    0,
+                    frame_header.loop_filter.ref_deltas[reference_delta_index],
+                    frame_header.loop_filter.mode_deltas[mode_delta_index],
                     block_delta,
                     segment_delta,
                 );
@@ -3474,6 +3481,18 @@ fn apply_loop_filter_deltas(
         + i16::from(mode_delta)
         + i16::from(block_delta);
     adjusted.clamp(0, 63) as u8
+}
+
+fn loop_filter_reference_delta_index(is_inter: bool, reference_frame: Option<u8>) -> usize {
+    reference_frame
+        .filter(|_| is_inter)
+        .map(usize::from)
+        .filter(|index| *index < 8)
+        .unwrap_or(0)
+}
+
+fn loop_filter_mode_delta_index(is_inter: bool, has_nonzero_mv: bool) -> usize {
+    usize::from(is_inter && has_nonzero_mv)
 }
 
 fn ceil_shift(value: usize, shift: usize) -> usize {

@@ -1,6 +1,7 @@
 use super::{
     DecodedFrame, apply_alpha_rows, apply_cdef_plane, apply_loop_filter_deltas,
     apply_loop_restoration_stage, cdef_has_active_strengths, cdef_strengths_disabled,
+    loop_filter_mode_delta_index, loop_filter_reference_delta_index,
 };
 use crate::av1::CdefParams;
 use crate::av1::{
@@ -14,6 +15,14 @@ fn segmentation_loop_filter_delta_is_applied_before_other_deltas() {
     assert_eq!(apply_loop_filter_deltas(10, true, 1, 2, 2, 5), 20);
     assert_eq!(apply_loop_filter_deltas(2, false, 0, 0, 0, -9), 0);
     assert_eq!(apply_loop_filter_deltas(60, true, 0, 0, 0, 9), 63);
+}
+
+#[test]
+fn inter_loop_filter_uses_reference_and_motion_mode_deltas() {
+    assert_eq!(loop_filter_reference_delta_index(true, Some(7)), 7);
+    assert_eq!(loop_filter_mode_delta_index(true, true), 1);
+    assert_eq!(loop_filter_reference_delta_index(false, Some(7)), 0);
+    assert_eq!(loop_filter_mode_delta_index(false, true), 0);
 }
 
 #[test]

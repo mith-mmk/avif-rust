@@ -1825,6 +1825,15 @@ the existing inter oracle threshold. The five-iteration release benchmark
 measured `84.99/86.32 ms` for `WML2Viewer.avif` and `1.36/1.67 ms` for
 `star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
 
+On 2026-07-24, AVIS block filter metadata now retains whether a block is inter,
+which reference frame it uses, and whether its motion vector is non-zero.
+Deblocking uses these fields to select the AV1 reference and motion-mode loop
+filter deltas instead of applying the intra-frame delta to every block. The
+generated inter sample remains within the existing FFmpeg gate (RGB average
+error `42.5653`, max `255`), affine global-motion coverage remains green
+(`34.5424` average), and the optimized five-iteration WML2Viewer checkpoint
+measured `89.0557/89.6886 ms` (native/RGBA).
+
 On 2026-07-24, AVIS `show_existing_frame` dispatch now reuses the frame-slot
 index captured during sequence-sample classification instead of reparsing the
 sample OBU stream during reconstruction. The indexed and batch show-existing
