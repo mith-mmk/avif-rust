@@ -189,6 +189,7 @@ pub(super) fn decode_plane_block_unit(
                 subsampling_x,
                 subsampling_y,
                 prediction,
+                &mut decoder.inter_intra_scratch[..prediction_len],
             )?;
             write_plane_block(
                 plane,
@@ -245,6 +246,7 @@ pub(super) fn decode_plane_block_unit(
                 subsampling_x,
                 subsampling_y,
                 prediction,
+                &mut decoder.inter_intra_scratch[..prediction_len],
             )?;
             write_plane_block(
                 plane,
@@ -295,6 +297,7 @@ pub(super) fn decode_plane_block_unit(
             subsampling_x,
             subsampling_y,
             prediction,
+            &mut decoder.inter_intra_scratch[..prediction_len],
         )?;
         let block = decoded_transform.transform;
         let tx_type = decoded_transform.tx_type;
@@ -591,6 +594,7 @@ fn predict_plane_block_into(
     subsampling_x: usize,
     subsampling_y: usize,
     output: &mut [u16],
+    inter_intra_scratch: &mut [u16],
 ) -> Result<(), DecoderError> {
     let sample_count = width.checked_mul(height).ok_or_else(|| {
         DecoderError::InvalidParam("AV1 prediction dimensions overflow".to_string())
@@ -675,7 +679,12 @@ fn predict_plane_block_into(
             MotionMode::LocalWarp => {}
         }
         if let Some(interintra_mode) = block_mode.interintra_mode {
-            let mut intra_prediction = vec![0_u16; output.len()];
+            if inter_intra_scratch.len() != output.len() {
+                return Err(DecoderError::Bitstream(
+                    "AV1 inter-intra scratch dimensions do not match block".to_string(),
+                ));
+            }
+            let intra_prediction = &mut inter_intra_scratch[..output.len()];
             let prediction_mode = match interintra_mode {
                 InterIntraMode::Dc => PredictionMode::Dc,
                 InterIntraMode::Vertical => PredictionMode::Vertical,
@@ -683,7 +692,7 @@ fn predict_plane_block_into(
                 InterIntraMode::Smooth => PredictionMode::Smooth,
             };
             if prediction_mode == PredictionMode::Dc {
-                predict_dc_block_into(plane, x, y, width, height, bit_depth, &mut intra_prediction);
+                predict_dc_block_into(plane, x, y, width, height, bit_depth, intra_prediction);
             } else {
                 predict_block_into(
                     plane,
@@ -699,7 +708,7 @@ fn predict_plane_block_into(
                     false,
                     top_right_available,
                     bottom_left_available,
-                    &mut intra_prediction,
+                    intra_prediction,
                 )?;
             }
             let wedge_index = block_mode.interintra_wedge_index;

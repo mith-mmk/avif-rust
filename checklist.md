@@ -1613,6 +1613,17 @@ intermediate buffer while preserving the AV1 bilinear rounding rule. A focused
 measured `83.40/83.60 ms` for `WML2Viewer.avif` and `1.37/1.72 ms` for
 `star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
 
+On 2026-07-23, inter-intra prediction stopped allocating a temporary `Vec`
+for every transform block and now uses a TileDecoder-owned 64x64 scratch
+buffer. The existing inter-intra oracle remains green, and a rotated
+global-motion AVIS fixture now exercises a non-trivial transformed reference
+sample at complete 256x256 dimensions (average RGB error `31.98`, max `255`).
+The optimization is recorded as an allocation-reduction checkpoint; the
+remaining motion-mode oracle work still includes strict OBMC/warped parity.
+A ten-iteration release recheck measured `91.29/94.79 ms` for
+`WML2Viewer.avif` (native/RGBA), which remains within host variance rather
+than a stable end-to-end speedup claim.
+
 On 2026-07-23, CDEF and loop-restoration output snapshots now clone the
 existing source buffer directly instead of zero-initializing and then copying
 the same samples. This removes the redundant zero-fill pass while preserving
