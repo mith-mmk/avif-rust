@@ -1391,6 +1391,16 @@ mod tests {
     }
 
     #[test]
+    fn cdef_direction_uses_sentinel_for_partial_frame_edges() {
+        let source = (0..5 * 5)
+            .map(|index| ((index * 17 + index / 5 * 9) & 255) as u16)
+            .collect::<Vec<_>>();
+        let clamped = super::cdef_find_direction_with_variance(&source, 5, 5, 0, 0, 0, false);
+        let sentinel = super::cdef_find_direction_with_variance(&source, 5, 5, 0, 0, 0, true);
+        assert_ne!(clamped, sentinel);
+    }
+
+    #[test]
     fn cdef_directions_match_aom_axis_order() {
         assert_eq!(CDEF_DIRECTIONS[2], [(0, 1), (0, 2)]);
         assert_eq!(CDEF_DIRECTIONS[6], [(1, 0), (2, 0)]);

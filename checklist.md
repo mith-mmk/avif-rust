@@ -1613,6 +1613,15 @@ intermediate buffer while preserving the AV1 bilinear rounding rule. A focused
 measured `83.40/83.60 ms` for `WML2Viewer.avif` and `1.37/1.72 ms` for
 `star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
 
+On 2026-07-23, CDEF direction search now uses the normative large-value
+sentinel for partial frame-edge 8x8 blocks instead of clamping missing samples
+to the last visible pixel. A focused 5x5 edge vector covers the distinction;
+the 405-test lib suite, 4:4:4/4:2:0 CDEF oracles and unsupported-sample audit
+remain green. A five-iteration benchmark measured `82.8311/85.2262 ms` for
+`WML2Viewer.avif` and `48.7963/51.5426 ms` for the external 4:2:0 sample
+(native/RGBA), recorded as a same-host no-regression checkpoint. The remaining
+4:2:0 CDEF RGB gap is average `1.2174`, maximum `179`.
+
 On 2026-07-23, AVIS reference refresh now returns before allocating metadata
 and cloning planes when a frame signals no refresh flags. A focused reference
 slot regression covers the no-op path; the 409-test lib suite and dynamic

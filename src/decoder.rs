@@ -3557,7 +3557,7 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
                 x,
                 y,
                 cdef_coeff_shift,
-                false,
+                true,
             );
             cdef_blocks.push((x, y, index, detected_direction, variance));
         }
