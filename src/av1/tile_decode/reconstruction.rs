@@ -6,7 +6,9 @@ use super::{
 use crate::DecoderError;
 use crate::av1::decode::{FrameBuffers, FrameDecodePlan, PlaneBuffer};
 use crate::av1::frame::{FrameHeader, InterpolationFilter};
-use crate::av1::predict::{IntraEdges, predict_filter_intra, predict_intra_with_edge_filter_into};
+use crate::av1::predict::{
+    IntraEdges, predict_filter_intra_into, predict_intra_with_edge_filter_into,
+};
 use crate::av1::quant::QuantState;
 use crate::av1::reconstruct::{read_intra_edges_into, write_plane_block};
 use crate::av1::sequence::SequenceHeader;
@@ -496,9 +498,7 @@ fn predict_block_into(
         }
     };
     if let Some(filter_intra_mode) = filter_intra_mode {
-        let prediction = predict_filter_intra(filter_intra_mode, width, height, edges)?;
-        output.copy_from_slice(&prediction);
-        return Ok(());
+        return predict_filter_intra_into(filter_intra_mode, width, height, edges, output);
     }
     predict_intra_with_edge_filter_into(
         prediction_mode,

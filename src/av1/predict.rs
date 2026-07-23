@@ -102,16 +102,40 @@ pub(crate) fn predict_intra_with_edge_filter_into(
     }
 }
 
-pub fn predict_filter_intra(
+#[cfg(test)]
+pub(crate) fn predict_filter_intra(
     mode: usize,
     width: usize,
     height: usize,
     edges: IntraEdges<'_>,
 ) -> Result<Vec<u16>, DecoderError> {
+    let sample_count = width.checked_mul(height).ok_or_else(|| {
+        DecoderError::InvalidParam("AV1 filter-intra prediction dimensions overflow".to_string())
+    })?;
+    let mut output = vec![0; sample_count];
+    predict_filter_intra_into(mode, width, height, edges, &mut output)?;
+    Ok(output)
+}
+
+pub(crate) fn predict_filter_intra_into(
+    mode: usize,
+    width: usize,
+    height: usize,
+    edges: IntraEdges<'_>,
+    output: &mut [u16],
+) -> Result<(), DecoderError> {
     if mode >= FILTER_INTRA_TAPS.len() {
         return Err(DecoderError::Bitstream(format!(
             "AV1 filter-intra mode {mode} is invalid"
         )));
+    }
+    let sample_count = width.checked_mul(height).ok_or_else(|| {
+        DecoderError::InvalidParam("AV1 filter-intra prediction dimensions overflow".to_string())
+    })?;
+    if output.len() != sample_count {
+        return Err(DecoderError::InvalidParam(
+            "AV1 filter-intra prediction output dimensions do not match block".to_string(),
+        ));
     }
     if width > 32 || height > 32 {
         return Err(DecoderError::Unsupported(format!(
@@ -167,11 +191,10 @@ pub fn predict_filter_intra(
         }
     }
 
-    let mut out = Vec::with_capacity(width * height);
     for row in 0..height {
-        out.extend_from_slice(&buffer[row + 1][1..=width]);
+        output[row * width..(row + 1) * width].copy_from_slice(&buffer[row + 1][1..=width]);
     }
-    Ok(out)
+    Ok(())
 }
 
 const FILTER_INTRA_TAPS: [[[i8; 8]; 8]; 5] = [
@@ -1120,6 +1143,22 @@ mod tests {
 
         assert_eq!(pred.len(), 8);
         assert!(pred.iter().any(|value| *value != pred[0]));
+    }
+
+    #[test]
+    fn filter_intra_into_matches_allocating_wrapper() {
+        let edges = IntraEdges {
+            above: Some(&[10, 20, 30, 40, 50, 60, 70, 80]),
+            left: Some(&[50, 60, 70, 80]),
+            above_left: Some(5),
+            bit_depth: 8,
+        };
+        let expected = predict_filter_intra(3, 8, 4, edges).unwrap();
+        let mut actual = vec![0; expected.len()];
+
+        predict_filter_intra_into(3, 8, 4, edges, &mut actual).unwrap();
+
+        assert_eq!(actual, expected);
     }
 
     #[test]

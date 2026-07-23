@@ -1846,3 +1846,13 @@ direction and the count/rate transition with an exact three-symbol vector. The
 generated two-frame Inter sample remains green, while strict tile trailing-bit
 validation stays diagnostic-only for Inter/Switch samples until the remaining
 motion/CDF bit-consumption boundary is resolved.
+
+On 2026-07-24, filter-intra prediction now writes directly into the tile
+decoder's reusable prediction scratch instead of allocating and copying a
+temporary block `Vec`. A generated 256x256 YUV444 libaom sample with
+filter-intra enabled exercises modes 0/1/2/3 and passes the native-plane
+FFmpeg oracle (maximum error `2`). A seven-iteration release checkpoint for
+that sample measured `5.4131/6.0750 ms` (native/RGBA); the ordinary
+`WML2Viewer.avif` recheck measured `83.4133/82.4604 ms`, so this remains a
+local allocation-reduction/no-regression result rather than a cross-machine
+speedup claim.

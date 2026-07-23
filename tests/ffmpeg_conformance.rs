@@ -1034,6 +1034,75 @@ fn generated_interintra_sample_matches_ffmpeg_when_encoder_present() {
 }
 
 #[test]
+fn generated_filter_intra_sample_matches_ffmpeg_when_encoder_present() {
+    let root = std::env::temp_dir().join(format!(".test-avif-filter-intra-{}", std::process::id()));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary AVIF filter-intra directory: {err}");
+    }
+    let output_path = root.join("filter-intra.avif");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .args(["-f", "lavfi", "-i", "testsrc2=size=256x256:rate=1"])
+        .args([
+            "-frames:v",
+            "1",
+            "-c:v",
+            "libaom-av1",
+            "-still-picture",
+            "1",
+            "-cpu-used",
+            "8",
+            "-crf",
+            "20",
+            "-pix_fmt",
+            "yuv444p",
+            "-enable-filter-intra",
+            "1",
+            "-enable-intra-edge-filter",
+            "1",
+            "-f",
+            "avif",
+        ])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated filter-intra sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom filter-intra encoder is unavailable; skipping generated sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let data = std::fs::read(&output_path).expect("generated filter-intra AVIF should be readable");
+    let decoded = avif_rust::image_from_bytes(&data).expect("filter-intra AVIF should decode");
+    assert_eq!((decoded.width, decoded.height), (256, 256));
+    let frame =
+        avif_rust::decode_frame_bytes(&data).expect("filter-intra native frame should decode");
+    if let Some(expected) = ffmpeg_decode_raw(&output_path, "yuv444p") {
+        let plane_size = 256 * 256;
+        assert_eq!(expected.len(), plane_size * 3);
+        for plane_index in 0..3 {
+            let expected_plane =
+                &expected[plane_index * plane_size..(plane_index + 1) * plane_size];
+            let max_error = frame.buffers.planes[plane_index]
+                .samples
+                .iter()
+                .zip(expected_plane)
+                .map(|(actual, expected)| u8::try_from(*actual).unwrap().abs_diff(*expected))
+                .max()
+                .unwrap_or(0);
+            assert!(
+                max_error <= 2,
+                "filter-intra native plane {plane_index} max error was {max_error}"
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn generated_cdef_sample_matches_explicit_ffmpeg_yuv_oracle_when_encoder_present() {
     let root = std::env::temp_dir().join(format!(".test-avif-cdef-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {
