@@ -1740,16 +1740,11 @@ fn parse_cdef_params(
     let mut strengths = CdefParams::default().strengths;
     for strength in strengths.iter_mut().take(1usize << cdef_bits) {
         strength.y_pri = reader.read_bits(4, "cdef_y_pri_strength")? as u8;
-        strength.y_sec = match reader.read_bits(2, "cdef_y_sec_strength")? as u8 {
-            3 => 4,
-            value => value,
-        };
+        strength.y_sec = cdef_secondary_strength(reader.read_bits(2, "cdef_y_sec_strength")? as u8);
         if !sequence.color_config.monochrome {
             strength.uv_pri = reader.read_bits(4, "cdef_uv_pri_strength")? as u8;
-            strength.uv_sec = match reader.read_bits(2, "cdef_uv_sec_strength")? as u8 {
-                3 => 4,
-                value => value,
-            };
+            strength.uv_sec =
+                cdef_secondary_strength(reader.read_bits(2, "cdef_uv_sec_strength")? as u8);
         }
     }
     Ok(CdefParams {
@@ -1758,6 +1753,14 @@ fn parse_cdef_params(
         bits: cdef_bits as u8,
         strengths,
     })
+}
+
+#[inline]
+fn cdef_secondary_strength(value: u8) -> u8 {
+    match value {
+        3 => 4,
+        value => value,
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1887,6 +1890,13 @@ mod tests {
             }
         }
         data
+    }
+
+    #[test]
+    fn cdef_secondary_strength_three_maps_to_four() {
+        assert_eq!(super::cdef_secondary_strength(0), 0);
+        assert_eq!(super::cdef_secondary_strength(2), 2);
+        assert_eq!(super::cdef_secondary_strength(3), 4);
     }
 
     #[test]

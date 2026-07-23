@@ -3608,6 +3608,18 @@ fn apply_cdef_plane(
     cdef_blocks: &[(usize, usize, usize, usize, i32)],
 ) {
     let source = std::mem::take(&mut plane.samples);
+    let plane_has_configured_strength = cdef_blocks.iter().any(|&(_, _, index, _, _)| {
+        let strength = &cdef.strengths[index];
+        if plane_index == 0 {
+            strength.y_pri != 0 || strength.y_sec != 0
+        } else {
+            strength.uv_pri != 0 || strength.uv_sec != 0
+        }
+    });
+    if !plane_has_configured_strength {
+        plane.samples = source;
+        return;
+    }
     // Cloning preserves the source snapshot while avoiding a zero-fill pass
     // before the filtered blocks overwrite their regions.
     let mut output = source.clone();

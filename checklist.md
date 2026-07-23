@@ -1613,6 +1613,14 @@ intermediate buffer while preserving the AV1 bilinear rounding rule. A focused
 measured `83.40/83.60 ms` for `WML2Viewer.avif` and `1.37/1.72 ms` for
 `star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
 
+On 2026-07-23, CDEF plane application now skips the source clone and filter
+thread when the selected plane has no configured primary or secondary strength.
+The parser's AV1 secondary-strength value `3 -> 4` mapping is covered by a
+focused unit test. The 4:2:0 CDEF oracle now reports native plane error per
+plane (Y average/max `0/0`, U `0.0374/2`, V `0.0212/3`); the remaining RGB
+average/max `1.2174/179` is therefore a color-conversion/chroma-position
+boundary rather than a native CDEF mismatch.
+
 On 2026-07-23, CDEF direction search now uses the normative large-value
 sentinel for partial frame-edge 8x8 blocks instead of clamping missing samples
 to the last visible pixel. A focused 5x5 edge vector covers the distinction;

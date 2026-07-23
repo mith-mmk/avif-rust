@@ -1,6 +1,6 @@
 use super::{
-    DecodedFrame, apply_alpha_rows, apply_loop_filter_deltas, apply_loop_restoration_stage,
-    cdef_has_active_strengths, cdef_strengths_disabled,
+    DecodedFrame, apply_alpha_rows, apply_cdef_plane, apply_loop_filter_deltas,
+    apply_loop_restoration_stage, cdef_has_active_strengths, cdef_strengths_disabled,
 };
 use crate::av1::CdefParams;
 use crate::av1::{
@@ -33,6 +33,30 @@ fn all_zero_cdef_indices_skip_the_whole_stage() {
     assert!(!cdef_has_active_strengths(&cdef));
     cdef.strengths[2].uv_sec = 1;
     assert!(cdef_has_active_strengths(&cdef));
+}
+
+#[test]
+fn cdef_skips_a_plane_without_configured_strengths() {
+    let source = (0..64).map(|value| value as u16).collect::<Vec<_>>();
+    let mut plane = PlaneBuffer {
+        layout: PlaneLayout {
+            plane: 0,
+            width: 8,
+            height: 8,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: source.len(),
+        },
+        samples: source.clone(),
+    };
+    let mut cdef = CdefParams {
+        enabled: true,
+        bits: 0,
+        ..CdefParams::default()
+    };
+    cdef.strengths[0].uv_sec = 4;
+    apply_cdef_plane(&mut plane, 0, false, false, cdef, &[(0, 0, 0, 0, 0)]);
+    assert_eq!(plane.samples, source);
 }
 
 #[test]

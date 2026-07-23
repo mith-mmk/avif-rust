@@ -1109,6 +1109,10 @@ fn generated_cdef_420_sample_matches_ffmpeg_when_encoder_present() {
     let actual = avif_rust::image_from_bytes(&data).expect("4:2:0 CDEF AVIF should decode");
     let actual_frame =
         avif_rust::decode_frame_bytes(&data).expect("4:2:0 CDEF frame should decode");
+    eprintln!(
+        "4:2:0 CDEF chroma position={:?}",
+        actual_frame.color_config.chroma_sample_position
+    );
     if let Some(expected) = ffmpeg_decode_raw(&output_path, "yuv420p") {
         let plane_lengths = [256 * 256, 128 * 128, 128 * 128];
         let mut offset = 0;
@@ -1121,6 +1125,9 @@ fn generated_cdef_420_sample_matches_ffmpeg_when_encoder_present() {
                 .map(|(actual, expected)| u8::try_from(*actual).unwrap().abs_diff(*expected));
             let max_error = errors.clone().max().unwrap_or(0);
             let average_error = errors.map(u64::from).sum::<u64>() as f64 / plane_len as f64;
+            eprintln!(
+                "4:2:0 CDEF plane {plane_index} error average={average_error} max={max_error}"
+            );
             assert!(
                 average_error <= 2.0 && max_error <= 32,
                 "4:2:0 CDEF plane {plane_index}: average={average_error} max={max_error}"
