@@ -97,8 +97,8 @@ pub fn decode<B: BinaryReader>(
         emit_metadata(&info, Some(&headers), option)?;
 
         // Decode the complete supported sequence before initializing the
-        // callback. Inter/Switch samples therefore fail closed without
-        // exposing a partial animation to the caller.
+        // callback. Unsupported prediction syntax therefore fails closed
+        // without exposing a partial animation to the caller.
         let mut frames = decode_sequence_frames_from_info(&info)?;
         if !info.alpha_auxiliary_items.is_empty() {
             let alpha_frame = decode_alpha_auxiliary_frame(&info)?;

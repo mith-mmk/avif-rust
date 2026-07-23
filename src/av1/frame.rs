@@ -174,8 +174,9 @@ impl FrameHeader {
 /// Frame-level segmentation signalling. The still-image decoder accepts the
 /// no-op form, `ALT_Q`/`ALT_LF` deltas and the still-image-safe `SKIP` feature
 /// on the current segmentation map. Reference-frame and GLOBALMV feature
-/// values are also consumed for still-image headers; inter-frame prediction is
-/// still fail-closed before reconstruction, while inherited film-grain
+/// values are also consumed for still-image headers; the AVIS path supplies
+/// decoded reference slots for supported inter/switch reconstruction, while
+/// unsupported prediction syntax remains fail-closed. Inherited film-grain
 /// parameters are resolved from the stored reference metadata.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SegmentationParams {
@@ -837,7 +838,8 @@ fn round_mv_to_integer(value: i32) -> i32 {
 
 /// Reads the small prefix that identifies an AV1 `show_existing_frame` OBU.
 /// The full coded-frame parser intentionally remains fail-closed for this
-/// sequence feature until reference-backed reconstruction is wired in.
+/// sequence-only prefix; the AVIS sequence dispatcher resolves the referenced
+/// frame from its slot before decoding the complete sample.
 pub(crate) fn parse_show_existing_frame_index(data: &[u8]) -> Result<Option<u8>, DecoderError> {
     let mut reader = BitReader::new(data);
     if !reader.read_bool("show_existing_frame")? {
