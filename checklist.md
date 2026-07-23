@@ -1866,3 +1866,13 @@ conformance suite, 14-test container suite, and WML2 AVIF integration tests
 remain green. A three-iteration release recheck measured
 `88.0658/84.9364 ms` for `WML2Viewer.avif` (native/RGBA); this is a correctness
 fix with no stable end-to-end speedup claim.
+
+On 2026-07-24, loop-restoration Wiener and SGRPROJ kernels now accept
+caller-owned scratch buffers. The decoder reuses those buffers per plane across
+restoration stripes, removing repeated intermediate `Vec` allocations while
+preserving the allocating wrappers and their regression vectors. The full
+416-test library suite, 86-test FFmpeg conformance suite, 14-test container
+suite, and WML2 AVIF feature-on/off tests remain green. An 11-iteration release
+recheck measured `86.0879/87.8933 ms` (native/RGBA) for `WML2Viewer.avif` on
+this host; this is recorded as allocation reduction and a local checkpoint,
+not a cross-machine speedup claim.
