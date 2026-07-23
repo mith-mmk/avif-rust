@@ -39,7 +39,7 @@ pub struct BlockModeProbe {
     pub motion_mode: MotionMode,
     pub interintra_mode: Option<InterIntraMode>,
     pub interintra_wedge_index: Option<u8>,
-    pub local_warp_neighbors: [Option<(i32, i32)>; 3],
+    pub local_warp_neighbors: [Option<(i32, i32)>; 4],
     pub interpolation_filter: Option<(InterpolationFilter, InterpolationFilter)>,
     /// Weight applied to the primary prediction for distance-weighted
     /// compound blocks; `None` selects equal averaging.

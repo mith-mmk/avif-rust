@@ -1613,6 +1613,17 @@ intermediate buffer while preserving the AV1 bilinear rounding rule. A focused
 measured `83.40/83.60 ms` for `WML2Viewer.avif` and `1.37/1.72 ms` for
 `star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
 
+On 2026-07-23, compound-mask geometry now uses the complete block-relative
+coordinates for both integer and fractional inter prediction, including
+inter-intra wedge blending; this avoids restarting the A64 mask at each
+transform tile. LOCALWARP diagnostics also retain the causal above-left
+neighbor and reconstruction averages the available vertical deltas while
+using the above-right horizontal delta. The 400-test lib suite and 77-test
+FFmpeg conformance suite remain green. The five-iteration release benchmark
+measured `83.85/89.07 ms` for `WML2Viewer.avif` and `1.28/1.64 ms` for
+`star-8bpc.avifs` (native/RGBA), a same-host checkpoint. Full least-squares
+LOCALWARP reconstruction remains the next unsupported prediction boundary.
+
 On 2026-07-23, the sequence inter-intra flag and normative inter-intra CDFs
 are retained. Inter-intra mode and optional wedge syntax are consumed and
 blended with DC/vertical/horizontal/smooth intra prediction; the generated

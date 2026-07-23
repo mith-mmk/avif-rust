@@ -16,6 +16,14 @@ use crate::av1::transform::{
     reconstruct_transform_block_parts_into,
 };
 
+#[derive(Clone, Copy)]
+struct MaskGeometry {
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "AV1 plane reconstruction keeps syntax, geometry, and mutable buffers explicit"
@@ -591,6 +599,12 @@ fn predict_plane_block_into(
             "AV1 prediction output dimensions do not match block".to_string(),
         ));
     }
+    let mask_geometry = MaskGeometry {
+        x: x.saturating_sub(block_x),
+        y: y.saturating_sub(block_y),
+        width: (block_mode.block_size.width() >> subsampling_x).max(4),
+        height: (block_mode.block_size.height() >> subsampling_y).max(4),
+    };
     if block_mode.is_inter {
         let slot = block_mode.reference_frame.ok_or_else(|| {
             DecoderError::Unsupported("AV1 inter block has no reference frame".to_string())
@@ -620,6 +634,7 @@ fn predict_plane_block_into(
             block_mode.compound_weight,
             block_mode.compound_mask,
             bit_depth,
+            mask_geometry,
             output,
         )?;
         match block_mode.motion_mode {
@@ -698,12 +713,12 @@ fn predict_plane_block_into(
                 let mask = wedge_index
                     .and_then(|wedge_idx| {
                         wedge_mask_value(
-                            width,
-                            height,
+                            mask_geometry.width,
+                            mask_geometry.height,
                             wedge_idx,
                             false,
-                            sample_index % width,
-                            sample_index / width,
+                            mask_geometry.x + sample_index % width,
+                            mask_geometry.y + sample_index / width,
                         )
                     })
                     .unwrap_or(32);
@@ -868,13 +883,13 @@ fn apply_local_warp_prediction(
     block_width: usize,
     block_height: usize,
     base_mv: (i32, i32),
-    neighbors: [Option<(i32, i32)>; 3],
+    neighbors: [Option<(i32, i32)>; 4],
     subsampling_x: usize,
     subsampling_y: usize,
     interpolation_filters: (InterpolationFilter, InterpolationFilter),
 ) -> Result<(), DecoderError> {
     let above = neighbors[0].unwrap_or(base_mv);
-    let horizontal_delta = neighbors[2]
+    let horizontal_delta = neighbors[3]
         .zip(neighbors[0])
         .map(|(above_right, above)| i64::from(above_right.1) - i64::from(above.1))
         .unwrap_or_else(|| {
@@ -882,7 +897,15 @@ fn apply_local_warp_prediction(
             i64::from(base_mv.1) - i64::from(left.1)
         });
     let dx_per_pixel = horizontal_delta / i64::try_from(block_width.max(1)).unwrap_or(1);
-    let dy_per_pixel = (i64::from(base_mv.0) - i64::from(above.0))
+    let vertical_deltas = [
+        Some(i64::from(base_mv.0) - i64::from(above.0)),
+        neighbors[1]
+            .zip(neighbors[2])
+            .map(|(left, above_left)| i64::from(left.0) - i64::from(above_left.0)),
+    ];
+    let vertical_delta_sum: i64 = vertical_deltas.into_iter().flatten().sum();
+    let vertical_delta_count = vertical_deltas.into_iter().flatten().count().max(1) as i64;
+    let dy_per_pixel = (vertical_delta_sum / vertical_delta_count)
         / i64::try_from(block_height.max(1)).unwrap_or(1);
     let base_x = i64::try_from(x).unwrap_or(i64::MAX) << 3;
     let base_y = i64::try_from(y).unwrap_or(i64::MAX) << 3;
@@ -931,6 +954,7 @@ fn predict_inter_block_into(
     compound_weight: Option<u8>,
     compound_mask: Option<CompoundMask>,
     bit_depth: u8,
+    mask_geometry: MaskGeometry,
     output: &mut [u16],
 ) -> Result<(), DecoderError> {
     let expected_len = width.checked_mul(height).ok_or_else(|| {
@@ -978,6 +1002,7 @@ fn predict_inter_block_into(
                 compound_weight,
                 compound_mask,
                 bit_depth,
+                mask_geometry,
                 output,
             );
         }
@@ -1028,6 +1053,7 @@ fn predict_inter_block_into(
                     compound_weight,
                     compound_mask,
                     bit_depth,
+                    mask_geometry,
                     output,
                 );
             }
@@ -1045,10 +1071,10 @@ fn predict_inter_block_into(
                         compound_weight,
                         compound_mask,
                         bit_depth,
-                        col,
-                        row,
-                        width,
-                        height,
+                        mask_geometry.x + col,
+                        mask_geometry.y + row,
+                        mask_geometry.width,
+                        mask_geometry.height,
                     );
                 }
             }
@@ -1146,10 +1172,10 @@ fn predict_inter_block_into(
                     compound_weight,
                     compound_mask,
                     bit_depth,
-                    col,
-                    row,
-                    width,
-                    height,
+                    mask_geometry.x + col,
+                    mask_geometry.y + row,
+                    mask_geometry.width,
+                    mask_geometry.height,
                 );
             }
         }
@@ -1569,6 +1595,7 @@ fn predict_inter_block_into_fractional(
     compound_weight: Option<u8>,
     compound_mask: Option<CompoundMask>,
     bit_depth: u8,
+    mask_geometry: MaskGeometry,
     output: &mut [u16],
 ) -> Result<(), DecoderError> {
     let mv_x = i64::from(mv.1) / (1_i64 << subsampling_x);
@@ -1624,10 +1651,10 @@ fn predict_inter_block_into_fractional(
                         compound_weight,
                         compound_mask,
                         bit_depth,
-                        col,
-                        row,
-                        width,
-                        height,
+                        mask_geometry.x + col,
+                        mask_geometry.y + row,
+                        mask_geometry.width,
+                        mask_geometry.height,
                     )
                 })
                 .unwrap_or(first);
@@ -2362,6 +2389,12 @@ mod tests {
             None,
             None,
             8,
+            MaskGeometry {
+                x: 0,
+                y: 0,
+                width: 2,
+                height: 2,
+            },
             &mut output,
         )
         .unwrap();
@@ -2401,6 +2434,12 @@ mod tests {
             None,
             None,
             8,
+            MaskGeometry {
+                x: 0,
+                y: 0,
+                width: 2,
+                height: 2,
+            },
             &mut output,
         )
         .unwrap();
@@ -2507,6 +2546,12 @@ mod tests {
             None,
             None,
             8,
+            MaskGeometry {
+                x: 0,
+                y: 0,
+                width: 2,
+                height: 2,
+            },
             &mut output,
         )
         .unwrap();
@@ -2542,6 +2587,12 @@ mod tests {
             None,
             None,
             8,
+            MaskGeometry {
+                x: 0,
+                y: 0,
+                width: 2,
+                height: 2,
+            },
             &mut output,
         )
         .unwrap();
