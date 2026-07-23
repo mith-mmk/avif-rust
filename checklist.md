@@ -1633,6 +1633,18 @@ the source snapshot required by filter taps. The focused post-filter tests and
 an allocation-reduction/no-regression checkpoint rather than a stable speedup
 claim under the current host variance.
 
+On 2026-07-23, the OBMC approximation now uses the normative AOM overlap
+length (`min(block_dimension, 64) / 2`) and the official 1/2/4/8/16/32/64
+sample mask tables instead of a linear blend. A generated libaom OBMC AVIS
+fixture decodes at complete 128x128 dimensions with average RGB error `35.63`
+(max `255`); the mask table has focused vectors, while neighbor-prediction
+parity remains an explicit follow-up. A ten-iteration release recheck of the
+ordinary `WML2Viewer.avif` sample measured `82.92/84.37 ms` (native/RGBA),
+which is retained as a host-specific reference rather than a stable speedup
+claim because OBMC is inactive for that still image.
+The generated 128x128 OBMC sequence measured `0.79/1.02 ms` (native/RGBA)
+over ten iterations; this small-sample result is also host-specific.
+
 On 2026-07-23, the generated sample matrix gained a moving-crop AVIS with
 libaom global motion enabled. The second Inter sample decodes at complete
 128x128 dimensions and matches the FFmpeg RGBA oracle with average RGB error

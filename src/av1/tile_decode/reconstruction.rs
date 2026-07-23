@@ -837,8 +837,11 @@ fn apply_obmc_edge_blend(
     block_height: usize,
     bit_depth: u8,
 ) {
-    let overlap_x = (block_width / 4).clamp(4, 32);
-    let overlap_y = (block_height / 4).clamp(4, 32);
+    // AV1 limits the overlap to half of the current block dimension and to
+    // 32 samples. The blend weights are the normative AOM mask tables rather
+    // than a linear approximation.
+    let overlap_x = (block_width.min(64) / 2).max(1);
+    let overlap_y = (block_height.min(64) / 2).max(1);
     let max_value = (1_u32 << u32::from(bit_depth.min(16))) - 1;
     for row in 0..height {
         let global_y = y.saturating_add(row);
@@ -852,7 +855,7 @@ fn apply_obmc_edge_blend(
                         * plane.layout.width
                         + global_x.min(plane.layout.width.saturating_sub(1))],
                 );
-                let current_weight = (((global_y - block_y + 1) * 64) / (overlap_y + 1)) as u32;
+                let current_weight = u32::from(obmc_mask_value(overlap_y, global_y - block_y));
                 value = (neighbor * (64 - current_weight) + value * current_weight + 32) >> 6;
             }
             if block_x > 0 && global_x < block_x.saturating_add(overlap_x) {
@@ -862,12 +865,58 @@ fn apply_obmc_edge_blend(
                         * plane.layout.width
                         + boundary_x.min(plane.layout.width.saturating_sub(1))],
                 );
-                let current_weight = (((global_x - block_x + 1) * 64) / (overlap_x + 1)) as u32;
+                let current_weight = u32::from(obmc_mask_value(overlap_x, global_x - block_x));
                 value = (neighbor * (64 - current_weight) + value * current_weight + 32) >> 6;
             }
             output[row * width + col] = value.min(max_value) as u16;
         }
     }
+}
+
+fn obmc_mask_value(length: usize, index: usize) -> u8 {
+    const MASK_1: [u8; 1] = [64];
+    const MASK_2: [u8; 2] = [45, 64];
+    const MASK_4: [u8; 4] = [39, 50, 59, 64];
+    const MASK_8: [u8; 8] = [36, 42, 48, 53, 57, 61, 64, 64];
+    const MASK_16: [u8; 16] = [
+        34, 37, 40, 43, 46, 49, 52, 54, 56, 58, 60, 61, 64, 64, 64, 64,
+    ];
+    const MASK_32: [u8; 32] = [
+        33, 35, 36, 38, 40, 41, 43, 44, 45, 47, 48, 50, 51, 52, 53, 55, 56, 57, 58, 59, 60, 60, 61,
+        62, 64, 64, 64, 64, 64, 64, 64, 64,
+    ];
+    const MASK_64: [u8; 64] = [
+        33, 34, 35, 35, 36, 37, 38, 39, 40, 40, 41, 42, 43, 44, 44, 44, 45, 46, 47, 47, 48, 49, 50,
+        51, 51, 51, 52, 52, 53, 54, 55, 56, 56, 56, 57, 57, 58, 58, 59, 60, 60, 60, 60, 61, 62, 62,
+        62, 62, 62, 63, 63, 63, 63, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+    ];
+    let mask = match length {
+        0 => &MASK_1[..],
+        1 => &MASK_1[..],
+        2 => &MASK_2[..],
+        4 => &MASK_4[..],
+        8 => &MASK_8[..],
+        16 => &MASK_16[..],
+        32 => &MASK_32[..],
+        64 => &MASK_64[..],
+        other => {
+            debug_assert!(other <= 64);
+            if other < 2 {
+                &MASK_1[..]
+            } else if other < 4 {
+                &MASK_2[..]
+            } else if other < 8 {
+                &MASK_4[..]
+            } else if other < 16 {
+                &MASK_8[..]
+            } else if other < 32 {
+                &MASK_16[..]
+            } else {
+                &MASK_32[..]
+            }
+        }
+    };
+    mask[index.min(mask.len().saturating_sub(1))]
 }
 
 #[expect(
@@ -2831,6 +2880,15 @@ mod tests {
         apply_obmc_edge_blend(&mut output, &plane, 1, 1, 1, 1, 8, 8, 8, 8, 8);
         assert!(output[0] < 64);
         assert_eq!(output[7 * 8 + 7], 64);
+    }
+
+    #[test]
+    fn obmc_masks_follow_aom_tables() {
+        assert_eq!(obmc_mask_value(4, 0), 39);
+        assert_eq!(obmc_mask_value(4, 1), 50);
+        assert_eq!(obmc_mask_value(8, 5), 61);
+        assert_eq!(obmc_mask_value(32, 24), 64);
+        assert_eq!(obmc_mask_value(64, 0), 33);
     }
 
     #[test]
