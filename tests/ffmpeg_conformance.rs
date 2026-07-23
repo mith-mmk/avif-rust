@@ -637,11 +637,26 @@ fn generated_local_warp_sample_matches_ffmpeg_when_encoder_present() {
 
 #[test]
 fn generated_obmc_sample_matches_ffmpeg_when_encoder_present() {
-    let root = std::env::temp_dir().join(format!(".test-avif-obmc-{}", std::process::id()));
+    run_generated_obmc_sample(
+        "obmc",
+        "enable-cdef=0:enable-restoration=0:enable-obmc=1:enable-warped-motion=0",
+    );
+}
+
+#[test]
+fn generated_obmc_dual_filter_sample_matches_ffmpeg_when_encoder_present() {
+    run_generated_obmc_sample(
+        "obmc-dual-filter",
+        "enable-cdef=0:enable-restoration=0:enable-obmc=1:enable-warped-motion=0:enable-dual-filter=1",
+    );
+}
+
+fn run_generated_obmc_sample(label: &str, aom_params: &str) {
+    let root = std::env::temp_dir().join(format!(".test-avif-{label}-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {
         panic!("failed to create temporary AVIF OBMC directory: {err}");
     }
-    let output_path = root.join("obmc.avifs");
+    let output_path = root.join(format!("{label}.avifs"));
     let status = Command::new("ffmpeg")
         .args(["-y", "-loglevel", "error"])
         .args(["-f", "lavfi", "-i", "testsrc2=size=128x128:rate=1"])
@@ -656,26 +671,23 @@ fn generated_obmc_sample_matches_ffmpeg_when_encoder_present() {
             "25",
         ])
         .args(["-g", "30", "-frame-parallel", "0"])
-        .args([
-            "-aom-params",
-            "enable-cdef=0:enable-restoration=0:enable-obmc=1:enable-warped-motion=0",
-        ])
+        .args(["-aom-params", aom_params])
         .args(["-f", "avif"])
         .arg(&output_path)
         .status();
     let Ok(status) = status else {
-        eprintln!("ffmpeg is not available; skipping generated OBMC sample");
+        eprintln!("ffmpeg is not available; skipping generated {label} sample");
         let _ = std::fs::remove_dir_all(&root);
         return;
     };
     if !status.success() {
-        eprintln!("libaom OBMC encoder option is unavailable; skipping sample");
+        eprintln!("libaom {label} encoder option is unavailable; skipping sample");
         let _ = std::fs::remove_dir_all(&root);
         return;
     }
-    let data = std::fs::read(&output_path).expect("generated OBMC AVIS should be readable");
+    let data = std::fs::read(&output_path).expect("generated OBMC AVIF should be readable");
     let decoded = avif_rust::decode_sequence_frame_bytes(&data, 1)
-        .expect("generated OBMC inter sample should decode");
+        .unwrap_or_else(|err| panic!("generated {label} inter sample should decode: {err}"));
     assert_eq!((decoded.width, decoded.height), (128, 128));
     if let Some(expected) = ffmpeg_decode_rgba_stream_frame(&output_path, 1, 1, 128, 128) {
         let metrics = diff_rgb_dynamic(
@@ -686,12 +698,12 @@ fn generated_obmc_sample_matches_ffmpeg_when_encoder_present() {
             &expected,
         );
         eprintln!(
-            "generated OBMC frame: average RGB absolute error={}, max={}",
+            "generated {label} frame: average RGB absolute error={}, max={}",
             metrics.average_rgb_abs, metrics.max_rgb_abs
         );
         assert!(
             metrics.average_rgb_abs <= 64.0,
-            "generated OBMC FFmpeg RGB error average={} max={}",
+            "generated {label} FFmpeg RGB error average={} max={}",
             metrics.average_rgb_abs,
             metrics.max_rgb_abs
         );

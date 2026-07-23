@@ -1623,6 +1623,13 @@ from average RGB error `35.63` to `29.65` (max `255`); the seven-iteration
 `WML2Viewer.avif` benchmark measured `82.42/85.18 ms` (native/RGBA), a
 no-regression host checkpoint.
 
+On 2026-07-23, the generated OBMC regression matrix added a second 4:2:0
+sample with libaom's switchable interpolation filter enabled. Both ordinary
+and dual-filter OBMC samples decode successfully and remain within the
+existing FFmpeg oracle threshold (`29.66` average RGB absolute error,
+`255` max), covering the neighbour-filter metadata path without changing
+the baseline output.
+
 On 2026-07-23, AVIS sequence decoding now honors `primary_ref_frame ==
 PRIMARY_REF_NONE` by starting the frame from the default CDF context instead of
 carrying the previous sample's adapted CDFs. The generated two-frame Inter
