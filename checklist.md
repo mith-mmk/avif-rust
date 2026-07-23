@@ -1824,3 +1824,10 @@ distance weighting and wedge disabled now decodes completely and stays within
 the existing inter oracle threshold. The five-iteration release benchmark
 measured `84.99/86.32 ms` for `WML2Viewer.avif` and `1.36/1.67 ms` for
 `star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
+
+On 2026-07-24, AVIS `show_existing_frame` dispatch now reuses the frame-slot
+index captured during sequence-sample classification instead of reparsing the
+sample OBU stream during reconstruction. The indexed and batch show-existing
+tests, generated all-key AVIS sequence gate, and focused library suite remain
+green; the full frame-header parser stays fail-closed because sequence
+dispatch resolves this prefix before coded-frame parsing.

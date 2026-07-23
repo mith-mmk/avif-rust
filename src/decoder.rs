@@ -715,9 +715,13 @@ fn decode_sequence_samples_from_info(
                     return Ok(vec![decoded]);
                 }
             }
-            AvifSequenceSampleKind::ShowExisting { .. } => {
-                let shown = first_show_existing_index(sample)?;
-                let decoded = references.frame_to_show(shown)?;
+            AvifSequenceSampleKind::ShowExisting {
+                frame_to_show_map_idx,
+            } => {
+                // `inspect_av1_sequence_sample` already consumed the
+                // show-existing prefix while classifying this sample. Reuse
+                // the decoded index instead of reparsing the OBU stream.
+                let decoded = references.frame_to_show(frame_to_show_map_idx)?;
                 if collect_all {
                     frames.push(decoded);
                 } else if index == stop_index {
@@ -899,17 +903,6 @@ fn parse_av1_sequence_sample_headers_with_references(
             references,
         )
     }
-}
-
-fn first_show_existing_index(sample: &[u8]) -> Result<u8, DecoderError> {
-    parse_obu_stream(sample)?
-        .iter()
-        .filter(|obu| matches!(obu.obu_type, ObuType::Frame | ObuType::FrameHeader))
-        .find_map(|obu| parse_show_existing_frame_index(obu.payload).transpose())
-        .transpose()?
-        .ok_or_else(|| {
-            DecoderError::Bitstream("show_existing_frame sample header is missing".to_string())
-        })
 }
 
 /// The eight AV1 reference slots used by a sequence.  Each slot keeps the
