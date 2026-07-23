@@ -1613,6 +1613,14 @@ intermediate buffer while preserving the AV1 bilinear rounding rule. A focused
 measured `83.40/83.60 ms` for `WML2Viewer.avif` and `1.37/1.72 ms` for
 `star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
 
+On 2026-07-23, AVIS sequence decoding now honors `primary_ref_frame ==
+PRIMARY_REF_NONE` by starting the frame from the default CDF context instead of
+carrying the previous sample's adapted CDFs. The generated two-frame Inter
+sample and all 407 library tests plus 81 FFmpeg conformance tests remain green.
+Strict tile entropy validation is still intentionally diagnostic-only for
+Inter/Switch samples until motion/reconstruction parity closes the remaining
+bit-consumption boundary.
+
 On 2026-07-23, 4:2:0 YUV-to-RGBA conversion now has a dedicated no-alpha fast
 path that reuses each chroma row pair and preserves the AV1 unknown/vertical
 versus colocated sample-position rules. The external

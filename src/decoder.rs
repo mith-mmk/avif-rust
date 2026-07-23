@@ -699,7 +699,7 @@ fn decode_sequence_samples_from_info(
                         Some(info),
                         true,
                         std::array::from_fn(|_| None),
-                        (!sample_info.has_sequence_header)
+                        (!sample_info.has_sequence_header && headers.frame.primary_ref_frame != 7)
                             .then_some(cdf_states.as_deref())
                             .flatten(),
                         true,
@@ -743,7 +743,7 @@ fn decode_sequence_samples_from_info(
                         Some(info),
                         true,
                         references.buffers(),
-                        (!sample_info.has_sequence_header)
+                        (!sample_info.has_sequence_header && headers.frame.primary_ref_frame != 7)
                             .then_some(cdf_states.as_deref())
                             .flatten(),
                         false,
