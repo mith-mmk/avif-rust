@@ -3,6 +3,7 @@ use super::diagnostic::{LocalWarpSample, ObmcNeighbor, ObmcNeighbors};
 use super::partition_syntax::{partition_plane_context, partition_subsize};
 use crate::DecoderError;
 use crate::av1::decode::TileDecodePlan;
+use crate::av1::frame::InterpolationFilter;
 use crate::av1::syntax::{BlockSize, Partition, TxSize};
 
 fn intra_bc_candidate_offsets(block_size: BlockSize) -> [(isize, isize); 9] {
@@ -91,6 +92,11 @@ impl<'a> TileDecoder<'a> {
                         width: source_w4 * 4,
                         height: source_h4 * 4,
                         motion_vector,
+                        interpolation_filters: self.interpolation_filter_grid[origin_index]
+                            .unwrap_or((
+                                InterpolationFilter::Regular,
+                                InterpolationFilter::Regular,
+                            )),
                     };
                     if !result[..result_len].contains(&Some(neighbor)) {
                         result[result_len] = Some(neighbor);
@@ -149,6 +155,11 @@ impl<'a> TileDecoder<'a> {
                         width: source_w4 * 4,
                         height: source_h4 * 4,
                         motion_vector,
+                        interpolation_filters: self.interpolation_filter_grid[origin_index]
+                            .unwrap_or((
+                                InterpolationFilter::Regular,
+                                InterpolationFilter::Regular,
+                            )),
                     };
                     if !result[..result_len].contains(&Some(neighbor)) {
                         result[result_len] = Some(neighbor);
@@ -486,6 +497,7 @@ impl<'a> TileDecoder<'a> {
         motion_vector: (i32, i32),
         reference_frame_secondary: Option<u8>,
         motion_vector_secondary: Option<(i32, i32)>,
+        interpolation_filters: (InterpolationFilter, InterpolationFilter),
     ) {
         super::context_grid::fill_mi_grid(
             &mut self.reference_frame_grid,
@@ -504,6 +516,15 @@ impl<'a> TileDecoder<'a> {
             y,
             block_size,
             motion_vector,
+        );
+        super::context_grid::fill_mi_grid(
+            &mut self.interpolation_filter_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            interpolation_filters,
         );
         super::context_grid::fill_mi_grid(
             &mut self.motion_block_size_grid,
@@ -546,6 +567,15 @@ impl<'a> TileDecoder<'a> {
         );
         super::context_grid::fill_mi_grid_clone(
             &mut self.motion_vector_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            None,
+        );
+        super::context_grid::fill_mi_grid_clone(
+            &mut self.interpolation_filter_grid,
             self.mi_cols,
             self.mi_rows,
             x,

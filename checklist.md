@@ -1613,6 +1613,16 @@ intermediate buffer while preserving the AV1 bilinear rounding rule. A focused
 measured `83.40/83.60 ms` for `WML2Viewer.avif` and `1.37/1.72 ms` for
 `star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
 
+On 2026-07-23, OBMC now leaves blocks without an eligible same-reference
+causal neighbour on their ordinary inter predictor instead of blending a
+synthetic frame-edge sample. Neighbour interpolation filters are retained in
+the MI grid, chroma 4x4/8x4/4x8 above blending follows AOM's skip rule, and
+only the intersecting overlap strip is predicted (avoiding a full-block
+temporary for each neighbour). The generated 128x128 OBMC oracle improved
+from average RGB error `35.63` to `29.65` (max `255`); the seven-iteration
+`WML2Viewer.avif` benchmark measured `82.42/85.18 ms` (native/RGBA), a
+no-regression host checkpoint.
+
 On 2026-07-23, AVIS sequence decoding now honors `primary_ref_frame ==
 PRIMARY_REF_NONE` by starting the frame from the default CDF context instead of
 carrying the previous sample's adapted CDFs. The generated two-frame Inter

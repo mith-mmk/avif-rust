@@ -38,6 +38,7 @@ pub(super) struct ObmcNeighbor {
     pub width: usize,
     pub height: usize,
     pub motion_vector: (i32, i32),
+    pub interpolation_filters: (InterpolationFilter, InterpolationFilter),
 }
 
 /// Causal top/left OBMC neighbors collected from the decoded MI grid.

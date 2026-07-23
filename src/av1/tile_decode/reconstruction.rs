@@ -658,7 +658,6 @@ fn predict_plane_block_into(
             MotionMode::Simple => {}
             MotionMode::Obmc => apply_obmc_edge_blend(
                 output,
-                plane,
                 reference,
                 block_x,
                 block_y,
@@ -668,9 +667,6 @@ fn predict_plane_block_into(
                 height,
                 (block_mode.block_size.width() >> subsampling_x).max(4),
                 (block_mode.block_size.height() >> subsampling_y).max(4),
-                block_mode
-                    .interpolation_filter
-                    .unwrap_or((InterpolationFilter::Regular, InterpolationFilter::Regular)),
                 subsampling_x,
                 subsampling_y,
                 obmc_neighbors,
@@ -849,7 +845,6 @@ fn predict_plane_block_into(
 )]
 fn apply_obmc_edge_blend(
     output: &mut [u16],
-    plane: &PlaneBuffer,
     reference: &PlaneBuffer,
     block_x: usize,
     block_y: usize,
@@ -859,7 +854,6 @@ fn apply_obmc_edge_blend(
     height: usize,
     block_width: usize,
     block_height: usize,
-    interpolation_filters: (InterpolationFilter, InterpolationFilter),
     subsampling_x: usize,
     subsampling_y: usize,
     neighbors: &ObmcNeighbors,
@@ -869,19 +863,9 @@ fn apply_obmc_edge_blend(
     let has_neighbors = neighbors.above.iter().flatten().next().is_some()
         || neighbors.left.iter().flatten().next().is_some();
     if !has_neighbors {
-        apply_obmc_boundary_blend(
-            output,
-            plane,
-            block_x,
-            block_y,
-            x,
-            y,
-            width,
-            height,
-            block_width,
-            block_height,
-            bit_depth,
-        );
+        // AV1 only blends predictors from eligible causal neighbours. A frame
+        // edge or a neighbour using another reference does not synthesize a
+        // replacement predictor from the already reconstructed current frame.
         return Ok(());
     }
     let sample_count = width.checked_mul(height).ok_or_else(|| {
@@ -894,28 +878,31 @@ fn apply_obmc_edge_blend(
     }
     let overlap_x = (block_width.min(64) / 2).max(1);
     let overlap_y = (block_height.min(64) / 2).max(1);
-    for neighbor in neighbors.above.iter().flatten() {
-        blend_obmc_neighbor_prediction(
-            output,
-            reference,
-            x,
-            y,
-            width,
-            height,
-            block_x,
-            block_y,
-            block_width,
-            block_height,
-            overlap_x,
-            overlap_y,
-            neighbor,
-            true,
-            interpolation_filters,
-            subsampling_x,
-            subsampling_y,
-            &mut scratch[..sample_count],
-            bit_depth,
-        )?;
+    // AOM skips the above predictor for chroma plane blocks smaller than
+    // 8x8 (4x4, 8x4 and 4x8), while retaining the left predictor.
+    let skip_above =
+        block_width <= 8 && block_height <= 8 && (block_width == 4 || block_height == 4);
+    if !skip_above {
+        for neighbor in neighbors.above.iter().flatten() {
+            blend_obmc_neighbor_prediction(
+                output,
+                reference,
+                x,
+                y,
+                width,
+                height,
+                block_x,
+                block_y,
+                overlap_x,
+                overlap_y,
+                neighbor,
+                true,
+                subsampling_x,
+                subsampling_y,
+                &mut scratch[..sample_count],
+                bit_depth,
+            )?;
+        }
     }
     for neighbor in neighbors.left.iter().flatten() {
         blend_obmc_neighbor_prediction(
@@ -927,13 +914,10 @@ fn apply_obmc_edge_blend(
             height,
             block_x,
             block_y,
-            block_width,
-            block_height,
             overlap_x,
             overlap_y,
             neighbor,
             false,
-            interpolation_filters,
             subsampling_x,
             subsampling_y,
             &mut scratch[..sample_count],
@@ -956,13 +940,10 @@ fn blend_obmc_neighbor_prediction(
     height: usize,
     block_x: usize,
     block_y: usize,
-    block_width: usize,
-    block_height: usize,
     overlap_x: usize,
     overlap_y: usize,
     neighbor: &super::diagnostic::ObmcNeighbor,
     above: bool,
-    interpolation_filters: (InterpolationFilter, InterpolationFilter),
     subsampling_x: usize,
     subsampling_y: usize,
     scratch: &mut [u16],
@@ -972,130 +953,80 @@ fn blend_obmc_neighbor_prediction(
     let neighbor_y = neighbor.origin_y >> subsampling_y;
     let neighbor_width = ceil_shift(neighbor.width, subsampling_x);
     let neighbor_height = ceil_shift(neighbor.height, subsampling_y);
-    let segment_start = if above {
-        block_x.max(neighbor_x)
+    let x_end = x.saturating_add(width);
+    let y_end = y.saturating_add(height);
+    let (predict_x, predict_y, predict_width, predict_height) = if above {
+        let start_x = x.max(neighbor_x);
+        let end_x = x_end.min(neighbor_x.saturating_add(neighbor_width));
+        let start_y = y.max(block_y);
+        let end_y = y_end.min(block_y.saturating_add(overlap_y));
+        (
+            start_x,
+            start_y,
+            end_x.saturating_sub(start_x),
+            end_y.saturating_sub(start_y),
+        )
     } else {
-        block_y.max(neighbor_y)
+        let start_x = x.max(block_x);
+        let end_x = x_end.min(block_x.saturating_add(overlap_x));
+        let start_y = y.max(neighbor_y);
+        let end_y = y_end.min(neighbor_y.saturating_add(neighbor_height));
+        (
+            start_x,
+            start_y,
+            end_x.saturating_sub(start_x),
+            end_y.saturating_sub(start_y),
+        )
     };
-    let segment_end = if above {
-        block_x
-            .saturating_add(block_width)
-            .min(neighbor_x.saturating_add(neighbor_width))
-    } else {
-        block_y
-            .saturating_add(block_height)
-            .min(neighbor_y.saturating_add(neighbor_height))
-    };
-    if segment_start >= segment_end {
+    if predict_width == 0 || predict_height == 0 {
         return Ok(());
     }
+    let predicted_count = predict_width
+        .checked_mul(predict_height)
+        .ok_or_else(|| DecoderError::InvalidParam("AV1 OBMC strip size overflows".to_string()))?;
     predict_inter_block_into(
         reference,
         None,
-        x,
-        y,
-        width,
-        height,
+        predict_x,
+        predict_y,
+        predict_width,
+        predict_height,
         neighbor.motion_vector,
         None,
         subsampling_x,
         subsampling_y,
-        interpolation_filters,
+        neighbor.interpolation_filters,
         None,
         None,
         bit_depth,
         MaskGeometry {
             x: 0,
             y: 0,
-            width: block_width,
-            height: block_height,
+            width: predict_width,
+            height: predict_height,
         },
-        scratch,
+        &mut scratch[..predicted_count],
     )?;
     let max_value = (1_u32 << u32::from(bit_depth.min(16))) - 1;
-    for row in 0..height {
-        let global_y = y.saturating_add(row);
-        for col in 0..width {
-            let global_x = x.saturating_add(col);
-            let (inside, current_weight) = if above {
-                (
-                    global_y >= block_y
-                        && global_y < block_y.saturating_add(overlap_y)
-                        && global_x >= segment_start
-                        && global_x < segment_end,
-                    obmc_mask_value(overlap_y, global_y.saturating_sub(block_y)),
-                )
+    for row in 0..predict_height {
+        let global_y = predict_y + row;
+        for col in 0..predict_width {
+            let global_x = predict_x + col;
+            let output_index = (global_y - y) * width + global_x - x;
+            let current_weight = if above {
+                obmc_mask_value(overlap_y, global_y.saturating_sub(block_y))
             } else {
-                (
-                    global_x >= block_x
-                        && global_x < block_x.saturating_add(overlap_x)
-                        && global_y >= segment_start
-                        && global_y < segment_end,
-                    obmc_mask_value(overlap_x, global_x.saturating_sub(block_x)),
-                )
+                obmc_mask_value(overlap_x, global_x.saturating_sub(block_x))
             };
-            if !inside {
-                continue;
-            }
             let neighbor_weight = u32::from(64_u8.saturating_sub(current_weight));
-            let current = u32::from(output[row * width + col]);
-            let predicted = u32::from(scratch[row * width + col]);
-            output[row * width + col] =
+            let current = u32::from(output[output_index]);
+            let predicted = u32::from(scratch[row * predict_width + col]);
+            output[output_index] =
                 ((current * u32::from(current_weight) + predicted * neighbor_weight + 32) >> 6)
                     .min(max_value) as u16;
         }
     }
     Ok(())
-}
-
-#[inline]
-fn apply_obmc_boundary_blend(
-    output: &mut [u16],
-    plane: &PlaneBuffer,
-    block_x: usize,
-    block_y: usize,
-    x: usize,
-    y: usize,
-    width: usize,
-    height: usize,
-    block_width: usize,
-    block_height: usize,
-    bit_depth: u8,
-) {
-    // AV1 limits the overlap to half of the current block dimension and to
-    // 32 samples. The blend weights are the normative AOM mask tables rather
-    // than a linear approximation.
-    let overlap_x = (block_width.min(64) / 2).max(1);
-    let overlap_y = (block_height.min(64) / 2).max(1);
-    let max_value = (1_u32 << u32::from(bit_depth.min(16))) - 1;
-    for row in 0..height {
-        let global_y = y.saturating_add(row);
-        for col in 0..width {
-            let global_x = x.saturating_add(col);
-            let mut value = u32::from(output[row * width + col]);
-            if block_y > 0 && global_y < block_y.saturating_add(overlap_y) {
-                let boundary_y = block_y - 1;
-                let neighbor = u32::from(
-                    plane.samples[boundary_y.min(plane.layout.height.saturating_sub(1))
-                        * plane.layout.width
-                        + global_x.min(plane.layout.width.saturating_sub(1))],
-                );
-                let current_weight = u32::from(obmc_mask_value(overlap_y, global_y - block_y));
-                value = (neighbor * (64 - current_weight) + value * current_weight + 32) >> 6;
-            }
-            if block_x > 0 && global_x < block_x.saturating_add(overlap_x) {
-                let boundary_x = block_x - 1;
-                let neighbor = u32::from(
-                    plane.samples[global_y.min(plane.layout.height.saturating_sub(1))
-                        * plane.layout.width
-                        + boundary_x.min(plane.layout.width.saturating_sub(1))],
-                );
-                let current_weight = u32::from(obmc_mask_value(overlap_x, global_x - block_x));
-                value = (neighbor * (64 - current_weight) + value * current_weight + 32) >> 6;
-            }
-            output[row * width + col] = value.min(max_value) as u16;
-        }
-    }
 }
 
 fn obmc_mask_value(length: usize, index: usize) -> u8 {
@@ -3089,22 +3020,39 @@ mod tests {
     }
 
     #[test]
-    fn obmc_blends_only_the_block_overlap_edges() {
-        let plane = PlaneBuffer {
+    fn obmc_without_eligible_neighbors_keeps_predictor() {
+        let reference = PlaneBuffer {
             layout: crate::av1::decode::PlaneLayout {
                 plane: 0,
-                width: 10,
-                height: 10,
+                width: 8,
+                height: 8,
                 subsampling_x: 0,
                 subsampling_y: 0,
-                sample_count: 100,
+                sample_count: 64,
             },
-            samples: vec![0; 100],
+            samples: vec![0; 64],
         };
-        let mut output = [64_u16; 64];
-        apply_obmc_boundary_blend(&mut output, &plane, 1, 1, 1, 1, 8, 8, 8, 8, 8);
-        assert!(output[0] < 64);
-        assert_eq!(output[7 * 8 + 7], 64);
+        let mut output = [123_u16; 64];
+        let mut scratch = [0_u16; 64];
+        apply_obmc_edge_blend(
+            &mut output,
+            &reference,
+            0,
+            0,
+            0,
+            0,
+            8,
+            8,
+            8,
+            8,
+            0,
+            0,
+            &ObmcNeighbors::default(),
+            &mut scratch,
+            8,
+        )
+        .unwrap();
+        assert!(output.iter().all(|sample| *sample == 123));
     }
 
     #[test]

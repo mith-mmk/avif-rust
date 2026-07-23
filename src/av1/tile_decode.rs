@@ -1,7 +1,7 @@
 use super::cdf::CdfContext;
 use super::decode::FrameBuffers;
 use super::entropy::EntropyDecoder;
-use super::frame::{FrameHeader, RestorationParams};
+use super::frame::{FrameHeader, InterpolationFilter, RestorationParams};
 use super::sequence::SequenceHeader;
 use super::syntax::{BlockSize, TxSize, TxType, mi_dimension};
 use super::transform::TransformBlock;
@@ -138,6 +138,7 @@ pub struct TileDecoder<'a> {
     is_inter_grid: Vec<Option<bool>>,
     reference_frame_grid: Vec<Option<u8>>,
     motion_vector_grid: Vec<Option<(i32, i32)>>,
+    interpolation_filter_grid: Vec<Option<(InterpolationFilter, InterpolationFilter)>>,
     motion_block_size_grid: Vec<Option<BlockSize>>,
     reference_frame_secondary_grid: Vec<Option<u8>>,
     motion_vector_secondary_grid: Vec<Option<(i32, i32)>>,
@@ -239,6 +240,7 @@ impl<'a> TileDecoder<'a> {
             is_inter_grid: vec![None; mi_count],
             reference_frame_grid: vec![None; mi_count],
             motion_vector_grid: vec![None; mi_count],
+            interpolation_filter_grid: vec![None; mi_count],
             motion_block_size_grid: vec![None; mi_count],
             reference_frame_secondary_grid: vec![None; mi_count],
             motion_vector_secondary_grid: vec![None; mi_count],

@@ -578,6 +578,8 @@ impl<'a> TileDecoder<'a> {
             motion_vector,
             reference_frame_secondary,
             motion_vector_secondary,
+            interpolation_filter
+                .unwrap_or((InterpolationFilter::Regular, InterpolationFilter::Regular)),
         );
         self.set_smooth_context(x, y, block_size, false, false);
         self.set_skip_context(x, y, block_size, skip);
