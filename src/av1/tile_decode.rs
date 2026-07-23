@@ -25,7 +25,7 @@ pub(crate) use post_filter_state::wiener_filter_unit;
 pub(crate) use post_filter_state::{
     PostFilterState, cdef_adjust_primary_strength, cdef_filter_block_region_with_edge_mode_into,
     cdef_find_direction_with_variance, deblock_filter_edge_with_visible_bounds,
-    sgrproj_filter_unit_into, wiener_filter_unit_into,
+    sgrproj_filter_unit_into_with_scratch, wiener_filter_unit_into_with_scratch,
 };
 mod public_api;
 mod reconstruction;

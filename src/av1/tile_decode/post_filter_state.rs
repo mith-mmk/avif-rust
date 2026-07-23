@@ -425,6 +425,37 @@ pub(crate) fn wiener_filter_unit_into(
     unit_height: usize,
     filters: [[i16; 3]; 2],
 ) {
+    let mut horizontal_scratch = Vec::new();
+    wiener_filter_unit_into_with_scratch(
+        source,
+        output,
+        width,
+        height,
+        origin_x,
+        origin_y,
+        unit_width,
+        unit_height,
+        filters,
+        &mut horizontal_scratch,
+    );
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scalar Wiener kernel parameters and reusable scratch stay explicit"
+)]
+pub(crate) fn wiener_filter_unit_into_with_scratch(
+    source: &[u16],
+    output: &mut [u16],
+    width: usize,
+    height: usize,
+    origin_x: usize,
+    origin_y: usize,
+    unit_width: usize,
+    unit_height: usize,
+    filters: [[i16; 3]; 2],
+    horizontal_scratch: &mut Vec<i32>,
+) {
     const FILTER_BITS: u32 = 7;
     const ROUND_0_BITS: u32 = 3;
     const ROUND_1_BITS: u32 = 2 * FILTER_BITS - ROUND_0_BITS;
@@ -454,7 +485,8 @@ pub(crate) fn wiener_filter_unit_into(
     let horizontal_kernel = residual_kernel(1);
     let vertical_kernel = residual_kernel(0);
     let intermediate_height = output_height + 6;
-    let mut horizontal = vec![0i32; output_width * intermediate_height];
+    horizontal_scratch.resize(output_width * intermediate_height, 0);
+    let horizontal = &mut horizontal_scratch[..output_width * intermediate_height];
     let horizontal_offset = 1 << (8 + FILTER_BITS - 1);
     let horizontal_limit = (1 << (8 + 1 + FILTER_BITS - ROUND_0_BITS)) - 1;
     for intermediate_y in 0..intermediate_height {
@@ -544,6 +576,39 @@ pub(crate) fn sgrproj_filter_unit_into(
     sgr_index: u8,
     xqd: [i16; 2],
 ) {
+    let mut scratch = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+    sgrproj_filter_unit_into_with_scratch(
+        source,
+        output,
+        width,
+        height,
+        origin_x,
+        origin_y,
+        unit_width,
+        unit_height,
+        sgr_index,
+        xqd,
+        &mut scratch,
+    );
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scalar SGRPROJ kernel parameters and reusable scratch stay explicit"
+)]
+pub(crate) fn sgrproj_filter_unit_into_with_scratch(
+    source: &[u16],
+    output: &mut [u16],
+    width: usize,
+    height: usize,
+    origin_x: usize,
+    origin_y: usize,
+    unit_width: usize,
+    unit_height: usize,
+    sgr_index: u8,
+    xqd: [i16; 2],
+    scratch: &mut [Vec<i32>; 4],
+) {
     const RADII: [[usize; 2]; 16] = [
         [2, 1],
         [2, 1],
@@ -592,10 +657,11 @@ pub(crate) fn sgrproj_filter_unit_into(
     let round_shift = |value: i64, shift: u32| -> i32 {
         ((value + (1_i64 << shift.saturating_sub(1))) >> shift) as i32
     };
-    let intermediate = |radius: usize, scale: i32| -> (Vec<i32>, Vec<i32>, usize) {
+    let intermediate = |radius: usize, scale: i32, a: &mut Vec<i32>, b: &mut Vec<i32>| -> usize {
         let stride = output_width + 4;
-        let mut a = vec![0i32; (output_height + 4) * stride];
-        let mut b = vec![0i32; (output_height + 4) * stride];
+        let scratch_len = (output_height + 4) * stride;
+        a.resize(scratch_len, 0);
+        b.resize(scratch_len, 0);
         let side = radius * 2 + 1;
         let n = (side * side) as i32;
         for yy in 0..output_height + 4 {
@@ -625,17 +691,19 @@ pub(crate) fn sgrproj_filter_unit_into(
                 b[index] = bf;
             }
         }
-        (a, b, stride)
+        stride
     };
-    let (a0, b0, stride0) = if RADII[index][0] == 0 {
-        (Vec::new(), Vec::new(), 0)
+    let stride0 = if RADII[index][0] == 0 {
+        0
     } else {
-        intermediate(RADII[index][0], S[index][0])
+        let (a, b) = scratch.split_at_mut(1);
+        intermediate(RADII[index][0], S[index][0], &mut a[0], &mut b[0])
     };
-    let (a1, b1, stride1) = if RADII[index][1] == 0 {
-        (Vec::new(), Vec::new(), 0)
+    let stride1 = if RADII[index][1] == 0 {
+        0
     } else {
-        intermediate(RADII[index][1], S[index][1])
+        let (a, b) = scratch.split_at_mut(3);
+        intermediate(RADII[index][1], S[index][1], &mut a[2], &mut b[0])
     };
     let xq0 = if RADII[index][0] == 0 {
         0
@@ -655,9 +723,9 @@ pub(crate) fn sgrproj_filter_unit_into(
             return sample((origin_x + x) as isize, (origin_y + y) as isize) << 4;
         }
         let (a, b, stride) = if radius_index == 0 {
-            (&a0, &b0, stride0)
+            (&scratch[0], &scratch[1], stride0)
         } else {
-            (&a1, &b1, stride1)
+            (&scratch[2], &scratch[3], stride1)
         };
         let k = (y + 2) * stride + x + 2;
         let pixel = sample((origin_x + x) as isize, (origin_y + y) as isize);
@@ -1477,6 +1545,22 @@ mod tests {
         );
         assert_eq!(actual_wiener, expected_wiener);
 
+        let mut reused_wiener = source.clone();
+        let mut wiener_scratch = Vec::new();
+        super::wiener_filter_unit_into_with_scratch(
+            &source,
+            &mut reused_wiener,
+            32,
+            32,
+            4,
+            8,
+            16,
+            16,
+            [[1, 2, 3], [3, -2, 1]],
+            &mut wiener_scratch,
+        );
+        assert_eq!(reused_wiener, expected_wiener);
+
         let expected_sgr = super::sgrproj_filter_unit(&source, 32, 32, 4, 8, 16, 16, 0, [12, 64]);
         let mut actual_sgr = source.clone();
         super::sgrproj_filter_unit_into(
@@ -1492,6 +1576,23 @@ mod tests {
             [12, 64],
         );
         assert_eq!(actual_sgr, expected_sgr);
+
+        let mut reused_sgr = source.clone();
+        let mut sgr_scratch = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+        super::sgrproj_filter_unit_into_with_scratch(
+            &source,
+            &mut reused_sgr,
+            32,
+            32,
+            4,
+            8,
+            16,
+            16,
+            0,
+            [12, 64],
+            &mut sgr_scratch,
+        );
+        assert_eq!(reused_sgr, expected_sgr);
     }
 
     #[test]

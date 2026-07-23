@@ -17,7 +17,7 @@ use crate::av1::{
     parse_frame_header_with_references, parse_sequence_header, parse_show_existing_frame_index,
     parse_tile_group, plan_transform_blocks_with_tx_size, prepare_tile_entropy,
     probe_first_block_residuals, probe_tile_block_modes, probe_tile_partitions,
-    sgrproj_filter_unit_into, wiener_filter_unit_into,
+    sgrproj_filter_unit_into_with_scratch, wiener_filter_unit_into_with_scratch,
 };
 use crate::compat::{DataMap, DecodeOptions, InitOptions};
 use crate::container::{
@@ -3776,6 +3776,8 @@ fn apply_loop_restoration_plane(
     // Keep the unfiltered source available to restoration taps without first
     // zero-initializing an output buffer that is immediately overwritten.
     let mut output = source.clone();
+    let mut wiener_scratch = Vec::new();
+    let mut sgrproj_scratch = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
     for unit in state
         .restoration_units
         .iter()
@@ -3822,7 +3824,7 @@ fn apply_loop_restoration_plane(
                             filters[0][0] = 0;
                             filters[1][0] = 0;
                         }
-                        wiener_filter_unit_into(
+                        wiener_filter_unit_into_with_scratch(
                             &source,
                             &mut output,
                             plane.layout.width,
@@ -3832,13 +3834,14 @@ fn apply_loop_restoration_plane(
                             chunk_width,
                             stripe_height,
                             filters,
+                            &mut wiener_scratch,
                         )
                     }
                     2 => {
                         let (Some(index), Some(xqd)) = (unit.sgrproj_index, unit.sgrproj) else {
                             break;
                         };
-                        sgrproj_filter_unit_into(
+                        sgrproj_filter_unit_into_with_scratch(
                             &source,
                             &mut output,
                             plane.layout.width,
@@ -3849,6 +3852,7 @@ fn apply_loop_restoration_plane(
                             stripe_height,
                             index,
                             xqd,
+                            &mut sgrproj_scratch,
                         )
                     }
                     _ => break,
