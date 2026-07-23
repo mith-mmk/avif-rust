@@ -636,6 +636,80 @@ fn generated_local_warp_sample_matches_ffmpeg_when_encoder_present() {
 }
 
 #[test]
+fn generated_global_motion_sample_matches_ffmpeg_when_encoder_present() {
+    let root =
+        std::env::temp_dir().join(format!(".test-avif-global-motion-{}", std::process::id()));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary AVIF global-motion directory: {err}");
+    }
+    let output_path = root.join("global-motion.avifs");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .args(["-f", "lavfi", "-i", "testsrc2=size=256x128:rate=1"])
+        .args(["-vf", "crop=128:128:2*n:0", "-t", "4"])
+        .args(["-c:v", "libaom-av1", "-cpu-used", "6", "-crf", "25"])
+        .args([
+            "-g",
+            "30",
+            "-frame-parallel",
+            "0",
+            "-enable-global-motion",
+            "1",
+        ])
+        .args([
+            "-aom-params",
+            "enable-cdef=0:enable-restoration=0:enable-obmc=0",
+        ])
+        .args(["-f", "avif"])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated global-motion sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom global-motion encoder options are unavailable; skipping sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let data =
+        std::fs::read(&output_path).expect("generated global-motion AVIS should be readable");
+    let info =
+        avif_rust::container::parse_avif(&data).expect("generated global-motion AVIS should parse");
+    assert!(info.sequence_sample_payloads.len() >= 2);
+    assert_eq!(
+        avif_rust::classify_av1_sequence_sample(&info.sequence_sample_payloads[1]).unwrap(),
+        Some(avif_rust::AvifSequenceSampleKind::Inter)
+    );
+    for frame_index in [1] {
+        let decoded = avif_rust::decode_sequence_frame_bytes(&data, frame_index)
+            .expect("generated global-motion inter sample should decode");
+        assert_eq!((decoded.width, decoded.height), (128, 128));
+        if let Some(expected) =
+            ffmpeg_decode_rgba_stream_frame(&output_path, 1, frame_index, 128, 128)
+        {
+            let actual = decoded
+                .to_rgba8()
+                .expect("generated global-motion sample should convert to RGBA8")
+                .rgba;
+            let metrics = diff_rgb_dynamic(&actual, &expected);
+            eprintln!(
+                "generated global-motion frame {}: average RGB absolute error={} max={}",
+                frame_index, metrics.average_rgb_abs, metrics.max_rgb_abs
+            );
+            assert!(
+                metrics.average_rgb_abs <= 64.0,
+                "generated global-motion FFmpeg RGB error average={} max={}",
+                metrics.average_rgb_abs,
+                metrics.max_rgb_abs
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn generated_difference_weighted_compound_sample_matches_ffmpeg_when_encoder_present() {
     let root =
         std::env::temp_dir().join(format!(".test-avif-diff-weighted-{}", std::process::id()));

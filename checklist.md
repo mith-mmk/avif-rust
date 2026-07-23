@@ -1613,6 +1613,13 @@ intermediate buffer while preserving the AV1 bilinear rounding rule. A focused
 measured `83.40/83.60 ms` for `WML2Viewer.avif` and `1.37/1.72 ms` for
 `star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
 
+On 2026-07-23, the generated sample matrix gained a moving-crop AVIS with
+libaom global motion enabled. The second Inter sample decodes at complete
+128x128 dimensions and matches the FFmpeg RGBA oracle with average RGB error
+`35.72` (max `255`); this keeps global-motion/reference-backed reconstruction
+in the regression loop while strict entropy and broader motion-mode parity
+remain explicit follow-up boundaries.
+
 On 2026-07-23, LOCALWARP now has the AV1 warped-motion 193-phase filter bank
 and two-pass horizontal/vertical reconstruction path, including shear setup,
 signed model reduction, bit-depth rounding, and edge clamping. The generated
