@@ -1613,6 +1613,13 @@ intermediate buffer while preserving the AV1 bilinear rounding rule. A focused
 measured `83.40/83.60 ms` for `WML2Viewer.avif` and `1.37/1.72 ms` for
 `star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
 
+On 2026-07-23, 4:2:0 YUV-to-RGBA conversion now has a dedicated no-alpha fast
+path that reuses each chroma row pair and preserves the AV1 unknown/vertical
+versus colocated sample-position rules. The external
+`fox.profile0.8bpc.yuv420.avif` benchmark improved from `51.06/57.05 ms` to
+`49.76/51.32 ms` (native/RGBA, seven iterations); `WML2Viewer.avif` remained
+within host variance at `85.52/90.26 ms`.
+
 On 2026-07-23, CDEF plane application now skips the source clone and filter
 thread when the selected plane has no configured primary or secondary strength.
 The parser's AV1 secondary-strength value `3 -> 4` mapping is covered by a
