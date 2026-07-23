@@ -1,5 +1,5 @@
 use super::TileDecoder;
-use super::diagnostic::LocalWarpSample;
+use super::diagnostic::{LocalWarpSample, ObmcNeighbor, ObmcNeighbors};
 use super::partition_syntax::{partition_plane_context, partition_subsize};
 use crate::DecoderError;
 use crate::av1::decode::TileDecodePlan;
@@ -34,6 +34,135 @@ fn push_local_warp_offset(
 }
 
 impl<'a> TileDecoder<'a> {
+    pub(super) fn obmc_neighbors(
+        &self,
+        x: usize,
+        y: usize,
+        block_size: BlockSize,
+        reference_frame: u8,
+    ) -> ObmcNeighbors {
+        ObmcNeighbors {
+            above: self.collect_obmc_above(x, y, block_size, reference_frame),
+            left: self.collect_obmc_left(x, y, block_size, reference_frame),
+        }
+    }
+
+    fn collect_obmc_above(
+        &self,
+        x: usize,
+        y: usize,
+        block_size: BlockSize,
+        reference_frame: u8,
+    ) -> [Option<ObmcNeighbor>; 4] {
+        let mi_col = x / 4;
+        let mi_row = y / 4;
+        if mi_row <= self.tile_mi_row_start {
+            return [None; 4];
+        }
+        let end_col = mi_col
+            .saturating_add((block_size.width() / 4).max(1))
+            .min(self.mi_cols);
+        let sample_row = mi_row - 1;
+        let mut result = [None; 4];
+        let mut result_len = 0usize;
+        let mut candidate_col = mi_col.max(self.tile_mi_col_start);
+        while candidate_col < end_col && result_len < result.len() {
+            let index = sample_row * self.mi_cols + candidate_col;
+            let Some(source_size) = self.motion_block_size_grid[index] else {
+                candidate_col += 1;
+                continue;
+            };
+            let source_w4 = (source_size.width() / 4).max(1);
+            let source_h4 = (source_size.height() / 4).max(1);
+            let origin_col = candidate_col & !(source_w4 - 1);
+            let origin_row = sample_row & !(source_h4 - 1);
+            if origin_row + source_h4 != mi_row {
+                candidate_col += 1;
+                continue;
+            }
+            let origin_index = origin_row * self.mi_cols + origin_col;
+            let same_reference = self.reference_frame_grid[origin_index] == Some(reference_frame)
+                && self.reference_frame_secondary_grid[origin_index].is_none();
+            if same_reference {
+                if let Some(motion_vector) = self.motion_vector_grid[origin_index] {
+                    let neighbor = ObmcNeighbor {
+                        origin_x: origin_col * 4,
+                        origin_y: origin_row * 4,
+                        width: source_w4 * 4,
+                        height: source_h4 * 4,
+                        motion_vector,
+                    };
+                    if !result[..result_len].contains(&Some(neighbor)) {
+                        result[result_len] = Some(neighbor);
+                        result_len += 1;
+                    }
+                }
+            }
+            candidate_col = candidate_col
+                .saturating_add(1)
+                .max(origin_col.saturating_add(source_w4));
+        }
+        result
+    }
+
+    fn collect_obmc_left(
+        &self,
+        x: usize,
+        y: usize,
+        block_size: BlockSize,
+        reference_frame: u8,
+    ) -> [Option<ObmcNeighbor>; 4] {
+        let mi_col = x / 4;
+        let mi_row = y / 4;
+        if mi_col <= self.tile_mi_col_start {
+            return [None; 4];
+        }
+        let end_row = mi_row
+            .saturating_add((block_size.height() / 4).max(1))
+            .min(self.mi_rows);
+        let sample_col = mi_col - 1;
+        let mut result = [None; 4];
+        let mut result_len = 0usize;
+        let mut candidate_row = mi_row.max(self.tile_mi_row_start);
+        while candidate_row < end_row && result_len < result.len() {
+            let index = candidate_row * self.mi_cols + sample_col;
+            let Some(source_size) = self.motion_block_size_grid[index] else {
+                candidate_row += 1;
+                continue;
+            };
+            let source_w4 = (source_size.width() / 4).max(1);
+            let source_h4 = (source_size.height() / 4).max(1);
+            let origin_col = sample_col & !(source_w4 - 1);
+            let origin_row = candidate_row & !(source_h4 - 1);
+            if origin_col + source_w4 != mi_col {
+                candidate_row += 1;
+                continue;
+            }
+            let origin_index = origin_row * self.mi_cols + origin_col;
+            let same_reference = self.reference_frame_grid[origin_index] == Some(reference_frame)
+                && self.reference_frame_secondary_grid[origin_index].is_none();
+            if same_reference {
+                if let Some(motion_vector) = self.motion_vector_grid[origin_index] {
+                    let neighbor = ObmcNeighbor {
+                        origin_x: origin_col * 4,
+                        origin_y: origin_row * 4,
+                        width: source_w4 * 4,
+                        height: source_h4 * 4,
+                        motion_vector,
+                    };
+                    if !result[..result_len].contains(&Some(neighbor)) {
+                        result[result_len] = Some(neighbor);
+                        result_len += 1;
+                    }
+                }
+            }
+            candidate_row = candidate_row
+                .saturating_add(1)
+                .max(origin_row.saturating_add(source_h4));
+        }
+        result
+    }
+
     pub(super) fn inter_mv_neighbor_candidates(
         &self,
         x: usize,

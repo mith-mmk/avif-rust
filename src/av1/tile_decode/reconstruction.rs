@@ -1,3 +1,4 @@
+use super::diagnostic::ObmcNeighbors;
 use super::{
     BlockModeProbe, CompoundMask, DecodedTransform, InterIntraMode, LocalWarpSample, MotionMode,
     PalettePlaneInfo, TileDecoder, coefficient_entropy_context,
@@ -121,6 +122,13 @@ pub(super) fn decode_plane_block_unit(
             "AV1 inter reference plane {plane_index} is unavailable"
         )));
     }
+    let obmc_neighbors = if let (MotionMode::Obmc, Some(reference_frame)) =
+        (block_mode.motion_mode, block_mode.reference_frame)
+    {
+        decoder.obmc_neighbors(x, y, block_mode.block_size, reference_frame)
+    } else {
+        ObmcNeighbors::default()
+    };
     let transforms = if subsampling_x == 0 && subsampling_y == 0 {
         iter_transform_blocks_with_tx_size(
             plane_index,
@@ -190,6 +198,7 @@ pub(super) fn decode_plane_block_unit(
                 subsampling_y,
                 prediction,
                 &mut decoder.inter_intra_scratch[..prediction_len],
+                &obmc_neighbors,
             )?;
             write_plane_block(
                 plane,
@@ -247,6 +256,7 @@ pub(super) fn decode_plane_block_unit(
                 subsampling_y,
                 prediction,
                 &mut decoder.inter_intra_scratch[..prediction_len],
+                &obmc_neighbors,
             )?;
             write_plane_block(
                 plane,
@@ -298,6 +308,7 @@ pub(super) fn decode_plane_block_unit(
             subsampling_y,
             prediction,
             &mut decoder.inter_intra_scratch[..prediction_len],
+            &obmc_neighbors,
         )?;
         let block = decoded_transform.transform;
         let tx_type = decoded_transform.tx_type;
@@ -595,6 +606,7 @@ fn predict_plane_block_into(
     subsampling_y: usize,
     output: &mut [u16],
     inter_intra_scratch: &mut [u16],
+    obmc_neighbors: &ObmcNeighbors,
 ) -> Result<(), DecoderError> {
     let sample_count = width.checked_mul(height).ok_or_else(|| {
         DecoderError::InvalidParam("AV1 prediction dimensions overflow".to_string())
@@ -647,6 +659,7 @@ fn predict_plane_block_into(
             MotionMode::Obmc => apply_obmc_edge_blend(
                 output,
                 plane,
+                reference,
                 block_x,
                 block_y,
                 x,
@@ -655,8 +668,15 @@ fn predict_plane_block_into(
                 height,
                 (block_mode.block_size.width() >> subsampling_x).max(4),
                 (block_mode.block_size.height() >> subsampling_y).max(4),
+                block_mode
+                    .interpolation_filter
+                    .unwrap_or((InterpolationFilter::Regular, InterpolationFilter::Regular)),
+                subsampling_x,
+                subsampling_y,
+                obmc_neighbors,
+                inter_intra_scratch,
                 bit_depth,
-            ),
+            )?,
             MotionMode::LocalWarp if secondary_reference_plane.is_none() => {
                 apply_local_warp_prediction(
                     output,
@@ -823,8 +843,213 @@ fn predict_plane_block_into(
     Ok(())
 }
 
-#[inline]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "OBMC prediction keeps frame, block, plane, and scratch geometry explicit"
+)]
 fn apply_obmc_edge_blend(
+    output: &mut [u16],
+    plane: &PlaneBuffer,
+    reference: &PlaneBuffer,
+    block_x: usize,
+    block_y: usize,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    block_width: usize,
+    block_height: usize,
+    interpolation_filters: (InterpolationFilter, InterpolationFilter),
+    subsampling_x: usize,
+    subsampling_y: usize,
+    neighbors: &ObmcNeighbors,
+    scratch: &mut [u16],
+    bit_depth: u8,
+) -> Result<(), DecoderError> {
+    let has_neighbors = neighbors.above.iter().flatten().next().is_some()
+        || neighbors.left.iter().flatten().next().is_some();
+    if !has_neighbors {
+        apply_obmc_boundary_blend(
+            output,
+            plane,
+            block_x,
+            block_y,
+            x,
+            y,
+            width,
+            height,
+            block_width,
+            block_height,
+            bit_depth,
+        );
+        return Ok(());
+    }
+    let sample_count = width.checked_mul(height).ok_or_else(|| {
+        DecoderError::InvalidParam("AV1 OBMC prediction size overflows".to_string())
+    })?;
+    if scratch.len() < sample_count {
+        return Err(DecoderError::InvalidParam(
+            "AV1 OBMC scratch buffer is too small".to_string(),
+        ));
+    }
+    let overlap_x = (block_width.min(64) / 2).max(1);
+    let overlap_y = (block_height.min(64) / 2).max(1);
+    for neighbor in neighbors.above.iter().flatten() {
+        blend_obmc_neighbor_prediction(
+            output,
+            reference,
+            x,
+            y,
+            width,
+            height,
+            block_x,
+            block_y,
+            block_width,
+            block_height,
+            overlap_x,
+            overlap_y,
+            neighbor,
+            true,
+            interpolation_filters,
+            subsampling_x,
+            subsampling_y,
+            &mut scratch[..sample_count],
+            bit_depth,
+        )?;
+    }
+    for neighbor in neighbors.left.iter().flatten() {
+        blend_obmc_neighbor_prediction(
+            output,
+            reference,
+            x,
+            y,
+            width,
+            height,
+            block_x,
+            block_y,
+            block_width,
+            block_height,
+            overlap_x,
+            overlap_y,
+            neighbor,
+            false,
+            interpolation_filters,
+            subsampling_x,
+            subsampling_y,
+            &mut scratch[..sample_count],
+            bit_depth,
+        )?;
+    }
+    Ok(())
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "OBMC neighbor blending keeps predictor and overlap geometry explicit"
+)]
+fn blend_obmc_neighbor_prediction(
+    output: &mut [u16],
+    reference: &PlaneBuffer,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    block_x: usize,
+    block_y: usize,
+    block_width: usize,
+    block_height: usize,
+    overlap_x: usize,
+    overlap_y: usize,
+    neighbor: &super::diagnostic::ObmcNeighbor,
+    above: bool,
+    interpolation_filters: (InterpolationFilter, InterpolationFilter),
+    subsampling_x: usize,
+    subsampling_y: usize,
+    scratch: &mut [u16],
+    bit_depth: u8,
+) -> Result<(), DecoderError> {
+    let neighbor_x = neighbor.origin_x >> subsampling_x;
+    let neighbor_y = neighbor.origin_y >> subsampling_y;
+    let neighbor_width = ceil_shift(neighbor.width, subsampling_x);
+    let neighbor_height = ceil_shift(neighbor.height, subsampling_y);
+    let segment_start = if above {
+        block_x.max(neighbor_x)
+    } else {
+        block_y.max(neighbor_y)
+    };
+    let segment_end = if above {
+        block_x
+            .saturating_add(block_width)
+            .min(neighbor_x.saturating_add(neighbor_width))
+    } else {
+        block_y
+            .saturating_add(block_height)
+            .min(neighbor_y.saturating_add(neighbor_height))
+    };
+    if segment_start >= segment_end {
+        return Ok(());
+    }
+    predict_inter_block_into(
+        reference,
+        None,
+        x,
+        y,
+        width,
+        height,
+        neighbor.motion_vector,
+        None,
+        subsampling_x,
+        subsampling_y,
+        interpolation_filters,
+        None,
+        None,
+        bit_depth,
+        MaskGeometry {
+            x: 0,
+            y: 0,
+            width: block_width,
+            height: block_height,
+        },
+        scratch,
+    )?;
+    let max_value = (1_u32 << u32::from(bit_depth.min(16))) - 1;
+    for row in 0..height {
+        let global_y = y.saturating_add(row);
+        for col in 0..width {
+            let global_x = x.saturating_add(col);
+            let (inside, current_weight) = if above {
+                (
+                    global_y >= block_y
+                        && global_y < block_y.saturating_add(overlap_y)
+                        && global_x >= segment_start
+                        && global_x < segment_end,
+                    obmc_mask_value(overlap_y, global_y.saturating_sub(block_y)),
+                )
+            } else {
+                (
+                    global_x >= block_x
+                        && global_x < block_x.saturating_add(overlap_x)
+                        && global_y >= segment_start
+                        && global_y < segment_end,
+                    obmc_mask_value(overlap_x, global_x.saturating_sub(block_x)),
+                )
+            };
+            if !inside {
+                continue;
+            }
+            let neighbor_weight = u32::from(64_u8.saturating_sub(current_weight));
+            let current = u32::from(output[row * width + col]);
+            let predicted = u32::from(scratch[row * width + col]);
+            output[row * width + col] =
+                ((current * u32::from(current_weight) + predicted * neighbor_weight + 32) >> 6)
+                    .min(max_value) as u16;
+        }
+    }
+    Ok(())
+}
+
+#[inline]
+fn apply_obmc_boundary_blend(
     output: &mut [u16],
     plane: &PlaneBuffer,
     block_x: usize,
@@ -2877,7 +3102,7 @@ mod tests {
             samples: vec![0; 100],
         };
         let mut output = [64_u16; 64];
-        apply_obmc_edge_blend(&mut output, &plane, 1, 1, 1, 1, 8, 8, 8, 8, 8);
+        apply_obmc_boundary_blend(&mut output, &plane, 1, 1, 1, 1, 8, 8, 8, 8, 8);
         assert!(output[0] < 64);
         assert_eq!(output[7 * 8 + 7], 64);
     }

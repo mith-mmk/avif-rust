@@ -1613,6 +1613,17 @@ intermediate buffer while preserving the AV1 bilinear rounding rule. A focused
 measured `83.40/83.60 ms` for `WML2Viewer.avif` and `1.37/1.72 ms` for
 `star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
 
+On 2026-07-23, OBMC now collects causal top/left neighbors that use the same
+reference frame from the decoded motion grid and predicts their overlap before
+applying the dimension-specific AOM masks. Blocks without a usable same-reference
+neighbor retain the boundary-only fallback. The generated 128x128 OBMC sample
+remains complete and matches the FFmpeg oracle threshold (average RGB absolute
+error `35.64599609375`, max `255`). The 404-test lib suite and 83-test FFmpeg
+conformance suite remain green. A five-iteration release benchmark measured
+`83.9505/84.7796 ms` for `WML2Viewer.avif` (native/RGBA); different-reference
+neighbor parity and a dedicated fixture that forces the new neighbor path remain
+follow-ups.
+
 On 2026-07-23, inter-intra prediction stopped allocating a temporary `Vec`
 for every transform block and now uses a TileDecoder-owned 64x64 scratch
 buffer. The existing inter-intra oracle remains green, and a rotated

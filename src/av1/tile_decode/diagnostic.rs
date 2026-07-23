@@ -30,6 +30,23 @@ pub struct LocalWarpSample {
     pub destination: (i32, i32),
 }
 
+/// One same-reference neighbor used by overlapped block motion compensation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ObmcNeighbor {
+    pub origin_x: usize,
+    pub origin_y: usize,
+    pub width: usize,
+    pub height: usize,
+    pub motion_vector: (i32, i32),
+}
+
+/// Causal top/left OBMC neighbors collected from the decoded MI grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) struct ObmcNeighbors {
+    pub above: [Option<ObmcNeighbor>; 4],
+    pub left: [Option<ObmcNeighbor>; 4],
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockModeProbe {
     pub tile_id: u32,
