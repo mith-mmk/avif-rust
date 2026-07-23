@@ -229,6 +229,7 @@ impl<'a> TileDecoder<'a> {
             interintra_mode: None,
             interintra_wedge_index: None,
             local_warp_neighbors: [None; 4],
+            local_warp_samples: [None; 8],
             interpolation_filter: None,
             compound_weight: None,
             compound_mask: None,
@@ -497,6 +498,11 @@ impl<'a> TileDecoder<'a> {
         } else {
             [None; 4]
         };
+        let local_warp_samples = if motion_mode == MotionMode::LocalWarp {
+            self.local_warp_sample_candidates(x, y, block_size, reference_frame, motion_vector)
+        } else {
+            [None; 8]
+        };
         let mut compound_weight = None;
         let mut compound_mask = None;
         if is_compound && !skip {
@@ -601,6 +607,7 @@ impl<'a> TileDecoder<'a> {
             interintra_mode,
             interintra_wedge_index,
             local_warp_neighbors,
+            local_warp_samples,
             interpolation_filter,
             compound_weight,
             compound_mask,

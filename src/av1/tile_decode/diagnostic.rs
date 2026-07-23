@@ -21,6 +21,15 @@ pub struct PartitionProbe {
     pub bit_position_after: usize,
 }
 
+/// A causal motion-vector sample used to estimate an AV1 LOCALWARP model.
+/// Coordinates are expressed in 1/8-luma-sample units, matching the
+/// bitstream's motion-vector precision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalWarpSample {
+    pub source: (i32, i32),
+    pub destination: (i32, i32),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockModeProbe {
     pub tile_id: u32,
@@ -40,6 +49,7 @@ pub struct BlockModeProbe {
     pub interintra_mode: Option<InterIntraMode>,
     pub interintra_wedge_index: Option<u8>,
     pub local_warp_neighbors: [Option<(i32, i32)>; 4],
+    pub local_warp_samples: [Option<LocalWarpSample>; 8],
     pub interpolation_filter: Option<(InterpolationFilter, InterpolationFilter)>,
     /// Weight applied to the primary prediction for distance-weighted
     /// compound blocks; `None` selects equal averaging.

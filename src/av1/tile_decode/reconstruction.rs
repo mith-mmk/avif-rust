@@ -1,6 +1,6 @@
 use super::{
-    BlockModeProbe, CompoundMask, DecodedTransform, InterIntraMode, MotionMode, PalettePlaneInfo,
-    TileDecoder, coefficient_entropy_context,
+    BlockModeProbe, CompoundMask, DecodedTransform, InterIntraMode, LocalWarpSample, MotionMode,
+    PalettePlaneInfo, TileDecoder, coefficient_entropy_context,
 };
 use crate::DecoderError;
 use crate::av1::decode::{FrameBuffers, FrameDecodePlan, PlaneBuffer};
@@ -652,11 +652,6 @@ fn predict_plane_block_into(
                 (block_mode.block_size.height() >> subsampling_y).max(4),
                 bit_depth,
             ),
-            // LOCALWARP keeps the decoded translation as a conservative
-            // fallback until the local least-squares warp model is available.
-            // Use the causal neighbour MVs to apply a bounded affine tilt;
-            // this covers the common local-warp case without introducing a
-            // per-block allocation or changing entropy traversal.
             MotionMode::LocalWarp if secondary_reference_plane.is_none() => {
                 apply_local_warp_prediction(
                     output,
@@ -670,12 +665,12 @@ fn predict_plane_block_into(
                     (block_mode.block_size.width() >> subsampling_x).max(4),
                     (block_mode.block_size.height() >> subsampling_y).max(4),
                     mv,
-                    block_mode.local_warp_neighbors,
                     subsampling_x,
                     subsampling_y,
                     block_mode
                         .interpolation_filter
                         .unwrap_or((InterpolationFilter::Regular, InterpolationFilter::Regular)),
+                    block_mode.local_warp_samples,
                 )?;
             }
             MotionMode::LocalWarp => {}
@@ -883,60 +878,238 @@ fn apply_local_warp_prediction(
     block_width: usize,
     block_height: usize,
     base_mv: (i32, i32),
-    neighbors: [Option<(i32, i32)>; 4],
     subsampling_x: usize,
     subsampling_y: usize,
     interpolation_filters: (InterpolationFilter, InterpolationFilter),
+    samples: [Option<LocalWarpSample>; 8],
 ) -> Result<(), DecoderError> {
-    let above = neighbors[0].unwrap_or(base_mv);
-    let horizontal_delta = neighbors[3]
-        .zip(neighbors[0])
-        .map(|(above_right, above)| i64::from(above_right.1) - i64::from(above.1))
-        .unwrap_or_else(|| {
-            let left = neighbors[1].unwrap_or(base_mv);
-            i64::from(base_mv.1) - i64::from(left.1)
-        });
-    let dx_per_pixel = horizontal_delta / i64::try_from(block_width.max(1)).unwrap_or(1);
-    let vertical_deltas = [
-        Some(i64::from(base_mv.0) - i64::from(above.0)),
-        neighbors[1]
-            .zip(neighbors[2])
-            .map(|(left, above_left)| i64::from(left.0) - i64::from(above_left.0)),
-    ];
-    let vertical_delta_sum: i64 = vertical_deltas.into_iter().flatten().sum();
-    let vertical_delta_count = vertical_deltas.into_iter().flatten().count().max(1) as i64;
-    let dy_per_pixel = (vertical_delta_sum / vertical_delta_count)
-        / i64::try_from(block_height.max(1)).unwrap_or(1);
-    let base_x = i64::try_from(x).unwrap_or(i64::MAX) << 3;
-    let base_y = i64::try_from(y).unwrap_or(i64::MAX) << 3;
+    let block_x_luma = i64::try_from(block_x)
+        .map_err(|_| DecoderError::Bitstream("AV1 local warp block x overflows".to_string()))?
+        .checked_shl(u32::try_from(subsampling_x).unwrap_or(0))
+        .ok_or_else(|| DecoderError::Bitstream("AV1 local warp block x overflows".to_string()))?;
+    let block_y_luma = i64::try_from(block_y)
+        .map_err(|_| DecoderError::Bitstream("AV1 local warp block y overflows".to_string()))?
+        .checked_shl(u32::try_from(subsampling_y).unwrap_or(0))
+        .ok_or_else(|| DecoderError::Bitstream("AV1 local warp block y overflows".to_string()))?;
+    let block_width_luma = block_width
+        .checked_shl(u32::try_from(subsampling_x).unwrap_or(0))
+        .unwrap_or(usize::MAX);
+    let block_height_luma = block_height
+        .checked_shl(u32::try_from(subsampling_y).unwrap_or(0))
+        .unwrap_or(usize::MAX);
+    let Some(params) = estimate_local_warp_params(
+        block_x_luma,
+        block_y_luma,
+        block_width_luma,
+        block_height_luma,
+        base_mv,
+        samples,
+    ) else {
+        return Ok(());
+    };
+    if params.alpha == 1 << 16 && params.beta == 0 && params.gamma == 0 && params.delta == 1 << 16 {
+        // The translation predictor already produced the exact regular
+        // interpolation result for the identity local model.
+        return Ok(());
+    }
     for row in 0..height {
         let global_y = y.saturating_add(row);
-        let local_y = global_y.saturating_sub(block_y);
-        let warped_y = i64::from(base_mv.0) + dy_per_pixel * i64::try_from(local_y).unwrap_or(0);
-        let source_y_fixed = base_y
-            .checked_add(warped_y / (1_i64 << subsampling_y))
+        let source_y_luma = i64::try_from(global_y)
+            .map_err(|_| DecoderError::Bitstream("AV1 local warp source y overflows".to_string()))?
+            .checked_shl(u32::try_from(subsampling_y).unwrap_or(0))
             .ok_or_else(|| {
                 DecoderError::Bitstream("AV1 local warp source y overflows".to_string())
             })?;
-        let source_y = floor_div_eight(source_y_fixed);
-        let fy = source_y_fixed - source_y * 8;
         for col in 0..width {
             let global_x = x.saturating_add(col);
-            let local_x = global_x.saturating_sub(block_x);
-            let warped_x =
-                i64::from(base_mv.1) + dx_per_pixel * i64::try_from(local_x).unwrap_or(0);
-            let source_x_fixed = base_x
-                .checked_add(warped_x / (1_i64 << subsampling_x))
+            let source_x_luma = i64::try_from(global_x)
+                .map_err(|_| {
+                    DecoderError::Bitstream("AV1 local warp source x overflows".to_string())
+                })?
+                .checked_shl(u32::try_from(subsampling_x).unwrap_or(0))
                 .ok_or_else(|| {
                     DecoderError::Bitstream("AV1 local warp source x overflows".to_string())
                 })?;
+            let warped_x = params
+                .alpha
+                .checked_mul(source_x_luma)
+                .and_then(|value| value.checked_add(params.beta.checked_mul(source_y_luma)?))
+                .and_then(|value| value.checked_add(params.translation_x))
+                .ok_or_else(|| DecoderError::Bitstream("AV1 local warp x overflows".to_string()))?;
+            let warped_y = params
+                .gamma
+                .checked_mul(source_x_luma)
+                .and_then(|value| value.checked_add(params.delta.checked_mul(source_y_luma)?))
+                .and_then(|value| value.checked_add(params.translation_y))
+                .ok_or_else(|| DecoderError::Bitstream("AV1 local warp y overflows".to_string()))?;
+            let source_x_fixed = fixed_warp_to_plane_eighth(warped_x, subsampling_x);
+            let source_y_fixed = fixed_warp_to_plane_eighth(warped_y, subsampling_y);
             let source_x = floor_div_eight(source_x_fixed);
+            let source_y = floor_div_eight(source_y_fixed);
             let fx = source_x_fixed - source_x * 8;
+            let fy = source_y_fixed - source_y * 8;
             output[row * width + col] =
                 predict_inter_sample(reference, source_x, source_y, fx, fy, interpolation_filters);
         }
     }
     Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct LocalWarpParams {
+    translation_x: i64,
+    translation_y: i64,
+    alpha: i64,
+    beta: i64,
+    gamma: i64,
+    delta: i64,
+}
+
+fn estimate_local_warp_params(
+    block_x_luma: i64,
+    block_y_luma: i64,
+    block_width_luma: usize,
+    block_height_luma: usize,
+    base_mv: (i32, i32),
+    samples: [Option<LocalWarpSample>; 8],
+) -> Option<LocalWarpParams> {
+    const WARPEDMODEL_PREC_BITS: u32 = 16;
+    const LS_MV_MAX: i64 = 256;
+    const NONDIAG_CLAMP: i64 = 1 << 13;
+    const TRANS_CLAMP: i64 = 1 << 23;
+    let mid_x = block_x_luma.checked_add(i64::try_from(block_width_luma / 2).ok()?)? - 1;
+    let mid_y = block_y_luma.checked_add(i64::try_from(block_height_luma / 2).ok()?)? - 1;
+    let sux = mid_x.checked_mul(8)?;
+    let suy = mid_y.checked_mul(8)?;
+    let dux = sux.checked_add(i64::from(base_mv.1))?;
+    let duy = suy.checked_add(i64::from(base_mv.0))?;
+    let mut a00 = 0_i64;
+    let mut a01 = 0_i64;
+    let mut a11 = 0_i64;
+    let mut bx0 = 0_i64;
+    let mut bx1 = 0_i64;
+    let mut by0 = 0_i64;
+    let mut by1 = 0_i64;
+    let mut used = 0usize;
+    for sample in samples.into_iter().flatten() {
+        let sx = i64::from(sample.source.1).checked_sub(sux)?;
+        let sy = i64::from(sample.source.0).checked_sub(suy)?;
+        let dx = i64::from(sample.destination.1).checked_sub(dux)?;
+        let dy = i64::from(sample.destination.0).checked_sub(duy)?;
+        if (sx - dx).abs() >= LS_MV_MAX || (sy - dy).abs() >= LS_MV_MAX {
+            continue;
+        }
+        a00 = a00.checked_add(ls_product(sx, sx)?.checked_add(8)?)?;
+        a01 = a01.checked_add(ls_product(sx, sy)?.checked_add(4)?)?;
+        a11 = a11.checked_add(ls_product(sy, sy)?.checked_add(8)?)?;
+        bx0 = bx0.checked_add(ls_product(sx, dx)?.checked_add(8)?)?;
+        bx1 = bx1.checked_add(ls_product(sy, dx)?.checked_add(4)?)?;
+        by0 = by0.checked_add(ls_product(sx, dy)?.checked_add(4)?)?;
+        by1 = by1.checked_add(ls_product(sy, dy)?.checked_add(8)?)?;
+        used += 1;
+    }
+    if used == 0 {
+        return None;
+    }
+    let determinant = a00.checked_mul(a11)?.checked_sub(a01.checked_mul(a01)?)?;
+    if determinant == 0 {
+        return None;
+    }
+    let alpha = round_div_signed(
+        a11.checked_mul(bx0)?
+            .checked_sub(a01.checked_mul(bx1)?)?
+            .checked_shl(WARPEDMODEL_PREC_BITS)?,
+        determinant,
+    )?
+    .clamp(
+        (1 << WARPEDMODEL_PREC_BITS) - NONDIAG_CLAMP + 1,
+        (1 << WARPEDMODEL_PREC_BITS) + NONDIAG_CLAMP - 1,
+    );
+    let beta = round_div_signed(
+        a00.checked_mul(bx1)?
+            .checked_sub(a01.checked_mul(bx0)?)?
+            .checked_shl(WARPEDMODEL_PREC_BITS)?,
+        determinant,
+    )?
+    .clamp(-NONDIAG_CLAMP + 1, NONDIAG_CLAMP - 1);
+    let gamma = round_div_signed(
+        a11.checked_mul(by0)?
+            .checked_sub(a01.checked_mul(by1)?)?
+            .checked_shl(WARPEDMODEL_PREC_BITS)?,
+        determinant,
+    )?
+    .clamp(-NONDIAG_CLAMP + 1, NONDIAG_CLAMP - 1);
+    let delta = round_div_signed(
+        a00.checked_mul(by1)?
+            .checked_sub(a01.checked_mul(by0)?)?
+            .checked_shl(WARPEDMODEL_PREC_BITS)?,
+        determinant,
+    )?
+    .clamp(
+        (1 << WARPEDMODEL_PREC_BITS) - NONDIAG_CLAMP + 1,
+        (1 << WARPEDMODEL_PREC_BITS) + NONDIAG_CLAMP - 1,
+    );
+    let translation_x = (i64::from(base_mv.1) << (WARPEDMODEL_PREC_BITS - 3))
+        .checked_sub(
+            mid_x
+                .checked_mul(alpha - (1 << WARPEDMODEL_PREC_BITS))?
+                .checked_add(mid_y.checked_mul(beta)?)?,
+        )?
+        .clamp(-TRANS_CLAMP, TRANS_CLAMP - 1);
+    let translation_y = (i64::from(base_mv.0) << (WARPEDMODEL_PREC_BITS - 3))
+        .checked_sub(
+            mid_x
+                .checked_mul(gamma)?
+                .checked_add(mid_y.checked_mul(delta - (1 << WARPEDMODEL_PREC_BITS))?)?,
+        )?
+        .clamp(-TRANS_CLAMP, TRANS_CLAMP - 1);
+    Some(LocalWarpParams {
+        translation_x,
+        translation_y,
+        alpha,
+        beta,
+        gamma,
+        delta,
+    })
+}
+
+fn ls_product(a: i64, b: i64) -> Option<i64> {
+    a.checked_mul(b)?
+        .checked_shr(2)?
+        .checked_add(a)?
+        .checked_add(b)
+}
+
+fn round_div_signed(numerator: i64, denominator: i64) -> Option<i64> {
+    if denominator == 0 {
+        return None;
+    }
+    let half = denominator.abs() / 2;
+    let adjusted = if (numerator < 0) ^ (denominator < 0) {
+        numerator.checked_sub(half)?
+    } else {
+        numerator.checked_add(half)?
+    };
+    adjusted.checked_div(denominator)
+}
+
+fn fixed_warp_to_plane_eighth(value: i64, subsampling: usize) -> i64 {
+    let shift = 13_u32.saturating_add(u32::try_from(subsampling).unwrap_or(0));
+    floor_div_power_of_two(value, shift)
+}
+
+fn floor_div_power_of_two(value: i64, shift: u32) -> i64 {
+    if shift == 0 {
+        return value;
+    }
+    let divisor = 1_i64.checked_shl(shift).unwrap_or(i64::MAX);
+    let quotient = value / divisor;
+    let remainder = value % divisor;
+    if remainder < 0 {
+        quotient - 1
+    } else {
+        quotient
+    }
 }
 
 fn predict_inter_block_into(
@@ -2515,6 +2688,50 @@ mod tests {
         apply_obmc_edge_blend(&mut output, &plane, 1, 1, 1, 1, 8, 8, 8, 8, 8);
         assert!(output[0] < 64);
         assert_eq!(output[7 * 8 + 7], 64);
+    }
+
+    #[test]
+    fn local_warp_estimation_preserves_translation_for_flat_samples() {
+        let base_mv = (8_i32, 16_i32);
+        let mid_x = 15_i64 * 8;
+        let mid_y = 15_i64 * 8;
+        let mut samples = [None; 8];
+        let flat_samples = [(-32_i64, -32_i64), (-32, 32), (32, -32), (32, 32)].map(|(dy, dx)| {
+            Some(LocalWarpSample {
+                source: ((mid_y + dy) as i32, (mid_x + dx) as i32),
+                destination: (
+                    (mid_y + dy + i64::from(base_mv.0)) as i32,
+                    (mid_x + dx + i64::from(base_mv.1)) as i32,
+                ),
+            })
+        });
+        samples[..4].copy_from_slice(&flat_samples);
+        let params = estimate_local_warp_params(8, 8, 16, 16, base_mv, samples).unwrap();
+        assert_eq!(params.alpha, 1 << 16);
+        assert_eq!(params.beta, 0);
+        assert_eq!(params.gamma, 0);
+        assert_eq!(params.delta, 1 << 16);
+        assert_eq!(params.translation_x, i64::from(base_mv.1) << 13);
+        assert_eq!(params.translation_y, i64::from(base_mv.0) << 13);
+    }
+
+    #[test]
+    fn local_warp_estimation_fits_cross_axis_tilt() {
+        let mid_x = 15_i64 * 8;
+        let mid_y = 15_i64 * 8;
+        let mut samples = [None; 8];
+        let tilted_samples =
+            [(-32_i64, -32_i64), (-32, 32), (32, -32), (32, 32)].map(|(dy, dx)| {
+                Some(LocalWarpSample {
+                    source: ((mid_y + dy) as i32, (mid_x + dx) as i32),
+                    destination: ((mid_y + dy + dx / 8) as i32, (mid_x + dx + dy / 8) as i32),
+                })
+            });
+        samples[..4].copy_from_slice(&tilted_samples);
+        let params = estimate_local_warp_params(8, 8, 16, 16, (0, 0), samples).unwrap();
+        assert!(params.beta.abs() > 0);
+        assert!(params.gamma.abs() > 0);
+        assert_eq!(fixed_warp_to_plane_eighth(-1, 0), -1);
     }
 
     #[test]

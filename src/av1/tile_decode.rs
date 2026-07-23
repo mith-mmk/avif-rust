@@ -44,7 +44,7 @@ use coefficient_context::{
 };
 pub use diagnostic::{
     BlockModeProbe, CompoundMask, DecodedBlockPrefix, DecodedLumaBlock, DecodedTransform,
-    InterIntraMode, MotionMode, PartitionProbe, ResidualProbe, TileEntropyState,
+    InterIntraMode, LocalWarpSample, MotionMode, PartitionProbe, ResidualProbe, TileEntropyState,
 };
 use diagnostic::{CoeffBaseProbe, CoeffBaseRead, CoeffBrProbe, CoeffSignRead};
 #[cfg(test)]
@@ -137,6 +137,7 @@ pub struct TileDecoder<'a> {
     is_inter_grid: Vec<Option<bool>>,
     reference_frame_grid: Vec<Option<u8>>,
     motion_vector_grid: Vec<Option<(i32, i32)>>,
+    motion_block_size_grid: Vec<Option<BlockSize>>,
     reference_frame_secondary_grid: Vec<Option<u8>>,
     motion_vector_secondary_grid: Vec<Option<(i32, i32)>>,
     intra_bc_mv_grid: Vec<Option<(i32, i32)>>,
@@ -236,6 +237,7 @@ impl<'a> TileDecoder<'a> {
             is_inter_grid: vec![None; mi_count],
             reference_frame_grid: vec![None; mi_count],
             motion_vector_grid: vec![None; mi_count],
+            motion_block_size_grid: vec![None; mi_count],
             reference_frame_secondary_grid: vec![None; mi_count],
             motion_vector_secondary_grid: vec![None; mi_count],
             intra_bc_mv_grid: vec![None; mi_count],

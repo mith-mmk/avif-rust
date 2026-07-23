@@ -1,4 +1,5 @@
 use super::TileDecoder;
+use super::diagnostic::LocalWarpSample;
 use super::partition_syntax::{partition_plane_context, partition_subsize};
 use crate::DecoderError;
 use crate::av1::decode::TileDecodePlan;
@@ -18,6 +19,18 @@ fn intra_bc_candidate_offsets(block_size: BlockSize) -> [(isize, isize); 9] {
         (-2, -6),
         ((n8_h.saturating_sub(1) * 2) as isize, -6),
     ]
+}
+
+fn push_local_warp_offset(
+    offsets: &mut [(isize, isize); 8],
+    offset_len: &mut usize,
+    delta_row: isize,
+    delta_col: isize,
+) {
+    if *offset_len < offsets.len() {
+        offsets[*offset_len] = (delta_row, delta_col);
+        *offset_len += 1;
+    }
 }
 
 impl<'a> TileDecoder<'a> {
@@ -67,6 +80,187 @@ impl<'a> TileDecoder<'a> {
             }
         }
         values
+    }
+
+    pub(super) fn local_warp_sample_candidates(
+        &self,
+        x: usize,
+        y: usize,
+        block_size: BlockSize,
+        reference_frame: u8,
+        motion_vector: (i32, i32),
+    ) -> [Option<LocalWarpSample>; 8] {
+        let mi_col = x >> 2;
+        let mi_row = y >> 2;
+        let w4 = (block_size.width() / 4).max(1);
+        let h4 = (block_size.height() / 4).max(1);
+        let threshold = block_size.width().max(block_size.height()).clamp(16, 112);
+        let mut offsets = [(0isize, 0isize); 8];
+        let mut offset_len = 0usize;
+        let mut do_top_left = true;
+        let mut do_top_right = true;
+
+        if mi_row > self.tile_mi_row_start {
+            if let Some(source_size) = self.motion_block_size_at(mi_col, mi_row - 1) {
+                let source_w4 = (source_size.width() / 4).max(1);
+                if w4 <= source_w4 {
+                    let col_offset = -((mi_col & (source_w4 - 1)) as isize);
+                    if col_offset < 0 {
+                        do_top_left = false;
+                    }
+                    if col_offset + source_w4 as isize > w4 as isize {
+                        do_top_right = false;
+                    }
+                    push_local_warp_offset(&mut offsets, &mut offset_len, -1, 0);
+                } else {
+                    let mut i = 0usize;
+                    while i < w4.min(self.mi_cols.saturating_sub(mi_col))
+                        && offset_len < offsets.len()
+                    {
+                        let source_w4 = self
+                            .motion_block_size_at(mi_col + i, mi_row - 1)
+                            .map(|size| (size.width() / 4).max(1))
+                            .unwrap_or(1);
+                        let mi_step = w4.min(source_w4).max(1);
+                        push_local_warp_offset(&mut offsets, &mut offset_len, -1, i as isize);
+                        i = i.saturating_add(mi_step);
+                    }
+                }
+            }
+        }
+        if mi_col > self.tile_mi_col_start {
+            if let Some(source_size) = self.motion_block_size_at(mi_col - 1, mi_row) {
+                let source_h4 = (source_size.height() / 4).max(1);
+                if h4 <= source_h4 {
+                    let row_offset = -((mi_row & (source_h4 - 1)) as isize);
+                    if row_offset < 0 {
+                        do_top_left = false;
+                    }
+                    push_local_warp_offset(&mut offsets, &mut offset_len, 0, -1);
+                } else {
+                    let mut i = 0usize;
+                    while i < h4.min(self.mi_rows.saturating_sub(mi_row))
+                        && offset_len < offsets.len()
+                    {
+                        let source_h4 = self
+                            .motion_block_size_at(mi_col - 1, mi_row + i)
+                            .map(|size| (size.height() / 4).max(1))
+                            .unwrap_or(1);
+                        let mi_step = h4.min(source_h4).max(1);
+                        push_local_warp_offset(&mut offsets, &mut offset_len, i as isize, -1);
+                        i = i.saturating_add(mi_step);
+                    }
+                }
+            }
+        }
+        if do_top_left {
+            push_local_warp_offset(&mut offsets, &mut offset_len, -1, -1);
+        }
+        if do_top_right && w4.max(h4) <= 16 {
+            push_local_warp_offset(&mut offsets, &mut offset_len, -1, w4 as isize);
+        }
+
+        let mut samples = [None; 8];
+        let mut sample_len = 0usize;
+        let mut scanned = 0usize;
+        for &(delta_row, delta_col) in &offsets[..offset_len] {
+            if scanned >= 8 {
+                break;
+            }
+            let Some(mv_row) = mi_row.checked_add_signed(delta_row) else {
+                continue;
+            };
+            let Some(mv_col) = mi_col.checked_add_signed(delta_col) else {
+                continue;
+            };
+            let Some((sample, valid)) = self.local_warp_candidate_at(
+                mv_row,
+                mv_col,
+                reference_frame,
+                motion_vector,
+                threshold,
+            ) else {
+                continue;
+            };
+            if samples[..sample_len].contains(&Some(sample)) {
+                continue;
+            }
+            scanned += 1;
+            if !valid && scanned > 1 {
+                break;
+            }
+            samples[sample_len] = Some(sample);
+            sample_len += 1;
+            if !valid {
+                break;
+            }
+        }
+        samples
+    }
+
+    fn motion_block_size_at(&self, mi_col: usize, mi_row: usize) -> Option<BlockSize> {
+        if mi_col >= self.mi_cols || mi_row >= self.mi_rows {
+            return None;
+        }
+        self.motion_block_size_grid[mi_row * self.mi_cols + mi_col]
+    }
+
+    fn local_warp_candidate_at(
+        &self,
+        mv_row: usize,
+        mv_col: usize,
+        reference_frame: u8,
+        motion_vector: (i32, i32),
+        threshold: usize,
+    ) -> Option<(LocalWarpSample, bool)> {
+        if mv_row < self.tile_mi_row_start
+            || mv_col < self.tile_mi_col_start
+            || mv_row >= self.mi_rows
+            || mv_col >= self.mi_cols
+        {
+            return None;
+        }
+        let index = mv_row * self.mi_cols + mv_col;
+        if self.reference_frame_grid[index] != Some(reference_frame)
+            || self.reference_frame_secondary_grid[index].is_some()
+        {
+            return None;
+        }
+        let candidate_size = self.motion_block_size_grid[index]?;
+        let candidate_w4 = (candidate_size.width() / 4).max(1);
+        let candidate_h4 = (candidate_size.height() / 4).max(1);
+        let candidate_row = mv_row & !(candidate_h4 - 1);
+        let candidate_col = mv_col & !(candidate_w4 - 1);
+        let candidate_index = candidate_row
+            .checked_mul(self.mi_cols)?
+            .checked_add(candidate_col)?;
+        let candidate_mv = self.motion_vector_grid[candidate_index]?;
+        let mid_y = candidate_row
+            .checked_mul(4)?
+            .checked_add(candidate_h4 * 2)?
+            - 1;
+        let mid_x = candidate_col
+            .checked_mul(4)?
+            .checked_add(candidate_w4 * 2)?
+            - 1;
+        let source = (
+            i32::try_from(mid_y.checked_mul(8)?).ok()?,
+            i32::try_from(mid_x.checked_mul(8)?).ok()?,
+        );
+        let destination = (
+            source.0.checked_add(candidate_mv.0)?,
+            source.1.checked_add(candidate_mv.1)?,
+        );
+        let valid = (candidate_mv.0.abs_diff(motion_vector.0) as usize)
+            .saturating_add(candidate_mv.1.abs_diff(motion_vector.1) as usize)
+            <= threshold;
+        Some((
+            LocalWarpSample {
+                source,
+                destination,
+            },
+            valid,
+        ))
     }
 
     pub(super) fn inter_mv_predictor(
@@ -182,6 +376,15 @@ impl<'a> TileDecoder<'a> {
             block_size,
             motion_vector,
         );
+        super::context_grid::fill_mi_grid(
+            &mut self.motion_block_size_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            block_size,
+        );
         super::context_grid::fill_mi_grid_clone(
             &mut self.reference_frame_secondary_grid,
             self.mi_cols,
@@ -214,6 +417,15 @@ impl<'a> TileDecoder<'a> {
         );
         super::context_grid::fill_mi_grid_clone(
             &mut self.motion_vector_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            None,
+        );
+        super::context_grid::fill_mi_grid_clone(
+            &mut self.motion_block_size_grid,
             self.mi_cols,
             self.mi_rows,
             x,

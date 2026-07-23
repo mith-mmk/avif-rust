@@ -1624,6 +1624,18 @@ measured `83.85/89.07 ms` for `WML2Viewer.avif` and `1.28/1.64 ms` for
 `star-8bpc.avifs` (native/RGBA), a same-host checkpoint. Full least-squares
 LOCALWARP reconstruction remains the next unsupported prediction boundary.
 
+On 2026-07-23, LOCALWARP now follows the AV1 causal sample search (up to eight
+deduplicated above/left/top-left/top-right candidates), retains candidate
+block geometry, and derives the local affine model through the normative 2x2
+least-squares equations and warp-parameter clamps. A generated libaom sample
+with `enable-warped-motion=1` is now an FFmpeg oracle test; it measured average
+RGB absolute error `40.75` and max `255`. The 402-test lib suite and 78-test
+FFmpeg conformance suite remain green. The ten-iteration release benchmark
+measured `88.73/89.34 ms` for `WML2Viewer.avif` and `1.30/1.74 ms` for
+`star-8bpc.avifs` (native/RGBA), a same-host checkpoint. The AV1-specific
+warped 2D filter kernel remains the next precision boundary; the affine model
+currently projects through the existing regular sub-pel sampler.
+
 On 2026-07-23, the sequence inter-intra flag and normative inter-intra CDFs
 are retained. Inter-intra mode and optional wedge syntax are consumed and
 blended with DC/vertical/horizontal/smooth intra prediction; the generated
