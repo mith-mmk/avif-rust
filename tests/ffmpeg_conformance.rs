@@ -573,14 +573,27 @@ fn generated_inter_sequence_sample_is_classified_for_decoder_gate_when_encoder_p
 
 #[test]
 fn generated_local_warp_sample_matches_ffmpeg_when_encoder_present() {
-    let root = std::env::temp_dir().join(format!(".test-avif-localwarp-{}", std::process::id()));
+    run_generated_local_warp_sample("localwarp", "testsrc2=size=128x128:rate=1", None);
+}
+
+#[test]
+fn generated_local_warp_yuv444_sample_matches_ffmpeg_when_encoder_present() {
+    run_generated_local_warp_sample(
+        "localwarp-yuv444",
+        "testsrc=size=128x128:rate=1,format=yuv444p",
+        Some("yuv444p"),
+    );
+}
+
+fn run_generated_local_warp_sample(label: &str, input: &str, pixel_format: Option<&str>) {
+    let root = std::env::temp_dir().join(format!(".test-avif-{label}-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {
         panic!("failed to create temporary AVIF local-warp directory: {err}");
     }
-    let output_path = root.join("localwarp.avifs");
+    let output_path = root.join(format!("{label}.avifs"));
     let status = Command::new("ffmpeg")
         .args(["-y", "-loglevel", "error"])
-        .args(["-f", "lavfi", "-i", "testsrc2=size=128x128:rate=1"])
+        .args(["-f", "lavfi", "-i", input])
         .args([
             "-t",
             "4",
@@ -591,6 +604,11 @@ fn generated_local_warp_sample_matches_ffmpeg_when_encoder_present() {
             "-crf",
             "25",
         ])
+        .args(
+            pixel_format
+                .into_iter()
+                .flat_map(|format| ["-pix_fmt", format]),
+        )
         .args(["-g", "30", "-frame-parallel", "0"])
         .args([
             "-aom-params",
@@ -600,18 +618,18 @@ fn generated_local_warp_sample_matches_ffmpeg_when_encoder_present() {
         .arg(&output_path)
         .status();
     let Ok(status) = status else {
-        eprintln!("ffmpeg is not available; skipping generated local-warp sample");
+        eprintln!("ffmpeg is not available; skipping generated {label} sample");
         let _ = std::fs::remove_dir_all(&root);
         return;
     };
     if !status.success() {
-        eprintln!("libaom local-warp encoder option is unavailable; skipping sample");
+        eprintln!("libaom {label} encoder option is unavailable; skipping sample");
         let _ = std::fs::remove_dir_all(&root);
         return;
     }
-    let data = std::fs::read(&output_path).expect("generated local-warp AVIS should be readable");
+    let data = std::fs::read(&output_path).expect("generated local-warp AVIF should be readable");
     let decoded = avif_rust::decode_sequence_frame_bytes(&data, 1)
-        .expect("generated local-warp inter sample should decode");
+        .unwrap_or_else(|err| panic!("generated {label} inter sample should decode: {err}"));
     assert_eq!((decoded.width, decoded.height), (128, 128));
     if let Some(expected) = ffmpeg_decode_rgba_stream_frame(&output_path, 1, 1, 128, 128) {
         let metrics = diff_rgb_dynamic(
@@ -622,12 +640,12 @@ fn generated_local_warp_sample_matches_ffmpeg_when_encoder_present() {
             &expected,
         );
         eprintln!(
-            "generated local-warp frame: average RGB absolute error={}, max={}",
+            "generated {label} frame: average RGB absolute error={}, max={}",
             metrics.average_rgb_abs, metrics.max_rgb_abs
         );
         assert!(
             metrics.average_rgb_abs <= 64.0,
-            "generated local-warp FFmpeg RGB error average={} max={}",
+            "generated {label} FFmpeg RGB error average={} max={}",
             metrics.average_rgb_abs,
             metrics.max_rgb_abs
         );

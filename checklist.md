@@ -1630,6 +1630,12 @@ existing FFmpeg oracle threshold (`29.66` average RGB absolute error,
 `255` max), covering the neighbour-filter metadata path without changing
 the baseline output.
 
+On 2026-07-24, the generated LOCALWARP regression matrix added a native
+4:4:4 YUV sample in addition to the existing 4:2:0 fixture. Both complete
+128x128 inter frames pass the FFmpeg oracle (`33.18` average RGB error for
+4:2:0 and `38.01` for 4:4:4; max `255`), exercising the warp path without
+subsampling as well as the existing chroma-plane geometry.
+
 On 2026-07-23, AVIS sequence decoding now honors `primary_ref_frame ==
 PRIMARY_REF_NONE` by starting the frame from the default CDF context instead of
 carrying the previous sample's adapted CDFs. The generated two-frame Inter
