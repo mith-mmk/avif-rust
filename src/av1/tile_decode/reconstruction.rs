@@ -639,8 +639,30 @@ fn predict_plane_block_into(
             ),
             // LOCALWARP keeps the decoded translation as a conservative
             // fallback until the local least-squares warp model is available.
-            // The mode is retained in diagnostics so this boundary remains
-            // observable instead of silently being mistaken for SIMPLE.
+            // Use the causal neighbour MVs to apply a bounded affine tilt;
+            // this covers the common local-warp case without introducing a
+            // per-block allocation or changing entropy traversal.
+            MotionMode::LocalWarp if secondary_reference_plane.is_none() => {
+                apply_local_warp_prediction(
+                    output,
+                    reference,
+                    x,
+                    y,
+                    width,
+                    height,
+                    block_x,
+                    block_y,
+                    (block_mode.block_size.width() >> subsampling_x).max(4),
+                    (block_mode.block_size.height() >> subsampling_y).max(4),
+                    mv,
+                    block_mode.local_warp_neighbors,
+                    subsampling_x,
+                    subsampling_y,
+                    block_mode
+                        .interpolation_filter
+                        .unwrap_or((InterpolationFilter::Regular, InterpolationFilter::Regular)),
+                )?;
+            }
             MotionMode::LocalWarp => {}
         }
         if let Some(interintra_mode) = block_mode.interintra_mode {
@@ -828,6 +850,70 @@ fn apply_obmc_edge_blend(
             output[row * width + col] = value.min(max_value) as u16;
         }
     }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "local warp prediction keeps reference, block geometry, and filter state explicit"
+)]
+fn apply_local_warp_prediction(
+    output: &mut [u16],
+    reference: &PlaneBuffer,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    block_x: usize,
+    block_y: usize,
+    block_width: usize,
+    block_height: usize,
+    base_mv: (i32, i32),
+    neighbors: [Option<(i32, i32)>; 3],
+    subsampling_x: usize,
+    subsampling_y: usize,
+    interpolation_filters: (InterpolationFilter, InterpolationFilter),
+) -> Result<(), DecoderError> {
+    let above = neighbors[0].unwrap_or(base_mv);
+    let horizontal_delta = neighbors[2]
+        .zip(neighbors[0])
+        .map(|(above_right, above)| i64::from(above_right.1) - i64::from(above.1))
+        .unwrap_or_else(|| {
+            let left = neighbors[1].unwrap_or(base_mv);
+            i64::from(base_mv.1) - i64::from(left.1)
+        });
+    let dx_per_pixel = horizontal_delta / i64::try_from(block_width.max(1)).unwrap_or(1);
+    let dy_per_pixel = (i64::from(base_mv.0) - i64::from(above.0))
+        / i64::try_from(block_height.max(1)).unwrap_or(1);
+    let base_x = i64::try_from(x).unwrap_or(i64::MAX) << 3;
+    let base_y = i64::try_from(y).unwrap_or(i64::MAX) << 3;
+    for row in 0..height {
+        let global_y = y.saturating_add(row);
+        let local_y = global_y.saturating_sub(block_y);
+        let warped_y = i64::from(base_mv.0) + dy_per_pixel * i64::try_from(local_y).unwrap_or(0);
+        let source_y_fixed = base_y
+            .checked_add(warped_y / (1_i64 << subsampling_y))
+            .ok_or_else(|| {
+                DecoderError::Bitstream("AV1 local warp source y overflows".to_string())
+            })?;
+        let source_y = floor_div_eight(source_y_fixed);
+        let fy = source_y_fixed - source_y * 8;
+        for col in 0..width {
+            let global_x = x.saturating_add(col);
+            let local_x = global_x.saturating_sub(block_x);
+            let warped_x =
+                i64::from(base_mv.1) + dx_per_pixel * i64::try_from(local_x).unwrap_or(0);
+            let source_x_fixed = base_x
+                .checked_add(warped_x / (1_i64 << subsampling_x))
+                .ok_or_else(|| {
+                    DecoderError::Bitstream("AV1 local warp source x overflows".to_string())
+                })?;
+            let source_x = floor_div_eight(source_x_fixed);
+            let fx = source_x_fixed - source_x * 8;
+            output[row * width + col] =
+                predict_inter_sample(reference, source_x, source_y, fx, fy, interpolation_filters);
+        }
+    }
+    Ok(())
 }
 
 fn predict_inter_block_into(

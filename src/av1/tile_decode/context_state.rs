@@ -21,7 +21,7 @@ fn intra_bc_candidate_offsets(block_size: BlockSize) -> [(isize, isize); 9] {
 }
 
 impl<'a> TileDecoder<'a> {
-    fn inter_mv_neighbor_candidates(
+    pub(super) fn inter_mv_neighbor_candidates(
         &self,
         x: usize,
         y: usize,

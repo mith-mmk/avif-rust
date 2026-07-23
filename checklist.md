@@ -1623,6 +1623,14 @@ release benchmark measured `85.25/87.19 ms` for `WML2Viewer.avif` and
 LOCALWARP still uses the observable translation fallback pending local warp
 model reconstruction.
 
+On 2026-07-23, LOCALWARP blocks now retain causal above/left/above-right MV
+neighbors and apply a bounded affine MV tilt through the existing regular
+sub-pel sampler. This is an incremental local-warp reconstruction path; the
+full AV1 least-squares sample selection remains a follow-up. The 400-test lib
+suite and 77-test FFmpeg conformance suite remain green. A five-iteration
+release benchmark measured `83.72/91.74 ms` for `WML2Viewer.avif` and
+`1.31/1.65 ms` for `star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
+
 On 2026-07-23, switchable motion-mode symbols are now retained in block
 diagnostics instead of being discarded. OBMC blocks apply the decoded
 prediction through the reconstructed top/left overlap edges, with a focused
