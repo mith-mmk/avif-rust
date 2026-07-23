@@ -3601,8 +3601,9 @@ fn apply_cdef_plane(
     cdef_blocks: &[(usize, usize, usize, usize, i32)],
 ) {
     let source = std::mem::take(&mut plane.samples);
-    let mut output = vec![0; source.len()];
-    output.copy_from_slice(&source);
+    // Cloning preserves the source snapshot while avoiding a zero-fill pass
+    // before the filtered blocks overwrite their regions.
+    let mut output = source.clone();
     let width = plane.layout.width;
     let height = plane.layout.height;
     let plane_subsampling_x = usize::from(plane_index > 0 && subsampling_x);
@@ -3741,8 +3742,9 @@ fn apply_loop_restoration_plane(
         return;
     }
     let source = std::mem::take(&mut plane.samples);
-    let mut output = vec![0; source.len()];
-    output.copy_from_slice(&source);
+    // Keep the unfiltered source available to restoration taps without first
+    // zero-initializing an output buffer that is immediately overwritten.
+    let mut output = source.clone();
     for unit in state
         .restoration_units
         .iter()

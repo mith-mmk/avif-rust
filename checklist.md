@@ -1613,6 +1613,15 @@ intermediate buffer while preserving the AV1 bilinear rounding rule. A focused
 measured `83.40/83.60 ms` for `WML2Viewer.avif` and `1.37/1.72 ms` for
 `star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
 
+On 2026-07-23, CDEF and loop-restoration output snapshots now clone the
+existing source buffer directly instead of zero-initializing and then copying
+the same samples. This removes the redundant zero-fill pass while preserving
+the source snapshot required by filter taps. The focused post-filter tests and
+403-test lib suite remain green; a 30-iteration release recheck measured
+`92.44/96.20 ms` for `WML2Viewer.avif` (native/RGBA), so this is recorded as
+an allocation-reduction/no-regression checkpoint rather than a stable speedup
+claim under the current host variance.
+
 On 2026-07-23, the generated sample matrix gained a moving-crop AVIS with
 libaom global motion enabled. The second Inter sample decodes at complete
 128x128 dimensions and matches the FFmpeg RGBA oracle with average RGB error
