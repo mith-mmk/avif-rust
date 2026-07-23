@@ -950,6 +950,9 @@ struct ReferenceFrame {
 
 impl FrameReferenceSlots {
     fn refresh(&mut self, refresh_frame_flags: u8, frame: &DecodedFrame, header: &FrameHeader) {
+        if refresh_frame_flags == 0 {
+            return;
+        }
         // Keep the decoded planes shared between reference slots. Cloning a
         // full `DecodedFrame` here used to duplicate every plane once per
         // refresh, which is especially expensive for AVIS inter sequences.
@@ -1093,6 +1096,8 @@ mod reference_frame_tests {
     fn refresh_flags_store_and_replace_reference_slots() {
         let mut slots = FrameReferenceSlots::default();
         let header = reference_header();
+        slots.refresh(0, &frame(5), &header);
+        assert!(slots.slots.iter().all(Option::is_none));
         slots.refresh(0b0000_0101, &frame(10), &header);
         assert_eq!(
             slots.frame_to_show(0).unwrap().buffers.planes[0].samples,

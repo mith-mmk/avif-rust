@@ -1613,6 +1613,14 @@ intermediate buffer while preserving the AV1 bilinear rounding rule. A focused
 measured `83.40/83.60 ms` for `WML2Viewer.avif` and `1.37/1.72 ms` for
 `star-8bpc.avifs` (native/RGBA), a same-host checkpoint.
 
+On 2026-07-23, AVIS reference refresh now returns before allocating metadata
+and cloning planes when a frame signals no refresh flags. A focused reference
+slot regression covers the no-op path; the 409-test lib suite and dynamic
+unsupported-sample audit remain green. An 11-iteration `star-8bpc.avifs`
+recheck measured `1.3492/1.6836 ms` (native/RGBA), which is recorded as a
+small-sequence no-regression checkpoint because the fixture refreshes most
+frames and does not isolate the fast path.
+
 On 2026-07-23, OBMC now collects causal top/left neighbors that use the same
 reference frame from the decoded motion grid and predicts their overlap before
 applying the dimension-specific AOM masks. Blocks without a usable same-reference
