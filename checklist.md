@@ -1856,3 +1856,13 @@ that sample measured `5.4131/6.0750 ms` (native/RGBA); the ordinary
 `WML2Viewer.avif` recheck measured `83.4133/82.4604 ms`, so this remains a
 local allocation-reduction/no-regression result rather than a cross-machine
 speedup claim.
+
+On 2026-07-24, fractional inter prediction now clips the regular and bilinear
+filter outputs to the declared AV1 bit-depth range instead of the full `u16`
+range. A focused high-contrast vector catches the 8-bit regular-kernel
+overshoot, and both generated LOCALWARP samples assert that every decoded
+plane stays within its declared range. The 416-test lib suite, 86-test FFmpeg
+conformance suite, 14-test container suite, and WML2 AVIF integration tests
+remain green. A three-iteration release recheck measured
+`88.0658/84.9364 ms` for `WML2Viewer.avif` (native/RGBA); this is a correctness
+fix with no stable end-to-end speedup claim.

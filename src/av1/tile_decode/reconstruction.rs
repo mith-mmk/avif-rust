@@ -1681,6 +1681,7 @@ fn predict_inter_block_into(
                         fx[col],
                         fy[row],
                         interpolation_filters,
+                        bit_depth,
                     ),
                     predict_inter_sample(
                         secondary,
@@ -1689,6 +1690,7 @@ fn predict_inter_block_into(
                         secondary_fx[col],
                         secondary_fy[row],
                         interpolation_filters,
+                        bit_depth,
                     ),
                     compound_weight,
                     compound_mask,
@@ -1710,6 +1712,7 @@ fn predict_inter_block_into(
                     fx[col],
                     fy[row],
                     interpolation_filters,
+                    bit_depth,
                 );
             }
         }
@@ -2156,7 +2159,8 @@ fn predict_inter_block_into_fractional(
             let fx = x_fixed - x0 * 8;
             let secondary_x0 = floor_div_eight(secondary_x_fixed);
             let secondary_fx = secondary_x_fixed - secondary_x0 * 8;
-            let first = predict_inter_sample(reference, x0, y0, fx, fy, interpolation_filters);
+            let first =
+                predict_inter_sample(reference, x0, y0, fx, fy, interpolation_filters, bit_depth);
             output[row * width + col] = secondary_reference
                 .map(|secondary| {
                     blend_compound_prediction(
@@ -2168,6 +2172,7 @@ fn predict_inter_block_into_fractional(
                             secondary_fx,
                             secondary_fy,
                             interpolation_filters,
+                            bit_depth,
                         ),
                         compound_weight,
                         compound_mask,
@@ -2289,9 +2294,12 @@ fn predict_inter_sample(
     subpel_x: i64,
     subpel_y: i64,
     interpolation_filters: (InterpolationFilter, InterpolationFilter),
+    bit_depth: u8,
 ) -> u16 {
     if interpolation_filters == (InterpolationFilter::Bilinear, InterpolationFilter::Bilinear) {
-        return predict_inter_sample_bilinear(plane, source_x, source_y, subpel_x, subpel_y);
+        return predict_inter_sample_bilinear(
+            plane, source_x, source_y, subpel_x, subpel_y, bit_depth,
+        );
     }
     let horizontal = interpolation_kernel(interpolation_filters.0, subpel_x as usize);
     let vertical = interpolation_kernel(interpolation_filters.1, subpel_y as usize);
@@ -2312,7 +2320,7 @@ fn predict_inter_sample(
     for (tap, coefficient) in vertical.iter().enumerate() {
         sum += intermediate[tap] * i64::from(*coefficient);
     }
-    round_filter_sum(sum).clamp(0, i64::from(u16::MAX)) as u16
+    round_filter_sum(sum).clamp(0, (1_i64 << bit_depth.min(16)) - 1) as u16
 }
 
 #[inline]
@@ -2322,6 +2330,7 @@ fn predict_inter_sample_bilinear(
     source_y: i64,
     subpel_x: i64,
     subpel_y: i64,
+    bit_depth: u8,
 ) -> u16 {
     let sample = |x: i64, y: i64| {
         let x = x.clamp(0, plane.layout.width.saturating_sub(1) as i64) as usize;
@@ -2332,7 +2341,8 @@ fn predict_inter_sample_bilinear(
         sample(source_x, source_y) * (8 - subpel_x) + sample(source_x + 1, source_y) * subpel_x;
     let bottom = sample(source_x, source_y + 1) * (8 - subpel_x)
         + sample(source_x + 1, source_y + 1) * subpel_x;
-    ((top * (8 - subpel_y) + bottom * subpel_y + 32) >> 6).clamp(0, i64::from(u16::MAX)) as u16
+    ((top * (8 - subpel_y) + bottom * subpel_y + 32) >> 6)
+        .clamp(0, (1_i64 << bit_depth.min(16)) - 1) as u16
 }
 
 fn floor_div_eight(value: i64) -> i64 {
@@ -3157,6 +3167,33 @@ mod tests {
         )
         .unwrap();
         assert_eq!(output, [1, 2, 5, 6]);
+    }
+
+    #[test]
+    fn inter_prediction_clips_filter_overshoot_to_bit_depth() {
+        let reference = PlaneBuffer {
+            layout: crate::av1::decode::PlaneLayout {
+                plane: 0,
+                width: 16,
+                height: 16,
+                subsampling_x: 0,
+                subsampling_y: 0,
+                sample_count: 256,
+            },
+            samples: (0..256)
+                .map(|index| [0, 255, 0, 255, 255, 0, 0, 0][index % 8])
+                .collect(),
+        };
+        let max = predict_inter_sample(
+            &reference,
+            3,
+            4,
+            1,
+            0,
+            (InterpolationFilter::Regular, InterpolationFilter::Regular),
+            8,
+        );
+        assert_eq!(max, 255);
     }
 
     #[test]

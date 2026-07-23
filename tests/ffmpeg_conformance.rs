@@ -631,6 +631,14 @@ fn run_generated_local_warp_sample(label: &str, input: &str, pixel_format: Optio
     let decoded = avif_rust::decode_sequence_frame_bytes(&data, 1)
         .unwrap_or_else(|err| panic!("generated {label} inter sample should decode: {err}"));
     assert_eq!((decoded.width, decoded.height), (128, 128));
+    let max_sample = ((1_u32 << u32::from(decoded.bit_depth.min(16))) - 1) as u16;
+    for (plane_index, plane) in decoded.buffers.planes.iter().enumerate() {
+        assert!(
+            plane.samples.iter().all(|sample| *sample <= max_sample),
+            "generated {label} plane {plane_index} exceeds {}-bit range",
+            decoded.bit_depth
+        );
+    }
     if let Some(expected) = ffmpeg_decode_rgba_stream_frame(&output_path, 1, 1, 128, 128) {
         let metrics = diff_rgb_dynamic(
             &decoded
