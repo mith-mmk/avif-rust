@@ -1936,3 +1936,10 @@ encoding so the native Y/U/V oracle is exact rather than conflating chroma
 quantisation error with decoder behavior; all three planes match exactly.
 The 10-bit fixture keeps the bounded lossy oracle (average error <=2 and
 maximum error <=16 per plane).
+
+On 2026-07-24, rectangular transforms with a 32-point stage now support the
+AV1 Identity stage for `Tx8x32`, `Tx16x32`, `Tx32x8`, and `Tx32x16`. The
+implementation uses the AOM `identity32` scale (`input * 4`) and keeps ADST
+rectangular stages fail-closed. Fixed 32-point vectors plus allocating/in-place
+dispatch parity tests cover the new path; the full library and FFmpeg
+conformance suites remain green.
