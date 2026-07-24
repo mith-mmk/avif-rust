@@ -642,6 +642,34 @@ fn external_animated_libavif_12bpc_sample_decodes_when_present() {
 }
 
 #[test]
+fn external_animated_auxiliary_and_audio_variants_decode_when_present() {
+    let Some(root) = std::env::var_os("AVIF_ANIMATED_SAMPLE_DIR") else {
+        eprintln!("external animated AVIF sample directory is unavailable; skipping");
+        return;
+    };
+    let root = std::path::PathBuf::from(root);
+    let cases = [
+        ("colors-animated-8bpc-alpha-exif-xmp.avif", true),
+        ("colors-animated-8bpc-depth-exif-xmp.avif", false),
+        ("colors-animated-8bpc-audio.avif", false),
+    ];
+    for (name, has_alpha) in cases {
+        let path = root.join(name);
+        if !path.is_file() {
+            eprintln!("external animated variant is unavailable; skipping {name}");
+            continue;
+        }
+        let data = std::fs::read(&path).expect("animated variant should be readable");
+        let info = parse_avif(&data).expect("animated variant metadata should parse");
+        assert_eq!(info.sequence_sample_payloads.len(), 5, "{name}");
+        assert_eq!(!info.alpha_auxiliary_items.is_empty(), has_alpha, "{name}");
+        let frames = avif_rust::decode_sequence_frames_bytes(&data)
+            .unwrap_or_else(|err| panic!("{name} should decode every frame: {err}"));
+        assert_eq!(frames.len(), 5, "{name}");
+    }
+}
+
+#[test]
 fn public_parsers_reject_truncated_and_malformed_headers() {
     let err = parse_avif(&[0, 0, 0]).unwrap_err();
     assert!(matches!(err, DecoderError::NotEnoughData(message) if message.contains("box header")));

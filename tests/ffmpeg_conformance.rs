@@ -4104,6 +4104,7 @@ fn public_additional_official_samples_match_ffmpeg_when_present() {
         // FFmpeg's current AVIF demuxer rejects progressive idat input; the
         // ImageMagick decoder provides the independent pixel oracle below.
         ("draw_points_idat_progressive.avif", 33, 11, false),
+        ("draw_points_idat_progressive_metasize0.avif", 33, 11, false),
         ("draw_points_idat_metasize0.avif", 33, 11, true),
         ("extended_pixi.avif", 4, 4, true),
         ("clap_irot_imir_non_essential.avif", 10, 8, true),
@@ -4145,6 +4146,12 @@ fn public_additional_official_samples_match_ffmpeg_when_present() {
                 );
                 offset += plane_length;
             }
+            continue;
+        }
+        if name == "draw_points_idat_progressive_metasize0.avif" {
+            // ImageMagick rejects a progressive idat stream whose meta box
+            // uses the unspecified-size form. The decoder still has a strict
+            // dimension/complete-output gate through the external manifest.
             continue;
         }
         if name == "draw_points_idat_progressive.avif" {
