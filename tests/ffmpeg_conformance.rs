@@ -4207,7 +4207,15 @@ fn all_official_unsupported_samples_decode_without_partial_output() {
         ("alpha_noispe.avif", 80, 80),
         ("clap_irot_imir_non_essential.avif", 10, 8),
         ("clop_irot_imor.avif", 34, 12),
+        ("colors-animated-8bpc.avif", 150, 150),
         ("colors-animated-12bpc-keyframes-0-2-3.avif", 64, 64),
+        ("colors_text_hdr_p3.avif", 200, 200),
+        ("colors_text_hdr_rec2020.avif", 200, 200),
+        ("colors_text_hdr_srgb.avif", 200, 200),
+        ("colors_text_sdr_srgb.avif", 200, 200),
+        ("colors_text_wcg_hdr_rec2020.avif", 200, 200),
+        ("colors_text_wcg_sdr_rec2020.avif", 200, 200),
+        ("colors_wcg_hdr_rec2020.avif", 200, 200),
         ("draw_points_idat.avif", 33, 11),
         ("draw_points_idat_metasize0.avif", 33, 11),
         ("draw_points_idat_progressive.avif", 33, 11),
@@ -4227,13 +4235,14 @@ fn all_official_unsupported_samples_decode_without_partial_output() {
             128,
             128,
         ),
+        ("paris_icc_exif_xmp.avif", 403, 302),
         ("red-at-12-oclock-with-color-profile-8bpc.avif", 800, 800),
         ("sofa_grid1x5_420.avif", 1024, 770),
         ("sofa_grid1x5_420_dimg_repeat.avif", 1024, 770),
         ("sofa_grid1x5_420_reversed_dimg_order.avif", 1024, 770),
         ("star-8bpc.avifs", 159, 159),
     ];
-    assert_eq!(cases.len(), 26);
+    assert_eq!(cases.len(), 35);
     for (name, width, height) in cases {
         let path = root.join(name);
         assert!(
@@ -4540,7 +4549,7 @@ fn external_gainmap_samples_keep_complete_base_decode() {
 }
 
 #[test]
-fn external_gainmap_duplicate_icc_association_fails_closed() {
+fn external_gainmap_icc_association_decodes_when_present() {
     let root = std::env::var_os("AVIF_GAINMAP_SAMPLE_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| {
@@ -4551,17 +4560,54 @@ fn external_gainmap_duplicate_icc_association_fails_closed() {
         });
     let path = root.join("seine_sdr_gainmap_srgb_icc.avif");
     if !path.is_file() {
-        eprintln!(
-            "malformed gain-map ICC sample is unavailable; skipping duplicate association audit"
-        );
+        eprintln!("gain-map ICC sample is unavailable; skipping ICC association audit");
         return;
     }
-    let data = std::fs::read(path).expect("malformed gain-map ICC sample should be readable");
-    assert!(matches!(
-        avif_rust::image_from_bytes(&data),
-        Err(avif_rust::DecoderError::Bitstream(message))
-            if message.contains("duplicate ColorInformation property association")
-    ));
+    let data = std::fs::read(path).expect("gain-map ICC sample should be readable");
+    let image = avif_rust::image_from_bytes(&data)
+        .expect("gain-map ICC sample should produce complete RGBA output");
+    assert_eq!((image.width, image.height), (400, 300));
+    let metadata = avif_rust::parse_gain_map_metadata(&data)
+        .expect("gain-map ICC metadata should parse")
+        .expect("gain-map ICC metadata should be present");
+    let gain_map = avif_rust::decode_gain_map_frame_bytes(&data)
+        .expect("gain-map ICC item should decode")
+        .expect("gain-map ICC item should be exposed");
+    let base = avif_rust::decode_frame_bytes(&data).expect("gain-map ICC base should decode");
+    let composed = base
+        .to_rgba16_with_gain_map(&gain_map, 1.0)
+        .expect("gain-map ICC composition should decode");
+    assert_eq!((composed.width, composed.height), (400, 300));
+    assert_eq!(metadata.channel_count(), 3);
+}
+
+#[test]
+fn external_paris_icc_and_nclx_sample_matches_ffmpeg_when_present() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("test/images/external/avif/unsupported/paris_icc_exif_xmp.avif");
+    if !path.is_file() {
+        eprintln!("Paris ICC+nclx sample is unavailable; skipping colour oracle");
+        return;
+    }
+    let data = std::fs::read(&path).expect("Paris ICC+nclx sample should be readable");
+    let actual = avif_rust::image_from_bytes(&data)
+        .expect("Paris ICC+nclx sample should produce complete RGBA output");
+    let Some(expected) = ffmpeg_decode_rgba_dynamic(&path, 403, 302) else {
+        return;
+    };
+    let metrics = diff_rgb_dynamic(&actual.rgba, &expected);
+    eprintln!(
+        "Paris ICC+nclx sample: average RGB absolute error={}, max={}",
+        metrics.average_rgb_abs, metrics.max_rgb_abs
+    );
+    assert!(
+        metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 48,
+        "Paris ICC+nclx sample RGB error average={} max={}",
+        metrics.average_rgb_abs,
+        metrics.max_rgb_abs
+    );
 }
 
 #[test]

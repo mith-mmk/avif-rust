@@ -31,6 +31,17 @@ fn external_star_path() -> PathBuf {
         .join("test/images/external/avif/unsupported/star-8bpc.avifs")
 }
 
+fn external_animated_root() -> PathBuf {
+    std::env::var_os("AVIF_ANIMATED_SAMPLE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("workspace root should exist")
+                .join("test/images/external/avif/unsupported")
+        })
+}
+
 #[derive(Default)]
 struct RecordingDrawer {
     init: Option<(usize, usize, InitOptions)>,
@@ -584,11 +595,7 @@ fn callback_decodes_inter_sequence_after_initialization() {
 
 #[test]
 fn external_animated_libavif_sample_metadata_is_parsed_when_present() {
-    let Some(root) = std::env::var_os("AVIF_ANIMATED_SAMPLE_DIR") else {
-        eprintln!("external animated AVIF sample directory is unavailable; skipping");
-        return;
-    };
-    let path = std::path::PathBuf::from(root).join("colors-animated-8bpc.avif");
+    let path = external_animated_root().join("colors-animated-8bpc.avif");
     if !path.is_file() {
         eprintln!("external animated AVIF sample is unavailable; skipping");
         return;
@@ -617,11 +624,7 @@ fn external_animated_libavif_sample_metadata_is_parsed_when_present() {
 
 #[test]
 fn external_animated_libavif_12bpc_sample_decodes_when_present() {
-    let Some(root) = std::env::var_os("AVIF_ANIMATED_SAMPLE_DIR") else {
-        eprintln!("external animated AVIF sample directory is unavailable; skipping");
-        return;
-    };
-    let path = std::path::PathBuf::from(root).join("colors-animated-12bpc-keyframes-0-2-3.avif");
+    let path = external_animated_root().join("colors-animated-12bpc-keyframes-0-2-3.avif");
     if !path.is_file() {
         eprintln!("external animated 12bpc AVIF sample is unavailable; skipping");
         return;
@@ -643,11 +646,7 @@ fn external_animated_libavif_12bpc_sample_decodes_when_present() {
 
 #[test]
 fn external_animated_auxiliary_and_audio_variants_decode_when_present() {
-    let Some(root) = std::env::var_os("AVIF_ANIMATED_SAMPLE_DIR") else {
-        eprintln!("external animated AVIF sample directory is unavailable; skipping");
-        return;
-    };
-    let root = std::path::PathBuf::from(root);
+    let root = external_animated_root();
     let cases = [
         ("colors-animated-8bpc-alpha-exif-xmp.avif", true),
         ("colors-animated-8bpc-depth-exif-xmp.avif", false),

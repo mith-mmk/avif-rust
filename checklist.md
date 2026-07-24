@@ -2157,3 +2157,30 @@ range sample and duplicate-ICC association sample.
 The CDEF index fast path and its regression vector are now included in the
 438-test library suite (`433 passed`, `5 ignored`); the 96-test FFmpeg suite
 still passes (`94 passed`, `2 ignored`).
+
+The external manifest now includes the latest libavif WCG/HDR text-colour
+matrix (`colors_wcg_hdr_rec2020.avif` and six `colors_text_*` variants) plus
+the five-frame `colors-animated-8bpc.avif` sequence. The animation metadata
+tests use the checked external directory by default, so the sequence now
+checks all five frame kinds, including `show-existing`, without requiring a
+special environment variable. The malformed `paris_icc_exif_xmp.avif` ICC
+association is registered as a second explicit fail-closed case. The expanded
+gate reports 73 successful decodes, 3 expected failures, 0 unexpected results,
+and 0 partial PNGs out of 76 manifest entries (`96.05%` successful decode
+coverage, `100%` expected-behavior coverage). The checklist work-item rate is
+unchanged at 153/170 (`90.00%`); this remains a historical task metric, not a
+feature-completeness percentage.
+
+The container metadata boundary now accepts distinct ICC (`prof`/`rICC`) and
+`nclx` colour properties on the same item while still rejecting repeated
+descriptions of the same colour-property family. The effective public colour
+description prefers `nclx`, matching the FFmpeg oracle for the official
+`paris_icc_exif_xmp.avif` sample. That sample and the official
+`seine_sdr_gainmap_srgb_icc.avif` gain-map sample are now supported; focused
+tests cover complete output, ICC gain-map composition, and the Paris RGB
+oracle (`average RGB error 0.0024`, `max 6`). The refreshed 76-entry external
+gate reports 75 successes, 1 explicit fail-closed case, 0 unexpected results,
+and 0 partial PNGs (`98.68%` successful decode coverage and `100%`
+expected-behavior coverage). The full AVIF suites remain green: 438 library
+tests (`433 passed`, `5 ignored`), 17 container tests, and 97 FFmpeg tests
+(`95 passed`, `2 ignored`).

@@ -1662,6 +1662,7 @@ fn validate_primary_item_metadata(state: &MetaState) -> Result<(), DecoderError>
             )));
         }
         let mut seen_kinds = Vec::new();
+        let mut seen_color_types = Vec::<[u8; 4]>::new();
         for property in &association.associations {
             let index = property.index;
             if index == 0 || usize::from(index) > state.item_properties.len() {
@@ -1697,7 +1698,30 @@ fn validate_primary_item_metadata(state: &MetaState) -> Result<(), DecoderError>
                 }
                 _ => {}
             }
-            if kind.is_singleton() && seen_kinds.contains(&kind) {
+            if let ItemProperty::ColorInformation(color) =
+                &state.item_properties[usize::from(index) - 1]
+            {
+                // ISO BMFF permits an item to associate both an ICC `prof`/
+                // `rICC` property and an `nclx` property. They are distinct
+                // colour descriptions, while repeating the same description
+                // remains malformed and is rejected below.
+                let color_type = if color.icc_profile().is_some() {
+                    *b"icc "
+                } else {
+                    color.color_type
+                };
+                if seen_color_types.contains(&color_type) {
+                    return Err(DecoderError::Bitstream(format!(
+                        "item {} has duplicate ColorInformation property association",
+                        association.item_id
+                    )));
+                }
+                seen_color_types.push(color_type);
+            }
+            if kind.is_singleton()
+                && kind != PropertyKind::ColorInformation
+                && seen_kinds.contains(&kind)
+            {
                 return Err(DecoderError::Bitstream(format!(
                     "item {} has duplicate {kind:?} property association",
                     association.item_id
@@ -1790,7 +1814,16 @@ fn item_metadata(state: &MetaState, item_id: u32) -> Result<PrimaryItemMetadata,
             }
             ItemProperty::Av1Config(config) => metadata.av1_config = Some(config.clone()),
             ItemProperty::ColorInformation(color) => {
-                metadata.color_information = Some(color.clone());
+                // When both descriptions are present, keep the CICP `nclx`
+                // property as the active AVIF colour description. The ICC
+                // profile remains a valid associated property, but applying
+                // it here would diverge from the decoder colour contract.
+                let replace = metadata.color_information.as_ref().is_none_or(|existing| {
+                    existing.icc_profile().is_some() && color.icc_profile().is_none()
+                });
+                if replace {
+                    metadata.color_information = Some(color.clone());
+                }
             }
             ItemProperty::Premultiplied => metadata.alpha_premultiplied = true,
             ItemProperty::CleanAperture(clap) => metadata.clean_aperture = Some(*clap),
@@ -4815,6 +4848,69 @@ mod tests {
         assert!(
             matches!(duplicate_singleton, DecoderError::Bitstream(message) if message.contains("duplicate SpatialExtents"))
         );
+    }
+
+    #[test]
+    fn accepts_distinct_color_properties_but_rejects_repeated_icc_family() {
+        let make_state = |second: ColorInformation| MetaState {
+            primary_item_id: Some(1),
+            item_infos: vec![ItemInfo {
+                item_id: 1,
+                item_type: *b"av01",
+                item_name: "primary".to_string(),
+            }],
+            item_locations: vec![ItemLocation {
+                item_id: 1,
+                base_offset: 0,
+                extents: vec![ItemExtent {
+                    offset: 0,
+                    length: 1,
+                }],
+            }],
+            item_properties: vec![
+                ItemProperty::SpatialExtents(ImageSpatialExtents {
+                    width: 1,
+                    height: 1,
+                }),
+                ItemProperty::PixelInformation(PixelInformation {
+                    bits_per_channel: vec![8, 8, 8],
+                    extended_channels: None,
+                }),
+                ItemProperty::Av1Config(vec![1]),
+                ItemProperty::ColorInformation(ColorInformation {
+                    color_type: *b"prof",
+                    payload: vec![1],
+                }),
+                ItemProperty::ColorInformation(second),
+            ],
+            item_property_associations: vec![ItemPropertyAssociation {
+                item_id: 1,
+                associations: (1..=5)
+                    .map(|index| PropertyAssociation {
+                        index,
+                        essential: false,
+                    })
+                    .collect(),
+            }],
+            ..MetaState::default()
+        };
+
+        validate_primary_item_metadata(&make_state(ColorInformation {
+            color_type: *b"nclx",
+            payload: vec![0; 7],
+        }))
+        .expect("prof and nclx may coexist on an item");
+
+        let duplicate = validate_primary_item_metadata(&make_state(ColorInformation {
+            color_type: *b"rICC",
+            payload: vec![2],
+        }))
+        .unwrap_err();
+        assert!(matches!(
+            duplicate,
+            DecoderError::Bitstream(message)
+                if message.contains("duplicate ColorInformation property association")
+        ));
     }
 
     #[test]
