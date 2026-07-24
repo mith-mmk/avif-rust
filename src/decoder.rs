@@ -668,7 +668,12 @@ fn decode_sequence_samples_from_info(
     }
     let mut references = FrameReferenceSlots::default();
     let mut cdf_states: Option<Vec<CdfContext>> = None;
-    let mut frames = Vec::new();
+    let frame_capacity = if collect_all {
+        stop_index.saturating_add(1).min(samples.len())
+    } else {
+        1
+    };
+    let mut frames = Vec::with_capacity(frame_capacity);
     for (((index, sample), sample_info), kind) in samples
         .iter()
         .enumerate()

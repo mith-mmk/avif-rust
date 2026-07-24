@@ -1884,3 +1884,10 @@ the declared 10-bit range, and an FFmpeg RGBA oracle (average RGB error
 existing 8-bit Inter sample; strict Inter/Switch entropy trailing-bit
 validation remains diagnostic-only until the motion/CDF bit-consumption
 boundary is resolved.
+
+The same generated Inter matrix now also covers a 12-bit YUV420 sample, with
+complete native planes and declared-range checks plus an FFmpeg RGBA oracle
+(average RGB error `41.69`, max `255`). A 12-bit LOCALWARP sample likewise
+passes the complete-frame gate and RGBA oracle (average RGB error `31.54`,
+max `255`), extending the motion-compensation coverage through the highest
+currently supported AV1 bit depth.

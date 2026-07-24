@@ -573,20 +573,30 @@ fn generated_inter_sequence_sample_is_classified_for_decoder_gate_when_encoder_p
 
 #[test]
 fn generated_10bit_inter_sequence_sample_decodes_when_encoder_present() {
+    run_generated_high_bit_inter_sequence_sample("10bit", "yuv420p10le", 10);
+}
+
+#[test]
+fn generated_12bit_inter_sequence_sample_decodes_when_encoder_present() {
+    run_generated_high_bit_inter_sequence_sample("12bit", "yuv420p12le", 12);
+}
+
+fn run_generated_high_bit_inter_sequence_sample(label: &str, pixel_format: &str, bit_depth: u8) {
     let root = std::env::temp_dir().join(format!(
-        ".test-avif-sequence-inter-10bit-{}",
+        ".test-avif-sequence-inter-{label}-{}",
         std::process::id()
     ));
     if let Err(err) = std::fs::create_dir_all(&root) {
-        panic!("failed to create temporary 10-bit AVIF sequence directory: {err}");
+        panic!("failed to create temporary {bit_depth}-bit AVIF sequence directory: {err}");
     }
-    let output_path = root.join("sequence-10bit.avifs");
+    let output_path = root.join(format!("sequence-{label}.avifs"));
+    let format_filter = format!("format={pixel_format}");
     let status = Command::new("ffmpeg")
         .args(["-y", "-loglevel", "error"])
         .args(["-f", "lavfi", "-i", "testsrc2=size=64x64:rate=1"])
         .args([
             "-vf",
-            "format=yuv420p10le",
+            format_filter.as_str(),
             "-t",
             "2",
             "-c:v",
@@ -602,7 +612,7 @@ fn generated_10bit_inter_sequence_sample_decodes_when_encoder_present() {
             "-aom-params",
             "enable-cdef=0:enable-restoration=0",
             "-pix_fmt",
-            "yuv420p10le",
+            pixel_format,
             "-colorspace",
             "bt709",
             "-color_primaries",
@@ -617,52 +627,59 @@ fn generated_10bit_inter_sequence_sample_decodes_when_encoder_present() {
         .arg(&output_path)
         .status();
     let Ok(status) = status else {
-        eprintln!("ffmpeg is not available; skipping generated 10-bit inter sequence");
+        eprintln!("ffmpeg is not available; skipping generated {bit_depth}-bit inter sequence");
         let _ = std::fs::remove_dir_all(&root);
         return;
     };
     if !status.success() {
-        eprintln!("libaom 10-bit inter encoder is unavailable; skipping generated sample");
+        eprintln!("libaom {bit_depth}-bit inter encoder is unavailable; skipping generated sample");
         let _ = std::fs::remove_dir_all(&root);
         return;
     }
-    let data = std::fs::read(&output_path).expect("generated 10-bit AVIS should be readable");
-    let info = avif_rust::container::parse_avif(&data).expect("generated 10-bit AVIS should parse");
-    let inter_sample = info
-        .sequence_sample_payloads
-        .get(1)
-        .expect("generated 10-bit sequence should contain a second sample");
+    let data = std::fs::read(&output_path)
+        .unwrap_or_else(|err| panic!("generated {bit_depth}-bit AVIS should be readable: {err}"));
+    let info = avif_rust::container::parse_avif(&data)
+        .unwrap_or_else(|err| panic!("generated {bit_depth}-bit AVIS should parse: {err}"));
+    let inter_sample = info.sequence_sample_payloads.get(1).unwrap_or_else(|| {
+        panic!("generated {bit_depth}-bit sequence should contain a second sample")
+    });
     assert_eq!(
         avif_rust::classify_av1_sequence_sample(inter_sample).unwrap(),
         Some(avif_rust::AvifSequenceSampleKind::Inter)
     );
-    let decoded = avif_rust::decode_sequence_frame_bytes(&data, 1)
-        .expect("generated 10-bit inter sample should decode without partial output");
+    let decoded = avif_rust::decode_sequence_frame_bytes(&data, 1).unwrap_or_else(|err| {
+        panic!("generated {bit_depth}-bit inter sample should decode without partial output: {err}")
+    });
     assert_eq!((decoded.width, decoded.height), (64, 64));
-    assert_eq!(decoded.bit_depth, 10);
+    assert_eq!(decoded.bit_depth, bit_depth);
     assert_eq!(decoded.buffers.planes.len(), 3);
     assert_eq!(decoded.buffers.planes[0].samples.len(), 64 * 64);
     assert_eq!(decoded.buffers.planes[1].samples.len(), 32 * 32);
     assert_eq!(decoded.buffers.planes[2].samples.len(), 32 * 32);
     for (plane_index, plane) in decoded.buffers.planes.iter().enumerate() {
         assert!(
-            plane.samples.iter().all(|sample| *sample <= 1023),
-            "10-bit inter plane {plane_index} exceeds the declared range"
+            plane
+                .samples
+                .iter()
+                .all(|sample| *sample <= ((1_u16 << bit_depth) - 1)),
+            "{bit_depth}-bit inter plane {plane_index} exceeds the declared range"
         );
     }
     if let Some(expected) = ffmpeg_decode_rgba_stream_frame(&output_path, 1, 1, 64, 64) {
         let actual = decoded
             .to_rgba8()
-            .expect("generated 10-bit inter sample should convert to RGBA8")
+            .unwrap_or_else(|err| {
+                panic!("generated {bit_depth}-bit inter sample should convert to RGBA8: {err}")
+            })
             .rgba;
         let metrics = diff_rgb_dynamic(&actual, &expected);
         eprintln!(
-            "generated 10-bit inter frame: average RGB absolute error={}, max={}",
+            "generated {bit_depth}-bit inter frame: average RGB absolute error={}, max={}",
             metrics.average_rgb_abs, metrics.max_rgb_abs
         );
         assert!(
             metrics.average_rgb_abs <= 64.0,
-            "generated 10-bit inter FFmpeg RGB error average={} max={}",
+            "generated {bit_depth}-bit inter FFmpeg RGB error average={} max={}",
             metrics.average_rgb_abs,
             metrics.max_rgb_abs
         );
@@ -681,6 +698,15 @@ fn generated_local_warp_yuv444_sample_matches_ffmpeg_when_encoder_present() {
         "localwarp-yuv444",
         "testsrc=size=128x128:rate=1,format=yuv444p",
         Some("yuv444p"),
+    );
+}
+
+#[test]
+fn generated_local_warp_12bit_sample_matches_ffmpeg_when_encoder_present() {
+    run_generated_local_warp_sample(
+        "localwarp-12bit",
+        "testsrc2=size=128x128:rate=1",
+        Some("yuv420p12le"),
     );
 }
 
