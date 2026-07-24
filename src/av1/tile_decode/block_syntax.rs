@@ -979,7 +979,10 @@ impl<'a> TileDecoder<'a> {
     ) -> Result<(Option<usize>, Option<usize>, TxSize), DecoderError> {
         let tx_size = match frame.tx_mode {
             TxMode::Only4x4 => TxSize::Tx4x4,
-            TxMode::Largest => block_size.largest_supported_tx_size(),
+            // Largest transforms retain the block's rectangular geometry.
+            // Using the square helper here turns edge partitions such as
+            // 32x64 into 32x32 and desynchronizes the entropy stream.
+            TxMode::Largest => block_size.largest_supported_rect_tx_size(),
             // Intra blocks signal the selected transform size even when
             // skip_txfm suppresses coefficient payloads. IntrABC is parsed as
             // an inter block by the AV1 syntax, so skipped IntrABC blocks do

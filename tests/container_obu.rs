@@ -595,6 +595,14 @@ fn external_animated_libavif_sample_metadata_is_parsed_when_present() {
     );
     assert_eq!(info.sequence_sample_payloads.len(), 5);
     assert_eq!(info.sequence_sample_payloads[0], info.primary_item_payload);
+    let frames = avif_rust::decode_sequence_frames_bytes(&data)
+        .expect("animated AVIF sample should decode every frame");
+    assert_eq!(frames.len(), 5);
+    assert!(
+        frames
+            .iter()
+            .all(|frame| (frame.width, frame.height) == (150, 150))
+    );
 }
 
 #[test]
