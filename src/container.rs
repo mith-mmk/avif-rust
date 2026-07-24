@@ -368,6 +368,11 @@ struct ItemReference {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct AlternateEntityGroup {
+    entity_ids: Vec<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ItemPropertyAssociation {
     item_id: u32,
     associations: Vec<PropertyAssociation>,
@@ -453,6 +458,7 @@ struct MetaState {
     idat_payload: Option<Vec<u8>>,
     item_infos: Vec<ItemInfo>,
     item_references: Vec<ItemReference>,
+    alternate_entity_groups: Vec<AlternateEntityGroup>,
     item_property_associations: Vec<ItemPropertyAssociation>,
     item_properties: Vec<ItemProperty>,
 }
@@ -548,7 +554,23 @@ fn gain_map_meta_state(data: &[u8]) -> Result<Option<(MetaState, u32)>, DecoderE
     else {
         return Ok(None);
     };
+    if !gain_map_is_preferred(&meta, item_id) {
+        return Ok(None);
+    }
     Ok(Some((meta, item_id)))
+}
+
+fn gain_map_is_preferred(meta: &MetaState, gain_map_item_id: u32) -> bool {
+    let Some(primary_item_id) = meta.primary_item_id else {
+        return true;
+    };
+    meta.alternate_entity_groups
+        .iter()
+        .filter(|group| {
+            group.entity_ids.contains(&primary_item_id)
+                && group.entity_ids.contains(&gain_map_item_id)
+        })
+        .all(|group| group.entity_ids.first() == Some(&gain_map_item_id))
 }
 
 /// Locates and parses the AV1 image referenced as the second `tmap` input.
@@ -1151,6 +1173,7 @@ fn parse_meta_children(
             }
             b"idat" => state.idat_payload = Some(child_payload.to_vec()),
             b"iref" => state.item_references = parse_iref(child_payload)?,
+            b"grpl" => state.alternate_entity_groups = parse_grpl(child_payload)?,
             b"iprp" => parse_iprp(source, child_payload, state)?,
             _ => {}
         }
@@ -1472,6 +1495,55 @@ fn parse_iref(payload: &[u8]) -> Result<Vec<ItemReference>, DecoderError> {
         offset = checked_add(header.offset, header.size, "iref child box end")?;
     }
     Ok(references)
+}
+
+fn parse_grpl(payload: &[u8]) -> Result<Vec<AlternateEntityGroup>, DecoderError> {
+    let mut groups = Vec::new();
+    let mut offset = 0;
+    while offset < payload.len() {
+        let header = read_box_header(payload, offset, payload.len())?;
+        let child_payload = box_payload(payload, header)?;
+        if &header.box_type == b"altr" {
+            groups.push(AlternateEntityGroup {
+                entity_ids: parse_altr(child_payload)?,
+            });
+        }
+        offset = checked_add(header.offset, header.size, "grpl child box end")?;
+    }
+    Ok(groups)
+}
+
+fn parse_altr(payload: &[u8]) -> Result<Vec<u32>, DecoderError> {
+    if payload.len() < 12 {
+        return Err(DecoderError::NotEnoughData(
+            "altr payload is too short".to_string(),
+        ));
+    }
+    let version = payload[0];
+    if version > 0 {
+        return Err(DecoderError::Unsupported(format!(
+            "altr version {version} is not supported"
+        )));
+    }
+    let entity_count = read_u32(payload, 8)? as usize;
+    validate_collection_count(
+        entity_count,
+        payload.len().saturating_sub(12),
+        4,
+        "altr entity",
+    )?;
+    let mut entity_ids = Vec::with_capacity(entity_count);
+    let mut offset = 12;
+    for _ in 0..entity_count {
+        entity_ids.push(read_u32(payload, offset)?);
+        offset += 4;
+    }
+    if offset != payload.len() {
+        return Err(DecoderError::Bitstream(
+            "altr payload has unexpected trailing bytes".to_string(),
+        ));
+    }
+    Ok(entity_ids)
 }
 
 fn parse_ipma(payload: &[u8]) -> Result<Vec<ItemPropertyAssociation>, DecoderError> {
@@ -3943,6 +4015,49 @@ mod tests {
                 to_item_ids: vec![2],
             }]
         );
+    }
+
+    #[test]
+    fn parses_altr_entity_order_and_prefers_gain_map_over_primary() {
+        let mut altr_payload = vec![0, 0, 0, 0]; // version and flags
+        push_u32(&mut altr_payload, 6); // alternate entity group id
+        push_u32(&mut altr_payload, 2); // entity count
+        push_u32(&mut altr_payload, 2); // preferred gain-map item
+        push_u32(&mut altr_payload, 1); // primary item
+        let groups = parse_grpl(&boxed(b"altr", &altr_payload)).unwrap();
+        assert_eq!(
+            groups,
+            vec![AlternateEntityGroup {
+                entity_ids: vec![2, 1]
+            }]
+        );
+
+        let meta = MetaState {
+            primary_item_id: Some(1),
+            alternate_entity_groups: groups,
+            ..MetaState::default()
+        };
+        assert!(gain_map_is_preferred(&meta, 2));
+
+        let wrong_order = MetaState {
+            alternate_entity_groups: vec![AlternateEntityGroup {
+                entity_ids: vec![1, 2],
+            }],
+            ..meta
+        };
+        assert!(!gain_map_is_preferred(&wrong_order, 2));
+    }
+
+    #[test]
+    fn rejects_malformed_altr_entity_list() {
+        let mut payload = vec![0, 0, 0, 0];
+        push_u32(&mut payload, 6);
+        push_u32(&mut payload, 2);
+        push_u32(&mut payload, 2);
+        assert!(matches!(
+            parse_altr(&payload),
+            Err(DecoderError::NotEnoughData(_))
+        ));
     }
 
     #[test]

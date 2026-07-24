@@ -4271,6 +4271,14 @@ fn every_external_unsupported_sample_decodes_completely() {
     paths.sort();
     for path in paths {
         let data = std::fs::read(&path).expect("external unsupported sample should be readable");
+        if path.file_name().and_then(|name| name.to_str()) == Some("poc_b_506387278.avif") {
+            assert!(matches!(
+                avif_rust::image_from_bytes(&data),
+                Err(avif_rust::DecoderError::Bitstream(message))
+                    if message.contains("nclx range does not match")
+            ));
+            continue;
+        }
         let image = avif_rust::image_from_bytes(&data)
             .unwrap_or_else(|error| panic!("{} should decode completely: {error}", path.display()));
         assert!(
@@ -4412,11 +4420,15 @@ fn external_gainmap_samples_keep_complete_base_decode() {
                 .join("test/images/external/avif/gainmap")
         });
     let cases = [
+        ("seine_hdr_srgb.avif", 400, 300),
+        ("seine_hdr_rec2020.avif", 400, 300),
         ("seine_hdr_gainmap_srgb.avif", 400, 300),
         ("seine_hdr_gainmap_small_srgb.avif", 400, 300),
         ("seine_sdr_gainmap_big_srgb.avif", 400, 300),
         ("seine_sdr_gainmap_srgb.avif", 400, 300),
         ("seine_sdr_gainmap_notmapbrand.avif", 400, 300),
+        ("seine_sdr_gainmap_gammazero.avif", 400, 300),
+        ("seine_hdr_gainmap_wrongaltr.avif", 400, 300),
         ("unsupported_gainmap_version.avif", 100, 100),
         ("unsupported_gainmap_minimum_version.avif", 100, 100),
         (
@@ -4450,8 +4462,18 @@ fn external_gainmap_samples_keep_complete_base_decode() {
         );
         assert_eq!(image.rgba.len(), width * height * 4, "{name} complete RGBA");
 
+        if name == "seine_hdr_srgb.avif" || name == "seine_hdr_rec2020.avif" {
+            let frame = avif_rust::decode_frame_bytes(&data)
+                .unwrap_or_else(|error| panic!("{name} base frame should decode: {error}"));
+            assert_eq!(frame.bit_depth, 10, "{name} native HDR bit depth");
+        }
+
         let gain_map_metadata = avif_rust::parse_gain_map_metadata(&data);
-        if name.starts_with("seine_")
+        if (name.starts_with("seine_")
+            && name != "seine_hdr_srgb.avif"
+            && name != "seine_hdr_rec2020.avif"
+            && name != "seine_sdr_gainmap_gammazero.avif"
+            && name != "seine_hdr_gainmap_wrongaltr.avif")
             || name == "unsupported_gainmap_writer_version_with_extra_bytes.avif"
         {
             assert!(
@@ -4474,6 +4496,27 @@ fn external_gainmap_samples_keep_complete_base_decode() {
                 });
             assert_eq!((composed.width, composed.height), (width, height));
             assert_eq!(composed.rgba.len(), width * height * 4);
+        } else if name == "seine_sdr_gainmap_gammazero.avif" {
+            assert!(
+                matches!(
+                    gain_map_metadata,
+                    Err(avif_rust::DecoderError::Bitstream(_))
+                ),
+                "{name} should reject its zero gamma"
+            );
+        } else if name == "seine_hdr_gainmap_wrongaltr.avif" {
+            assert!(
+                gain_map_metadata
+                    .expect("wrong altr metadata should parse without selecting a map")
+                    .is_none(),
+                "{name} should ignore a non-preferred gain map"
+            );
+            assert!(
+                avif_rust::decode_gain_map_frame_bytes(&data)
+                    .expect("wrong altr gain-map API should stay available")
+                    .is_none(),
+                "{name} should not expose a non-preferred gain map"
+            );
         } else if name == "unsupported_gainmap_version.avif"
             || name == "unsupported_gainmap_minimum_version.avif"
         {
@@ -4494,6 +4537,31 @@ fn external_gainmap_samples_keep_complete_base_decode() {
             );
         }
     }
+}
+
+#[test]
+fn external_gainmap_duplicate_icc_association_fails_closed() {
+    let root = std::env::var_os("AVIF_GAINMAP_SAMPLE_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("workspace root should exist")
+                .join("test/images/external/avif/gainmap")
+        });
+    let path = root.join("seine_sdr_gainmap_srgb_icc.avif");
+    if !path.is_file() {
+        eprintln!(
+            "malformed gain-map ICC sample is unavailable; skipping duplicate association audit"
+        );
+        return;
+    }
+    let data = std::fs::read(path).expect("malformed gain-map ICC sample should be readable");
+    assert!(matches!(
+        avif_rust::image_from_bytes(&data),
+        Err(avif_rust::DecoderError::Bitstream(message))
+            if message.contains("duplicate ColorInformation property association")
+    ));
 }
 
 #[test]

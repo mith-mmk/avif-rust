@@ -2123,3 +2123,16 @@ as one expected fail-closed rejection. A seven-iteration release benchmark measu
 `89.5729/86.8459 ms` for `WML2Viewer.avif`; a 20-iteration filter-disabled
 directional fixture measured `0.3857/0.3903 ms`. These are same-host
 checkpoints, not portable speedup claims.
+
+On 2026-07-24, the official `grpl/altr` gain-map preference vectors were
+audited. The parser now honors entity ordering when the alternate group
+contains both the primary item and the `tmap` item: a gain map is exposed only
+when it is the preferred entity, while the official `wrongaltr` sample remains
+fully decodable through its base-image fallback. The audit also adds HDR
+`seine_hdr_srgb`/`seine_hdr_rec2020`, zero-gamma and duplicate-ICC malformed
+gain-map samples, with explicit fail-closed expectations. The 437-test library
+suite is green (`432 passed`, `5 ignored`), the 17-test container suite and
+96-test FFmpeg conformance suite are green (`94 passed`, `2 ignored`). The
+parent external gate reports 65 successes, 2 expected failures, 0 unexpected
+results, and 0 partial PNGs; the expected failures are the malformed nclx
+range sample and duplicate-ICC association sample.
