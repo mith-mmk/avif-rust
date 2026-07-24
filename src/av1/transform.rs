@@ -660,9 +660,14 @@ pub fn inverse_transform(
         return Ok(inverse_transform_8x8(tx_type, dequant, bit_depth));
     }
     if tx_size.is_rectangular() {
-        if tx_size.width().max(tx_size.height()) > 16 && tx_type != TxType::DctDct {
+        if tx_size.width().max(tx_size.height()) > 16
+            && !matches!(
+                tx_type,
+                TxType::DctDct | TxType::Identity | TxType::VerticalDct | TxType::HorizontalDct
+            )
+        {
             return Err(DecoderError::Unsupported(format!(
-                "AV1 {tx_size:?} non-DCT transform is not signaled for intra blocks"
+                "AV1 {tx_size:?} transform stage is not supported for rectangular decoding"
             )));
         }
         return Ok(inverse_transform_rect(tx_type, tx_size, dequant, bit_depth));
@@ -726,9 +731,17 @@ pub(crate) fn inverse_transform_into(
         TxSize::Tx64x64 => inverse_transform_64x64_dct_into(dequant, bit_depth, output),
         _ => {
             if tx_size.is_rectangular() {
-                if tx_size.width().max(tx_size.height()) > 16 && tx_type != TxType::DctDct {
+                if tx_size.width().max(tx_size.height()) > 16
+                    && !matches!(
+                        tx_type,
+                        TxType::DctDct
+                            | TxType::Identity
+                            | TxType::VerticalDct
+                            | TxType::HorizontalDct
+                    )
+                {
                     return Err(DecoderError::Unsupported(format!(
-                        "AV1 {tx_size:?} non-DCT transform is not signaled for intra blocks"
+                        "AV1 {tx_size:?} transform stage is not supported for rectangular decoding"
                     )));
                 }
                 inverse_transform_rect_into(tx_type, tx_size, dequant, bit_depth, output);
@@ -835,11 +848,15 @@ fn inverse_staged_dynamic_into(
                 range,
             ));
         }
-        32 if transform == StagedTransform::Dct => {
-            output[..32].copy_from_slice(&inverse_dct32(
-                input.try_into().expect("length checked"),
-                range,
-            ));
+        32 => {
+            let input = input.try_into().expect("length checked");
+            output[..32].copy_from_slice(&match transform {
+                StagedTransform::Dct => inverse_dct32(input, range),
+                StagedTransform::Identity => inverse_identity32(input),
+                StagedTransform::Adst => {
+                    unreachable!("rectangular 32-point ADST is not supported")
+                }
+            });
         }
         64 if transform == StagedTransform::Dct => output[..64].copy_from_slice(&inverse_dct64(
             input.try_into().expect("length checked"),
@@ -1482,6 +1499,10 @@ fn inverse_staged_16(transform: StagedTransform, input: [i32; 16], range: u8) ->
         }
         StagedTransform::Adst => inverse_adst16(input, range),
     }
+}
+
+fn inverse_identity32(input: [i32; 32]) -> [i32; 32] {
+    input.map(|value| value.saturating_mul(4))
 }
 
 fn inverse_adst16(i: [i32; 16], r: u8) -> [i32; 16] {
@@ -2742,6 +2763,45 @@ mod tests {
             ),
             [181, -48, 25, 0, 8, -14, 0, 6, -3, 0, 11, -8, 0, 3, -6, 17]
         );
+    }
+
+    #[test]
+    fn staged_32_point_identity_matches_aom_reference_vectors() {
+        assert_eq!(
+            inverse_identity32([
+                64, -17, 9, 0, 3, -5, 0, 2, -1, 0, 4, -3, 0, 1, -2, 6, 7, -8, 11, -12, 13, -14, 15,
+                -16, 17, -18, 19, -20, 21, -22, 23, -24,
+            ]),
+            [
+                256, -68, 36, 0, 12, -20, 0, 8, -4, 0, 16, -12, 0, 4, -8, 24, 28, -32, 44, -48, 52,
+                -56, 60, -64, 68, -72, 76, -80, 84, -88, 92, -96,
+            ]
+        );
+    }
+
+    #[test]
+    fn rectangular_identity32_dispatches_all_32_point_shapes() {
+        for tx_size in [
+            TxSize::Tx8x32,
+            TxSize::Tx16x32,
+            TxSize::Tx32x8,
+            TxSize::Tx32x16,
+        ] {
+            let mut coefficients = vec![0; tx_size.sample_count()];
+            coefficients[0] = 64;
+            coefficients[1] = -17;
+            coefficients[tx_size.width()] = 9;
+            coefficients[tx_size.sample_count() - 1] = -3;
+
+            let expected = inverse_transform(TxType::Identity, tx_size, &coefficients, 8)
+                .expect("32-point rectangular identity must decode");
+            let mut actual = vec![0; coefficients.len()];
+            inverse_transform_into(TxType::Identity, tx_size, &coefficients, 8, &mut actual)
+                .expect("32-point rectangular identity into path must decode");
+
+            assert_eq!(actual, expected, "{tx_size:?}");
+            assert!(actual.iter().any(|value| *value != 0), "{tx_size:?}");
+        }
     }
 
     #[test]
