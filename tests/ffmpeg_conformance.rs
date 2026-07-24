@@ -572,6 +572,105 @@ fn generated_inter_sequence_sample_is_classified_for_decoder_gate_when_encoder_p
 }
 
 #[test]
+fn generated_10bit_inter_sequence_sample_decodes_when_encoder_present() {
+    let root = std::env::temp_dir().join(format!(
+        ".test-avif-sequence-inter-10bit-{}",
+        std::process::id()
+    ));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary 10-bit AVIF sequence directory: {err}");
+    }
+    let output_path = root.join("sequence-10bit.avifs");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .args(["-f", "lavfi", "-i", "testsrc2=size=64x64:rate=1"])
+        .args([
+            "-vf",
+            "format=yuv420p10le",
+            "-t",
+            "2",
+            "-c:v",
+            "libaom-av1",
+            "-cpu-used",
+            "8",
+            "-crf",
+            "0",
+            "-g",
+            "30",
+            "-frame-parallel",
+            "1",
+            "-aom-params",
+            "enable-cdef=0:enable-restoration=0",
+            "-pix_fmt",
+            "yuv420p10le",
+            "-colorspace",
+            "bt709",
+            "-color_primaries",
+            "bt709",
+            "-color_trc",
+            "bt709",
+            "-color_range",
+            "tv",
+            "-f",
+            "avif",
+        ])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated 10-bit inter sequence");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom 10-bit inter encoder is unavailable; skipping generated sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let data = std::fs::read(&output_path).expect("generated 10-bit AVIS should be readable");
+    let info = avif_rust::container::parse_avif(&data).expect("generated 10-bit AVIS should parse");
+    let inter_sample = info
+        .sequence_sample_payloads
+        .get(1)
+        .expect("generated 10-bit sequence should contain a second sample");
+    assert_eq!(
+        avif_rust::classify_av1_sequence_sample(inter_sample).unwrap(),
+        Some(avif_rust::AvifSequenceSampleKind::Inter)
+    );
+    let decoded = avif_rust::decode_sequence_frame_bytes(&data, 1)
+        .expect("generated 10-bit inter sample should decode without partial output");
+    assert_eq!((decoded.width, decoded.height), (64, 64));
+    assert_eq!(decoded.bit_depth, 10);
+    assert_eq!(decoded.buffers.planes.len(), 3);
+    assert_eq!(decoded.buffers.planes[0].samples.len(), 64 * 64);
+    assert_eq!(decoded.buffers.planes[1].samples.len(), 32 * 32);
+    assert_eq!(decoded.buffers.planes[2].samples.len(), 32 * 32);
+    for (plane_index, plane) in decoded.buffers.planes.iter().enumerate() {
+        assert!(
+            plane.samples.iter().all(|sample| *sample <= 1023),
+            "10-bit inter plane {plane_index} exceeds the declared range"
+        );
+    }
+    if let Some(expected) = ffmpeg_decode_rgba_stream_frame(&output_path, 1, 1, 64, 64) {
+        let actual = decoded
+            .to_rgba8()
+            .expect("generated 10-bit inter sample should convert to RGBA8")
+            .rgba;
+        let metrics = diff_rgb_dynamic(&actual, &expected);
+        eprintln!(
+            "generated 10-bit inter frame: average RGB absolute error={}, max={}",
+            metrics.average_rgb_abs, metrics.max_rgb_abs
+        );
+        assert!(
+            metrics.average_rgb_abs <= 64.0,
+            "generated 10-bit inter FFmpeg RGB error average={} max={}",
+            metrics.average_rgb_abs,
+            metrics.max_rgb_abs
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn generated_local_warp_sample_matches_ffmpeg_when_encoder_present() {
     run_generated_local_warp_sample("localwarp", "testsrc2=size=128x128:rate=1", None);
 }
