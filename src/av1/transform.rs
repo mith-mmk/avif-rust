@@ -737,6 +737,11 @@ pub(crate) fn inverse_transform_into(
         output.fill(0);
         return Ok(());
     }
+    if tx_size == TxSize::Tx64x64 && tx_type != TxType::DctDct {
+        return Err(DecoderError::Unsupported(format!(
+            "AV1 64x64 {tx_type:?} transform is not supported for this size"
+        )));
+    }
     match tx_size {
         TxSize::Tx4x4 => {
             inverse_transform_4x4_into(tx_type, dequant, bit_depth, output);
@@ -2772,6 +2777,22 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn tx64_in_place_unsupported_non_dct_transform_rejects_non_zero_coefficients() {
+        let mut coefficients = vec![0; TxSize::Tx64x64.sample_count()];
+        coefficients[0] = 64;
+        let mut output = vec![0; coefficients.len()];
+        let error = inverse_transform_into(
+            TxType::Identity,
+            TxSize::Tx64x64,
+            &coefficients,
+            8,
+            &mut output,
+        )
+        .expect_err("64x64 in-place non-DCT transform must fail closed");
+        assert!(matches!(error, DecoderError::Unsupported(message) if message.contains("64x64")));
     }
 
     #[test]

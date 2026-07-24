@@ -18,7 +18,8 @@ use crate::av1::{
     parse_frame_header_with_references, parse_sequence_header, parse_show_existing_frame_index,
     parse_tile_group, plan_transform_blocks_with_tx_size, prepare_tile_entropy,
     probe_first_block_residuals, probe_tile_block_modes, probe_tile_partitions,
-    sgrproj_filter_unit_into_with_scratch, wiener_filter_unit_into_with_scratch,
+    sgrproj_filter_unit_into_with_scratch_bit_depth,
+    wiener_filter_unit_into_with_scratch_bit_depth,
 };
 use crate::compat::{DataMap, DecodeOptions, InitOptions};
 use crate::container::{
@@ -4026,6 +4027,7 @@ fn apply_loop_restoration_stage(
     unit_size: usize,
     enabled_types: &[u8],
 ) {
+    let bit_depth = frame.bit_depth;
     if state.restoration_units.is_empty()
         || !state
             .restoration_units
@@ -4047,6 +4049,7 @@ fn apply_loop_restoration_stage(
                         state,
                         unit_size,
                         enabled_types,
+                        bit_depth,
                     );
                 });
             }
@@ -4054,7 +4057,14 @@ fn apply_loop_restoration_stage(
         return;
     }
     for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
-        apply_loop_restoration_plane(plane, plane_index, state, unit_size, enabled_types);
+        apply_loop_restoration_plane(
+            plane,
+            plane_index,
+            state,
+            unit_size,
+            enabled_types,
+            bit_depth,
+        );
     }
 }
 
@@ -4084,6 +4094,7 @@ fn apply_loop_restoration_plane(
     state: &PostFilterState,
     unit_size: usize,
     enabled_types: &[u8],
+    bit_depth: u8,
 ) {
     const RESTORATION_UNIT_OFFSET: usize = 8;
     if !state
@@ -4145,7 +4156,7 @@ fn apply_loop_restoration_plane(
                             filters[0][0] = 0;
                             filters[1][0] = 0;
                         }
-                        wiener_filter_unit_into_with_scratch(
+                        wiener_filter_unit_into_with_scratch_bit_depth(
                             &source,
                             &mut output,
                             plane.layout.width,
@@ -4155,6 +4166,7 @@ fn apply_loop_restoration_plane(
                             chunk_width,
                             stripe_height,
                             filters,
+                            bit_depth,
                             &mut wiener_scratch,
                         )
                     }
@@ -4162,7 +4174,7 @@ fn apply_loop_restoration_plane(
                         let (Some(index), Some(xqd)) = (unit.sgrproj_index, unit.sgrproj) else {
                             break;
                         };
-                        sgrproj_filter_unit_into_with_scratch(
+                        sgrproj_filter_unit_into_with_scratch_bit_depth(
                             &source,
                             &mut output,
                             plane.layout.width,
@@ -4173,6 +4185,7 @@ fn apply_loop_restoration_plane(
                             stripe_height,
                             index,
                             xqd,
+                            bit_depth,
                             &mut sgrproj_scratch,
                         )
                     }

@@ -2091,3 +2091,19 @@ rectangular requests retain their explicit `Unsupported` boundary. The
 conformance suite remain green. A fresh seven-iteration release benchmark
 measured `79.4775/80.5235 ms` (native/RGBA) for `samples/WML2Viewer.avif`;
 this is a same-host checkpoint, not a portable speedup claim.
+
+On 2026-07-24, the official libavif
+`colors-animated-12bpc-keyframes-0-2-3.avif` sample exposed an integer
+overflow in the SGRPROJ high-bit-depth restoration variance calculation.
+Restoration now uses AOM's highbd box-sum normalization, 64-bit accumulators,
+and bit-depth-specific output clamps for SGRPROJ and Wiener restoration; the
+8-bit paths keep their previous fixed-point arithmetic. The sample now decodes
+all sequence frames, and an optional external-sample test checks its 12-bit
+range. The 434-test library suite is green (`429 passed`, `5 ignored`), the
+16-test container suite and 94-test FFmpeg conformance suite are green (`92
+passed`, `2 ignored`). The expanded parent external gate reports 38
+successes, 0 expected failures, 0 unexpected results, and 0 partial PNGs.
+The
+the 11-iteration release benchmark measured `82.6978/84.1873 ms`
+(native/RGBA) for `samples/WML2Viewer.avif`. This is a same-host
+no-regression checkpoint, not a portable speedup claim.

@@ -616,6 +616,32 @@ fn external_animated_libavif_sample_metadata_is_parsed_when_present() {
 }
 
 #[test]
+fn external_animated_libavif_12bpc_sample_decodes_when_present() {
+    let Some(root) = std::env::var_os("AVIF_ANIMATED_SAMPLE_DIR") else {
+        eprintln!("external animated AVIF sample directory is unavailable; skipping");
+        return;
+    };
+    let path = std::path::PathBuf::from(root).join("colors-animated-12bpc-keyframes-0-2-3.avif");
+    if !path.is_file() {
+        eprintln!("external animated 12bpc AVIF sample is unavailable; skipping");
+        return;
+    }
+    let data = std::fs::read(&path).expect("animated 12bpc AVIF sample should be readable");
+    let frames = avif_rust::decode_sequence_frames_bytes(&data)
+        .expect("animated 12bpc AVIF sample should decode every frame");
+    assert!(!frames.is_empty());
+    assert!(frames.iter().all(|frame| frame.bit_depth == 12));
+    assert!(frames.iter().all(|frame| {
+        frame
+            .buffers
+            .planes
+            .iter()
+            .flat_map(|plane| plane.samples.iter())
+            .all(|&sample| sample <= 4095)
+    }));
+}
+
+#[test]
 fn public_parsers_reject_truncated_and_malformed_headers() {
     let err = parse_avif(&[0, 0, 0]).unwrap_err();
     assert!(matches!(err, DecoderError::NotEnoughData(message) if message.contains("box header")));

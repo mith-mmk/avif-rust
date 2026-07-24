@@ -456,6 +456,38 @@ pub(crate) fn wiener_filter_unit_into_with_scratch(
     filters: [[i16; 3]; 2],
     horizontal_scratch: &mut Vec<i32>,
 ) {
+    wiener_filter_unit_into_with_scratch_bit_depth(
+        source,
+        output,
+        width,
+        height,
+        origin_x,
+        origin_y,
+        unit_width,
+        unit_height,
+        filters,
+        8,
+        horizontal_scratch,
+    );
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scalar Wiener kernel parameters and reusable scratch stay explicit"
+)]
+pub(crate) fn wiener_filter_unit_into_with_scratch_bit_depth(
+    source: &[u16],
+    output: &mut [u16],
+    width: usize,
+    height: usize,
+    origin_x: usize,
+    origin_y: usize,
+    unit_width: usize,
+    unit_height: usize,
+    filters: [[i16; 3]; 2],
+    bit_depth: u8,
+    horizontal_scratch: &mut Vec<i32>,
+) {
     const FILTER_BITS: u32 = 7;
     const ROUND_0_BITS: u32 = 3;
     const ROUND_1_BITS: u32 = 2 * FILTER_BITS - ROUND_0_BITS;
@@ -487,8 +519,8 @@ pub(crate) fn wiener_filter_unit_into_with_scratch(
     let intermediate_height = output_height + 6;
     horizontal_scratch.resize(output_width * intermediate_height, 0);
     let horizontal = &mut horizontal_scratch[..output_width * intermediate_height];
-    let horizontal_offset = 1 << (8 + FILTER_BITS - 1);
-    let horizontal_limit = (1 << (8 + 1 + FILTER_BITS - ROUND_0_BITS)) - 1;
+    let horizontal_offset = 1_i32 << (u32::from(bit_depth) + FILTER_BITS - 1);
+    let horizontal_limit = (1_i32 << (u32::from(bit_depth) + 1 + FILTER_BITS - ROUND_0_BITS)) - 1;
     for intermediate_y in 0..intermediate_height {
         let source_y = origin_y as isize + intermediate_y as isize - 3;
         for local_x in 0..output_width {
@@ -510,7 +542,8 @@ pub(crate) fn wiener_filter_unit_into_with_scratch(
         }
     }
 
-    let vertical_offset = 1 << (8 + ROUND_1_BITS - 1);
+    let vertical_offset = 1_i32 << (u32::from(bit_depth) + ROUND_1_BITS - 1);
+    let max_sample = ((1_u32 << u32::from(bit_depth.min(16))) - 1) as i32;
     for local_y in 0..output_height {
         for local_x in 0..output_width {
             let center = horizontal[(local_y + 3) * output_width + local_x];
@@ -523,7 +556,7 @@ pub(crate) fn wiener_filter_unit_into_with_scratch(
                 .sum::<i32>();
             let value = residual + (center << FILTER_BITS) - vertical_offset;
             output[(origin_y + local_y) * width + origin_x + local_x] =
-                ((value + (1 << (ROUND_1_BITS - 1))) >> ROUND_1_BITS).clamp(0, 255) as u16;
+                ((value + (1 << (ROUND_1_BITS - 1))) >> ROUND_1_BITS).clamp(0, max_sample) as u16;
         }
     }
 }
@@ -609,6 +642,40 @@ pub(crate) fn sgrproj_filter_unit_into_with_scratch(
     xqd: [i16; 2],
     scratch: &mut [Vec<i32>; 4],
 ) {
+    sgrproj_filter_unit_into_with_scratch_bit_depth(
+        source,
+        output,
+        width,
+        height,
+        origin_x,
+        origin_y,
+        unit_width,
+        unit_height,
+        sgr_index,
+        xqd,
+        8,
+        scratch,
+    );
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scalar SGRPROJ kernel parameters and reusable scratch stay explicit"
+)]
+pub(crate) fn sgrproj_filter_unit_into_with_scratch_bit_depth(
+    source: &[u16],
+    output: &mut [u16],
+    width: usize,
+    height: usize,
+    origin_x: usize,
+    origin_y: usize,
+    unit_width: usize,
+    unit_height: usize,
+    sgr_index: u8,
+    xqd: [i16; 2],
+    bit_depth: u8,
+    scratch: &mut [Vec<i32>; 4],
+) {
     const RADII: [[usize; 2]; 16] = [
         [2, 1],
         [2, 1],
@@ -657,33 +724,72 @@ pub(crate) fn sgrproj_filter_unit_into_with_scratch(
     let round_shift = |value: i64, shift: u32| -> i32 {
         ((value + (1_i64 << shift.saturating_sub(1))) >> shift) as i32
     };
+    let round_shift_i64 =
+        |value: i64, shift: u32| -> i64 { (value + (1_i64 << shift.saturating_sub(1))) >> shift };
+    let bd_shift = u32::from(bit_depth.saturating_sub(8));
+    let max_sample = ((1_u32 << u32::from(bit_depth.min(16))) - 1) as i32;
     let intermediate = |radius: usize, scale: i32, a: &mut Vec<i32>, b: &mut Vec<i32>| -> usize {
         let stride = output_width + 4;
         let scratch_len = (output_height + 4) * stride;
         a.resize(scratch_len, 0);
         b.resize(scratch_len, 0);
         let side = radius * 2 + 1;
-        let n = (side * side) as i32;
+        let n = (side * side) as i64;
+        if bit_depth == 8 {
+            let n = n as i32;
+            for yy in 0..output_height + 4 {
+                for xx in 0..output_width + 4 {
+                    let cx = xx as isize + origin_x as isize - 2;
+                    let cy = yy as isize + origin_y as isize - 2;
+                    let mut sum = 0i32;
+                    let mut sum_sq = 0i32;
+                    for dy in -(radius as isize)..=(radius as isize) {
+                        for dx in -(radius as isize)..=(radius as isize) {
+                            let value = sample(cx + dx, cy + dy);
+                            sum += value;
+                            sum_sq += value * value;
+                        }
+                    }
+                    let p = (sum_sq * n - sum * sum).max(0) as i64;
+                    let z = round_shift(p * i64::from(scale), 20).clamp(0, 255);
+                    let af = sgr_x_by_xplus1(z);
+                    let bf = round_shift(
+                        i64::from(256 - af) * i64::from(sum) * i64::from((4096 + n / 2) / n),
+                        12,
+                    );
+                    let index = yy * stride + xx;
+                    a[index] = af;
+                    b[index] = bf;
+                }
+            }
+            return stride;
+        }
         for yy in 0..output_height + 4 {
             for xx in 0..output_width + 4 {
                 let cx = xx as isize + origin_x as isize - 2;
                 let cy = yy as isize + origin_y as isize - 2;
-                let mut sum = 0i32;
-                let mut sum_sq = 0i32;
+                let mut sum = 0i64;
+                let mut sum_sq = 0i64;
                 for dy in -(radius as isize)..=(radius as isize) {
                     for dx in -(radius as isize)..=(radius as isize) {
                         let value = sample(cx + dx, cy + dy);
+                        let value = i64::from(value);
                         sum += value;
                         sum_sq += value * value;
                     }
                 }
-                let p = (sum_sq * n - sum * sum).max(0) as i64;
-                let z = round_shift(p * i64::from(scale), 20).clamp(0, 255);
+                // AOM normalizes the highbd box sums before calculating the
+                // variance. This keeps the fixed-point range identical to
+                // the 8-bit kernel while avoiding overflow in sum_sq * n.
+                let normalized_sum = round_shift_i64(sum, bd_shift);
+                let normalized_sum_sq = round_shift_i64(sum_sq, bd_shift * 2);
+                let p = (normalized_sum_sq * n - normalized_sum * normalized_sum).max(0);
+                let z = round_shift_i64(p * i64::from(scale), 20).clamp(0, 255) as i32;
                 // AOM's av1_x_by_xplus1 table maps zero to one and rounds
                 // 256*z/(z+1) to nearest for every other variance value.
                 let af = sgr_x_by_xplus1(z);
                 let bf = round_shift(
-                    i64::from(256 - af) * i64::from(sum) * i64::from((4096 + n / 2) / n),
+                    i64::from(256 - af) * normalized_sum * ((4096 + n / 2) / n),
                     12,
                 );
                 let index = yy * stride + xx;
@@ -770,7 +876,7 @@ pub(crate) fn sgrproj_filter_unit_into_with_scratch(
             let f0 = filter_at(local_x, local_y, 0);
             let f1 = filter_at(local_x, local_y, 1);
             let value = (u << 7) + xq0 * (f0 - u) + xq1 * (f1 - u);
-            output[y * width + x] = ((value + (1 << 10)) >> 11).clamp(0, 255) as u16;
+            output[y * width + x] = ((value + (1 << 10)) >> 11).clamp(0, max_sample) as u16;
         }
     }
 }
@@ -1518,10 +1624,69 @@ mod tests {
     }
 
     #[test]
+    fn wiener_high_bit_depth_clamps_to_the_declared_sample_range() {
+        let source = (0..32 * 32)
+            .map(|index| 1024u16 + ((index * 197) % 3072) as u16)
+            .collect::<Vec<_>>();
+        let mut output = source.clone();
+        let mut scratch = Vec::new();
+        super::wiener_filter_unit_into_with_scratch_bit_depth(
+            &source,
+            &mut output,
+            32,
+            32,
+            0,
+            0,
+            32,
+            32,
+            [[1, 2, 3], [3, -2, 1]],
+            12,
+            &mut scratch,
+        );
+        assert!(output.iter().all(|&sample| sample <= 4095));
+        assert!(
+            output
+                .iter()
+                .zip(&source)
+                .any(|(&filtered, &original)| filtered != original)
+        );
+    }
+
+    #[test]
     fn sgrproj_filter_preserves_a_constant_unit_with_zero_projection() {
         let source = vec![200u16; 16 * 16];
         let filtered = super::sgrproj_filter_unit(&source, 16, 16, 0, 0, 16, 16, 0, [0, 128]);
         assert_eq!(filtered, source);
+    }
+
+    #[test]
+    fn sgrproj_high_bit_depth_arithmetic_stays_in_sample_range() {
+        let source = (0..32 * 32)
+            .map(|index| 1024u16 + ((index * 197) % 3072) as u16)
+            .collect::<Vec<_>>();
+        let mut output = source.clone();
+        let mut scratch = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+        super::sgrproj_filter_unit_into_with_scratch_bit_depth(
+            &source,
+            &mut output,
+            32,
+            32,
+            0,
+            0,
+            32,
+            32,
+            0,
+            [12, 64],
+            12,
+            &mut scratch,
+        );
+        assert!(output.iter().all(|&sample| sample <= 4095));
+        assert!(
+            output
+                .iter()
+                .zip(&source)
+                .any(|(&filtered, &original)| filtered != original)
+        );
     }
 
     #[test]

@@ -4200,6 +4200,7 @@ fn all_official_unsupported_samples_decode_without_partial_output() {
         ("alpha_noispe.avif", 80, 80),
         ("clap_irot_imir_non_essential.avif", 10, 8),
         ("clop_irot_imor.avif", 34, 12),
+        ("colors-animated-12bpc-keyframes-0-2-3.avif", 64, 64),
         ("draw_points_idat.avif", 33, 11),
         ("draw_points_idat_metasize0.avif", 33, 11),
         ("draw_points_idat_progressive.avif", 33, 11),
@@ -4225,7 +4226,7 @@ fn all_official_unsupported_samples_decode_without_partial_output() {
         ("sofa_grid1x5_420_reversed_dimg_order.avif", 1024, 770),
         ("star-8bpc.avifs", 159, 159),
     ];
-    assert_eq!(cases.len(), 25);
+    assert_eq!(cases.len(), 26);
     for (name, width, height) in cases {
         let path = root.join(name);
         assert!(
