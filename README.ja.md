@@ -35,8 +35,8 @@ frame AVIF profileに対応します。1 frameの`avis` primary itemも静止画
 | file dataおよびmeta `idat`の`iloc` item payload | 対応（construction method 0／1／indexed method 2） |
 | `clap`、`irot`、`imir` composition | 対応 |
 | 1 frameの`avis` primary item | 対応 |
-| AVISのKey/IntraOnly/show-existing frameをindex指定・一括でデコード | 対応（Inter/Switchはfail-closed） |
-| animated AVIFの複数frame callback出力 | Key／IntraOnly／show-existingに対応（`animation: true`、Inter／Switchはfail-closed） |
+| AVISのKey／IntraOnly／Inter／show-existing frameをindex指定・一括でデコード | 対応（動き補償付きInterの検証サンプルを含む、Switchはfail-closed） |
+| animated AVIFの複数frame callback出力 | Key／IntraOnly／Inter／show-existingに対応（`animation: true`、Switchはfail-closed） |
 | layered image selector（`a1op=0`、`lsel=0`） | 解析・受理（既定外の層／operating point選択はfail-closed） |
 | `tmap`主画像のbase画像フォールバック | 対応（base `av01`をデコード、ISO 21496 Gain Mapメタデータと参照AV1 gain-map itemを解析・デコード可能、base色空間の明示的なHDR合成に対応） |
 | PQ／HLG transferからbounded SDR RGBA16への変換 | 対応（bounded tone mapping、display固有のcalibrationは未適用） |
@@ -96,10 +96,10 @@ assert_eq!(rgba16.rgba.len(), rgba16.width * rgba16.height * 4);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-AVIS sequenceでは、`decode_sequence_frame_bytes`でKey／IntraOnlyまたは
-`show_existing_frame`のサンプルをindex指定、`decode_sequence_frames_bytes`で
-対応サンプルを一括デコードできます。動き補償が実装されるまでは、
-Inter／Switchサンプルは`DecoderError::Unsupported`を返します。
+AVIS sequenceでは、`decode_sequence_frame_bytes`でKey／IntraOnly／動き補償付き
+Interまたは`show_existing_frame`のサンプルをindex指定、
+`decode_sequence_frames_bytes`で対応サンプルを一括デコードできます。Switchは
+独立した参照意味論の検証が残っているため、`DecoderError::Unsupported`を返します。
 
 低水準の`parse_info`と`decode`は`bin-rs::reader::BinaryReader`を受け取ります。
 `decode`は`wml2`互換の`init -> draw -> terminate` callback順序を維持し、
