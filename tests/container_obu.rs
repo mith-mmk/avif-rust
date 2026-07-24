@@ -415,6 +415,16 @@ fn generated_avis_exposes_inter_and_show_existing_reference_samples() {
             .iter()
             .any(|kind| { matches!(kind, Some(AvifSequenceSampleKind::ShowExisting { .. })) })
     );
+    let show_existing_index = kinds
+        .iter()
+        .position(|kind| matches!(kind, Some(AvifSequenceSampleKind::ShowExisting { .. })))
+        .expect("generated AVIS reference sample should expose a show-existing index");
+    let frames = avif_rust::decode_sequence_frames_bytes(&data)
+        .expect("generated AVIS reference sample should decode all frames");
+    assert_eq!(frames.len(), info.sequence_sample_payloads.len());
+    let shown = avif_rust::decode_sequence_frame_bytes(&data, show_existing_index)
+        .expect("generated AVIS show-existing sample should decode");
+    assert_eq!((shown.width, shown.height), (64, 64));
     let frame = avif_rust::decode_frame_bytes(&data)
         .expect("primary AVIS reference sample should still decode");
     assert_eq!((frame.width, frame.height), (64, 64));
