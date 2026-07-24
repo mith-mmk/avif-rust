@@ -1409,6 +1409,15 @@ extension does not add a measurable cost to the normal large-frame decode;
 the numbers remain host-specific checkpoints rather than a cross-machine
 speedup claim.
 
+On 2026-07-24, the entropy hot path was measured again after the fixed
+probability `read_bool` shortcut. Marking `read_raw_bit` and `renormalize` as
+always-inline reduced two 100-iteration release medians for
+`samples/WML2Viewer.avif` to `98.6355/100.1637` and `101.0170/101.4118 ms`
+(native/RGBA), compared with the clean no-inline run at `108.3963/109.7268
+ms`. The small `star-8bpc.avifs` sample remained at `1.3396/1.6800 ms`, so
+the change is retained as a hot-path optimization with no small-sample
+regression.
+
 The unsupported-sample regression gate now recursively enumerates every
 `.avif`/`.avifs` file below `test/images/external/avif/unsupported`, including
 nested fixture directories. Optional external samples and FFmpeg oracles now

@@ -123,6 +123,7 @@ impl<'a> EntropyDecoder<'a> {
 
     // AOM's literal bits use a binary probability of 128, which maps to the
     // Q15 value 16384.
+    #[inline(always)]
     fn read_raw_bit(&mut self) -> Result<u8, DecoderError> {
         let f = 16_384u32;
         let split = (((self.symbol_range >> 8) * (f >> EC_PROB_SHIFT)) >> (7 - EC_PROB_SHIFT))
@@ -207,6 +208,7 @@ impl<'a> EntropyDecoder<'a> {
         }
     }
 
+    #[inline(always)]
     fn renormalize(&mut self) -> Result<(), DecoderError> {
         let bits = 15 - floor_log2(self.symbol_range);
         self.symbol_range <<= bits;
