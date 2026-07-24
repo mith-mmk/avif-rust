@@ -46,8 +46,11 @@ impl<'a> EntropyDecoder<'a> {
     }
 
     pub fn read_bool(&mut self) -> Result<u8, DecoderError> {
-        let mut cdf = [1 << 14, 1 << 15, 0];
-        self.read_symbol(&mut cdf).map(|value| value as u8)
+        // `read_bool` is the AV1 fixed-probability (1/2) boolean syntax. It
+        // is equivalent to a two-entry CDF with a midpoint split, but using
+        // the raw-bit path avoids rebuilding and updating a throwaway CDF on
+        // every boolean read.
+        self.read_raw_bit()
     }
 
     pub fn read_literal(&mut self, bits: usize) -> Result<u32, DecoderError> {

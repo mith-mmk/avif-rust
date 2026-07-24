@@ -1168,14 +1168,33 @@ fn generated_interintra_sample_matches_ffmpeg_when_encoder_present() {
 
 #[test]
 fn generated_filter_intra_sample_matches_ffmpeg_when_encoder_present() {
-    let root = std::env::temp_dir().join(format!(".test-avif-filter-intra-{}", std::process::id()));
+    generated_filter_intra_sample_matches_ffmpeg_impl("yuv444p", "yuv444p", 256, 8);
+}
+
+#[test]
+fn generated_10bit_filter_intra_sample_matches_ffmpeg_when_encoder_present() {
+    generated_filter_intra_sample_matches_ffmpeg_impl("yuv444p10le", "yuv444p10le", 128, 10);
+}
+
+fn generated_filter_intra_sample_matches_ffmpeg_impl(
+    pixel_format: &str,
+    expected_format: &str,
+    dimension: usize,
+    bit_depth: u8,
+) {
+    let root = std::env::temp_dir().join(format!(
+        ".test-avif-filter-intra-{}-{}",
+        bit_depth,
+        std::process::id()
+    ));
     if let Err(err) = std::fs::create_dir_all(&root) {
         panic!("failed to create temporary AVIF filter-intra directory: {err}");
     }
     let output_path = root.join("filter-intra.avif");
+    let source = format!("testsrc2=size={dimension}x{dimension}:rate=1");
     let status = Command::new("ffmpeg")
         .args(["-y", "-loglevel", "error"])
-        .args(["-f", "lavfi", "-i", "testsrc2=size=256x256:rate=1"])
+        .args(["-f", "lavfi", "-i", &source])
         .args([
             "-frames:v",
             "1",
@@ -1188,7 +1207,7 @@ fn generated_filter_intra_sample_matches_ffmpeg_when_encoder_present() {
             "-crf",
             "20",
             "-pix_fmt",
-            "yuv444p",
+            pixel_format,
             "-enable-filter-intra",
             "1",
             "-enable-intra-edge-filter",
@@ -1210,26 +1229,50 @@ fn generated_filter_intra_sample_matches_ffmpeg_when_encoder_present() {
     }
     let data = std::fs::read(&output_path).expect("generated filter-intra AVIF should be readable");
     let decoded = avif_rust::image_from_bytes(&data).expect("filter-intra AVIF should decode");
-    assert_eq!((decoded.width, decoded.height), (256, 256));
+    assert_eq!((decoded.width, decoded.height), (dimension, dimension));
     let frame =
         avif_rust::decode_frame_bytes(&data).expect("filter-intra native frame should decode");
-    if let Some(expected) = ffmpeg_decode_raw(&output_path, "yuv444p") {
-        let plane_size = 256 * 256;
-        assert_eq!(expected.len(), plane_size * 3);
-        for plane_index in 0..3 {
-            let expected_plane =
-                &expected[plane_index * plane_size..(plane_index + 1) * plane_size];
-            let max_error = frame.buffers.planes[plane_index]
-                .samples
-                .iter()
-                .zip(expected_plane)
-                .map(|(actual, expected)| u8::try_from(*actual).unwrap().abs_diff(*expected))
-                .max()
-                .unwrap_or(0);
-            assert!(
-                max_error <= 2,
-                "filter-intra native plane {plane_index} max error was {max_error}"
-            );
+    assert_eq!(frame.bit_depth, bit_depth);
+    if let Some(expected) = ffmpeg_decode_raw(&output_path, expected_format) {
+        let plane_size = dimension * dimension;
+        if bit_depth == 8 {
+            assert_eq!(expected.len(), plane_size * 3);
+            for plane_index in 0..3 {
+                let expected_plane =
+                    &expected[plane_index * plane_size..(plane_index + 1) * plane_size];
+                let max_error = frame.buffers.planes[plane_index]
+                    .samples
+                    .iter()
+                    .zip(expected_plane)
+                    .map(|(actual, expected)| u8::try_from(*actual).unwrap().abs_diff(*expected))
+                    .max()
+                    .unwrap_or(0);
+                assert!(
+                    max_error <= 2,
+                    "filter-intra native plane {plane_index} max error was {max_error}"
+                );
+            }
+        } else {
+            assert_eq!(expected.len(), plane_size * 3 * 2);
+            let expected: Vec<u16> = expected
+                .chunks_exact(2)
+                .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]) & ((1 << bit_depth) - 1))
+                .collect();
+            for plane_index in 0..3 {
+                let expected_plane =
+                    &expected[plane_index * plane_size..(plane_index + 1) * plane_size];
+                let max_error = frame.buffers.planes[plane_index]
+                    .samples
+                    .iter()
+                    .zip(expected_plane)
+                    .map(|(actual, expected)| actual.abs_diff(*expected))
+                    .max()
+                    .unwrap_or(0);
+                assert!(
+                    max_error <= 16,
+                    "filter-intra {bit_depth}-bit native plane {plane_index} max error was {max_error}"
+                );
+            }
         }
     }
     let _ = std::fs::remove_dir_all(&root);

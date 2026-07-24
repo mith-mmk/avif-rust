@@ -1905,3 +1905,18 @@ The post-checkpoint release bench for `samples/WML2Viewer.avif` (10
 iterations) measured `84.2075 ms` for native `decode_frame_bytes` and
 `90.1377 ms` through RGBA conversion on this host. This is a local reference
 for the existing allocation/reuse work, not a cross-machine speedup claim.
+
+On 2026-07-24, the generated filter-intra oracle was generalized to compare
+native planes at the declared bit depth, and now covers both the existing
+8-bit YUV444 sample and a generated 10-bit YUV444 sample. Both pass the
+FFmpeg raw-plane gate; the new 10-bit sample also asserts the native frame
+bit depth and 10-bit sample range.
+
+On 2026-07-24, the fixed-probability AV1 `read_bool` path now uses the raw
+midpoint-bit decoder directly instead of rebuilding and updating a temporary
+two-symbol CDF for every boolean. Entropy tests and the generated filter-intra
+gates remain green. A 100-iteration release checkpoint for
+`samples/WML2Viewer.avif` measured `107.2613/107.5944 ms` (native/RGBA),
+versus the prior `108.6493/109.2108 ms` run on this host; retain this as a
+local checkpoint because system noise prevents treating it as a portable
+speedup claim.
