@@ -676,6 +676,11 @@ pub fn inverse_transform(
         return Ok(inverse_transform_8x8(tx_type, dequant, bit_depth));
     }
     if tx_size.is_rectangular() {
+        if tx_size.width().max(tx_size.height()) > 32 && tx_type != TxType::DctDct {
+            return Err(DecoderError::Unsupported(format!(
+                "AV1 {tx_size:?} non-DCT transform is not supported for dimensions above 32"
+            )));
+        }
         if tx_size.width().max(tx_size.height()) > 16
             && !matches!(
                 tx_type,
@@ -747,6 +752,11 @@ pub(crate) fn inverse_transform_into(
         TxSize::Tx64x64 => inverse_transform_64x64_dct_into(dequant, bit_depth, output),
         _ => {
             if tx_size.is_rectangular() {
+                if tx_size.width().max(tx_size.height()) > 32 && tx_type != TxType::DctDct {
+                    return Err(DecoderError::Unsupported(format!(
+                        "AV1 {tx_size:?} non-DCT transform is not supported for dimensions above 32"
+                    )));
+                }
                 if tx_size.width().max(tx_size.height()) > 16
                     && !matches!(
                         tx_type,
@@ -2863,6 +2873,25 @@ mod tests {
 
             assert_eq!(actual, expected, "{tx_size:?}");
             assert!(actual.iter().any(|value| *value != 0), "{tx_size:?}");
+        }
+    }
+
+    #[test]
+    fn rectangular_64_point_non_dct_is_rejected_without_panicking() {
+        for tx_size in [
+            TxSize::Tx16x64,
+            TxSize::Tx64x16,
+            TxSize::Tx32x64,
+            TxSize::Tx64x32,
+        ] {
+            let mut coefficients = vec![0; tx_size.sample_count()];
+            coefficients[0] = 64;
+            let error = inverse_transform(TxType::Identity, tx_size, &coefficients, 8)
+                .expect_err("non-DCT 64-point rectangular transform must fail closed");
+            assert!(
+                matches!(error, DecoderError::Unsupported(ref message) if message.contains("dimensions above 32")),
+                "{tx_size:?}: {error:?}"
+            );
         }
     }
 

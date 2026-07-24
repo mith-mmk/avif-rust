@@ -2070,3 +2070,14 @@ The same official animated sample was replayed through the public frame API as
 an AV1 tile-entropy audit. Its first key sample still fails closed at strict
 tile termination before a frame is accepted, so animated frame decode remains
 an explicit unsupported boundary; no partial frame is exposed by the API.
+
+On 2026-07-24, generated AVIS coverage now decodes every frame in a 60-sample
+Inter/show-existing sequence and verifies indexed show-existing lookup through
+the public sequence API. Rectangular Identity dispatch remains supported for
+the 32-point stage shapes (`Tx8x32`, `Tx16x32`, `Tx32x8`, `Tx32x16`); 64-point
+non-DCT rectangular requests now return an explicit `Unsupported` error
+instead of reaching an internal `unreachable!`. The 425-test library suite,
+15-test container suite, and FFmpeg conformance suite remain green. A fresh
+seven-iteration release benchmark measured `81.6585/82.0603 ms`
+(native/RGBA) for `samples/WML2Viewer.avif`; this is a same-host checkpoint,
+not a portable speedup claim.
