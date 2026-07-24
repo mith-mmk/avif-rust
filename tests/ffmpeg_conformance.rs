@@ -4417,3 +4417,41 @@ fn external_gainmap_samples_keep_complete_base_decode() {
         }
     }
 }
+
+#[test]
+fn external_gainmap_grid_samples_compose_when_present() {
+    let root = std::env::var_os("AVIF_GAINMAP_SAMPLE_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("workspace root should exist")
+                .join("test/images/external/avif/gainmap")
+        });
+    let names = [
+        "color_nogrid_alpha_nogrid_gainmap_grid.avif",
+        "color_grid_alpha_grid_gainmap_nogrid.avif",
+        "color_grid_gainmap_different_grid.avif",
+    ];
+    let mut found = false;
+    for name in names {
+        let path = root.join(name);
+        if !path.is_file() {
+            continue;
+        }
+        found = true;
+        let data = std::fs::read(&path).expect("gain-map grid sample should be readable");
+        let base = avif_rust::decode_frame_bytes(&data)
+            .unwrap_or_else(|error| panic!("{name} base frame should decode: {error}"));
+        let gain_map = avif_rust::decode_gain_map_frame_bytes(&data)
+            .unwrap_or_else(|error| panic!("{name} gain-map grid should decode: {error}"))
+            .expect("gain-map grid sample should expose a tmap item");
+        let composed = base
+            .to_rgba16_with_gain_map(&gain_map, 1.0)
+            .unwrap_or_else(|error| panic!("{name} gain-map grid should compose: {error}"));
+        assert_eq!((composed.width, composed.height), (base.width, base.height));
+    }
+    if !found {
+        eprintln!("external gain-map grid samples are unavailable; skipping grid audit");
+    }
+}

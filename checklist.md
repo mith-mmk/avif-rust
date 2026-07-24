@@ -2011,3 +2011,16 @@ full library suite is green (`422 passed`, `5 ignored`) and FFmpeg conformance
 is green (`90 passed`, `2 ignored`). The seven-iteration release bench for
 `samples/WML2Viewer.avif` measured `81.3502/88.7201 ms` (native/RGBA) on this
 host; this is a local checkpoint, not a portable speedup claim.
+
+On 2026-07-24, ISO 21496 gain-map items carried by an AVIF `grid` item are now
+parsed through the existing grid compositor before gain-map resampling and
+composition. The external audit covers the official grid gain-map fixtures
+`color_nogrid_alpha_nogrid_gainmap_grid.avif`,
+`color_grid_alpha_grid_gainmap_nogrid.avif`, and
+`color_grid_gainmap_different_grid.avif` when they are available (the current
+workspace has no external gain-map directory, so this optional audit skips).
+The full library suite is green (`422 passed`, `5 ignored`) and FFmpeg
+conformance is green (`91 passed`, `2 ignored`). The seven-iteration release
+bench for `samples/WML2Viewer.avif` measured `86.1501/82.3831 ms`
+(native/RGBA) on this host; this is a local checkpoint, not a portable speedup
+claim.

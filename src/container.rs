@@ -255,10 +255,11 @@ pub(crate) struct GainMapImage {
     pub metadata: GainMapMetadata,
     pub width: u32,
     pub height: u32,
-    pub pixel_information: PixelInformation,
+    pub pixel_information: Option<PixelInformation>,
     pub color_information: Option<ColorInformation>,
-    pub av1_config: Vec<u8>,
+    pub av1_config: Option<Vec<u8>>,
     pub payload: Vec<u8>,
+    pub grid: Option<GridImage>,
 }
 
 /// Parsed AVIF image grid derived item.
@@ -577,33 +578,64 @@ pub(crate) fn parse_gain_map_image(data: &[u8]) -> Result<Option<GainMapImage>, 
                 "tmap gain map item {gain_map_id} is missing item info"
             ))
         })?;
-    if gain_map_item.item_type != *b"av01" {
-        return Err(DecoderError::Unsupported(format!(
-            "tmap gain map item {gain_map_id} has unsupported type {:?}",
-            gain_map_item.item_type
-        )));
-    }
     item_metadata(&meta, base_id)?;
     let gain_metadata = item_metadata(&meta, gain_map_id)?;
-    let width = gain_metadata.width.ok_or_else(|| {
-        DecoderError::Bitstream("tmap gain map item is missing ispe dimensions".to_string())
-    })?;
-    let height = gain_metadata.height.ok_or_else(|| {
-        DecoderError::Bitstream("tmap gain map item is missing ispe dimensions".to_string())
-    })?;
-    if width == 0 || height == 0 {
-        return Err(DecoderError::Bitstream(
-            "tmap gain map dimensions must be non-zero".to_string(),
-        ));
-    }
-    let pixel_information = gain_metadata
-        .pixel_information
-        .ok_or_else(|| DecoderError::Bitstream("tmap gain map item is missing pixi".to_string()))?;
-    let av1_config = gain_metadata
-        .av1_config
-        .ok_or_else(|| DecoderError::Bitstream("tmap gain map item is missing av1C".to_string()))?;
     let tmap_payload = item_payload(data, &meta, tmap_id)?;
     let metadata = parse_gain_map_metadata_payload(&tmap_payload)?;
+    let gain_map_payload = item_payload(data, &meta, gain_map_id)?;
+    let (width, height, pixel_information, av1_config, grid) = match gain_map_item.item_type {
+        item_type if item_type == *b"av01" => {
+            let width = gain_metadata.width.ok_or_else(|| {
+                DecoderError::Bitstream("tmap gain map item is missing ispe dimensions".to_string())
+            })?;
+            let height = gain_metadata.height.ok_or_else(|| {
+                DecoderError::Bitstream("tmap gain map item is missing ispe dimensions".to_string())
+            })?;
+            if width == 0 || height == 0 {
+                return Err(DecoderError::Bitstream(
+                    "tmap gain map dimensions must be non-zero".to_string(),
+                ));
+            }
+            let pixel_information = gain_metadata.pixel_information.ok_or_else(|| {
+                DecoderError::Bitstream("tmap gain map item is missing pixi".to_string())
+            })?;
+            let av1_config = gain_metadata.av1_config.ok_or_else(|| {
+                DecoderError::Bitstream("tmap gain map item is missing av1C".to_string())
+            })?;
+            (
+                width,
+                height,
+                Some(pixel_information),
+                Some(av1_config),
+                None,
+            )
+        }
+        item_type if item_type == *b"grid" => {
+            let grid = parse_grid_item(data, &gain_map_payload, &meta, gain_map_id)?;
+            if grid.output_width == 0 || grid.output_height == 0 {
+                return Err(DecoderError::Bitstream(
+                    "tmap gain map grid dimensions must be non-zero".to_string(),
+                ));
+            }
+            let pixel_information = grid
+                .cells
+                .first()
+                .and_then(|cell| cell.pixel_information.clone());
+            (
+                grid.output_width,
+                grid.output_height,
+                pixel_information,
+                None,
+                Some(grid),
+            )
+        }
+        _ => {
+            return Err(DecoderError::Unsupported(format!(
+                "tmap gain map item {gain_map_id} has unsupported type {:?}",
+                gain_map_item.item_type
+            )));
+        }
+    };
     Ok(Some(GainMapImage {
         metadata,
         width,
@@ -611,7 +643,8 @@ pub(crate) fn parse_gain_map_image(data: &[u8]) -> Result<Option<GainMapImage>, 
         pixel_information,
         color_information: gain_metadata.color_information,
         av1_config,
-        payload: item_payload(data, &meta, gain_map_id)?,
+        payload: gain_map_payload,
+        grid,
     }))
 }
 

@@ -577,22 +577,26 @@ pub fn decode_gain_map_frame_bytes(
         primary_item_id: None,
         width: Some(gain_map.width),
         height: Some(gain_map.height),
-        pixel_information: Some(gain_map.pixel_information),
+        pixel_information: gain_map.pixel_information,
         color_information: gain_map.color_information,
         alpha_premultiplied: false,
         alpha_auxiliary_items: Vec::new(),
         alpha_grid: None,
-        primary_grid: None,
+        primary_grid: gain_map.grid,
         clean_aperture: None,
         rotation: None,
         mirror: None,
-        av1_config: Some(gain_map.av1_config),
+        av1_config: gain_map.av1_config,
         primary_item_payload: gain_map.payload,
         sequence_sample_payloads: Vec::new(),
     };
     validate_public_container_preflight(&info, false)?;
-    let headers = parse_av1_headers(&info)?;
-    let frame = decode_still_frame(&headers, Some(&info))?;
+    let frame = if info.primary_grid.is_some() {
+        decode_grid_frame(&info)?
+    } else {
+        let headers = parse_av1_headers(&info)?;
+        decode_still_frame(&headers, Some(&info))?
+    };
     Ok(Some(DecodedGainMapFrame {
         metadata: gain_map.metadata,
         frame,
