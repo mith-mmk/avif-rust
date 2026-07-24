@@ -1900,3 +1900,8 @@ bit-consumption/termination discrepancy, not an unhandled block syntax branch;
 strict Inter/Switch acceptance therefore remains disabled until the entropy
 position is reconciled with the motion/CDF traversal. The diagnostic probe and
 all temporary logging are kept out of the normal decode path.
+
+The post-checkpoint release bench for `samples/WML2Viewer.avif` (10
+iterations) measured `84.2075 ms` for native `decode_frame_bytes` and
+`90.1377 ms` through RGBA conversion on this host. This is a local reference
+for the existing allocation/reuse work, not a cross-machine speedup claim.
