@@ -4353,6 +4353,7 @@ fn external_gainmap_samples_keep_complete_base_decode() {
     let cases = [
         ("seine_hdr_gainmap_srgb.avif", 400, 300),
         ("seine_hdr_gainmap_small_srgb.avif", 400, 300),
+        ("seine_sdr_gainmap_big_srgb.avif", 400, 300),
         ("seine_sdr_gainmap_srgb.avif", 400, 300),
         ("seine_sdr_gainmap_notmapbrand.avif", 400, 300),
         ("unsupported_gainmap_version.avif", 100, 100),
@@ -4394,11 +4395,17 @@ fn external_gainmap_samples_keep_complete_base_decode() {
             let gain_map = avif_rust::decode_gain_map_frame_bytes(&data)
                 .unwrap_or_else(|error| panic!("{name} gain-map item should decode: {error}"))
                 .expect("supported gain-map sample should expose its AV1 map item");
-            assert_eq!(
-                (gain_map.frame.width, gain_map.frame.height),
-                (width, height)
-            );
+            assert!(gain_map.frame.width > 0 && gain_map.frame.height > 0);
             assert!(matches!(gain_map.metadata.channel_count(), 1 | 3));
+            let base_frame = avif_rust::decode_frame_bytes(&data)
+                .unwrap_or_else(|error| panic!("{name} base frame should decode: {error}"));
+            let composed = base_frame
+                .to_rgba16_with_gain_map(&gain_map, 1.0)
+                .unwrap_or_else(|error| {
+                    panic!("{name} gain-map composition should decode: {error}")
+                });
+            assert_eq!((composed.width, composed.height), (width, height));
+            assert_eq!(composed.rgba.len(), width * height * 4);
         } else if name == "unsupported_gainmap_minimum_version.avif" {
             assert!(
                 matches!(

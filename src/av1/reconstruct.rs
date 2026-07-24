@@ -1302,7 +1302,40 @@ impl MatrixCoefficients {
 }
 
 fn derived_luma_coefficients(color_primaries: u8) -> Result<(f64, f64), DecoderError> {
-    let (red, green, blue, white) = match color_primaries {
+    let (red, green, blue, white) = primary_chromaticities(color_primaries)?;
+    let to_xyz = |(x, y): (f64, f64)| [x / y, 1.0, (1.0 - x - y) / y];
+    let [xr, _, zr] = to_xyz(red);
+    let [xg, _, zg] = to_xyz(green);
+    let [xb, _, zb] = to_xyz(blue);
+    let xw = white.0 / white.1;
+    let zw = (1.0 - white.0 - white.1) / white.1;
+    let ax = xr - xb;
+    let bx = xg - xb;
+    let az = zr - zb;
+    let bz = zg - zb;
+    let det = ax * bz - bx * az;
+    if det.abs() < f64::EPSILON {
+        return Err(DecoderError::Unsupported(
+            "AV1 chromaticity-derived matrix has singular primaries".to_string(),
+        ));
+    }
+    let rhs_x = xw - xb;
+    let rhs_z = zw - zb;
+    let kr = (rhs_x * bz - bx * rhs_z) / det;
+    let kg = (ax * rhs_z - rhs_x * az) / det;
+    let kb = 1.0 - kr - kg;
+    if ![kr, kg, kb].iter().all(|value| value.is_finite()) {
+        return Err(DecoderError::Unsupported(
+            "AV1 chromaticity-derived matrix coefficients are not finite".to_string(),
+        ));
+    }
+    Ok((kr, kb))
+}
+
+fn primary_chromaticities(
+    color_primaries: u8,
+) -> Result<((f64, f64), (f64, f64), (f64, f64), (f64, f64)), DecoderError> {
+    Ok(match color_primaries {
         1 => (
             (0.640, 0.330),
             (0.300, 0.600),
@@ -1363,34 +1396,92 @@ fn derived_luma_coefficients(color_primaries: u8) -> Result<(f64, f64), DecoderE
                 "AV1 colour primaries {color_primaries} are required for chromaticity-derived matrix"
             )));
         }
-    };
+    })
+}
+
+/// Converts linear RGB samples between two AV1 CICP primary sets.
+///
+/// Gain-map composition uses this small matrix path when its alternate image
+/// is authored in a different colour space. The supported primary table is
+/// shared with chromaticity-derived YUV conversion above; unsupported or
+/// singular primary sets fail closed rather than silently changing colours.
+pub(crate) fn convert_linear_rgb_primaries(
+    rgb: &mut [f64; 3],
+    source_primaries: u8,
+    destination_primaries: u8,
+) -> Result<(), DecoderError> {
+    if source_primaries == destination_primaries {
+        return Ok(());
+    }
+    let source = rgb_to_xyz_matrix(source_primaries)?;
+    let destination = invert_3x3(rgb_to_xyz_matrix(destination_primaries)?)?;
+    let xyz = multiply_3x3_vector(source, *rgb);
+    *rgb = multiply_3x3_vector(destination, xyz);
+    if rgb.iter().all(|value| value.is_finite()) {
+        Ok(())
+    } else {
+        Err(DecoderError::Unsupported(
+            "AV1 RGB primary conversion produced a non-finite value".to_string(),
+        ))
+    }
+}
+
+fn rgb_to_xyz_matrix(color_primaries: u8) -> Result<[[f64; 3]; 3], DecoderError> {
+    let (red, green, blue, white) = primary_chromaticities(color_primaries)?;
     let to_xyz = |(x, y): (f64, f64)| [x / y, 1.0, (1.0 - x - y) / y];
-    let [xr, _, zr] = to_xyz(red);
-    let [xg, _, zg] = to_xyz(green);
-    let [xb, _, zb] = to_xyz(blue);
+    let red = to_xyz(red);
+    let green = to_xyz(green);
+    let blue = to_xyz(blue);
     let xw = white.0 / white.1;
     let zw = (1.0 - white.0 - white.1) / white.1;
-    let ax = xr - xb;
-    let bx = xg - xb;
-    let az = zr - zb;
-    let bz = zg - zb;
-    let det = ax * bz - bx * az;
-    if det.abs() < f64::EPSILON {
+    let unscaled = [
+        [red[0], green[0], blue[0]],
+        [red[1], green[1], blue[1]],
+        [red[2], green[2], blue[2]],
+    ];
+    let scale = multiply_3x3_vector(invert_3x3(unscaled)?, [xw, 1.0, zw]);
+    Ok([
+        [red[0] * scale[0], green[0] * scale[1], blue[0] * scale[2]],
+        [red[1] * scale[0], green[1] * scale[1], blue[1] * scale[2]],
+        [red[2] * scale[0], green[2] * scale[1], blue[2] * scale[2]],
+    ])
+}
+
+fn multiply_3x3_vector(matrix: [[f64; 3]; 3], vector: [f64; 3]) -> [f64; 3] {
+    [
+        matrix[0][0] * vector[0] + matrix[0][1] * vector[1] + matrix[0][2] * vector[2],
+        matrix[1][0] * vector[0] + matrix[1][1] * vector[1] + matrix[1][2] * vector[2],
+        matrix[2][0] * vector[0] + matrix[2][1] * vector[1] + matrix[2][2] * vector[2],
+    ]
+}
+
+fn invert_3x3(matrix: [[f64; 3]; 3]) -> Result<[[f64; 3]; 3], DecoderError> {
+    let determinant = matrix[0][0] * (matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1])
+        - matrix[0][1] * (matrix[1][0] * matrix[2][2] - matrix[1][2] * matrix[2][0])
+        + matrix[0][2] * (matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0]);
+    if determinant.abs() < f64::EPSILON {
         return Err(DecoderError::Unsupported(
-            "AV1 chromaticity-derived matrix has singular primaries".to_string(),
+            "AV1 RGB primary matrix is singular".to_string(),
         ));
     }
-    let rhs_x = xw - xb;
-    let rhs_z = zw - zb;
-    let kr = (rhs_x * bz - bx * rhs_z) / det;
-    let kg = (ax * rhs_z - rhs_x * az) / det;
-    let kb = 1.0 - kr - kg;
-    if ![kr, kg, kb].iter().all(|value| value.is_finite()) {
-        return Err(DecoderError::Unsupported(
-            "AV1 chromaticity-derived matrix coefficients are not finite".to_string(),
-        ));
-    }
-    Ok((kr, kb))
+    let inverse = [
+        [
+            matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1],
+            matrix[0][2] * matrix[2][1] - matrix[0][1] * matrix[2][2],
+            matrix[0][1] * matrix[1][2] - matrix[0][2] * matrix[1][1],
+        ],
+        [
+            matrix[1][2] * matrix[2][0] - matrix[1][0] * matrix[2][2],
+            matrix[0][0] * matrix[2][2] - matrix[0][2] * matrix[2][0],
+            matrix[0][2] * matrix[1][0] - matrix[0][0] * matrix[1][2],
+        ],
+        [
+            matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0],
+            matrix[0][1] * matrix[2][0] - matrix[0][0] * matrix[2][1],
+            matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0],
+        ],
+    ];
+    Ok(inverse.map(|row| row.map(|value| value / determinant)))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2526,6 +2617,18 @@ mod tests {
         assert!(
             matches!(error, DecoderError::Unsupported(message) if message.contains("colour primaries"))
         );
+    }
+
+    #[test]
+    fn linear_rgb_primary_conversion_round_trips_bt709_and_bt2020() {
+        let original = [0.73, 0.21, 0.91];
+        let mut converted = original;
+        convert_linear_rgb_primaries(&mut converted, 1, 9).unwrap();
+        assert_ne!(converted, original);
+        convert_linear_rgb_primaries(&mut converted, 9, 1).unwrap();
+        for (actual, expected) in converted.into_iter().zip(original) {
+            assert!((actual - expected).abs() < 1e-10, "{actual} != {expected}");
+        }
     }
 
     #[test]

@@ -37,6 +37,7 @@ pub use frame::{
 pub(crate) use frame::{ReferenceFrameState, parse_frame_header_with_references};
 pub use predict::{IntraEdges, predict_intra};
 pub use quant::{PlaneQuant, QuantState, dequantize_coefficients};
+pub(crate) use reconstruct::convert_linear_rgb_primaries;
 pub use reconstruct::{
     add_residual_to_prediction, frame_buffers_to_identity_rgba_8, frame_buffers_to_rgba_8,
     frame_buffers_to_rgba_16, read_intra_edges, read_intra_edges_with_extension_availability,

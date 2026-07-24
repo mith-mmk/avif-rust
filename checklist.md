@@ -1987,3 +1987,27 @@ library suite is green (`420 passed`, `5 ignored`) and FFmpeg conformance is
 green (`90 passed`, `2 ignored`). The seven-iteration release bench for
 `samples/WML2Viewer.avif` measured `84.6383/83.8039 ms` (native/RGBA) on this
 host; this is a local allocation checkpoint, not a portable speedup claim.
+
+On 2026-07-24, gain-map composition now supports an alternate image encoded
+with a different supported CICP RGB primary set. Linear RGB conversion uses
+the same AV1 primary chromaticity table as the derived-matrix path, converts
+the base into the alternate math space before applying the log2 gain, and
+converts the result back to the base space. BT.709/BT.2020 matrix round-trip
+and alternate-space composition tests are covered; ICC-backed alternate
+conversion remains fail-closed. The full library suite is green (`421 passed`,
+`5 ignored`) and FFmpeg conformance is green (`90 passed`, `2 ignored`). The
+seven-iteration release bench for `samples/WML2Viewer.avif` measured
+`80.5375/83.1505 ms` (native/RGBA) on this host; this is a local checkpoint,
+not a portable speedup claim.
+
+On 2026-07-24, ISO 21496 gain-map items with dimensions different from the
+base image are now accepted. Composition resamples the decoded map to the
+base RGBA16 dimensions with a bounded bilinear pass; constant-map parity and
+the existing alternate-colour-space path are covered by unit tests. The
+external gain-map matrix now also includes the official big-map fixture when
+present, and validates composed output dimensions (the current workspace has
+no external gain-map directory, so that optional audit is skipped here). The
+full library suite is green (`422 passed`, `5 ignored`) and FFmpeg conformance
+is green (`90 passed`, `2 ignored`). The seven-iteration release bench for
+`samples/WML2Viewer.avif` measured `81.3502/88.7201 ms` (native/RGBA) on this
+host; this is a local checkpoint, not a portable speedup claim.

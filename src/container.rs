@@ -583,7 +583,7 @@ pub(crate) fn parse_gain_map_image(data: &[u8]) -> Result<Option<GainMapImage>, 
             gain_map_item.item_type
         )));
     }
-    let base_metadata = item_metadata(&meta, base_id)?;
+    item_metadata(&meta, base_id)?;
     let gain_metadata = item_metadata(&meta, gain_map_id)?;
     let width = gain_metadata.width.ok_or_else(|| {
         DecoderError::Bitstream("tmap gain map item is missing ispe dimensions".to_string())
@@ -591,9 +591,9 @@ pub(crate) fn parse_gain_map_image(data: &[u8]) -> Result<Option<GainMapImage>, 
     let height = gain_metadata.height.ok_or_else(|| {
         DecoderError::Bitstream("tmap gain map item is missing ispe dimensions".to_string())
     })?;
-    if Some(width) != base_metadata.width || Some(height) != base_metadata.height {
+    if width == 0 || height == 0 {
         return Err(DecoderError::Bitstream(
-            "tmap gain map dimensions do not match the base image".to_string(),
+            "tmap gain map dimensions must be non-zero".to_string(),
         ));
     }
     let pixel_information = gain_metadata

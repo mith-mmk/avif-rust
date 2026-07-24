@@ -11,7 +11,8 @@ use crate::av1::{
     SequenceHeader, TileEntropyState, TileGroup, alloc_coded_frame_buffers, apply_film_grain,
     apply_superres_horizontal, build_still_decode_plan, cdef_adjust_primary_strength,
     cdef_filter_block_region_with_edge_mode_into, cdef_find_direction_with_variance,
-    crop_frame_buffers_to_plan, deblock_filter_edge_with_visible_bounds,
+    convert_linear_rgb_primaries, crop_frame_buffers_to_plan,
+    deblock_filter_edge_with_visible_bounds,
     decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf,
     frame_buffers_to_rgba_16, parse_av1_config, parse_frame_header,
     parse_frame_header_with_references, parse_sequence_header, parse_show_existing_frame_index,
@@ -213,9 +214,11 @@ pub struct DecodedFrame {
 
 /// A decoded ISO 21496 gain-map image and its descriptor.
 ///
-/// Gain-map pixels are returned as a normal native AV1 frame so applications
-/// can apply display-headroom policy themselves. The default still-image API
-/// intentionally continues to return only the base image.
+/// Gain-map pixels are returned as a normal native AV1 frame at the map's own
+/// dimensions. Composition resamples them to the base frame dimensions when
+/// needed; applications can still apply display-headroom policy themselves.
+/// The default still-image API intentionally continues to return only the base
+/// image.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedGainMapFrame {
     pub metadata: crate::container::GainMapMetadata,
@@ -266,9 +269,11 @@ impl DecodedFrame {
 
     /// Applies an explicitly decoded ISO 21496 gain map to this frame.
     ///
-    /// The base and gain-map frames must have matching dimensions. Base-colour
-    /// maps and alternate maps with an identical decoded colour configuration
-    /// are supported; genuinely different alternate spaces fail closed.
+    /// Gain-map frames may use a different native size and are resampled to
+    /// the base dimensions during composition. Base-colour maps and alternate
+    /// maps in supported CICP RGB primary sets are
+    /// supported; ICC-backed alternate conversions fail closed because their
+    /// matrix-shaper semantics are not available at this API boundary.
     /// `hdr_headroom` is expressed in log2 headroom units; a value at the base
     /// headroom returns the base RGBA16 image unchanged. The default AVIF
     /// decode path never applies this method implicitly.
@@ -282,25 +287,48 @@ impl DecodedFrame {
                 "gain-map HDR headroom must be finite and non-negative".to_string(),
             ));
         }
-        if !gain_map.metadata.use_base_colour_space
-            && !gain_map_colour_spaces_match(self, &gain_map.frame)
-        {
-            return Err(DecoderError::Unsupported(
-                "gain-map composition in a different alternate colour space is not supported"
-                    .to_string(),
-            ));
-        }
-        if self.width != gain_map.frame.width || self.height != gain_map.frame.height {
-            return Err(DecoderError::Bitstream(
-                "gain-map and base frame dimensions do not match".to_string(),
-            ));
-        }
         let weight = gain_map_weight(hdr_headroom, &gain_map.metadata)?;
         let mut base = self.to_rgba16()?;
         if weight == 0.0 {
             return Ok(base);
         }
-        let map = gain_map.frame.to_rgba16()?;
+        let base_primaries = self
+            .color_config
+            .color_description
+            .map(|description| description.color_primaries)
+            .unwrap_or(2);
+        let alternate_primaries = gain_map
+            .frame
+            .color_config
+            .color_description
+            .map(|description| description.color_primaries)
+            .unwrap_or(base_primaries);
+        let convert_alternate =
+            !gain_map.metadata.use_base_colour_space && base_primaries != alternate_primaries;
+        if convert_alternate
+            && (self
+                .color_information
+                .as_ref()
+                .and_then(ColorInformation::icc_profile)
+                .is_some()
+                || gain_map
+                    .frame
+                    .color_information
+                    .as_ref()
+                    .and_then(ColorInformation::icc_profile)
+                    .is_some())
+        {
+            return Err(DecoderError::Unsupported(
+                "gain-map alternate colour conversion with ICC profiles is not supported"
+                    .to_string(),
+            ));
+        }
+        let decoded_map = gain_map.frame.to_rgba16()?;
+        let map = if decoded_map.width == base.width && decoded_map.height == base.height {
+            decoded_map
+        } else {
+            resample_gain_map(&decoded_map, base.width, base.height)?
+        };
         if map.rgba.len() != base.rgba.len() {
             return Err(DecoderError::Bitstream(
                 "gain-map and base RGBA buffers do not match".to_string(),
@@ -333,21 +361,39 @@ impl DecodedFrame {
                 rational_to_f64(metadata.alternate_offset, "alternate offset")?;
         }
         for (base_pixel, map_pixel) in base.rgba.chunks_exact_mut(4).zip(map.rgba.chunks_exact(4)) {
-            let base_linear = [
+            let mut base_linear = [
                 srgb_to_linear(f64::from(base_pixel[0]) / f64::from(u16::MAX)),
                 srgb_to_linear(f64::from(base_pixel[1]) / f64::from(u16::MAX)),
                 srgb_to_linear(f64::from(base_pixel[2]) / f64::from(u16::MAX)),
             ];
+            if convert_alternate {
+                convert_linear_rgb_primaries(
+                    &mut base_linear,
+                    base_primaries,
+                    alternate_primaries,
+                )?;
+            }
+            let mut tone_mapped = [0.0; 3];
             for channel in 0..3 {
                 let map_value = f64::from(map_pixel[channel]) / f64::from(u16::MAX);
                 let gain_map_log2 = minimum[channel]
                     + (maximum[channel] - minimum[channel]) * map_value.powf(1.0 / gamma[channel]);
-                let tone_mapped = (base_linear[channel] + base_offset[channel])
+                tone_mapped[channel] = (base_linear[channel] + base_offset[channel])
                     * (gain_map_log2 * f64::from(weight)).exp2()
                     - alternate_offset[channel];
-                base_pixel[channel] = (linear_to_srgb(tone_mapped.max(0.0)) * f64::from(u16::MAX))
-                    .round()
-                    .clamp(0.0, f64::from(u16::MAX)) as u16;
+            }
+            if convert_alternate {
+                convert_linear_rgb_primaries(
+                    &mut tone_mapped,
+                    alternate_primaries,
+                    base_primaries,
+                )?;
+            }
+            for channel in 0..3 {
+                base_pixel[channel] = (linear_to_srgb(tone_mapped[channel].max(0.0))
+                    * f64::from(u16::MAX))
+                .round()
+                .clamp(0.0, f64::from(u16::MAX)) as u16;
             }
         }
         Ok(base)
@@ -369,11 +415,6 @@ fn gain_map_weight(
     } else {
         normalized as f32
     })
-}
-
-fn gain_map_colour_spaces_match(base: &DecodedFrame, gain_map: &DecodedFrame) -> bool {
-    base.color_config == gain_map.color_config
-        && base.color_information == gain_map.color_information
 }
 
 fn rational_to_f64(
@@ -402,6 +443,71 @@ fn linear_to_srgb(linear: f64) -> f64 {
     } else {
         1.055 * linear.powf(1.0 / 2.4) - 0.055
     }
+}
+
+fn resample_gain_map(
+    input: &Rgba16ImageBuffer,
+    width: usize,
+    height: usize,
+) -> Result<Rgba16ImageBuffer, DecoderError> {
+    if input.width == 0 || input.height == 0 || width == 0 || height == 0 {
+        return Err(DecoderError::Bitstream(
+            "gain-map resampling dimensions must be non-zero".to_string(),
+        ));
+    }
+    let input_pixels = input
+        .width
+        .checked_mul(input.height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| DecoderError::InvalidParam("gain-map buffer size overflows".to_string()))?;
+    if input.rgba.len() != input_pixels {
+        return Err(DecoderError::Bitstream(
+            "gain-map RGBA buffer length does not match dimensions".to_string(),
+        ));
+    }
+    let output_pixels = width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| DecoderError::InvalidParam("gain-map output size overflows".to_string()))?;
+    let mut rgba = vec![0_u16; output_pixels];
+    for y in 0..height {
+        let source_y = (((y as f64 + 0.5) * input.height as f64 / height as f64) - 0.5)
+            .clamp(0.0, (input.height - 1) as f64);
+        let y0 = source_y.floor() as usize;
+        let y1 = (y0 + 1).min(input.height - 1);
+        let fy = source_y - y0 as f64;
+        for x in 0..width {
+            let source_x = (((x as f64 + 0.5) * input.width as f64 / width as f64) - 0.5)
+                .clamp(0.0, (input.width - 1) as f64);
+            let x0 = source_x.floor() as usize;
+            let x1 = (x0 + 1).min(input.width - 1);
+            let fx = source_x - x0 as f64;
+            let top = (y0 * input.width + x0) * 4;
+            let top_right = (y0 * input.width + x1) * 4;
+            let bottom = (y1 * input.width + x0) * 4;
+            let bottom_right = (y1 * input.width + x1) * 4;
+            let destination = (y * width + x) * 4;
+            for channel in 0..4 {
+                let top_value = f64::from(input.rgba[top + channel])
+                    + (f64::from(input.rgba[top_right + channel])
+                        - f64::from(input.rgba[top + channel]))
+                        * fx;
+                let bottom_value = f64::from(input.rgba[bottom + channel])
+                    + (f64::from(input.rgba[bottom_right + channel])
+                        - f64::from(input.rgba[bottom + channel]))
+                        * fx;
+                rgba[destination + channel] = (top_value + (bottom_value - top_value) * fy)
+                    .round()
+                    .clamp(0.0, f64::from(u16::MAX))
+                    as u16;
+            }
+        }
+    }
+    Ok(Rgba16ImageBuffer {
+        width,
+        height,
+        rgba,
+    })
 }
 
 fn unpremultiply_rgba8(rgba: &mut [u8]) {
@@ -6081,6 +6187,20 @@ mod gain_map_tests {
     }
 
     #[test]
+    fn gain_map_resampling_preserves_constant_map_values() {
+        let input = Rgba16ImageBuffer {
+            width: 1,
+            height: 1,
+            rgba: vec![1234, 2345, 3456, u16::MAX],
+        };
+        let output = resample_gain_map(&input, 3, 2).unwrap();
+        assert_eq!((output.width, output.height), (3, 2));
+        for pixel in output.rgba.chunks_exact(4) {
+            assert_eq!(pixel, &[1234, 2345, 3456, u16::MAX]);
+        }
+    }
+
+    #[test]
     fn gain_map_base_headroom_is_an_exact_fast_path() {
         let base = identity_frame(128);
         let gain_map = DecodedGainMapFrame {
@@ -6105,7 +6225,7 @@ mod gain_map_tests {
     }
 
     #[test]
-    fn gain_map_rejects_alternate_colour_space_composition() {
+    fn gain_map_composes_different_alternate_colour_space() {
         let base = identity_frame(128);
         let mut alternate_frame = identity_frame(255);
         alternate_frame.color_config.color_description = Some(crate::av1::ColorDescription {
@@ -6117,10 +6237,10 @@ mod gain_map_tests {
             metadata: metadata(false),
             frame: alternate_frame,
         };
-        assert!(matches!(
-            base.to_rgba16_with_gain_map(&gain_map, 1.0),
-            Err(DecoderError::Unsupported(message)) if message.contains("different alternate colour space")
-        ));
+        let mapped = base.to_rgba16_with_gain_map(&gain_map, 1.0).unwrap();
+        assert!(mapped.rgba[0] > base.to_rgba16().unwrap().rgba[0]);
+        assert!(mapped.rgba[1] > base.to_rgba16().unwrap().rgba[1]);
+        assert!(mapped.rgba[2] > base.to_rgba16().unwrap().rgba[2]);
     }
 
     #[test]
