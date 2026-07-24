@@ -4363,6 +4363,11 @@ fn external_gainmap_samples_keep_complete_base_decode() {
             100,
             100,
         ),
+        (
+            "supported_gainmap_writer_version_with_extra_bytes.avif",
+            100,
+            100,
+        ),
     ];
     if !cases.iter().any(|(name, _, _)| root.join(name).is_file()) {
         eprintln!("external gainmap samples are unavailable; skipping base decode audit");
@@ -4385,7 +4390,9 @@ fn external_gainmap_samples_keep_complete_base_decode() {
         assert_eq!(image.rgba.len(), width * height * 4, "{name} complete RGBA");
 
         let gain_map_metadata = avif_rust::parse_gain_map_metadata(&data);
-        if name.starts_with("seine_") {
+        if name.starts_with("seine_")
+            || name == "unsupported_gainmap_writer_version_with_extra_bytes.avif"
+        {
             assert!(
                 gain_map_metadata
                     .expect("supported gain-map metadata should parse")
@@ -4406,13 +4413,23 @@ fn external_gainmap_samples_keep_complete_base_decode() {
                 });
             assert_eq!((composed.width, composed.height), (width, height));
             assert_eq!(composed.rgba.len(), width * height * 4);
-        } else if name == "unsupported_gainmap_minimum_version.avif" {
+        } else if name == "unsupported_gainmap_version.avif"
+            || name == "unsupported_gainmap_minimum_version.avif"
+        {
             assert!(
                 matches!(
                     gain_map_metadata,
                     Err(avif_rust::DecoderError::Unsupported(_))
                 ),
-                "{name} should fail closed on its descriptor minimum version"
+                "{name} should fail closed on its unsupported descriptor version"
+            );
+        } else if name == "supported_gainmap_writer_version_with_extra_bytes.avif" {
+            assert!(
+                matches!(
+                    gain_map_metadata,
+                    Err(avif_rust::DecoderError::Bitstream(_))
+                ),
+                "{name} should reject trailing bytes for a supported writer version"
             );
         }
     }

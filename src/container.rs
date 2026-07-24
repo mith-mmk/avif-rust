@@ -650,6 +650,12 @@ pub(crate) fn parse_gain_map_image(data: &[u8]) -> Result<Option<GainMapImage>, 
 
 fn parse_gain_map_metadata_payload(payload: &[u8]) -> Result<GainMapMetadata, DecoderError> {
     let mut reader = GainMapReader::new(payload);
+    let version = reader.read_u8("version")?;
+    if version != 0 {
+        return Err(DecoderError::Unsupported(format!(
+            "gain map metadata version {version} is not supported"
+        )));
+    }
     let minimum_version = reader.read_u16("minimum_version")?;
     if minimum_version != 0 {
         return Err(DecoderError::Unsupported(format!(
@@ -665,32 +671,13 @@ fn parse_gain_map_metadata_payload(payload: &[u8]) -> Result<GainMapMetadata, De
     let flags = reader.read_u8("flags")?;
     let is_multichannel = flags & 0x80 != 0;
     let use_base_colour_space = flags & 0x40 != 0;
-    let backward_direction = flags & 0x04 != 0;
-    let use_common_denominator = flags & 0x08 != 0;
     let channel_count = if is_multichannel { 3 } else { 1 };
 
-    let (base_hdr_headroom, alternate_hdr_headroom, channels) = if use_common_denominator {
-        let denominator = reader.read_nonzero_u32("common denominator")?;
-        let base_hdr_headroom = GainMapRational {
-            numerator: i64::from(reader.read_u32("base HDR headroom numerator")?),
-            denominator,
-        };
-        let alternate_hdr_headroom = GainMapRational {
-            numerator: i64::from(reader.read_u32("alternate HDR headroom numerator")?),
-            denominator,
-        };
-        let channels = (0..channel_count)
-            .map(|_| parse_gain_map_channel_common(&mut reader, denominator))
-            .collect::<Result<Vec<_>, _>>()?;
-        (base_hdr_headroom, alternate_hdr_headroom, channels)
-    } else {
-        let base_hdr_headroom = reader.read_unsigned_rational("base HDR headroom")?;
-        let alternate_hdr_headroom = reader.read_unsigned_rational("alternate HDR headroom")?;
-        let channels = (0..channel_count)
-            .map(|_| parse_gain_map_channel(&mut reader))
-            .collect::<Result<Vec<_>, _>>()?;
-        (base_hdr_headroom, alternate_hdr_headroom, channels)
-    };
+    let base_hdr_headroom = reader.read_unsigned_rational("base HDR headroom")?;
+    let alternate_hdr_headroom = reader.read_unsigned_rational("alternate HDR headroom")?;
+    let channels = (0..channel_count)
+        .map(|_| parse_gain_map_channel(&mut reader))
+        .collect::<Result<Vec<_>, _>>()?;
 
     if base_hdr_headroom == alternate_hdr_headroom {
         return Err(DecoderError::Bitstream(
@@ -714,43 +701,25 @@ fn parse_gain_map_metadata_payload(payload: &[u8]) -> Result<GainMapMetadata, De
         }
     }
 
+    // ISO 21496-1 version 0 has no backward-direction or common-denominator
+    // flag; those fields are retained in the public struct for compatibility.
+    // A writer version newer than the decoder's supported metadata version may
+    // append fields, so only version 0 is required to consume the payload.
+    if writer_version == 0 && reader.remaining_bytes().iter().any(|byte| *byte != 0) {
+        return Err(DecoderError::Bitstream(
+            "gain map metadata has unexpected trailing bytes".to_string(),
+        ));
+    }
+
     Ok(GainMapMetadata {
         minimum_version,
         writer_version,
         is_multichannel,
         use_base_colour_space,
-        backward_direction,
+        backward_direction: false,
         base_hdr_headroom,
         alternate_hdr_headroom,
         channels,
-    })
-}
-
-fn parse_gain_map_channel_common(
-    reader: &mut GainMapReader<'_>,
-    denominator: u32,
-) -> Result<GainMapChannel, DecoderError> {
-    Ok(GainMapChannel {
-        gain_map_min: GainMapRational {
-            numerator: i64::from(reader.read_i32("gain map minimum numerator")?),
-            denominator,
-        },
-        gain_map_max: GainMapRational {
-            numerator: i64::from(reader.read_i32("gain map maximum numerator")?),
-            denominator,
-        },
-        gamma: GainMapRational {
-            numerator: i64::from(reader.read_u32("gain map gamma numerator")?),
-            denominator,
-        },
-        base_offset: GainMapRational {
-            numerator: i64::from(reader.read_i32("base offset numerator")?),
-            denominator,
-        },
-        alternate_offset: GainMapRational {
-            numerator: i64::from(reader.read_i32("alternate offset numerator")?),
-            denominator,
-        },
     })
 }
 
@@ -807,6 +776,10 @@ impl<'a> GainMapReader<'a> {
         Ok(i32::from_be_bytes(
             self.read_bytes(4, name)?.try_into().unwrap(),
         ))
+    }
+
+    fn remaining_bytes(&self) -> &'a [u8] {
+        &self.payload[self.offset..]
     }
 
     fn read_nonzero_u32(&mut self, name: &str) -> Result<u32, DecoderError> {
@@ -2973,33 +2946,44 @@ mod tests {
         output
     }
 
-    fn common_gain_map_payload() -> Vec<u8> {
+    fn gain_map_payload(writer_version: u16, trailing: &[u8]) -> Vec<u8> {
         let mut payload = Vec::new();
+        payload.push(0); // ISO 21496-1 metadata version.
         push_u16(&mut payload, 0);
-        push_u16(&mut payload, 0);
-        payload.push(0xc8 | 0x04); // RGB channels, base colour space, backward direction, common denominator.
+        push_u16(&mut payload, writer_version);
+        payload.push(0xc0); // RGB channels and base colour space.
+        push_u32(&mut payload, 100); // base headroom 1/1.
         push_u32(&mut payload, 100);
+        push_u32(&mut payload, 200); // alternate headroom 2/1.
         push_u32(&mut payload, 100);
-        push_u32(&mut payload, 200);
         for channel in 0..3 {
             push_i32(&mut payload, -10 - channel);
+            push_u32(&mut payload, 100);
             push_i32(&mut payload, 40 + channel);
             push_u32(&mut payload, 100);
+            push_u32(&mut payload, 100);
+            push_u32(&mut payload, 100);
             push_i32(&mut payload, 0);
+            push_u32(&mut payload, 100);
             push_i32(&mut payload, 5);
+            push_u32(&mut payload, 100);
         }
-        payload.extend_from_slice(&[0, 1]);
+        payload.extend_from_slice(trailing);
         payload
     }
 
+    fn common_gain_map_payload() -> Vec<u8> {
+        gain_map_payload(0, &[])
+    }
+
     #[test]
-    fn parses_gain_map_metadata_with_common_denominator() {
+    fn parses_gain_map_metadata_with_iso_layout() {
         let metadata = parse_gain_map_metadata_payload(&common_gain_map_payload()).unwrap();
 
         assert_eq!(metadata.channel_count(), 3);
         assert!(metadata.is_multichannel);
         assert!(metadata.use_base_colour_space);
-        assert!(metadata.backward_direction);
+        assert!(!metadata.backward_direction);
         assert_eq!(metadata.base_hdr_headroom.numerator, 100);
         assert_eq!(metadata.alternate_hdr_headroom.numerator, 200);
         assert_eq!(metadata.channels[0].gain_map_min.numerator, -10);
@@ -3009,7 +2993,7 @@ mod tests {
 
     #[test]
     fn parses_gain_map_metadata_with_per_field_denominators() {
-        let mut payload = vec![0, 0, 0, 0, 0];
+        let mut payload = vec![0, 0, 0, 0, 0, 0]; // version, minimum, writer, flags
         push_u32(&mut payload, 1); // base headroom 1/1
         push_u32(&mut payload, 1);
         push_u32(&mut payload, 2); // alternate headroom 2/1
@@ -3037,22 +3021,36 @@ mod tests {
         unsupported[0] = 1;
         assert!(matches!(
             parse_gain_map_metadata_payload(&unsupported),
-            Err(DecoderError::Unsupported(message)) if message.contains("minimum version")
+            Err(DecoderError::Unsupported(message)) if message.contains("metadata version")
         ));
 
         let mut zero_denominator = common_gain_map_payload();
-        zero_denominator[5..9].fill(0);
+        zero_denominator[10..14].fill(0);
         assert!(matches!(
             parse_gain_map_metadata_payload(&zero_denominator),
             Err(DecoderError::Bitstream(message)) if message.contains("denominator")
         ));
 
         let mut invalid_range = common_gain_map_payload();
-        invalid_range[21..25].copy_from_slice(&(-20_i32).to_be_bytes());
+        invalid_range[30..34].copy_from_slice(&(-20_i32).to_be_bytes());
         assert!(matches!(
             parse_gain_map_metadata_payload(&invalid_range),
             Err(DecoderError::Bitstream(message)) if message.contains("maximum")
         ));
+
+        let trailing = gain_map_payload(0, &[1]);
+        assert!(matches!(
+            parse_gain_map_metadata_payload(&trailing),
+            Err(DecoderError::Bitstream(message)) if message.contains("trailing")
+        ));
+
+        let future = gain_map_payload(1, &[0xde, 0xad]);
+        assert_eq!(
+            parse_gain_map_metadata_payload(&future)
+                .unwrap()
+                .writer_version,
+            1
+        );
     }
 
     #[test]

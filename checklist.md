@@ -2024,3 +2024,18 @@ conformance is green (`91 passed`, `2 ignored`). The seven-iteration release
 bench for `samples/WML2Viewer.avif` measured `86.1501/82.3831 ms`
 (native/RGBA) on this host; this is a local checkpoint, not a portable speedup
 claim.
+
+On 2026-07-24, `tmap` gain-map metadata now follows the ISO 21496-1 layout:
+the explicit metadata version byte is consumed, channel/headroom rationals use
+per-field denominators, and the legacy draft common-denominator/backward flags
+are no longer inferred from the reserved flag bits. Supported writer version 0
+rejects non-zero trailing bytes, while newer writer versions may carry extra
+metadata; unsupported version/minimum fields remain fail-closed at the
+gain-map API while ordinary base decode is preserved. The official libavif
+grid fixtures and writer-version boundary fixtures are covered through the
+`.test*` sample directory, with complete base decode and composed grid checks.
+The full library suite is green (`422 passed`, `5 ignored`) and FFmpeg
+conformance is green (`91 passed`, `2 ignored`). The seven-iteration release
+bench measured `81.1717/82.9439 ms` (native/RGBA) for
+`samples/WML2Viewer.avif`; this is a local checkpoint, not a portable speedup
+claim.
