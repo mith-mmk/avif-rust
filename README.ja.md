@@ -38,7 +38,7 @@ frame AVIF profileに対応します。1 frameの`avis` primary itemも静止画
 | AVISのKey／IntraOnly／Inter／show-existing frameをindex指定・一括でデコード | 対応（動き補償付きInterの検証サンプルを含む、Switchはfail-closed） |
 | animated AVIFの複数frame callback出力 | Key／IntraOnly／Inter／show-existingに対応（`animation: true`、Switchはfail-closed） |
 | layered image selector（`a1op=0`、`lsel=0`） | 解析・受理（既定外の層／operating point選択はfail-closed） |
-| `tmap`主画像のbase画像フォールバック | 対応（base `av01`をデコード、ISO 21496 Gain Mapメタデータと参照AV1 gain-map itemを解析・デコード可能、base色空間の明示的なHDR合成に対応） |
+| `tmap`主画像のbase画像フォールバック | 対応（base `av01`、ISO 21496 Gain Map、CICPおよびmatrix-shaper ICC alternateの明示的HDR合成に対応。LUT alternateはfail-closed） |
 | PQ／HLG transferからbounded SDR RGBA16への変換 | 対応（bounded tone mapping、display固有のcalibrationは未適用） |
 | display固有HDR gamut calibration、matrix-shaper以外のICC表示変換 | 未対応 |
 
@@ -109,8 +109,8 @@ Interまたは`show_existing_frame`のサンプルをindex指定、
 `tmap`画像では、`decode_gain_map_frame_bytes`によって参照されたAV1 gain-map
 itemと`GainMapMetadata`を取得できます。既定のbase画像デコードは変更せず、
 `DecodedFrame::to_rgba16_with_gain_map`へdisplay headroomを渡すことで、base色空間
-の明示的なHDR合成を適用できます。alternate色空間でもデコード後の色設定がbaseと
-同一の場合は合成できますが、実際に異なるalternate色空間はfail-closedです。
+の明示的なHDR合成を適用できます。CICP alternateとmatrix-shaper ICC alternateは
+対応しますが、gain値へtone curveを適用できないLUT alternateはfail-closedです。
 
 ## 検証
 

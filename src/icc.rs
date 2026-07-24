@@ -122,6 +122,44 @@ pub(crate) fn apply_to_rgba16(rgba: &mut [u16], profile: &[u8]) -> Result<(), De
     Ok(())
 }
 
+/// Converts linear sRGB values to or from a matrix-shaper ICC profile.
+///
+/// Gain-map composition operates on linear RGB, while the ordinary ICC
+/// output path has already converted the base image to sRGB.  A matrix-shaper
+/// profile therefore gives us a small, allocation-free 3x3 transform for the
+/// alternate colour space.  LUT profiles deliberately remain unsupported at
+/// this boundary: applying their tone curves to scalar gain samples would
+/// silently change the gain semantics.
+pub(crate) fn convert_linear_srgb_with_matrix_shaper(
+    rgb: &mut [f64; 3],
+    profile_bytes: &[u8],
+    to_profile: bool,
+) -> Result<(), DecoderError> {
+    if find_profile_tag(profile_bytes, b"A2B0")?.is_some()
+        || find_profile_tag(profile_bytes, b"A2B1")?.is_some()
+        || find_profile_tag(profile_bytes, b"A2B2")?.is_some()
+    {
+        return Err(unsupported(
+            "ICC LUT profiles cannot be used for linear gain-map colour conversion",
+        ));
+    }
+    let profile = MatrixShaperProfile::parse(profile_bytes)?;
+    let profile_to_srgb = multiply_matrices(profile.xyz_to_srgb, profile.to_xyz);
+    let transform = if to_profile {
+        invert_matrix(profile_to_srgb)?
+    } else {
+        profile_to_srgb
+    };
+    let converted = multiply(transform, *rgb);
+    if !converted.iter().all(|value| value.is_finite()) {
+        return Err(unsupported(
+            "ICC matrix-shaper conversion produced a non-finite value",
+        ));
+    }
+    *rgb = converted;
+    Ok(())
+}
+
 impl GrayProfile {
     fn parse(profile: &[u8]) -> Result<Self, DecoderError> {
         if profile.len() < 132 {
@@ -1082,6 +1120,43 @@ fn multiply(matrix: [[f64; 3]; 3], vector: [f64; 3]) -> [f64; 3] {
     ]
 }
 
+fn multiply_matrices(left: [[f64; 3]; 3], right: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
+    std::array::from_fn(|row| {
+        std::array::from_fn(|column| {
+            (0..3)
+                .map(|index| left[row][index] * right[index][column])
+                .sum()
+        })
+    })
+}
+
+fn invert_matrix(matrix: [[f64; 3]; 3]) -> Result<[[f64; 3]; 3], DecoderError> {
+    let determinant = matrix[0][0] * (matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1])
+        - matrix[0][1] * (matrix[1][0] * matrix[2][2] - matrix[1][2] * matrix[2][0])
+        + matrix[0][2] * (matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0]);
+    if !determinant.is_finite() || determinant.abs() < f64::EPSILON {
+        return Err(unsupported("ICC matrix-shaper transform is singular"));
+    }
+    let inverse = [
+        [
+            matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1],
+            matrix[0][2] * matrix[2][1] - matrix[0][1] * matrix[2][2],
+            matrix[0][1] * matrix[1][2] - matrix[0][2] * matrix[1][1],
+        ],
+        [
+            matrix[1][2] * matrix[2][0] - matrix[1][0] * matrix[2][2],
+            matrix[0][0] * matrix[2][2] - matrix[0][2] * matrix[2][0],
+            matrix[0][2] * matrix[1][0] - matrix[0][0] * matrix[1][2],
+        ],
+        [
+            matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0],
+            matrix[0][1] * matrix[2][0] - matrix[0][0] * matrix[2][1],
+            matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0],
+        ],
+    ];
+    Ok(inverse.map(|row| row.map(|value| value / determinant)))
+}
+
 fn encode_srgb(value: f64) -> u16 {
     let value = value.clamp(0.0, 1.0);
     let encoded = if value <= 0.0031308 {
@@ -1185,6 +1260,81 @@ mod tests {
         let profile_size = profile.len() as u32;
         profile[0..4].copy_from_slice(&profile_size.to_be_bytes());
         profile
+    }
+
+    fn synthetic_matrix_shaper_profile() -> Vec<u8> {
+        let tag_table = 132usize;
+        let tag_count = 7usize;
+        let mut profile = vec![0; tag_table + tag_count * 12];
+        profile[12..16].copy_from_slice(b"mntr");
+        profile[16..20].copy_from_slice(b"RGB ");
+        profile[20..24].copy_from_slice(b"XYZ ");
+        profile[128..132].copy_from_slice(&(tag_count as u32).to_be_bytes());
+
+        struct TagWriter<'a> {
+            profile: &'a mut Vec<u8>,
+            next: usize,
+        }
+        impl TagWriter<'_> {
+            fn push(&mut self, signature: &[u8; 4], bytes: &[u8]) {
+                let entry = 132 + self.next * 12;
+                let offset = self.profile.len();
+                self.profile[entry..entry + 4].copy_from_slice(signature);
+                self.profile[entry + 4..entry + 8].copy_from_slice(&(offset as u32).to_be_bytes());
+                self.profile[entry + 8..entry + 12]
+                    .copy_from_slice(&(bytes.len() as u32).to_be_bytes());
+                self.profile.extend_from_slice(bytes);
+                self.next += 1;
+            }
+        }
+        let xyz = |values: [f64; 3]| {
+            let mut bytes = Vec::from(*b"XYZ \0\0\0\0");
+            for value in values {
+                bytes.extend_from_slice(&((value * 65_536.0).round() as i32).to_be_bytes());
+            }
+            bytes
+        };
+        let curve = || {
+            let mut bytes = Vec::from(*b"curv\0\0\0\0");
+            bytes.extend_from_slice(&1_u32.to_be_bytes());
+            bytes.extend_from_slice(&256_u16.to_be_bytes());
+            bytes
+        };
+        let mut writer = TagWriter {
+            profile: &mut profile,
+            next: 0,
+        };
+        writer.push(b"wtpt", &xyz([0.9505, 1.0, 1.0890]));
+        writer.push(b"rXYZ", &xyz([0.4124, 0.2126, 0.0193]));
+        writer.push(b"gXYZ", &xyz([0.3576, 0.7152, 0.1192]));
+        writer.push(b"bXYZ", &xyz([0.1805, 0.0722, 0.9505]));
+        writer.push(b"rTRC", &curve());
+        writer.push(b"gTRC", &curve());
+        writer.push(b"bTRC", &curve());
+        drop(writer);
+        let profile_size = profile.len() as u32;
+        profile[0..4].copy_from_slice(&profile_size.to_be_bytes());
+        profile
+    }
+
+    #[test]
+    fn matrix_shaper_linear_conversion_round_trips() {
+        let profile = synthetic_matrix_shaper_profile();
+        let original = [0.2, 0.35, 0.7];
+        let mut converted = original;
+        convert_linear_srgb_with_matrix_shaper(&mut converted, &profile, true).unwrap();
+        convert_linear_srgb_with_matrix_shaper(&mut converted, &profile, false).unwrap();
+        for (actual, expected) in converted.into_iter().zip(original) {
+            assert!((actual - expected).abs() < 1e-9, "{actual} != {expected}");
+        }
+    }
+
+    #[test]
+    fn matrix_shaper_linear_conversion_rejects_lut_profiles() {
+        let profile = synthetic_lut_profile(b"mft1", 2, 0);
+        let error = convert_linear_srgb_with_matrix_shaper(&mut [0.2, 0.3, 0.4], &profile, true)
+            .unwrap_err();
+        assert!(matches!(error, DecoderError::Unsupported(message) if message.contains("LUT")));
     }
 
     fn synthetic_lut_profile(signature: &[u8; 4], grid_points: u8, entries: u16) -> Vec<u8> {

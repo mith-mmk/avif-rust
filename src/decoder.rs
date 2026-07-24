@@ -274,8 +274,9 @@ impl DecodedFrame {
     /// Gain-map frames may use a different native size and are resampled to
     /// the base dimensions during composition. Base-colour maps and alternate
     /// maps in supported CICP RGB primary sets are
-    /// supported; ICC-backed alternate conversions fail closed because their
-    /// matrix-shaper semantics are not available at this API boundary.
+    /// supported; matrix-shaper ICC alternate conversions are supported while
+    /// LUT-backed profiles fail closed because applying their tone curves to
+    /// scalar gain samples would change the gain semantics.
     /// `hdr_headroom` is expressed in log2 headroom units; a value at the base
     /// headroom returns the base RGBA16 image unchanged. The default AVIF
     /// decode path never applies this method implicitly.
@@ -319,24 +320,11 @@ impl DecodedFrame {
             };
         let convert_alternate =
             !gain_map.metadata.use_base_colour_space && base_primaries != alternate_primaries;
-        if convert_alternate
-            && (self
-                .color_information
-                .as_ref()
-                .and_then(ColorInformation::icc_profile)
-                .is_some()
-                || gain_map
-                    .frame
-                    .color_information
-                    .as_ref()
-                    .and_then(ColorInformation::icc_profile)
-                    .is_some())
-        {
-            return Err(DecoderError::Unsupported(
-                "gain-map alternate colour conversion with ICC profiles is not supported"
-                    .to_string(),
-            ));
-        }
+        let alternate_icc = gain_map
+            .frame
+            .color_information
+            .as_ref()
+            .and_then(ColorInformation::icc_profile);
         let decoded_map = gain_map.frame.to_rgba16()?;
         let map = if decoded_map.width == base.width && decoded_map.height == base.height {
             decoded_map
@@ -381,11 +369,19 @@ impl DecodedFrame {
                 srgb_to_linear(f64::from(base_pixel[2]) / f64::from(u16::MAX)),
             ];
             if convert_alternate {
-                convert_linear_rgb_primaries(
-                    &mut base_linear,
-                    base_primaries,
-                    alternate_primaries,
-                )?;
+                if let Some(profile) = alternate_icc {
+                    crate::icc::convert_linear_srgb_with_matrix_shaper(
+                        &mut base_linear,
+                        profile,
+                        true,
+                    )?;
+                } else {
+                    convert_linear_rgb_primaries(
+                        &mut base_linear,
+                        base_primaries,
+                        alternate_primaries,
+                    )?;
+                }
             }
             let mut tone_mapped = [0.0; 3];
             for channel in 0..3 {
@@ -397,11 +393,19 @@ impl DecodedFrame {
                     - alternate_offset[channel];
             }
             if convert_alternate {
-                convert_linear_rgb_primaries(
-                    &mut tone_mapped,
-                    alternate_primaries,
-                    base_primaries,
-                )?;
+                if let Some(profile) = alternate_icc {
+                    crate::icc::convert_linear_srgb_with_matrix_shaper(
+                        &mut tone_mapped,
+                        profile,
+                        false,
+                    )?;
+                } else {
+                    convert_linear_rgb_primaries(
+                        &mut tone_mapped,
+                        alternate_primaries,
+                        base_primaries,
+                    )?;
+                }
             }
             for channel in 0..3 {
                 base_pixel[channel] = (linear_to_srgb(tone_mapped[channel].max(0.0))
@@ -6334,6 +6338,45 @@ mod tile_group_merge_tests {
 mod gain_map_tests {
     use super::*;
 
+    fn synthetic_matrix_shaper_profile() -> Vec<u8> {
+        fn add_tag(profile: &mut Vec<u8>, index: usize, signature: &[u8; 4], payload: &[u8]) {
+            let entry = 132 + index * 12;
+            let offset = profile.len();
+            profile[entry..entry + 4].copy_from_slice(signature);
+            profile[entry + 4..entry + 8].copy_from_slice(&(offset as u32).to_be_bytes());
+            profile[entry + 8..entry + 12].copy_from_slice(&(payload.len() as u32).to_be_bytes());
+            profile.extend_from_slice(payload);
+        }
+        fn xyz(values: [f64; 3]) -> Vec<u8> {
+            let mut payload = Vec::from(*b"XYZ \0\0\0\0");
+            for value in values {
+                payload.extend_from_slice(&((value * 65_536.0).round() as i32).to_be_bytes());
+            }
+            payload
+        }
+        let curve = || {
+            let mut payload = Vec::from(*b"curv\0\0\0\0");
+            payload.extend_from_slice(&1_u32.to_be_bytes());
+            payload.extend_from_slice(&256_u16.to_be_bytes());
+            payload
+        };
+        let mut profile = vec![0; 132 + 7 * 12];
+        profile[12..16].copy_from_slice(b"mntr");
+        profile[16..20].copy_from_slice(b"RGB ");
+        profile[20..24].copy_from_slice(b"XYZ ");
+        profile[128..132].copy_from_slice(&7_u32.to_be_bytes());
+        add_tag(&mut profile, 0, b"wtpt", &xyz([0.9505, 1.0, 1.0890]));
+        add_tag(&mut profile, 1, b"rXYZ", &xyz([0.4124, 0.2126, 0.0193]));
+        add_tag(&mut profile, 2, b"gXYZ", &xyz([0.3576, 0.7152, 0.1192]));
+        add_tag(&mut profile, 3, b"bXYZ", &xyz([0.1805, 0.0722, 0.9505]));
+        add_tag(&mut profile, 4, b"rTRC", &curve());
+        add_tag(&mut profile, 5, b"gTRC", &curve());
+        add_tag(&mut profile, 6, b"bTRC", &curve());
+        let profile_size = profile.len() as u32;
+        profile[0..4].copy_from_slice(&profile_size.to_be_bytes());
+        profile
+    }
+
     fn identity_frame(value: u16) -> DecodedFrame {
         let color_config = ColorConfig {
             high_bitdepth: false,
@@ -6482,6 +6525,27 @@ mod gain_map_tests {
         let gain_map = DecodedGainMapFrame {
             metadata: metadata(false),
             frame: identity_frame(255),
+        };
+        let mapped = base.to_rgba16_with_gain_map(&gain_map, 1.0).unwrap();
+        assert!(mapped.rgba[0] > base.to_rgba16().unwrap().rgba[0]);
+    }
+
+    #[test]
+    fn gain_map_composes_matrix_shaper_icc_alternate_space() {
+        let base = identity_frame(128);
+        let mut alternate_frame = identity_frame(255);
+        alternate_frame.color_config.color_description = Some(crate::av1::ColorDescription {
+            color_primaries: 9,
+            transfer_characteristics: 13,
+            matrix_coefficients: 0,
+        });
+        alternate_frame.color_information = Some(ColorInformation {
+            color_type: *b"prof",
+            payload: synthetic_matrix_shaper_profile(),
+        });
+        let gain_map = DecodedGainMapFrame {
+            metadata: metadata(false),
+            frame: alternate_frame,
         };
         let mapped = base.to_rgba16_with_gain_map(&gain_map, 1.0).unwrap();
         assert!(mapped.rgba[0] > base.to_rgba16().unwrap().rgba[0]);

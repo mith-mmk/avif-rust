@@ -37,7 +37,7 @@ passes the FFmpeg RGB oracle (average absolute error about 0.075, maximum 6).
 | AVIS Key/IntraOnly/Inter/show-existing sample decode by index or batch | Supported for tested motion-compensated Inter samples (Switch remains fail-closed) |
 | Animated AVIF multi-frame callback output | Supported for Key/IntraOnly/Inter/show-existing samples (`animation: true`); Switch remains fail-closed |
 | Layered-image selectors (`a1op=0`, `lsel=0`) | Parsed and accepted; non-default layer/operating-point selection remains fail-closed |
-| `tmap` primary item base-image fallback | Supported (base `av01` decode); ISO 21496 gain-map metadata and the referenced AV1 gain-map item can be inspected/decoded; explicit base-colour-space HDR application is supported |
+| `tmap` primary item base-image fallback | Supported (base `av01` decode); ISO 21496 gain-map metadata and the referenced AV1 gain-map item can be inspected/decoded; explicit base-colour-space HDR application supports CICP and matrix-shaper ICC alternates (LUT alternates fail closed) |
 | PQ/HLG transfer to bounded SDR RGBA16 | Supported (bounded tone mapping; no display-specific calibration) |
 | Display-specific HDR gamut calibration and non-matrix ICC display conversion | Not yet supported |
 
@@ -112,9 +112,9 @@ For a `tmap` image, `decode_gain_map_frame_bytes` returns the referenced AV1
 gain-map item and its `GainMapMetadata` without changing the default base-image
 decode. Call `DecodedFrame::to_rgba16_with_gain_map` with a selected display
 headroom to apply the explicit base-colour-space composition path. An
-alternate-colour-space map is accepted when its decoded colour configuration
-is identical to the base; genuinely different alternate spaces remain
-fail-closed.
+alternate-colour-space CICP maps and matrix-shaper ICC alternates are
+supported; LUT-backed ICC alternates remain fail-closed because their tone
+curves are not valid for scalar gain samples.
 
 ## Validation
 

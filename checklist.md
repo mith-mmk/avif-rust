@@ -2178,20 +2178,22 @@ description prefers `nclx`, matching the FFmpeg oracle for the official
 `paris_icc_exif_xmp.avif` sample. That sample and the official
 `seine_sdr_gainmap_srgb_icc.avif` gain-map sample are now supported; focused
 tests cover complete output, ICC gain-map composition, and the Paris RGB
-oracle (`average RGB error 0.0024`, `max 6`). The refreshed 76-entry external
+oracle (`average RGB error 0.0024`, `max 6`). Matrix-shaper ICC alternate
+gain-map composition now uses a linear 3x3 profile transform, while LUT
+alternates remain fail-closed. The refreshed 76-entry external
 gate reports 75 successes, 1 explicit fail-closed case, 0 unexpected results,
 and 0 partial PNGs (`98.68%` successful decode coverage and `100%`
-expected-behavior coverage). The full AVIF suites remain green: 439 library
-tests (`434 passed`, `5 ignored`), 17 container tests, and 97 FFmpeg tests
+expected-behavior coverage). The full AVIF suites remain green: 442 library
+tests (`437 passed`, `5 ignored`), 17 container tests, and 97 FFmpeg tests
 (`95 passed`, `2 ignored`).
 
 The generated AVIS Inter fixture also remains green with complete native
 planes and an FFmpeg RGB oracle (average error `43.20`, max `255` under the
 existing filtered-frame tolerance). The public support matrix therefore
-lists tested Inter samples as supported; Switch and ICC-backed alternate
+lists tested Inter samples as supported; Switch and LUT-backed ICC alternate
 gain-map conversion remain explicitly fail-closed.
 
-The latest local decode checkpoint is `85.397 ms` for native frame decode and
-`85.304 ms` for RGBA conversion on `samples/WML2Viewer.avif` (7 iterations,
+The latest local decode checkpoint is `85.925 ms` for native frame decode and
+`82.706 ms` for RGBA conversion on `samples/WML2Viewer.avif` (7 iterations,
 same host). This is a local regression checkpoint, not a portable speedup
 claim.
