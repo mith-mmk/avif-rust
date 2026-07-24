@@ -102,6 +102,32 @@ fn inter_set3_symbol_order_matches_identity_then_dct() {
     assert_eq!(TxType::from_inter_ext_tx_set3_symbol(2), None);
 }
 
+#[test]
+fn inter_set1_and_set2_symbol_orders_include_flipadst_variants() {
+    assert_eq!(
+        TxType::from_inter_ext_tx_set1_symbol(0),
+        Some(TxType::Identity)
+    );
+    assert_eq!(
+        TxType::from_inter_ext_tx_set1_symbol(5),
+        Some(TxType::VerticalFlipAdst)
+    );
+    assert_eq!(
+        TxType::from_inter_ext_tx_set1_symbol(15),
+        Some(TxType::FlipAdstAdst)
+    );
+    assert_eq!(
+        TxType::from_inter_ext_tx_set2_symbol(6),
+        Some(TxType::FlipAdstDct)
+    );
+    assert_eq!(
+        TxType::from_inter_ext_tx_set2_symbol(11),
+        Some(TxType::FlipAdstAdst)
+    );
+    assert_eq!(TxType::from_inter_ext_tx_set1_symbol(16), None);
+    assert_eq!(TxType::from_inter_ext_tx_set2_symbol(12), None);
+}
+
 fn sample_frame(base_q_idx: u8) -> FrameHeader {
     FrameHeader {
         frame_type: FrameType::Key,

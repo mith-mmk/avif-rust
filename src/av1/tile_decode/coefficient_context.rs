@@ -120,10 +120,19 @@ pub(super) fn set_txb_entropy_context(
 }
 
 pub(super) fn eob_tx_class_context(tx_type: TxType) -> usize {
-    usize::from(matches!(
+    usize::from(is_directional_tx_type(tx_type))
+}
+
+pub(super) fn is_directional_tx_type(tx_type: TxType) -> bool {
+    matches!(
         tx_type,
-        TxType::VerticalDct | TxType::HorizontalDct
-    ))
+        TxType::VerticalDct
+            | TxType::HorizontalDct
+            | TxType::VerticalAdst
+            | TxType::HorizontalAdst
+            | TxType::VerticalFlipAdst
+            | TxType::HorizontalFlipAdst
+    )
 }
 
 #[cfg(test)]
@@ -323,8 +332,12 @@ pub(super) fn coeff_base_context_1d(
     // the same first two neighbours, then continue along their transform
     // axis (see AOM's get_nz_mag()).
     let offsets: [(usize, usize); 5] = match tx_type {
-        TxType::VerticalDct => [(0, 1), (1, 0), (2, 0), (3, 0), (4, 0)],
-        TxType::HorizontalDct => [(0, 1), (1, 0), (0, 2), (0, 3), (0, 4)],
+        TxType::VerticalDct | TxType::VerticalAdst | TxType::VerticalFlipAdst => {
+            [(0, 1), (1, 0), (2, 0), (3, 0), (4, 0)]
+        }
+        TxType::HorizontalDct | TxType::HorizontalAdst | TxType::HorizontalFlipAdst => {
+            [(0, 1), (1, 0), (0, 2), (0, 3), (0, 4)]
+        }
         _ => {
             return Err(DecoderError::InvalidParam(
                 "AV1 1D coeff_base context requires a directional transform".to_string(),
@@ -344,7 +357,10 @@ pub(super) fn coeff_base_context_1d(
         })
         .sum::<usize>();
     let delta = ((magnitude + 1) >> 1).min(4);
-    let axis = if tx_type == TxType::HorizontalDct {
+    let axis = if matches!(
+        tx_type,
+        TxType::HorizontalDct | TxType::HorizontalAdst | TxType::HorizontalFlipAdst
+    ) {
         col
     } else {
         row
@@ -414,8 +430,12 @@ pub(super) fn coeff_br_context_1d(
     let height = tx_size.height();
     let (row, col) = directional_coeff_coords(tx_size, position);
     let offsets = match tx_type {
-        TxType::VerticalDct => [(0, 1), (1, 0), (2, 0)],
-        TxType::HorizontalDct => [(0, 1), (1, 0), (0, 2)],
+        TxType::VerticalDct | TxType::VerticalAdst | TxType::VerticalFlipAdst => {
+            [(0, 1), (1, 0), (2, 0)]
+        }
+        TxType::HorizontalDct | TxType::HorizontalAdst | TxType::HorizontalFlipAdst => {
+            [(0, 1), (1, 0), (0, 2)]
+        }
         _ => {
             return Err(DecoderError::InvalidParam(
                 "AV1 1D coeff_br context requires a directional transform".to_string(),
@@ -436,8 +456,14 @@ pub(super) fn coeff_br_context_1d(
     let delta = ((magnitude + 1) >> 1).min(6);
     if position == 0 {
         Ok(delta)
-    } else if (tx_type == TxType::HorizontalDct && col == 0)
-        || (tx_type == TxType::VerticalDct && row == 0)
+    } else if (matches!(
+        tx_type,
+        TxType::HorizontalDct | TxType::HorizontalAdst | TxType::HorizontalFlipAdst
+    ) && col == 0)
+        || (matches!(
+            tx_type,
+            TxType::VerticalDct | TxType::VerticalAdst | TxType::VerticalFlipAdst
+        ) && row == 0)
     {
         Ok(delta + 7)
     } else {

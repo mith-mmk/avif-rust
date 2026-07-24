@@ -639,7 +639,18 @@ pub enum TxType {
     Identity,
     VerticalDct,
     HorizontalDct,
+    FlipAdstDct,
+    DctFlipAdst,
+    FlipAdstFlipAdst,
+    AdstFlipAdst,
+    FlipAdstAdst,
+    VerticalAdst,
+    HorizontalAdst,
+    VerticalFlipAdst,
+    HorizontalFlipAdst,
 }
+
+pub const TX_TYPES: usize = 16;
 
 impl TxType {
     pub fn from_intra_ext_tx_set1_symbol(symbol: usize) -> Option<Self> {
@@ -672,6 +683,46 @@ impl TxType {
             1 => Some(Self::DctDct),
             _ => None,
         }
+    }
+
+    pub fn from_inter_ext_tx_set1_symbol(symbol: usize) -> Option<Self> {
+        Some(match symbol {
+            0 => Self::Identity,
+            1 => Self::VerticalDct,
+            2 => Self::HorizontalDct,
+            3 => Self::VerticalAdst,
+            4 => Self::HorizontalAdst,
+            5 => Self::VerticalFlipAdst,
+            6 => Self::HorizontalFlipAdst,
+            7 => Self::DctDct,
+            8 => Self::AdstDct,
+            9 => Self::DctAdst,
+            10 => Self::FlipAdstDct,
+            11 => Self::DctFlipAdst,
+            12 => Self::AdstAdst,
+            13 => Self::FlipAdstFlipAdst,
+            14 => Self::AdstFlipAdst,
+            15 => Self::FlipAdstAdst,
+            _ => return None,
+        })
+    }
+
+    pub fn from_inter_ext_tx_set2_symbol(symbol: usize) -> Option<Self> {
+        Some(match symbol {
+            0 => Self::Identity,
+            1 => Self::VerticalAdst,
+            2 => Self::HorizontalAdst,
+            3 => Self::DctDct,
+            4 => Self::AdstDct,
+            5 => Self::DctAdst,
+            6 => Self::FlipAdstDct,
+            7 => Self::DctFlipAdst,
+            8 => Self::AdstAdst,
+            9 => Self::FlipAdstFlipAdst,
+            10 => Self::AdstFlipAdst,
+            11 => Self::FlipAdstAdst,
+            _ => return None,
+        })
     }
 }
 

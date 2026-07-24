@@ -14,7 +14,7 @@ impl<'a> TileDecoder<'a> {
     ) -> Result<TxTypeProbe, DecoderError> {
         if transform.plane == 0
             && matches!(frame.frame_type, FrameType::Inter | FrameType::Switch)
-            && let Some(probe) = self.read_reduced_inter_tx_type(frame, transform)?
+            && let Some(probe) = self.read_inter_tx_type(frame, transform)?
         {
             return Ok(probe);
         }
@@ -81,15 +81,14 @@ impl<'a> TileDecoder<'a> {
         }
     }
 
-    fn read_reduced_inter_tx_type(
+    fn read_inter_tx_type(
         &mut self,
         frame: &FrameHeader,
         transform: TransformBlock,
     ) -> Result<Option<TxTypeProbe>, DecoderError> {
-        // AV1's inter transform set 3 is the only inter set currently backed
-        // by the decoder's transform enum. It covers reduced-transform frames
-        // and every transform whose square-up size is 32x32, including the
-        // 8/16-by-32 rectangular shapes added by the transform layer.
+        // AV1 selects the inter transform set from the smaller and larger
+        // square-up dimensions. Sizes above 32 are DCT-only and fall through
+        // to fixed_tx_type; all other sets consume one luma CDF symbol.
         let tx_size_sqr = usize::from(
             transform
                 .tx_size
@@ -102,27 +101,55 @@ impl<'a> TileDecoder<'a> {
             .width_log2()
             .max(transform.tx_size.height_log2())
             - 2;
-        let set3 = frame.reduced_tx_set || tx_size_sqr_up == 3;
-        if tx_size_sqr_up > 3 || !set3 {
+        if tx_size_sqr_up > 3 {
             return Ok(None);
         }
-        if tx_size_sqr >= 4 {
-            return Err(DecoderError::Bitstream(format!(
-                "AV1 inter transform square size {} is outside reduced set 3",
-                transform.tx_size.width().min(transform.tx_size.height())
-            )));
-        }
-        let symbol = self
-            .reader
-            .read_symbol(self.cdf.inter_ext_tx_set3_cdf_mut(tx_size_sqr))?;
-        let tx_type = TxType::from_inter_ext_tx_set3_symbol(symbol).ok_or_else(|| {
-            DecoderError::Bitstream(format!(
-                "AV1 inter tx_type set 3 symbol {symbol} is invalid"
-            ))
-        })?;
+        let set = if frame.reduced_tx_set || tx_size_sqr_up == 3 {
+            3
+        } else if tx_size_sqr == 2 {
+            2
+        } else {
+            1
+        };
+        let (symbol, tx_type) = match set {
+            1 => {
+                let symbol = self
+                    .reader
+                    .read_symbol(self.cdf.inter_ext_tx_set1_cdf_mut(tx_size_sqr))?;
+                let tx_type = TxType::from_inter_ext_tx_set1_symbol(symbol).ok_or_else(|| {
+                    DecoderError::Bitstream(format!(
+                        "AV1 inter tx_type set 1 symbol {symbol} is invalid"
+                    ))
+                })?;
+                (symbol, tx_type)
+            }
+            2 => {
+                let symbol = self
+                    .reader
+                    .read_symbol(self.cdf.inter_ext_tx_set2_cdf_mut())?;
+                let tx_type = TxType::from_inter_ext_tx_set2_symbol(symbol).ok_or_else(|| {
+                    DecoderError::Bitstream(format!(
+                        "AV1 inter tx_type set 2 symbol {symbol} is invalid"
+                    ))
+                })?;
+                (symbol, tx_type)
+            }
+            3 => {
+                let symbol = self
+                    .reader
+                    .read_symbol(self.cdf.inter_ext_tx_set3_cdf_mut(tx_size_sqr))?;
+                let tx_type = TxType::from_inter_ext_tx_set3_symbol(symbol).ok_or_else(|| {
+                    DecoderError::Bitstream(format!(
+                        "AV1 inter tx_type set 3 symbol {symbol} is invalid"
+                    ))
+                })?;
+                (symbol, tx_type)
+            }
+            _ => unreachable!("inter transform set is bounded to 1..=3"),
+        };
         Ok(Some(TxTypeProbe {
             read: true,
-            set: Some(3),
+            set: Some(set),
             symbol: Some(symbol),
             tx_type,
         }))

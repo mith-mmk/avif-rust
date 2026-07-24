@@ -1953,3 +1953,19 @@ without consuming a second symbol. A generated libaom AVIS with
 decodes all samples through the public sequence API; the full library and
 FFmpeg conformance suites remain green. Inter set 1/2, flipADST, and strict
 entropy/oracle registration remain open follow-up items.
+
+On 2026-07-24, Inter transform-set 1 and set 2 now use the AV1 default CDF
+tables and complete symbol maps, including the FLIPADST variants. The inverse
+transform dispatcher and coefficient-context selection cover vertical and
+horizontal ADST/FLIPADST forms; 32-point non-DCT stages remain fail-closed.
+The generated 128x128 libaom Inter fixture explicitly enables the full
+transform set and decodes completely. The 12-bit Inter and LOCALWARP fixtures
+pass the FFmpeg RGBA oracle with average RGB errors `38.51` and `32.54`
+respectively (maximum `255`). The full library suite is green (`418 passed`,
+`5 ignored`) and FFmpeg conformance is green (`90 passed`, `2 ignored`).
+
+The 7-iteration release decode checkpoint for `samples/WML2Viewer.avif`
+measured `86.6327/85.2226 ms` for native/RGBA on this host. This is a local
+reference for the transform and allocation work, not a cross-machine speedup
+claim. Strict entropy/oracle registration, post-filter coverage, HDR edge
+cases, and non-DCT transforms with 32-point stages remain follow-up items.

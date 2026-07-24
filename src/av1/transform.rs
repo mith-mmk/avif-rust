@@ -193,16 +193,23 @@ pub fn coefficient_scan(tx_size: TxSize, tx_type: TxType) -> Vec<usize> {
     let scan_width = width.min(32);
     let scan_height = tx_size.height().min(32);
     match tx_type {
-        TxType::VerticalDct if tx_size.is_rectangular() => (0..scan_height)
-            .flat_map(|row| (0..scan_width).map(move |column| column * tx_size.height() + row))
-            .collect(),
-        TxType::HorizontalDct if tx_size.is_rectangular() => {
+        TxType::VerticalDct | TxType::VerticalAdst | TxType::VerticalFlipAdst
+            if tx_size.is_rectangular() =>
+        {
+            (0..scan_height)
+                .flat_map(|row| (0..scan_width).map(move |column| column * tx_size.height() + row))
+                .collect()
+        }
+        TxType::HorizontalDct | TxType::HorizontalAdst | TxType::HorizontalFlipAdst
+            if tx_size.is_rectangular() =>
+        {
             (0..scan_width * scan_height).collect()
         }
-        TxType::VerticalDct => (0..scan_width)
+        TxType::VerticalDct | TxType::VerticalAdst | TxType::VerticalFlipAdst => (0..scan_width)
             .flat_map(|column| (0..scan_height).map(move |row| row * width + column))
             .collect(),
-        TxType::HorizontalDct => (0..scan_height)
+        TxType::HorizontalDct | TxType::HorizontalAdst | TxType::HorizontalFlipAdst => (0
+            ..scan_height)
             .flat_map(|row| (0..scan_width).map(move |column| row * width + column))
             .collect(),
         _ => zig_zag_scan(tx_size),
@@ -300,9 +307,18 @@ pub(crate) fn remap_coefficients_for_inverse_storage(
             TxType::AdstDct
                 | TxType::DctAdst
                 | TxType::AdstAdst
+                | TxType::FlipAdstDct
+                | TxType::DctFlipAdst
+                | TxType::FlipAdstFlipAdst
+                | TxType::AdstFlipAdst
+                | TxType::FlipAdstAdst
                 | TxType::Identity
                 | TxType::VerticalDct
                 | TxType::HorizontalDct
+                | TxType::VerticalAdst
+                | TxType::HorizontalAdst
+                | TxType::VerticalFlipAdst
+                | TxType::HorizontalFlipAdst
         );
     if coefficients.len() != tx_size.sample_count() || tx_size.is_rectangular() || !needs_remap {
         return;
@@ -856,6 +872,9 @@ fn inverse_staged_dynamic_into(
                 StagedTransform::Adst => {
                     unreachable!("rectangular 32-point ADST is not supported")
                 }
+                StagedTransform::FlipAdst => {
+                    unreachable!("rectangular 32-point FLIPADST is not supported")
+                }
             });
         }
         64 if transform == StagedTransform::Dct => output[..64].copy_from_slice(&inverse_dct64(
@@ -1254,6 +1273,7 @@ fn has_non_zero_outside_tx64_coded_top_left(coefficients: &[i32]) -> bool {
 enum StagedTransform {
     Dct,
     Adst,
+    FlipAdst,
     Identity,
 }
 
@@ -1290,6 +1310,11 @@ fn inverse_staged_4(transform: StagedTransform, input: [i32; 4], range: u8) -> [
     match transform {
         StagedTransform::Dct => inverse_dct4(input, range),
         StagedTransform::Adst => inverse_adst4(input),
+        StagedTransform::FlipAdst => {
+            let mut output = inverse_adst4(input);
+            output.reverse();
+            output
+        }
         StagedTransform::Identity => {
             input.map(|value| round_shift_i64(i64::from(value) * NEW_SQRT2, NEW_SQRT2_BITS) as i32)
         }
@@ -1333,9 +1358,18 @@ fn staged_transform_pair(tx_type: TxType) -> (StagedTransform, StagedTransform) 
         TxType::AdstDct => (StagedTransform::Adst, StagedTransform::Dct),
         TxType::DctAdst => (StagedTransform::Dct, StagedTransform::Adst),
         TxType::AdstAdst => (StagedTransform::Adst, StagedTransform::Adst),
+        TxType::FlipAdstDct => (StagedTransform::FlipAdst, StagedTransform::Dct),
+        TxType::DctFlipAdst => (StagedTransform::Dct, StagedTransform::FlipAdst),
+        TxType::FlipAdstFlipAdst => (StagedTransform::FlipAdst, StagedTransform::FlipAdst),
+        TxType::AdstFlipAdst => (StagedTransform::Adst, StagedTransform::FlipAdst),
+        TxType::FlipAdstAdst => (StagedTransform::FlipAdst, StagedTransform::Adst),
         TxType::Identity => (StagedTransform::Identity, StagedTransform::Identity),
         TxType::VerticalDct => (StagedTransform::Dct, StagedTransform::Identity),
         TxType::HorizontalDct => (StagedTransform::Identity, StagedTransform::Dct),
+        TxType::VerticalAdst => (StagedTransform::Adst, StagedTransform::Identity),
+        TxType::HorizontalAdst => (StagedTransform::Identity, StagedTransform::Adst),
+        TxType::VerticalFlipAdst => (StagedTransform::FlipAdst, StagedTransform::Identity),
+        TxType::HorizontalFlipAdst => (StagedTransform::Identity, StagedTransform::FlipAdst),
     }
 }
 
@@ -1343,6 +1377,11 @@ fn inverse_staged_8(transform: StagedTransform, input: [i32; 8], range: u8) -> [
     match transform {
         StagedTransform::Dct => inverse_dct8(input, range),
         StagedTransform::Adst => inverse_adst8(input, range),
+        StagedTransform::FlipAdst => {
+            let mut output = inverse_adst8(input, range);
+            output.reverse();
+            output
+        }
         StagedTransform::Identity => input.map(|value| value.saturating_mul(2)),
     }
 }
@@ -1498,6 +1537,11 @@ fn inverse_staged_16(transform: StagedTransform, input: [i32; 16], range: u8) ->
             input.map(|v| round_shift_i64(i64::from(v) * NEW_SQRT2 * 2, NEW_SQRT2_BITS) as i32)
         }
         StagedTransform::Adst => inverse_adst16(input, range),
+        StagedTransform::FlipAdst => {
+            let mut output = inverse_adst16(input, range);
+            output.reverse();
+            output
+        }
     }
 }
 
@@ -2634,6 +2678,24 @@ mod tests {
                 inverse_dct64_staged(&tx64_coefficients, bit_depth),
                 "Tx64x64 {bit_depth}-bit"
             );
+        }
+    }
+
+    #[test]
+    fn flipadst_stage_is_the_reversed_adst_stage() {
+        let mut coefficients = vec![0; TxSize::Tx4x4.sample_count()];
+        coefficients[1] = 37;
+        coefficients[6] = -19;
+        let adst = inverse_transform(TxType::AdstDct, TxSize::Tx4x4, &coefficients, 8).unwrap();
+        let flip = inverse_transform(TxType::FlipAdstDct, TxSize::Tx4x4, &coefficients, 8).unwrap();
+        for row in 0..4 {
+            for column in 0..4 {
+                assert_eq!(
+                    flip[row * 4 + column],
+                    adst[(3 - row) * 4 + column],
+                    "row {row} column {column}"
+                );
+            }
         }
     }
 

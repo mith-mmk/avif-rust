@@ -2,13 +2,14 @@ use super::coefficient_context::{
     BR_CDF_SIZE, COEFF_BR_CDF_ROUNDS, MAX_BASE_BR_RANGE, NUM_BASE_LEVELS, clamp_coefficient_level,
     coeff_base_context_1d, coeff_base_context_2d, coeff_base_eob_context,
     coeff_base_non_zero_count, coeff_br_context_1d, coeff_br_context_2d, eob_base_from_pt,
-    eob_tx_class_context, first_signed_coeff,
+    eob_tx_class_context, first_signed_coeff, is_directional_tx_type,
 };
 use super::{
     CoeffBaseProbe, CoeffBaseRead, CoeffBrProbe, CoeffSignRead, DecoderError, EntropyDecoder,
     TxSize, TxType,
 };
 use crate::av1::cdf::CdfContext;
+use crate::av1::syntax::TX_TYPES;
 use crate::av1::transform::coefficient_scan;
 
 pub(super) struct CoefficientScanCache {
@@ -18,12 +19,12 @@ pub(super) struct CoefficientScanCache {
 impl CoefficientScanCache {
     pub(super) fn new() -> Self {
         Self {
-            entries: (0..19 * 7).map(|_| None).collect(),
+            entries: (0..19 * TX_TYPES).map(|_| None).collect(),
         }
     }
 
     pub(super) fn get(&mut self, tx_size: TxSize, tx_type: TxType) -> &[usize] {
-        let index = usize::from(tx_size as u8) * 7 + usize::from(tx_type as u8);
+        let index = usize::from(tx_size as u8) * TX_TYPES + usize::from(tx_type as u8);
         if self.entries[index].is_none() {
             self.entries[index] = Some(coefficient_scan(tx_size, tx_type));
         }
@@ -324,11 +325,9 @@ fn read_regular_coeff_bases<S: CoefficientTokenSource>(
     let mut decoded_count = 0;
     for scan_index in (0..eob - 1).rev() {
         let position = scan[scan_index];
-        let (context, reference_magnitude) = match tx_type {
-            TxType::VerticalDct | TxType::HorizontalDct => {
-                coeff_base_context_1d(tx_size, tx_type, position, &quant)?
-            }
-            _ => coeff_base_context_2d(tx_size, position, &quant)?,
+        let (context, reference_magnitude) = match is_directional_tx_type(tx_type) {
+            true => coeff_base_context_1d(tx_size, tx_type, position, &quant)?,
+            false => coeff_base_context_2d(tx_size, position, &quant)?,
         };
         let symbol = source.read_symbol(CoefficientSymbol::Base {
             tx_size_context: tx_size.coeff_cdf_index(),
@@ -414,11 +413,9 @@ fn read_coeff_br_range<S: CoefficientTokenSource>(
         return Ok(base_level);
     }
     *base_range_count += 1;
-    let context = match tx_type {
-        TxType::VerticalDct | TxType::HorizontalDct => {
-            coeff_br_context_1d(tx_size, tx_type, position, quant)?
-        }
-        _ => coeff_br_context_2d(tx_size, position, quant)?,
+    let context = match is_directional_tx_type(tx_type) {
+        true => coeff_br_context_1d(tx_size, tx_type, position, quant)?,
+        false => coeff_br_context_2d(tx_size, position, quant)?,
     };
     let mut level = base_level;
     for _ in 0..COEFF_BR_CDF_ROUNDS {

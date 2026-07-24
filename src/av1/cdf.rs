@@ -24,7 +24,10 @@ pub const COEFF_BR_CONTEXTS: usize = 21;
 pub const DC_SIGN_CONTEXTS: usize = 3;
 pub const INTRA_EXT_TX_TYPES_SET1: usize = 7;
 pub const INTRA_EXT_TX_TYPES_SET2: usize = 5;
+pub const INTER_EXT_TX_TYPES_SET1: usize = 16;
+pub const INTER_EXT_TX_TYPES_SET2: usize = 12;
 pub const INTER_EXT_TX_TYPES_SET3: usize = 2;
+pub const INTER_EXT_TX_SET1_SIZES: usize = 2;
 pub const INTER_EXT_TX_SET3_SIZES: usize = 4;
 pub const PALETTE_BLOCK_SIZE_CONTEXTS: usize = 7;
 pub const PALETTE_COLOR_INDEX_CONTEXTS: usize = 5;
@@ -504,6 +507,22 @@ pub const DEFAULT_INTRA_EXT_TX_SET2_CDF: [[[u16; INTRA_EXT_TX_TYPES_SET2 + 1]; I
         [83, 5615, 12001, 17228, 32768, 0],
         [1968, 5556, 12023, 18547, 32768, 0],
     ],
+];
+
+pub const DEFAULT_INTER_EXT_TX_SET1_CDF: [[u16; INTER_EXT_TX_TYPES_SET1 + 1];
+    INTER_EXT_TX_SET1_SIZES] = [
+    [
+        4458, 5560, 7695, 9709, 13330, 14789, 17537, 20266, 21504, 22848, 23934, 25474, 27727,
+        28915, 30631, 32768, 0,
+    ],
+    [
+        1645, 2573, 4778, 5711, 7807, 8622, 10522, 15357, 17674, 20408, 22517, 25010, 27116, 28856,
+        30749, 32768, 0,
+    ],
+];
+
+pub const DEFAULT_INTER_EXT_TX_SET2_CDF: [u16; INTER_EXT_TX_TYPES_SET2 + 1] = [
+    770, 2421, 5225, 12907, 15819, 18927, 21561, 24089, 26595, 28526, 30529, 32768, 0,
 ];
 
 /// Default CDF for the reduced inter transform set `{ IDTX, DCT_DCT }`.
@@ -2216,6 +2235,8 @@ pub struct CdfContext {
     pub intra_ext_tx_set1: [[[u16; INTRA_EXT_TX_TYPES_SET1 + 1]; INTRA_MODES]; 2],
     pub intra_ext_tx_set1_staging: [[u16; INTRA_EXT_TX_TYPES_SET1 + 1]; INTRA_MODES],
     pub intra_ext_tx_set2: [[[u16; INTRA_EXT_TX_TYPES_SET2 + 1]; INTRA_MODES]; 3],
+    pub inter_ext_tx_set1: [[u16; INTER_EXT_TX_TYPES_SET1 + 1]; INTER_EXT_TX_SET1_SIZES],
+    pub inter_ext_tx_set2: [u16; INTER_EXT_TX_TYPES_SET2 + 1],
     pub inter_ext_tx_set3: [[u16; INTER_EXT_TX_TYPES_SET3 + 1]; INTER_EXT_TX_SET3_SIZES],
 }
 
@@ -2301,6 +2322,8 @@ impl CdfContext {
             intra_ext_tx_set1: DEFAULT_INTRA_EXT_TX_SET1_CDF,
             intra_ext_tx_set1_staging: DEFAULT_INTRA_EXT_TX_SET1_STAGING_CDF,
             intra_ext_tx_set2: DEFAULT_INTRA_EXT_TX_SET2_CDF,
+            inter_ext_tx_set1: DEFAULT_INTER_EXT_TX_SET1_CDF,
+            inter_ext_tx_set2: DEFAULT_INTER_EXT_TX_SET2_CDF,
             inter_ext_tx_set3: DEFAULT_INTER_EXT_TX_SET3_CDF,
         }
     }
@@ -2626,6 +2649,14 @@ impl CdfContext {
     pub fn inter_ext_tx_set3_cdf_mut(&mut self, tx_size_context: usize) -> &mut [u16] {
         &mut self.inter_ext_tx_set3[tx_size_context]
     }
+
+    pub fn inter_ext_tx_set1_cdf_mut(&mut self, tx_size_context: usize) -> &mut [u16] {
+        &mut self.inter_ext_tx_set1[tx_size_context]
+    }
+
+    pub fn inter_ext_tx_set2_cdf_mut(&mut self) -> &mut [u16] {
+        &mut self.inter_ext_tx_set2
+    }
 }
 
 pub fn coeff_q_context(base_q_idx: u8) -> usize {
@@ -2693,6 +2724,15 @@ mod tests {
         let mut context = CdfContext::default();
         assert_eq!(context.inter_ext_tx_set3, DEFAULT_INTER_EXT_TX_SET3_CDF);
         assert_eq!(context.inter_ext_tx_set3_cdf_mut(2), &[1998, 32768, 0]);
+    }
+
+    #[test]
+    fn inter_ext_tx_set1_and_set2_defaults_match_av1_tables() {
+        let context = CdfContext::default();
+        assert_eq!(context.inter_ext_tx_set1, DEFAULT_INTER_EXT_TX_SET1_CDF);
+        assert_eq!(context.inter_ext_tx_set2, DEFAULT_INTER_EXT_TX_SET2_CDF);
+        assert_eq!(context.inter_ext_tx_set1[0][14], 30631);
+        assert_eq!(context.inter_ext_tx_set2[10], 30529);
     }
 
     #[test]
