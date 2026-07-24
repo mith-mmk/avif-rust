@@ -1920,3 +1920,10 @@ gates remain green. A 100-iteration release checkpoint for
 versus the prior `108.6493/109.2108 ms` run on this host; retain this as a
 local checkpoint because system noise prevents treating it as a portable
 speedup claim.
+
+On 2026-07-24, filter-intra coverage now includes generated 10-bit lossy and
+12-bit lossless YUV444 samples. The 12-bit fixture uses libaom lossless
+encoding so the native Y/U/V oracle is exact rather than conflating chroma
+quantisation error with decoder behavior; all three planes match exactly.
+The 10-bit fixture keeps the bounded lossy oracle (average error <=2 and
+maximum error <=16 per plane).

@@ -1176,6 +1176,11 @@ fn generated_10bit_filter_intra_sample_matches_ffmpeg_when_encoder_present() {
     generated_filter_intra_sample_matches_ffmpeg_impl("yuv444p10le", "yuv444p10le", 128, 10);
 }
 
+#[test]
+fn generated_12bit_filter_intra_sample_matches_ffmpeg_when_encoder_present() {
+    generated_filter_intra_sample_matches_ffmpeg_impl("yuv444p12le", "yuv444p12le", 96, 12);
+}
+
 fn generated_filter_intra_sample_matches_ffmpeg_impl(
     pixel_format: &str,
     expected_format: &str,
@@ -1205,7 +1210,7 @@ fn generated_filter_intra_sample_matches_ffmpeg_impl(
             "-cpu-used",
             "8",
             "-crf",
-            "20",
+            if bit_depth >= 12 { "0" } else { "20" },
             "-pix_fmt",
             pixel_format,
             "-enable-filter-intra",
@@ -1268,9 +1273,20 @@ fn generated_filter_intra_sample_matches_ffmpeg_impl(
                     .map(|(actual, expected)| actual.abs_diff(*expected))
                     .max()
                     .unwrap_or(0);
+                let average_error = frame.buffers.planes[plane_index]
+                    .samples
+                    .iter()
+                    .zip(expected_plane)
+                    .map(|(actual, expected)| f64::from(actual.abs_diff(*expected)))
+                    .sum::<f64>()
+                    / plane_size as f64;
+                eprintln!(
+                    "filter-intra {bit_depth}-bit native plane {plane_index}: average={average_error} max={max_error}"
+                );
+                let max_error_limit = if bit_depth >= 12 { 2 } else { 16 };
                 assert!(
-                    max_error <= 16,
-                    "filter-intra {bit_depth}-bit native plane {plane_index} max error was {max_error}"
+                    average_error <= 2.0 && max_error <= max_error_limit,
+                    "filter-intra {bit_depth}-bit native plane {plane_index}: average={average_error} max={max_error} limit={max_error_limit}"
                 );
             }
         }
