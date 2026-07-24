@@ -1,7 +1,7 @@
 use super::TileDecoder;
 use super::diagnostic::{BlockModeProbe, TxTypeProbe};
 use crate::DecoderError;
-use crate::av1::frame::FrameHeader;
+use crate::av1::frame::{FrameHeader, FrameType};
 use crate::av1::syntax::{PredictionMode, TxSize, TxType, UvPredictionMode};
 use crate::av1::transform::TransformBlock;
 
@@ -12,6 +12,12 @@ impl<'a> TileDecoder<'a> {
         block_mode: &BlockModeProbe,
         transform: TransformBlock,
     ) -> Result<TxTypeProbe, DecoderError> {
+        if transform.plane == 0
+            && matches!(frame.frame_type, FrameType::Inter | FrameType::Switch)
+            && let Some(probe) = self.read_reduced_inter_tx_type(frame, transform)?
+        {
+            return Ok(probe);
+        }
         if transform.plane > 0 {
             return Ok(TxTypeProbe {
                 read: false,
@@ -73,6 +79,53 @@ impl<'a> TileDecoder<'a> {
                 tx_type,
             })
         }
+    }
+
+    fn read_reduced_inter_tx_type(
+        &mut self,
+        frame: &FrameHeader,
+        transform: TransformBlock,
+    ) -> Result<Option<TxTypeProbe>, DecoderError> {
+        // AV1's inter transform set 3 is the only inter set currently backed
+        // by the decoder's transform enum. It covers reduced-transform frames
+        // and every transform whose square-up size is 32x32, including the
+        // 8/16-by-32 rectangular shapes added by the transform layer.
+        let tx_size_sqr = usize::from(
+            transform
+                .tx_size
+                .width_log2()
+                .min(transform.tx_size.height_log2())
+                - 2,
+        );
+        let tx_size_sqr_up = transform
+            .tx_size
+            .width_log2()
+            .max(transform.tx_size.height_log2())
+            - 2;
+        let set3 = frame.reduced_tx_set || tx_size_sqr_up == 3;
+        if tx_size_sqr_up > 3 || !set3 {
+            return Ok(None);
+        }
+        if tx_size_sqr >= 4 {
+            return Err(DecoderError::Bitstream(format!(
+                "AV1 inter transform square size {} is outside reduced set 3",
+                transform.tx_size.width().min(transform.tx_size.height())
+            )));
+        }
+        let symbol = self
+            .reader
+            .read_symbol(self.cdf.inter_ext_tx_set3_cdf_mut(tx_size_sqr))?;
+        let tx_type = TxType::from_inter_ext_tx_set3_symbol(symbol).ok_or_else(|| {
+            DecoderError::Bitstream(format!(
+                "AV1 inter tx_type set 3 symbol {symbol} is invalid"
+            ))
+        })?;
+        Ok(Some(TxTypeProbe {
+            read: true,
+            set: Some(3),
+            symbol: Some(symbol),
+            tx_type,
+        }))
     }
 }
 

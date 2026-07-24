@@ -665,6 +665,14 @@ impl TxType {
             _ => None,
         }
     }
+
+    pub fn from_inter_ext_tx_set3_symbol(symbol: usize) -> Option<Self> {
+        match symbol {
+            0 => Some(Self::Identity),
+            1 => Some(Self::DctDct),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]

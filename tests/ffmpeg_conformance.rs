@@ -572,6 +572,69 @@ fn generated_inter_sequence_sample_is_classified_for_decoder_gate_when_encoder_p
 }
 
 #[test]
+fn generated_reduced_inter_transform_sequence_decodes_when_encoder_present() {
+    let root = std::env::temp_dir().join(format!(
+        ".test-avif-sequence-inter-idtx-{}",
+        std::process::id()
+    ));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary reduced-transform AVIF directory: {err}");
+    }
+    let output_path = root.join("sequence.avifs");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .args(["-f", "lavfi", "-i", "testsrc2=size=128x128:rate=1"])
+        .args([
+            "-t",
+            "2",
+            "-c:v",
+            "libaom-av1",
+            "-cpu-used",
+            "8",
+            "-crf",
+            "20",
+            "-g",
+            "30",
+            "-frame-parallel",
+            "1",
+            "-aom-params",
+            "enable-flip-idtx=1:enable-tx64=0:enable-cdef=0:enable-restoration=0",
+            "-f",
+            "avif",
+        ])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping reduced-transform AVIF sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom reduced-transform encoder is unavailable; skipping sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let data = std::fs::read(&output_path)
+        .expect("generated reduced-transform AVIF sequence should be readable");
+    let info = avif_rust::container::parse_avif(&data)
+        .expect("generated reduced-transform AVIF sequence should parse");
+    assert!(info.sequence_sample_payloads.len() >= 2);
+    assert_eq!(
+        avif_rust::classify_av1_sequence_sample(&info.sequence_sample_payloads[1]).unwrap(),
+        Some(avif_rust::AvifSequenceSampleKind::Inter)
+    );
+    let frames = avif_rust::decode_sequence_frames_bytes(&data)
+        .expect("reduced inter transform sequence should decode fully");
+    assert_eq!(frames.len(), info.sequence_sample_payloads.len());
+    assert!(
+        frames
+            .iter()
+            .all(|frame| (frame.width, frame.height) == (128, 128))
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn generated_10bit_inter_sequence_sample_decodes_when_encoder_present() {
     run_generated_high_bit_inter_sequence_sample("10bit", "yuv420p10le", 10);
 }

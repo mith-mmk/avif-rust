@@ -24,6 +24,8 @@ pub const COEFF_BR_CONTEXTS: usize = 21;
 pub const DC_SIGN_CONTEXTS: usize = 3;
 pub const INTRA_EXT_TX_TYPES_SET1: usize = 7;
 pub const INTRA_EXT_TX_TYPES_SET2: usize = 5;
+pub const INTER_EXT_TX_TYPES_SET3: usize = 2;
+pub const INTER_EXT_TX_SET3_SIZES: usize = 4;
 pub const PALETTE_BLOCK_SIZE_CONTEXTS: usize = 7;
 pub const PALETTE_COLOR_INDEX_CONTEXTS: usize = 5;
 pub const PALETTE_SIZES: usize = 7;
@@ -502,6 +504,16 @@ pub const DEFAULT_INTRA_EXT_TX_SET2_CDF: [[[u16; INTRA_EXT_TX_TYPES_SET2 + 1]; I
         [83, 5615, 12001, 17228, 32768, 0],
         [1968, 5556, 12023, 18547, 32768, 0],
     ],
+];
+
+/// Default CDF for the reduced inter transform set `{ IDTX, DCT_DCT }`.
+/// The rows are indexed by the square-up transform size 4, 8, 16, or 32.
+pub const DEFAULT_INTER_EXT_TX_SET3_CDF: [[u16; INTER_EXT_TX_TYPES_SET3 + 1];
+    INTER_EXT_TX_SET3_SIZES] = [
+    [16384, 32768, 0],
+    [4167, 32768, 0],
+    [1998, 32768, 0],
+    [748, 32768, 0],
 ];
 
 pub const DEFAULT_USE_FILTER_INTRA_CDF: [[u16; 3]; FILTER_INTRA_BLOCK_CONTEXTS] = [
@@ -2204,6 +2216,7 @@ pub struct CdfContext {
     pub intra_ext_tx_set1: [[[u16; INTRA_EXT_TX_TYPES_SET1 + 1]; INTRA_MODES]; 2],
     pub intra_ext_tx_set1_staging: [[u16; INTRA_EXT_TX_TYPES_SET1 + 1]; INTRA_MODES],
     pub intra_ext_tx_set2: [[[u16; INTRA_EXT_TX_TYPES_SET2 + 1]; INTRA_MODES]; 3],
+    pub inter_ext_tx_set3: [[u16; INTER_EXT_TX_TYPES_SET3 + 1]; INTER_EXT_TX_SET3_SIZES],
 }
 
 impl Default for CdfContext {
@@ -2288,6 +2301,7 @@ impl CdfContext {
             intra_ext_tx_set1: DEFAULT_INTRA_EXT_TX_SET1_CDF,
             intra_ext_tx_set1_staging: DEFAULT_INTRA_EXT_TX_SET1_STAGING_CDF,
             intra_ext_tx_set2: DEFAULT_INTRA_EXT_TX_SET2_CDF,
+            inter_ext_tx_set3: DEFAULT_INTER_EXT_TX_SET3_CDF,
         }
     }
 }
@@ -2608,6 +2622,10 @@ impl CdfContext {
     pub fn intra_ext_tx_set2_staging_cdf_mut(&mut self, intra_mode: usize) -> &mut [u16] {
         &mut self.intra_ext_tx_set2[0][intra_mode]
     }
+
+    pub fn inter_ext_tx_set3_cdf_mut(&mut self, tx_size_context: usize) -> &mut [u16] {
+        &mut self.inter_ext_tx_set3[tx_size_context]
+    }
 }
 
 pub fn coeff_q_context(base_q_idx: u8) -> usize {
@@ -2666,6 +2684,15 @@ mod tests {
         assert_eq!(context.intra_ext_tx_set1_staging[0][6], 32768);
         assert_eq!(context.intra_ext_tx_set2[0][0][4], 32768);
         assert_eq!(context.intra_ext_tx_set2[2][12][4], 32768);
+        assert_eq!(context.inter_ext_tx_set3[0][1], 32768);
+        assert_eq!(context.inter_ext_tx_set3[3][1], 32768);
+    }
+
+    #[test]
+    fn inter_ext_tx_set3_defaults_follow_square_size() {
+        let mut context = CdfContext::default();
+        assert_eq!(context.inter_ext_tx_set3, DEFAULT_INTER_EXT_TX_SET3_CDF);
+        assert_eq!(context.inter_ext_tx_set3_cdf_mut(2), &[1998, 32768, 0]);
     }
 
     #[test]

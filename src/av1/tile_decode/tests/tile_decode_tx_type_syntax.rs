@@ -89,6 +89,19 @@ fn fixed_tx_type_uses_dct_for_coded_lossless_luma() {
     assert_eq!(fixed_tx_type(&frame, transform), Some(TxType::DctDct));
 }
 
+#[test]
+fn inter_set3_symbol_order_matches_identity_then_dct() {
+    assert_eq!(
+        TxType::from_inter_ext_tx_set3_symbol(0),
+        Some(TxType::Identity)
+    );
+    assert_eq!(
+        TxType::from_inter_ext_tx_set3_symbol(1),
+        Some(TxType::DctDct)
+    );
+    assert_eq!(TxType::from_inter_ext_tx_set3_symbol(2), None);
+}
+
 fn sample_frame(base_q_idx: u8) -> FrameHeader {
     FrameHeader {
         frame_type: FrameType::Key,

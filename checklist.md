@@ -1943,3 +1943,13 @@ implementation uses the AOM `identity32` scale (`input * 4`) and keeps ADST
 rectangular stages fail-closed. Fixed 32-point vectors plus allocating/in-place
 dispatch parity tests cover the new path; the full library and FFmpeg
 conformance suites remain green.
+
+On 2026-07-24, reduced inter transform-set 3 now reads the AV1 two-symbol
+Identity/DCT CDF for luma blocks whose square-up transform dimension is 32
+(`Tx8x32`, `Tx16x32`, `Tx32x8`, `Tx32x16`, and `Tx32x32`). The CDF rows follow
+the AV1 square-size contexts, while chroma continues to derive the luma type
+without consuming a second symbol. A generated libaom AVIS with
+`enable-flip-idtx=1`, 128x128 inter content, and loop filters disabled now
+decodes all samples through the public sequence API; the full library and
+FFmpeg conformance suites remain green. Inter set 1/2, flipADST, and strict
+entropy/oracle registration remain open follow-up items.
