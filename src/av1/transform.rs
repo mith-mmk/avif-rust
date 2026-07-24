@@ -696,6 +696,9 @@ pub fn inverse_transform(
     if tx_size == TxSize::Tx16x16 {
         return Ok(inverse_transform_16x16(tx_type, dequant, bit_depth));
     }
+    if tx_size == TxSize::Tx32x32 {
+        return inverse_transform_32x32(tx_type, dequant, bit_depth);
+    }
     if tx_type != TxType::DctDct && (tx_size.width() >= 32 || tx_size.height() >= 32) {
         return Err(DecoderError::Unsupported(format!(
             "AV1 {tx_size:?} non-DCT transform is not signaled for intra blocks"
@@ -707,7 +710,6 @@ pub fn inverse_transform(
         )));
     }
     match tx_size {
-        TxSize::Tx32x32 => inverse_transform_32x32_dct(dequant, bit_depth),
         TxSize::Tx64x64 => inverse_transform_64x64_dct(dequant, bit_depth),
         TxSize::Tx4x4 | TxSize::Tx8x8 | TxSize::Tx16x16 => {
             unreachable!("small transforms are dispatched before large DCT fallback handling")
@@ -748,7 +750,7 @@ pub(crate) fn inverse_transform_into(
             inverse_transform_16x16_into(tx_type, dequant, bit_depth, output);
             Ok(())
         }
-        TxSize::Tx32x32 => inverse_transform_32x32_dct_into(dequant, bit_depth, output),
+        TxSize::Tx32x32 => inverse_transform_32x32_into(tx_type, dequant, bit_depth, output),
         TxSize::Tx64x64 => inverse_transform_64x64_dct_into(dequant, bit_depth, output),
         _ => {
             if tx_size.is_rectangular() {
@@ -1153,13 +1155,23 @@ fn inverse_dct64(input: [i32; 64], range: u8) -> [i32; 64] {
     dct64::inverse_dct64(input, range)
 }
 
-fn inverse_transform_32x32_dct(dequant: &[i32], bit_depth: u8) -> Result<Vec<i32>, DecoderError> {
+fn inverse_transform_32x32(
+    tx_type: TxType,
+    dequant: &[i32],
+    bit_depth: u8,
+) -> Result<Vec<i32>, DecoderError> {
     let mut output = vec![0i32; TxSize::Tx32x32.sample_count()];
-    inverse_transform_32x32_dct_into(dequant, bit_depth, &mut output)?;
+    inverse_transform_32x32_into(tx_type, dequant, bit_depth, &mut output)?;
     Ok(output)
 }
 
-fn inverse_transform_32x32_dct_into(
+#[cfg(test)]
+fn inverse_transform_32x32_dct(dequant: &[i32], bit_depth: u8) -> Result<Vec<i32>, DecoderError> {
+    inverse_transform_32x32(TxType::DctDct, dequant, bit_depth)
+}
+
+fn inverse_transform_32x32_into(
+    tx_type: TxType,
     dequant: &[i32],
     bit_depth: u8,
     output: &mut [i32],
@@ -1174,13 +1186,22 @@ fn inverse_transform_32x32_dct_into(
             "AV1 32x32 DCT output count does not match transform size".to_string(),
         ));
     }
+    if !matches!(
+        tx_type,
+        TxType::DctDct | TxType::Identity | TxType::VerticalDct | TxType::HorizontalDct
+    ) {
+        return Err(DecoderError::Unsupported(format!(
+            "AV1 32x32 {tx_type:?} transform is not supported for this size"
+        )));
+    }
     const SIDE: usize = 32;
+    let (vertical, horizontal) = staged_transform_pair(tx_type);
     let row_range = bit_depth + 8;
     let mut intermediate = [0i32; SIDE * SIDE];
     for row in 0..SIDE {
         let input =
             std::array::from_fn(|column| clamp_signed(dequant[row * SIDE + column], bit_depth + 8));
-        let transformed = inverse_dct32(input, row_range);
+        let transformed = inverse_staged_32(horizontal, input, row_range);
         for column in 0..SIDE {
             intermediate[row * SIDE + column] = round2_signed(transformed[column], 2);
         }
@@ -1189,13 +1210,24 @@ fn inverse_transform_32x32_dct_into(
     let residual_limit = 1i32 << (bit_depth + 7);
     for column in 0..SIDE {
         let input = std::array::from_fn(|row| clamp_signed(intermediate[row * SIDE + column], 16));
-        let transformed = inverse_dct32(input, 16);
+        let transformed = inverse_staged_32(vertical, input, 16);
         for row in 0..SIDE {
             output[row * SIDE + column] =
                 round2_signed(transformed[row], 4).clamp(-residual_limit, residual_limit - 1);
         }
     }
     Ok(())
+}
+
+fn inverse_staged_32(transform: StagedTransform, input: [i32; 32], range: u8) -> [i32; 32] {
+    match transform {
+        StagedTransform::Dct => inverse_dct32(input, range),
+        StagedTransform::Identity => inverse_identity32(input),
+        StagedTransform::Adst => unreachable!("rectangular 32-point ADST is not supported"),
+        StagedTransform::FlipAdst => {
+            unreachable!("rectangular 32-point FLIPADST is not supported")
+        }
+    }
 }
 
 fn inverse_transform_64x64_dct(dequant: &[i32], bit_depth: u8) -> Result<Vec<i32>, DecoderError> {
@@ -2725,16 +2757,9 @@ mod tests {
     }
 
     #[test]
-    fn tx32_and_tx64_non_dct_large_transforms_reject_non_zero_coefficients() {
+    fn tx32_and_tx64_unsupported_non_dct_transforms_reject_non_zero_coefficients() {
         for tx_size in [TxSize::Tx32x32, TxSize::Tx64x64] {
-            for tx_type in [
-                TxType::AdstDct,
-                TxType::DctAdst,
-                TxType::AdstAdst,
-                TxType::Identity,
-                TxType::VerticalDct,
-                TxType::HorizontalDct,
-            ] {
+            for tx_type in [TxType::AdstDct, TxType::DctAdst, TxType::AdstAdst] {
                 let mut coefficients = vec![0; tx_size.sample_count()];
                 coefficients[0] = 64;
 
@@ -2746,6 +2771,23 @@ mod tests {
                     "{tx_type:?} {tx_size:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn tx32_identity_and_directional_transforms_match_in_place_dispatch() {
+        let mut coefficients = vec![0; TxSize::Tx32x32.sample_count()];
+        coefficients[0] = 64;
+        coefficients[1] = -17;
+        coefficients[32] = 9;
+        for tx_type in [TxType::Identity, TxType::VerticalDct, TxType::HorizontalDct] {
+            let expected = inverse_transform(tx_type, TxSize::Tx32x32, &coefficients, 8)
+                .expect("32x32 inter transform should decode");
+            let mut actual = vec![0; coefficients.len()];
+            inverse_transform_into(tx_type, TxSize::Tx32x32, &coefficients, 8, &mut actual)
+                .expect("32x32 in-place inter transform should decode");
+            assert_eq!(actual, expected, "{tx_type:?}");
+            assert!(actual.iter().all(|sample| sample.abs() < (1 << 15)));
         }
     }
 

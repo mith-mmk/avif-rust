@@ -2081,3 +2081,13 @@ instead of reaching an internal `unreachable!`. The 425-test library suite,
 seven-iteration release benchmark measured `81.6585/82.0603 ms`
 (native/RGBA) for `samples/WML2Viewer.avif`; this is a same-host checkpoint,
 not a portable speedup claim.
+
+On 2026-07-24, AV1 inter transform-set 3 now reconstructs 32x32 `Identity`,
+`VerticalDct`, and `HorizontalDct` blocks through the staged 32-point inverse
+kernels, with allocating and in-place dispatch covered by fixed-vector tests.
+The 32-point ADST/FlipADST cases remain fail-closed, and 64-point non-DCT
+rectangular requests retain their explicit `Unsupported` boundary. The
+426-test library suite, 15-test container suite, and 92-pass/2-ignored FFmpeg
+conformance suite remain green. A fresh seven-iteration release benchmark
+measured `79.4775/80.5235 ms` (native/RGBA) for `samples/WML2Viewer.avif`;
+this is a same-host checkpoint, not a portable speedup claim.
