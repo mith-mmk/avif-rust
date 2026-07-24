@@ -1876,3 +1876,11 @@ suite, and WML2 AVIF feature-on/off tests remain green. An 11-iteration release
 recheck measured `86.0879/87.8933 ms` (native/RGBA) for `WML2Viewer.avif` on
 this host; this is recorded as allocation reduction and a local checkpoint,
 not a cross-machine speedup claim.
+
+On 2026-07-24, the generated AVIS matrix now includes a 10-bit YUV420 Inter
+sample. The test checks Inter classification, complete 64x64 native planes,
+the declared 10-bit range, and an FFmpeg RGBA oracle (average RGB error
+`44.85`, max `255`). This extends reference-dependent coverage beyond the
+existing 8-bit Inter sample; strict Inter/Switch entropy trailing-bit
+validation remains diagnostic-only until the motion/CDF bit-consumption
+boundary is resolved.
