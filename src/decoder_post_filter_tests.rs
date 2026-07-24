@@ -1,7 +1,8 @@
 use super::{
     DecodedFrame, apply_alpha_rows, apply_cdef_plane, apply_loop_filter_deltas,
-    apply_loop_restoration_stage, cdef_has_active_strengths, cdef_strengths_disabled,
-    deblock_has_active_strengths, loop_filter_mode_delta_index, loop_filter_reference_delta_index,
+    apply_loop_restoration_stage, cdef_has_active_strengths, cdef_indices_have_active_strengths,
+    cdef_strengths_disabled, deblock_has_active_strengths, loop_filter_mode_delta_index,
+    loop_filter_reference_delta_index,
 };
 use crate::av1::CdefParams;
 use crate::av1::{
@@ -70,6 +71,22 @@ fn all_zero_cdef_indices_skip_the_whole_stage() {
     assert!(!cdef_has_active_strengths(&cdef));
     cdef.strengths[2].uv_sec = 1;
     assert!(cdef_has_active_strengths(&cdef));
+}
+
+#[test]
+fn cdef_indices_skip_unused_strength_tables() {
+    let mut cdef = CdefParams {
+        enabled: true,
+        bits: 2,
+        ..CdefParams::default()
+    };
+    cdef.strengths[2].uv_sec = 1;
+    assert!(!cdef_indices_have_active_strengths(
+        &cdef,
+        &[Some(0), Some(1)]
+    ));
+    assert!(cdef_indices_have_active_strengths(&cdef, &[Some(2)]));
+    assert!(!cdef_indices_have_active_strengths(&cdef, &[None]));
 }
 
 #[test]

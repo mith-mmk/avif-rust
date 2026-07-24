@@ -3879,6 +3879,9 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
             *slot = Some(block.index as usize & unit_mask);
         }
     }
+    if !cdef_indices_have_active_strengths(&frame_header.cdef, &cdef_indices) {
+        return;
+    }
     let filtered_blocks_width = luma_width.div_ceil(8);
     let filtered_blocks_height = luma_height.div_ceil(8);
     let mut filtered_blocks = vec![false; filtered_blocks_width * filtered_blocks_height];
@@ -4064,6 +4067,19 @@ fn cdef_has_active_strengths(cdef: &crate::av1::CdefParams) -> bool {
                 || strength.uv_pri != 0
                 || strength.uv_sec != 0
         })
+}
+
+#[inline]
+fn cdef_indices_have_active_strengths(
+    cdef: &crate::av1::CdefParams,
+    indices: &[Option<usize>],
+) -> bool {
+    indices.iter().flatten().any(|&index| {
+        let Some(strength) = cdef.strengths.get(index) else {
+            return false;
+        };
+        strength.y_pri != 0 || strength.y_sec != 0 || strength.uv_pri != 0 || strength.uv_sec != 0
+    })
 }
 
 fn apply_loop_restoration_stage(

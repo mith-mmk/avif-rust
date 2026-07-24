@@ -2124,6 +2124,23 @@ as one expected fail-closed rejection. A seven-iteration release benchmark measu
 directional fixture measured `0.3857/0.3903 ms`. These are same-host
 checkpoints, not portable speedup claims.
 
+The CDEF stage now exits after resolving the per-64x64 indices when every
+selected index maps to zero strength, avoiding direction analysis, filtered
+block bookkeeping, and source/output cloning for frames whose header contains
+unused non-zero strength slots. A seven-iteration release benchmark measured
+`88.0570/84.0579 ms` (native/RGBA) for `WML2Viewer.avif`; this is a same-host
+checkpoint and not a portable speedup claim.
+
+Implementation-rate snapshot (2026-07-24): the checklist contains 153 of 170
+completed items (`90.00%`), but this is a historical work-item metric rather
+than a feature-completeness claim. The external manifest has 65 successful
+decodes and 2 explicit fail-closed cases out of 67 entries (`97.01%` successful
+decode coverage, `100%` expected-behavior coverage). At the transform API
+boundary all 19 AV1 transform sizes have a DCT path (`19/19`, `100%` size
+coverage); counting every 16-way size/class pair conservatively gives
+`169/304` (`55.59%`) because the remaining non-DCT classes are intentionally
+restricted or not yet implemented for larger sizes.
+
 On 2026-07-24, the official `grpl/altr` gain-map preference vectors were
 audited. The parser now honors entity ordering when the alternate group
 contains both the primary item and the `tmap` item: a gain map is exposed only
@@ -2136,3 +2153,7 @@ suite is green (`432 passed`, `5 ignored`), the 17-test container suite and
 parent external gate reports 65 successes, 2 expected failures, 0 unexpected
 results, and 0 partial PNGs; the expected failures are the malformed nclx
 range sample and duplicate-ICC association sample.
+
+The CDEF index fast path and its regression vector are now included in the
+438-test library suite (`433 passed`, `5 ignored`); the 96-test FFmpeg suite
+still passes (`94 passed`, `2 ignored`).
