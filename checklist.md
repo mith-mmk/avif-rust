@@ -101,7 +101,7 @@ remain ignored as well.
       without local test data.
 - [x] Make strict mode reject a header-only/zero-entry manifest and require
       the approved fixture IDs; manifest absence is already a strict failure.
-- [ ] Add the future `-RegisterInStrictManifest` path to
+- [x] Add the future `-RegisterInStrictManifest` path to
       `generate_oracles.ps1`; the default `WML2Viewer` output remains
       diagnostic-only, while filter-disabled generation must opt in explicitly.
 - [x] Recompute source hashes and compare them with the source manifest using
@@ -112,10 +112,10 @@ remain ignored as well.
 - [x] Generate the palette fixture in that same profile and assert that the
       bitstream actually contains decoded palette blocks and color maps.
 - [ ] Generate the `WML2Viewer.avif` native-plane and RGBA fixtures.
-- [ ] Make diagnostic fixture generation opt-in for strict registration
+- [x] Make diagnostic fixture generation opt-in for strict registration
       (for example, `generate_oracles.ps1 -RegisterInStrictManifest`), and keep
       the default `WML2Viewer` generation out of `oracles.csv`.
-- [ ] Add one reproducible recipe/bootstrap for `BlackLossless` and the five
+- [x] Add one reproducible recipe/bootstrap for `BlackLossless` and the five
       filter-disabled fixtures from a fresh clone (`scripts/bootstrap_oracles.ps1`).
 - [x] Make the strict oracle command part of the documented AVIF validation
       gate.
@@ -2197,3 +2197,12 @@ The latest local decode checkpoint is `85.925 ms` for native frame decode and
 `82.706 ms` for RGBA conversion on `samples/WML2Viewer.avif` (7 iterations,
 same host). This is a local regression checkpoint, not a portable speedup
 claim.
+
+On 2026-07-25, strict oracle registration was verified with a custom output
+directory under `.test*`; temporary oracle files are now nested below that
+output and are removed without deleting the generated manifest or fixtures.
+The 8-bit identity GBR RGBA path also separates alpha and no-alpha loops to
+avoid an optional-plane lookup for every pixel; both paths have regression
+coverage. The current checklist work-item snapshot is 156/170 (`91.76%`),
+while the external sample and benchmark percentages above remain separate
+validation metrics.

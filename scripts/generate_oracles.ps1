@@ -98,8 +98,7 @@ if ($planeSampleCount64 -gt [int32]::MaxValue) {
 }
 $planeSampleCount = [int]$planeSampleCount64
 
-$temporaryParent = Split-Path -Parent (Split-Path -Parent $outputPath)
-$temporaryPath = Join-Path $temporaryParent ".test-avif-oracle"
+$temporaryPath = Join-Path $outputPath ".test-avif-oracle"
 $imagesPath = Join-Path $outputPath "images"
 $planesPath = Join-Path $outputPath "planes"
 $rgbaPath = Join-Path $outputPath "rgba"

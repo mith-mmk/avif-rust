@@ -261,23 +261,37 @@ fn frame_buffers_to_identity_rgba_8_fast(
     let plane_b = &buffers.planes[1].samples;
     let plane_r = &buffers.planes[2].samples;
     let mut rgba = vec![0u8; buffers.width * buffers.height * 4];
-    let alpha = buffers.planes.get(3).map(|plane| plane.samples.as_slice());
-    for_each_rgba_row_chunk(
-        &mut rgba,
-        buffers.width,
-        buffers.height,
-        |first_row, chunk| {
-            for (local_index, pixel) in chunk.chunks_exact_mut(4).enumerate() {
-                let index = first_row * buffers.width + local_index;
-                pixel[0] = plane_r[index] as u8;
-                pixel[1] = plane_g[index] as u8;
-                pixel[2] = plane_b[index] as u8;
-                pixel[3] = alpha
-                    .and_then(|samples| samples.get(index).copied())
-                    .map_or(u8::MAX, |sample| u8::try_from(sample).unwrap_or(u8::MAX));
-            }
-        },
-    );
+    if let Some(alpha) = buffers.planes.get(3).map(|plane| plane.samples.as_slice()) {
+        for_each_rgba_row_chunk(
+            &mut rgba,
+            buffers.width,
+            buffers.height,
+            |first_row, chunk| {
+                for (local_index, pixel) in chunk.chunks_exact_mut(4).enumerate() {
+                    let index = first_row * buffers.width + local_index;
+                    pixel[0] = plane_r[index] as u8;
+                    pixel[1] = plane_g[index] as u8;
+                    pixel[2] = plane_b[index] as u8;
+                    pixel[3] = u8::try_from(alpha[index]).unwrap_or(u8::MAX);
+                }
+            },
+        );
+    } else {
+        for_each_rgba_row_chunk(
+            &mut rgba,
+            buffers.width,
+            buffers.height,
+            |first_row, chunk| {
+                for (local_index, pixel) in chunk.chunks_exact_mut(4).enumerate() {
+                    let index = first_row * buffers.width + local_index;
+                    pixel[0] = plane_r[index] as u8;
+                    pixel[1] = plane_g[index] as u8;
+                    pixel[2] = plane_b[index] as u8;
+                    pixel[3] = u8::MAX;
+                }
+            },
+        );
+    }
     Ok(ImageBuffer {
         width: buffers.width,
         height: buffers.height,
@@ -1848,6 +1862,44 @@ mod tests {
         let image = frame_buffers_to_identity_rgba_8(&buffers).unwrap();
 
         assert_eq!(image.rgba, vec![10, 30, 50, 255, 20, 40, 60, 255]);
+    }
+
+    #[test]
+    fn identity_rgba_preserves_alpha_plane_in_fast_path() {
+        let layout = PlaneLayout {
+            plane: 0,
+            width: 2,
+            height: 1,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 2,
+        };
+        let buffers = FrameBuffers {
+            width: 2,
+            height: 1,
+            planes: vec![
+                PlaneBuffer {
+                    layout,
+                    samples: vec![30, 40],
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout { plane: 1, ..layout },
+                    samples: vec![50, 60],
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout { plane: 2, ..layout },
+                    samples: vec![10, 20],
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout { plane: 3, ..layout },
+                    samples: vec![7, 230],
+                },
+            ],
+        };
+
+        let image = frame_buffers_to_identity_rgba_8(&buffers).unwrap();
+
+        assert_eq!(image.rgba, vec![10, 30, 50, 7, 20, 40, 60, 230]);
     }
 
     #[test]
