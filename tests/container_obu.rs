@@ -573,6 +573,31 @@ fn callback_decodes_inter_sequence_after_initialization() {
 }
 
 #[test]
+fn external_animated_libavif_sample_metadata_is_parsed_when_present() {
+    let Some(root) = std::env::var_os("AVIF_ANIMATED_SAMPLE_DIR") else {
+        eprintln!("external animated AVIF sample directory is unavailable; skipping");
+        return;
+    };
+    let path = std::path::PathBuf::from(root).join("colors-animated-8bpc.avif");
+    if !path.is_file() {
+        eprintln!("external animated AVIF sample is unavailable; skipping");
+        return;
+    }
+    let data = std::fs::read(&path).expect("animated AVIF sample should be readable");
+    let info = parse_avif(&data).expect("animated AVIF metadata should parse");
+    eprintln!(
+        "animated samples={} kinds={:?}",
+        info.sequence_sample_payloads.len(),
+        info.sequence_sample_payloads
+            .iter()
+            .map(|payload| classify_av1_sequence_sample(payload))
+            .collect::<Result<Vec<_>, _>>()
+    );
+    assert_eq!(info.sequence_sample_payloads.len(), 5);
+    assert_eq!(info.sequence_sample_payloads[0], info.primary_item_payload);
+}
+
+#[test]
 fn public_parsers_reject_truncated_and_malformed_headers() {
     let err = parse_avif(&[0, 0, 0]).unwrap_err();
     assert!(matches!(err, DecoderError::NotEnoughData(message) if message.contains("box header")));

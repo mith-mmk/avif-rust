@@ -2053,3 +2053,15 @@ a round-trip unit test. The full library suite is green (`424 passed`,
 seven-iteration release bench measured `83.8378/83.3717 ms` (native/RGBA) for
 `samples/WML2Viewer.avif`; this is a local regression checkpoint, not a
 portable speedup claim.
+
+On 2026-07-24, animated AVIF container parsing now filters `moov` children to
+actual `trak` boxes before reading track metadata. The official
+`colors-animated-8bpc.avif` sample is covered by an optional metadata
+regression test and exposes all five samples, including `show-existing`; full
+animated frame decode remains a separate AV1 tile-entropy compatibility gap.
+Still-image decode no longer allocates CDF snapshots unless the AVIS sequence
+path needs them for the next predicted sample. The 429-test library suite and
+the animated metadata test pass. Two seven-iteration local release benches
+measured `83.7375/81.9339 ms` and `79.1575/80.6369 ms` (native/RGBA), so this
+change is recorded as an allocation checkpoint rather than a portable speedup
+claim.

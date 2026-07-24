@@ -2079,7 +2079,10 @@ fn parse_sequence_track(
     data: &[u8],
     moov_payload: &[u8],
 ) -> Result<Option<Vec<Vec<u8>>>, DecoderError> {
-    for trak in child_boxes(moov_payload)? {
+    for trak in child_boxes(moov_payload)?
+        .into_iter()
+        .filter(|header| header.box_type == *b"trak")
+    {
         let trak_payload = box_payload(moov_payload, trak)?;
         let Some(mdia) = child_box(trak_payload, b"mdia")? else {
             continue;

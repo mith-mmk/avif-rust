@@ -440,6 +440,7 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
         collect_diagnostics,
         std::array::from_fn(|_| None),
         None,
+        true,
     )?;
     Ok((prefix, state))
 }
@@ -460,6 +461,7 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
     collect_diagnostics: bool,
     reference_buffers: [Option<Arc<FrameBuffers>>; 8],
     initial_cdfs: Option<&[CdfContext]>,
+    collect_cdf: bool,
 ) -> Result<(DecodedBlockPrefix, PostFilterState, Vec<CdfContext>), DecoderError> {
     if tile_group.tiles.is_empty() {
         return Err(DecoderError::Bitstream(
@@ -488,7 +490,9 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
             decoder.reset_left_superblock_contexts();
             for sb_col in tile_plan.sb_col_start..tile_plan.sb_col_end {
                 if block_budget == 0 {
-                    final_cdfs.push(decoder.cdf_snapshot());
+                    if collect_cdf {
+                        final_cdfs.push(decoder.cdf_snapshot());
+                    }
                     post_filter_state.merge(decoder.take_post_filter_state());
                     return Ok((
                         DecodedBlockPrefix {
@@ -523,7 +527,9 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
                     Err(err @ DecoderError::Unsupported(_))
                         if decoded_block_count > block_start =>
                     {
-                        final_cdfs.push(decoder.cdf_snapshot());
+                        if collect_cdf {
+                            final_cdfs.push(decoder.cdf_snapshot());
+                        }
                         post_filter_state.merge(decoder.take_post_filter_state());
                         return Ok((
                             DecodedBlockPrefix {
@@ -549,7 +555,9 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
                 ))
             })?;
         }
-        final_cdfs.push(decoder.cdf_snapshot());
+        if collect_cdf {
+            final_cdfs.push(decoder.cdf_snapshot());
+        }
         post_filter_state.merge(decoder.take_post_filter_state());
     }
 

@@ -818,6 +818,7 @@ fn decode_sequence_samples_from_info(
                             .then_some(cdf_states.as_deref())
                             .flatten(),
                         true,
+                        true,
                     )?;
                 let decoded = finish_decoded_still_frame(&headers, decoded_state, true)?;
                 if !headers.frame.disable_frame_end_update_cdf {
@@ -866,6 +867,7 @@ fn decode_sequence_samples_from_info(
                             .then_some(cdf_states.as_deref())
                             .flatten(),
                         false,
+                        true,
                     ) {
                         Ok(decoded) => decoded,
                         Err(DecoderError::Bitstream(_) | DecoderError::Unsupported(_)) => {
@@ -4210,6 +4212,7 @@ fn decode_still_frame_with_filter_policy_and_state_and_references(
         reference_buffers,
         None,
         true,
+        false,
     )
     .map(|(decoded, _)| decoded)
 }
@@ -4221,6 +4224,7 @@ fn decode_still_frame_with_filter_policy_and_state_and_references_and_cdf(
     reference_buffers: [Option<Arc<FrameBuffers>>; 8],
     initial_cdfs: Option<&[CdfContext]>,
     validate_entropy: bool,
+    collect_cdf: bool,
 ) -> Result<(DecodedStillFrame, Vec<CdfContext>), DecoderError> {
     if validate_filters {
         validate_public_decode_tools(headers)?;
@@ -4239,6 +4243,7 @@ fn decode_still_frame_with_filter_policy_and_state_and_references_and_cdf(
             false,
             reference_buffers,
             initial_cdfs,
+            collect_cdf,
         )?;
     if let Some(err) = prefix.next_unsupported {
         return Err(err);
