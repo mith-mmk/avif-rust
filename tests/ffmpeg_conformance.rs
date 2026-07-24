@@ -4349,6 +4349,59 @@ fn gain_map_frame_api_is_absent_without_tmap() {
 }
 
 #[test]
+fn official_hdr_and_sample_transform_samples_keep_declared_native_range() {
+    let root = std::env::var_os("AVIF_HDR_SAMPLE_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("workspace root should exist")
+                .join("test/images/external/avif/unsupported")
+        });
+    let cases = [
+        (
+            "arc_triomphe_extent1000_nullbyte_extent1310.avif",
+            64,
+            64,
+            8,
+        ),
+        ("colors_hdr_p3.avif", 200, 200, 10),
+        ("colors_hdr_rec2020.avif", 200, 200, 10),
+        ("colors_hdr_srgb.avif", 200, 200, 10),
+        ("colors_sdr_srgb.avif", 200, 200, 8),
+        // The 12B_8B sample-transform input is normalized to the item's
+        // declared 16-bit output depth by the ISO transform metadata.
+        ("weld_sato_12B_8B_q0.avif", 1024, 684, 16),
+    ];
+    for (name, width, height, bit_depth) in cases {
+        let path = root.join(name);
+        if !path.is_file() {
+            eprintln!("official HDR/sample-transform sample is unavailable; skipping {name}");
+            continue;
+        }
+        let data = std::fs::read(&path).expect("official HDR sample should be readable");
+        let frame = avif_rust::decode_frame_bytes(&data)
+            .unwrap_or_else(|error| panic!("{name} should decode completely: {error}"));
+        assert_eq!((frame.width, frame.height), (width, height), "{name}");
+        assert_eq!(frame.bit_depth, bit_depth, "{name} bit depth");
+        let max_sample = (1u32 << bit_depth) - 1;
+        assert!(
+            frame
+                .buffers
+                .planes
+                .iter()
+                .flat_map(|plane| plane.samples.iter())
+                .all(|&sample| u32::from(sample) <= max_sample),
+            "{name} contains a sample outside its declared range"
+        );
+        let rgba = frame
+            .to_rgba16()
+            .unwrap_or_else(|error| panic!("{name} RGBA16 conversion should succeed: {error}"));
+        assert_eq!(rgba.rgba.len(), width * height * 4, "{name} RGBA16 length");
+    }
+}
+
+#[test]
 fn external_gainmap_samples_keep_complete_base_decode() {
     let root = std::env::var_os("AVIF_GAINMAP_SAMPLE_DIR")
         .map(std::path::PathBuf::from)

@@ -7,9 +7,10 @@ use crate::av1::decode_luma_root_block_prefix_with_post_filter_state_and_entropy
 use crate::av1::{
     Av1CodecConfiguration, BlockModeProbe, CdfContext, ChromaSamplePosition, ColorConfig,
     FilmGrainParams, FrameBuffers, FrameDecodePlan, FrameHeader, FrameType, GlobalMotionParams,
-    PartitionProbe, PlaneBuffer, PlaneLayout, QuantState, ReferenceFrameState, ResidualProbe,
-    SequenceHeader, TileEntropyState, TileGroup, alloc_coded_frame_buffers, apply_film_grain,
-    apply_superres_horizontal, build_still_decode_plan, cdef_adjust_primary_strength,
+    LoopFilterParams, PartitionProbe, PlaneBuffer, PlaneLayout, QuantState, ReferenceFrameState,
+    ResidualProbe, SegmentationParams, SequenceHeader, TileEntropyState, TileGroup,
+    alloc_coded_frame_buffers, apply_film_grain, apply_superres_horizontal,
+    build_still_decode_plan, cdef_adjust_primary_strength,
     cdef_filter_block_region_with_edge_mode_into, cdef_find_direction_with_variance,
     convert_linear_rgb_primaries, crop_frame_buffers_to_plan,
     deblock_filter_edge_with_visible_bounds,
@@ -293,17 +294,29 @@ impl DecodedFrame {
         if weight == 0.0 {
             return Ok(base);
         }
-        let base_primaries = self
+        let declared_base_primaries = self
             .color_config
             .color_description
             .map(|description| description.color_primaries)
             .unwrap_or(2);
-        let alternate_primaries = gain_map
+        let declared_alternate_primaries = gain_map
             .frame
             .color_config
             .color_description
             .map(|description| description.color_primaries)
-            .unwrap_or(base_primaries);
+            .unwrap_or(declared_base_primaries);
+        // A gain-map item carries scalar/log gain samples, and libavif files
+        // commonly leave its CICP primaries unspecified (2). Treat an
+        // unspecified side as inheriting the other side rather than trying
+        // to construct a chromaticity matrix for CICP 2.
+        let (base_primaries, alternate_primaries) =
+            if declared_base_primaries == 2 && declared_alternate_primaries != 2 {
+                (declared_alternate_primaries, declared_alternate_primaries)
+            } else if declared_alternate_primaries == 2 {
+                (declared_base_primaries, declared_base_primaries)
+            } else {
+                (declared_base_primaries, declared_alternate_primaries)
+            };
         let convert_alternate =
             !gain_map.metadata.use_base_colour_space && base_primaries != alternate_primaries;
         if convert_alternate
@@ -3529,6 +3542,9 @@ fn apply_deblock_stage(
     if state.block_filter_states.is_empty() || state.transform_boundaries.is_empty() {
         return;
     }
+    if !deblock_has_active_strengths(&frame_header.loop_filter, &frame_header.segmentation, state) {
+        return;
+    }
     const FILTER_GRID_STEP: usize = 8;
     let filter_grid_width = frame.width.div_ceil(FILTER_GRID_STEP);
     let filter_grid_height = frame.height.div_ceil(FILTER_GRID_STEP);
@@ -3763,6 +3779,35 @@ fn apply_deblock_stage(
             }
         }
     }
+}
+
+#[inline]
+fn deblock_has_active_strengths(
+    loop_filter: &LoopFilterParams,
+    segmentation: &SegmentationParams,
+    state: &PostFilterState,
+) -> bool {
+    if loop_filter.levels.iter().any(|&level| level != 0) {
+        return true;
+    }
+    if loop_filter.delta_enabled
+        && (loop_filter.ref_deltas.iter().any(|&delta| delta != 0)
+            || loop_filter.mode_deltas.iter().any(|&delta| delta != 0))
+    {
+        return true;
+    }
+    if segmentation
+        .segment_delta_lf
+        .iter()
+        .flatten()
+        .any(|&delta| delta != 0)
+    {
+        return true;
+    }
+    state
+        .block_filter_states
+        .iter()
+        .any(|block| block.delta_lf.iter().any(|&delta| delta != 0))
 }
 
 fn apply_loop_filter_deltas(

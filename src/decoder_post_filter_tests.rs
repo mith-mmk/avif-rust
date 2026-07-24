@@ -1,12 +1,12 @@
 use super::{
     DecodedFrame, apply_alpha_rows, apply_cdef_plane, apply_loop_filter_deltas,
     apply_loop_restoration_stage, cdef_has_active_strengths, cdef_strengths_disabled,
-    loop_filter_mode_delta_index, loop_filter_reference_delta_index,
+    deblock_has_active_strengths, loop_filter_mode_delta_index, loop_filter_reference_delta_index,
 };
 use crate::av1::CdefParams;
 use crate::av1::{
-    ColorConfig, ColorRange, FrameBuffers, PlaneBuffer, PlaneLayout, PostFilterState,
-    RestorationUnit, wiener_filter_unit,
+    ColorConfig, ColorRange, FrameBuffers, LoopFilterParams, PlaneBuffer, PlaneLayout,
+    PostFilterState, RestorationUnit, SegmentationParams, wiener_filter_unit,
 };
 
 #[test]
@@ -23,6 +23,34 @@ fn inter_loop_filter_uses_reference_and_motion_mode_deltas() {
     assert_eq!(loop_filter_mode_delta_index(true, true), 1);
     assert_eq!(loop_filter_reference_delta_index(false, Some(7)), 0);
     assert_eq!(loop_filter_mode_delta_index(false, true), 0);
+}
+
+#[test]
+fn zero_deblock_strengths_skip_boundary_traversal() {
+    let loop_filter = LoopFilterParams::default();
+    let segmentation = SegmentationParams::default();
+    let state = PostFilterState::default();
+    assert!(!deblock_has_active_strengths(
+        &loop_filter,
+        &segmentation,
+        &state
+    ));
+
+    let mut active_loop_filter = loop_filter;
+    active_loop_filter.levels[0] = 1;
+    assert!(deblock_has_active_strengths(
+        &active_loop_filter,
+        &segmentation,
+        &state
+    ));
+
+    let mut active_segmentation = segmentation;
+    active_segmentation.segment_delta_lf[0][0] = 1;
+    assert!(deblock_has_active_strengths(
+        &loop_filter,
+        &active_segmentation,
+        &state
+    ));
 }
 
 #[test]

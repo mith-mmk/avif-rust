@@ -2107,3 +2107,19 @@ The
 the 11-iteration release benchmark measured `82.6978/84.1873 ms`
 (native/RGBA) for `samples/WML2Viewer.avif`. This is a same-host
 no-regression checkpoint, not a portable speedup claim.
+
+On 2026-07-24, official libavif HDR, sample-transform, and ISO 21496 gain-map
+samples were added to the external manifest. Gain-map composition now treats
+an unspecified CICP primary set (`2`) on the scalar gain-map item as inheriting
+the peer image's primaries, instead of attempting an invalid chromaticity
+conversion. The audit covers HDR P3/Rec.2020/sRGB, `weld_sato_12B_8B_q0`,
+different-size and grid gain maps, and supported/unsupported writer-version
+metadata. Deblocking now exits before building boundary lookup tables when all
+frame, segmentation, and block deltas are zero. The 434-test library suite,
+17-test container suite, and 95-test FFmpeg conformance suite remain green;
+the external gate reports 61 successes, 1 expected failure, 0 unexpected
+results, and 0 partial PNGs. The malformed `poc_b_506387278.avif` is retained
+as one expected fail-closed rejection. A seven-iteration release benchmark measured
+`89.5729/86.8459 ms` for `WML2Viewer.avif`; a 20-iteration filter-disabled
+directional fixture measured `0.3857/0.3903 ms`. These are same-host
+checkpoints, not portable speedup claims.
