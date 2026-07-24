@@ -1977,3 +1977,13 @@ the full library suite (`419 passed`, `5 ignored`), and FFmpeg conformance
 (`90 passed`, `2 ignored`) remain green. The seven-iteration release bench
 measured `86.2827/88.56 ms` (native/RGBA) for `samples/WML2Viewer.avif`; this
 is a local scheduling checkpoint, not a portable speedup claim.
+
+On 2026-07-24, LOCALWARP prediction now reuses a caller-owned `15 * 8` i64
+intermediate scratch buffer across the 8x8 warped blocks in a prediction
+pass. This removes the repeated stack initialization from the hot loop while
+preserving the allocating reference output; a dedicated reuse-parity unit
+test and the three generated LOCALWARP FFmpeg gates remain green. The full
+library suite is green (`420 passed`, `5 ignored`) and FFmpeg conformance is
+green (`90 passed`, `2 ignored`). The seven-iteration release bench for
+`samples/WML2Viewer.avif` measured `84.6383/83.8039 ms` (native/RGBA) on this
+host; this is a local allocation checkpoint, not a portable speedup claim.

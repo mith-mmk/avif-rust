@@ -1214,7 +1214,11 @@ mod reference_frame_tests {
         small
             .buffers
             .planes
-            .push(super::grid_composition_tests::native_plane(32, 32, vec![0; 32 * 32]));
+            .push(super::grid_composition_tests::native_plane(
+                32,
+                32,
+                vec![0; 32 * 32],
+            ));
         assert!(!post_filter_parallel_work_is_large_enough(&small));
 
         let mut large = super::grid_composition_tests::native_frame(
@@ -1225,7 +1229,11 @@ mod reference_frame_tests {
         large
             .buffers
             .planes
-            .push(super::grid_composition_tests::native_plane(256, 256, vec![0; 256 * 256]));
+            .push(super::grid_composition_tests::native_plane(
+                256,
+                256,
+                vec![0; 256 * 256],
+            ));
         assert!(post_filter_parallel_work_is_large_enough(&large));
     }
 

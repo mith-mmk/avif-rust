@@ -1129,6 +1129,7 @@ fn apply_local_warp_prediction(
         return Ok(());
     };
     let (inter_round0, inter_round1) = if bit_depth == 12 { (5, 9) } else { (3, 11) };
+    let mut intermediate = [0_i64; 15 * 8];
     for row in (0..height).step_by(8) {
         for col in (0..width).step_by(8) {
             predict_warped_block_into(
@@ -1150,6 +1151,7 @@ fn apply_local_warp_prediction(
                 inter_round0,
                 inter_round1,
                 bit_depth,
+                &mut intermediate,
             );
         }
     }
@@ -1198,7 +1200,7 @@ fn round_div_power_of_two_signed(value: i64, bits: u32) -> i64 {
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "AV1 warped block filtering keeps geometry and rounding explicit"
+    reason = "AV1 warped block filtering keeps geometry and caller scratch explicit"
 )]
 fn predict_warped_block_into(
     output: &mut [u16],
@@ -1219,6 +1221,7 @@ fn predict_warped_block_into(
     inter_round0: u32,
     inter_round1: u32,
     bit_depth: u8,
+    intermediate: &mut [i64; 15 * 8],
 ) {
     const MODEL_BITS: u32 = 16;
     const DIFF_BITS: u32 = 10;
@@ -1249,7 +1252,6 @@ fn predict_warped_block_into(
     let sy4 = ((y4 & ((1_i64 << MODEL_BITS) - 1)) - 4 * gamma - 4 * delta) & !63;
     let offset_bits_horiz = u32::from(bit_depth) + 7 - 1;
     let offset_bits_vert = u32::from(bit_depth) + 14 - inter_round0;
-    let mut intermediate = [0_i64; 15 * 8];
     for k in -7_i64..8 {
         let iy = (iy4 + k).clamp(0, reference.layout.height.saturating_sub(1) as i64) as usize;
         for l in -4_i64..4 {
@@ -3126,6 +3128,99 @@ mod tests {
         }
         assert_eq!(AV1_WARPED_FILTERS[0], [0, 0, 127, 1, 0, 0, 0, 0]);
         assert_eq!(AV1_WARPED_FILTERS[192], [0, 0, 0, 0, 2, 127, -1, 0]);
+    }
+
+    #[test]
+    fn warped_prediction_reuses_intermediate_scratch_without_changing_output() {
+        let reference = PlaneBuffer {
+            layout: crate::av1::decode::PlaneLayout {
+                plane: 0,
+                width: 32,
+                height: 32,
+                subsampling_x: 0,
+                subsampling_y: 0,
+                sample_count: 32 * 32,
+            },
+            samples: (0..(32 * 32)).map(|value| (value % 256) as u16).collect(),
+        };
+        let params = LocalWarpParams {
+            translation_x: 0,
+            translation_y: 0,
+            alpha: 1 << 16,
+            beta: 0,
+            gamma: 0,
+            delta: 1 << 16,
+        };
+        let mut reused = [0_i64; 15 * 8];
+        let mut first = [0_u16; 64];
+        predict_warped_block_into(
+            &mut first,
+            &reference,
+            0,
+            0,
+            8,
+            8,
+            0,
+            0,
+            0,
+            0,
+            &params,
+            0,
+            0,
+            0,
+            0,
+            3,
+            11,
+            8,
+            &mut reused,
+        );
+        let mut second = [0_u16; 64];
+        predict_warped_block_into(
+            &mut second,
+            &reference,
+            0,
+            0,
+            8,
+            8,
+            0,
+            0,
+            0,
+            0,
+            &params,
+            0,
+            0,
+            0,
+            0,
+            3,
+            11,
+            8,
+            &mut reused,
+        );
+        let mut fresh = [0_i64; 15 * 8];
+        let mut expected = [0_u16; 64];
+        predict_warped_block_into(
+            &mut expected,
+            &reference,
+            0,
+            0,
+            8,
+            8,
+            0,
+            0,
+            0,
+            0,
+            &params,
+            0,
+            0,
+            0,
+            0,
+            3,
+            11,
+            8,
+            &mut fresh,
+        );
+        assert_eq!(first, expected);
+        assert_eq!(second, expected);
     }
 
     #[test]
