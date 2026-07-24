@@ -2065,3 +2065,8 @@ the animated metadata test pass. Two seven-iteration local release benches
 measured `83.7375/81.9339 ms` and `79.1575/80.6369 ms` (native/RGBA), so this
 change is recorded as an allocation checkpoint rather than a portable speedup
 claim.
+
+The same official animated sample was replayed through the public frame API as
+an AV1 tile-entropy audit. Its first key sample still fails closed at strict
+tile termination before a frame is accepted, so animated frame decode remains
+an explicit unsupported boundary; no partial frame is exposed by the API.
