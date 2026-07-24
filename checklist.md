@@ -1969,3 +1969,11 @@ measured `86.6327/85.2226 ms` for native/RGBA on this host. This is a local
 reference for the transform and allocation work, not a cross-machine speedup
 claim. Strict entropy/oracle registration, post-filter coverage, HDR edge
 cases, and non-DCT transforms with 32-point stages remain follow-up items.
+
+On 2026-07-24, CDEF and loop-restoration now avoid spawning one worker per
+plane for small frames; the existing plane-parallel path is retained once the
+combined plane sample count reaches `128 * 1024`. A focused threshold test,
+the full library suite (`419 passed`, `5 ignored`), and FFmpeg conformance
+(`90 passed`, `2 ignored`) remain green. The seven-iteration release bench
+measured `86.2827/88.56 ms` (native/RGBA) for `samples/WML2Viewer.avif`; this
+is a local scheduling checkpoint, not a portable speedup claim.

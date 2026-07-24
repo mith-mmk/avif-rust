@@ -1203,6 +1203,32 @@ mod reference_frame_tests {
         assert!(avis_parallel_work_is_large_enough(&info, 1));
     }
 
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
+    fn post_filter_parallelism_skips_small_frames_but_keeps_large_frames() {
+        let mut small = super::grid_composition_tests::native_frame(
+            64,
+            64,
+            super::grid_composition_tests::native_plane(64, 64, vec![0; 64 * 64]),
+        );
+        small
+            .buffers
+            .planes
+            .push(super::grid_composition_tests::native_plane(32, 32, vec![0; 32 * 32]));
+        assert!(!post_filter_parallel_work_is_large_enough(&small));
+
+        let mut large = super::grid_composition_tests::native_frame(
+            512,
+            512,
+            super::grid_composition_tests::native_plane(512, 512, vec![0; 512 * 512]),
+        );
+        large
+            .buffers
+            .planes
+            .push(super::grid_composition_tests::native_plane(256, 256, vec![0; 256 * 256]));
+        assert!(post_filter_parallel_work_is_large_enough(&large));
+    }
+
     #[test]
     fn indexed_sample_with_own_sequence_header_uses_that_header() {
         let data = include_bytes!("../test_data/images/WML2Viewer.avif");
@@ -2242,7 +2268,7 @@ mod grid_composition_tests {
         assert!(error.to_string().contains("dimensions do not match"));
     }
 
-    fn native_frame(width: usize, height: usize, plane: PlaneBuffer) -> DecodedFrame {
+    pub(super) fn native_frame(width: usize, height: usize, plane: PlaneBuffer) -> DecodedFrame {
         DecodedFrame {
             width,
             height,
@@ -2271,7 +2297,7 @@ mod grid_composition_tests {
         }
     }
 
-    fn native_plane(width: usize, height: usize, samples: Vec<u16>) -> PlaneBuffer {
+    pub(super) fn native_plane(width: usize, height: usize, samples: Vec<u16>) -> PlaneBuffer {
         PlaneBuffer {
             layout: PlaneLayout {
                 plane: 0,
@@ -3587,7 +3613,7 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
     // source/output buffer, so the expensive directional filtering can run
     // concurrently without sharing mutable state.
     #[cfg(not(target_family = "wasm"))]
-    if frame.buffers.planes.len() > 1 {
+    if post_filter_parallel_work_is_large_enough(frame) {
         std::thread::scope(|scope| {
             for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
                 scope.spawn(move || {
@@ -3741,7 +3767,7 @@ fn apply_loop_restoration_stage(
     // Restoration units never cross planes; keep their source snapshots local
     // to each worker and retain the sequential path for Wasm/single-plane data.
     #[cfg(not(target_family = "wasm"))]
-    if frame.buffers.planes.len() > 1 {
+    if post_filter_parallel_work_is_large_enough(frame) {
         std::thread::scope(|scope| {
             for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
                 scope.spawn(move || {
@@ -3760,6 +3786,26 @@ fn apply_loop_restoration_stage(
     for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
         apply_loop_restoration_plane(plane, plane_index, state, unit_size, enabled_types);
     }
+}
+
+#[cfg(not(target_family = "wasm"))]
+const PARALLEL_POST_FILTER_MIN_SAMPLES: usize = 128 * 1024;
+
+#[cfg(not(target_family = "wasm"))]
+fn post_filter_parallel_work_is_large_enough(frame: &DecodedFrame) -> bool {
+    frame.buffers.planes.len() > 1
+        && frame
+            .buffers
+            .planes
+            .iter()
+            .map(|plane| plane.samples.len())
+            .sum::<usize>()
+            >= PARALLEL_POST_FILTER_MIN_SAMPLES
+}
+
+#[cfg(target_family = "wasm")]
+fn post_filter_parallel_work_is_large_enough(_frame: &DecodedFrame) -> bool {
+    false
 }
 
 fn apply_loop_restoration_plane(
