@@ -4472,3 +4472,47 @@ fn external_gainmap_grid_samples_compose_when_present() {
         eprintln!("external gain-map grid samples are unavailable; skipping grid audit");
     }
 }
+
+#[test]
+fn external_official_grid_variants_decode_when_present() {
+    let root = std::env::var_os("AVIF_OFFICIAL_GRID_SAMPLE_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("workspace root should exist")
+                .join("test/images/external/avif/unsupported")
+        });
+    let names = [
+        "color_grid_alpha_nogrid.avif",
+        "color_grid_alpha_grid_tile_shared_in_dimg.avif",
+    ];
+    let mut found = false;
+    for name in names {
+        let path = root.join(name);
+        if !path.is_file() {
+            continue;
+        }
+        found = true;
+        let data = std::fs::read(&path).expect("official grid sample should be readable");
+        let image = avif_rust::image_from_bytes(&data)
+            .unwrap_or_else(|error| panic!("{name} should decode completely: {error}"));
+        assert!(image.width > 0 && image.height > 0);
+        assert_eq!(image.rgba.len(), image.width * image.height * 4);
+        if let Some(expected) = ffmpeg_decode_rgba_dynamic(&path, image.width, image.height) {
+            let metrics = diff_rgb_dynamic(&image.rgba, &expected);
+            assert!(
+                metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 48,
+                "{name} FFmpeg RGBA error average={} max={}",
+                metrics.average_rgb_abs,
+                metrics.max_rgb_abs
+            );
+        }
+        let frame = avif_rust::decode_frame_bytes(&data)
+            .unwrap_or_else(|error| panic!("{name} native planes should decode: {error}"));
+        assert_eq!((frame.width, frame.height), (image.width, image.height));
+    }
+    if !found {
+        eprintln!("official grid variants are unavailable; skipping grid variant audit");
+    }
+}

@@ -24,8 +24,8 @@ use crate::compat::{DataMap, DecodeOptions, InitOptions};
 use crate::container::{
     AvifInfo, AvifSequenceSampleInfo, AvifSequenceSampleKind, CleanAperture, ColorInformation,
     GridCell, ImageMirror, ImageRotation, PixelInformation, SampleTransformInput,
-    SampleTransformToken, inspect_av1_sequence_sample, parse_avif, parse_gain_map_image,
-    parse_sample_transform,
+    SampleTransformToken, grid_cell_alpha_item_id, grid_has_cell_alpha,
+    inspect_av1_sequence_sample, parse_avif, parse_gain_map_image, parse_sample_transform,
 };
 use crate::obu::{ObuType, find_obu_payloads_in_parts, parse_obu_stream};
 use crate::{DecoderError, ImageBuffer, Rgba16ImageBuffer};
@@ -1815,7 +1815,8 @@ fn decode_grid_frame(info: &AvifInfo) -> Result<DecodedFrame, DecoderError> {
     }
     let mut column_widths = vec![0usize; columns];
     let mut row_heights = vec![0usize; rows];
-    let decoded_cells = decode_grid_cells(info, &grid.cells)?;
+    let mut decoded_cells = decode_grid_cells(info, &grid.cells)?;
+    normalize_grid_cells(&mut decoded_cells)?;
     for (index, cell) in grid.cells.iter().enumerate() {
         let cell_width = usize::try_from(cell.width)
             .map_err(|_| DecoderError::InvalidParam("grid cell width is too large".to_string()))?;
@@ -1851,23 +1852,30 @@ fn decode_grid_frame(info: &AvifInfo) -> Result<DecodedFrame, DecoderError> {
             )));
         }
     }
-    if column_widths.iter().sum::<usize>() != width || row_heights.iter().sum::<usize>() != height {
-        return Err(DecoderError::Bitstream(
-            "grid cell dimensions do not cover the declared output".to_string(),
-        ));
+    if column_widths.iter().sum::<usize>() < width || row_heights.iter().sum::<usize>() < height {
+        return Err(DecoderError::Bitstream(format!(
+            "grid cell dimensions do not cover declared output {}x{} (columns {:?}, rows {:?})",
+            width, height, column_widths, row_heights
+        )));
     }
     let first = decoded_cells
         .first()
         .ok_or_else(|| DecoderError::Bitstream("grid has no cells".to_string()))?;
     let plane_count = first.buffers.planes.len();
-    for cell in &decoded_cells {
+    for (index, cell) in decoded_cells.iter().enumerate() {
         if cell.buffers.planes.len() != plane_count
             || cell.bit_depth != first.bit_depth
             || cell.color_config != first.color_config
         {
-            return Err(DecoderError::Unsupported(
-                "grid cells use different AV1 plane or color configurations".to_string(),
-            ));
+            return Err(DecoderError::Unsupported(format!(
+                "grid cell {index} uses different AV1 plane/color configuration: planes={}, bit_depth={}, color_config={:?}; first planes={}, bit_depth={}, color_config={:?}",
+                cell.buffers.planes.len(),
+                cell.bit_depth,
+                cell.color_config,
+                plane_count,
+                first.bit_depth,
+                first.color_config
+            )));
         }
     }
     let mut planes = Vec::with_capacity(plane_count);
@@ -1916,21 +1924,25 @@ fn decode_grid_frame(info: &AvifInfo) -> Result<DecodedFrame, DecoderError> {
                 }
                 let destination_x = x_offset / scale_x;
                 let destination_y = y_offset / scale_y;
-                if destination_x + source.layout.width > destination.layout.width
-                    || destination_y + source.layout.height > destination.layout.height
+                if destination_x >= destination.layout.width
+                    || destination_y >= destination.layout.height
                 {
-                    return Err(DecoderError::Bitstream(
-                        "grid cell plane exceeds composed output".to_string(),
-                    ));
+                    continue;
                 }
-                for source_y in 0..source.layout.height {
+                let copy_width = source
+                    .layout
+                    .width
+                    .min(destination.layout.width - destination_x);
+                let copy_height = source
+                    .layout
+                    .height
+                    .min(destination.layout.height - destination_y);
+                for source_y in 0..copy_height {
                     let source_start = source_y * source.layout.width;
                     let destination_start =
                         (destination_y + source_y) * destination.layout.width + destination_x;
-                    destination.samples[destination_start..destination_start + source.layout.width]
-                        .copy_from_slice(
-                            &source.samples[source_start..source_start + source.layout.width],
-                        );
+                    destination.samples[destination_start..destination_start + copy_width]
+                        .copy_from_slice(&source.samples[source_start..source_start + copy_width]);
                 }
             }
             x_offset += column_widths[column];
@@ -1955,7 +1967,12 @@ fn decode_grid_frame(info: &AvifInfo) -> Result<DecodedFrame, DecoderError> {
     if let Some(alpha_grid) = info.alpha_grid.as_ref() {
         let (alpha_plane, alpha_bit_depth) = decode_alpha_grid_plane(alpha_grid)?;
         append_alpha_plane_buffer(&mut frame, alpha_plane, alpha_bit_depth)?;
-    } else if !info.alpha_auxiliary_items.is_empty() {
+    } else if !info.alpha_auxiliary_items.is_empty()
+        && !info
+            .primary_grid
+            .as_ref()
+            .is_some_and(|grid| grid_has_cell_alpha(&grid.payload))
+    {
         let alpha_frame = decode_alpha_auxiliary_frame(info)?;
         append_alpha_plane(&mut frame, &alpha_frame)?;
     }
@@ -2251,15 +2268,21 @@ fn decode_grid_image(info: &AvifInfo) -> Result<ImageBuffer, DecoderError> {
         column_widths[column] = cell_width;
         row_heights[row] = cell_height;
     }
-    if column_widths.iter().sum::<usize>() != width || row_heights.iter().sum::<usize>() != height {
-        return Err(DecoderError::Bitstream(
-            "grid cell dimensions do not cover the declared output".to_string(),
-        ));
+    if column_widths.iter().sum::<usize>() < width || row_heights.iter().sum::<usize>() < height {
+        return Err(DecoderError::Bitstream(format!(
+            "grid cell dimensions do not cover declared output {}x{} (columns {:?}, rows {:?})",
+            width, height, column_widths, row_heights
+        )));
     }
     let mut image = compose_grid_images(grid, &decoded_cells, &column_widths, &row_heights)?;
     if let Some(alpha_grid) = info.alpha_grid.as_ref() {
         apply_alpha_grid(&mut image, alpha_grid)?;
-    } else if !info.alpha_auxiliary_items.is_empty() {
+    } else if !info.alpha_auxiliary_items.is_empty()
+        && !info
+            .primary_grid
+            .as_ref()
+            .is_some_and(|grid| grid_has_cell_alpha(&grid.payload))
+    {
         apply_alpha_auxiliary(&mut image, info)?;
     }
     apply_clean_aperture(&mut image, info.clean_aperture)?;
@@ -2307,17 +2330,111 @@ fn compose_grid_images(
                     "grid cell image dimensions do not match metadata".to_string(),
                 ));
             }
-            for y in 0..cell.height {
-                let destination = ((y_offset + y) * width + x_offset) * 4;
-                let source = y * cell.width * 4;
-                image.rgba[destination..destination + cell.width * 4]
-                    .copy_from_slice(&cell.rgba[source..source + cell.width * 4]);
+            if x_offset < width && y_offset < height {
+                let copy_width = cell.width.min(width - x_offset);
+                let copy_height = cell.height.min(height - y_offset);
+                for y in 0..copy_height {
+                    let destination = ((y_offset + y) * width + x_offset) * 4;
+                    let source = y * cell.width * 4;
+                    let row_len = copy_width * 4;
+                    image.rgba[destination..destination + row_len]
+                        .copy_from_slice(&cell.rgba[source..source + row_len]);
+                }
             }
             x_offset += column_widths[column];
         }
         y_offset += row_heights[row];
     }
     Ok(image)
+}
+
+fn normalize_grid_cells(decoded_cells: &mut [DecodedFrame]) -> Result<(), DecoderError> {
+    let Some(target) = decoded_cells
+        .iter()
+        .find(|cell| !cell.color_config.monochrome)
+    else {
+        return Ok(());
+    };
+    let target_config = target.color_config;
+    let target_color_information = target.color_information.clone();
+    let target_bit_depth = target.bit_depth;
+    let target_has_alpha = decoded_cells.iter().any(|cell| {
+        cell.buffers
+            .planes
+            .iter()
+            .any(|plane| plane.layout.plane == 3)
+    });
+    for cell in decoded_cells {
+        if cell.color_config.monochrome {
+            let luma = cell
+                .buffers
+                .planes
+                .iter()
+                .find(|plane| plane.layout.plane == 0)
+                .cloned()
+                .ok_or_else(|| {
+                    DecoderError::Bitstream(
+                        "monochrome grid cell is missing its luma plane".to_string(),
+                    )
+                })?;
+            let alpha = cell
+                .buffers
+                .planes
+                .iter()
+                .find(|plane| plane.layout.plane == 3)
+                .cloned();
+            let chroma_x = u8::from(target_config.subsampling_x);
+            let chroma_y = u8::from(target_config.subsampling_y);
+            let chroma_width = cell.width.div_ceil(1usize << chroma_x);
+            let chroma_height = cell.height.div_ceil(1usize << chroma_y);
+            let chroma_samples = chroma_width.checked_mul(chroma_height).ok_or_else(|| {
+                DecoderError::InvalidParam("grid chroma plane size overflows".to_string())
+            })?;
+            let neutral = 1u16 << target_bit_depth.saturating_sub(1);
+            let make_chroma = |plane: u8| PlaneBuffer {
+                layout: PlaneLayout {
+                    plane,
+                    width: chroma_width,
+                    height: chroma_height,
+                    subsampling_x: chroma_x,
+                    subsampling_y: chroma_y,
+                    sample_count: chroma_samples,
+                },
+                samples: vec![neutral; chroma_samples],
+            };
+            let mut planes = vec![luma, make_chroma(1), make_chroma(2)];
+            if let Some(alpha) = alpha {
+                planes.push(alpha);
+            }
+            cell.buffers.planes = planes;
+            cell.color_config = target_config;
+            cell.color_information = target_color_information.clone();
+        }
+        if target_has_alpha
+            && !cell
+                .buffers
+                .planes
+                .iter()
+                .any(|plane| plane.layout.plane == 3)
+        {
+            let alpha_samples = cell.width.checked_mul(cell.height).ok_or_else(|| {
+                DecoderError::InvalidParam("grid alpha plane size overflows".to_string())
+            })?;
+            let opaque = ((1u32 << target_bit_depth) - 1) as u16;
+            cell.buffers.planes.push(PlaneBuffer {
+                layout: PlaneLayout {
+                    plane: 3,
+                    width: cell.width,
+                    height: cell.height,
+                    subsampling_x: 0,
+                    subsampling_y: 0,
+                    sample_count: alpha_samples,
+                },
+                samples: vec![opaque; alpha_samples],
+            });
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2356,6 +2473,25 @@ mod grid_composition_tests {
         assert_eq!(image.rgba[8], 20);
         assert_eq!(image.rgba[2 * 3 * 4], 30);
         assert_eq!(image.rgba[(2 * 3 + 2) * 4], 40);
+    }
+
+    #[test]
+    fn compose_grid_crops_oversized_edge_cells_to_output() {
+        let grid = GridImage {
+            item_id: 1,
+            rows: 2,
+            columns: 1,
+            output_width: 2,
+            output_height: 3,
+            payload: Vec::new(),
+            cells: Vec::new(),
+        };
+        let cells = vec![cell(2, 2, 10), cell(2, 2, 20)];
+        let image = compose_grid_images(&grid, &cells, &[2], &[2, 2]).unwrap();
+        assert_eq!((image.width, image.height), (2, 3));
+        assert_eq!(image.rgba[0], 10);
+        assert_eq!(image.rgba[(2 * 2) * 4], 20);
+        assert_eq!(image.rgba[(2 * 2 + 1) * 4], 20);
     }
 
     #[test]
@@ -2505,6 +2641,21 @@ mod grid_composition_tests {
 }
 
 fn grid_cell_info(info: &AvifInfo, cell: &GridCell) -> AvifInfo {
+    let alpha_auxiliary_items = if info.alpha_grid.is_none() {
+        info.primary_grid
+            .as_ref()
+            .and_then(|grid| grid_cell_alpha_item_id(&grid.payload, cell.item_id))
+            .and_then(|alpha_id| {
+                info.alpha_auxiliary_items
+                    .iter()
+                    .find(|item| item.item_id == alpha_id)
+                    .cloned()
+            })
+            .into_iter()
+            .collect()
+    } else {
+        Vec::new()
+    };
     AvifInfo {
         major_brand: info.major_brand,
         compatible_brands: info.compatible_brands.clone(),
@@ -2517,7 +2668,7 @@ fn grid_cell_info(info: &AvifInfo, cell: &GridCell) -> AvifInfo {
             .clone()
             .or_else(|| info.color_information.clone()),
         alpha_premultiplied: false,
-        alpha_auxiliary_items: Vec::new(),
+        alpha_auxiliary_items,
         alpha_grid: None,
         primary_grid: None,
         clean_aperture: None,
@@ -2680,7 +2831,7 @@ fn decode_alpha_grid_plane(
             )));
         }
     }
-    if column_widths.iter().sum::<usize>() != width || row_heights.iter().sum::<usize>() != height {
+    if column_widths.iter().sum::<usize>() < width || row_heights.iter().sum::<usize>() < height {
         return Err(DecoderError::Bitstream(
             "alpha grid cell dimensions do not cover the declared output".to_string(),
         ));
@@ -2742,21 +2893,20 @@ fn decode_alpha_grid_plane(
             }
             let destination_x = x_offset / scale_x;
             let destination_y = y_offset / scale_y;
-            if destination_x + source.layout.width > output.layout.width
-                || destination_y + source.layout.height > output.layout.height
-            {
-                return Err(DecoderError::Bitstream(
-                    "alpha grid cell plane exceeds composed output".to_string(),
-                ));
+            if destination_x >= output.layout.width || destination_y >= output.layout.height {
+                continue;
             }
-            for source_y in 0..source.layout.height {
+            let copy_width = source.layout.width.min(output.layout.width - destination_x);
+            let copy_height = source
+                .layout
+                .height
+                .min(output.layout.height - destination_y);
+            for source_y in 0..copy_height {
                 let source_start = source_y * source.layout.width;
                 let destination_start =
                     (destination_y + source_y) * output.layout.width + destination_x;
-                output.samples[destination_start..destination_start + source.layout.width]
-                    .copy_from_slice(
-                        &source.samples[source_start..source_start + source.layout.width],
-                    );
+                output.samples[destination_start..destination_start + copy_width]
+                    .copy_from_slice(&source.samples[source_start..source_start + copy_width]);
             }
             x_offset += column_widths[column];
         }

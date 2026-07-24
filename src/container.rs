@@ -7,6 +7,7 @@ const BRAND_AVIF: &[u8; 4] = b"avif";
 const BRAND_AVIS: &[u8; 4] = b"avis";
 const BRAND_AVIO: &[u8; 4] = b"avio";
 const ALPHA_AUX_TYPE: &str = "urn:mpeg:mpegB:cicp:systems:auxiliary:alpha";
+const GRID_ALPHA_MAP_MAGIC: &[u8; 8] = b"WML2ALPH";
 
 /// The coded-frame kind found in one AVIS track sample.
 ///
@@ -2397,40 +2398,44 @@ fn alpha_auxiliary_items_for(
     state: &MetaState,
     owner_item_id: Option<u32>,
 ) -> Result<Vec<AuxiliaryImage>, DecoderError> {
-    let mut item_ids: Vec<(u32, String)> = state
-        .item_property_associations
-        .iter()
-        .filter_map(|association| {
-            association
-                .associations
+    let mut item_ids: Vec<(u32, String)> = Vec::new();
+    if let Some(owner_item_id) = owner_item_id {
+        item_ids.extend(
+            state
+                .item_references
                 .iter()
-                .filter_map(|index| {
-                    state
-                        .item_properties
-                        .get(usize::from(index.index).saturating_sub(1))
+                .filter(|reference| {
+                    reference.reference_type == *b"auxl" && reference.from_item_id == owner_item_id
                 })
-                .find_map(|property| match property {
-                    ItemProperty::AuxiliaryType(aux_type) if aux_type == ALPHA_AUX_TYPE => {
-                        Some((association.item_id, aux_type.clone()))
-                    }
-                    _ => None,
-                })
-        })
-        .collect();
-
-    if item_ids.is_empty()
-        && let Some(primary_item_id) = owner_item_id
-    {
-        for reference in &state.item_references {
-            if &reference.reference_type == b"auxl" && reference.from_item_id == primary_item_id {
-                item_ids.extend(
+                .flat_map(|reference| {
                     reference
                         .to_item_ids
                         .iter()
-                        .map(|item_id| (*item_id, ALPHA_AUX_TYPE.to_string())),
-                );
-            }
-        }
+                        .map(|item_id| (*item_id, ALPHA_AUX_TYPE.to_string()))
+                }),
+        );
+    }
+    if item_ids.is_empty() {
+        item_ids = state
+            .item_property_associations
+            .iter()
+            .filter_map(|association| {
+                association
+                    .associations
+                    .iter()
+                    .filter_map(|index| {
+                        state
+                            .item_properties
+                            .get(usize::from(index.index).saturating_sub(1))
+                    })
+                    .find_map(|property| match property {
+                        ItemProperty::AuxiliaryType(aux_type) if aux_type == ALPHA_AUX_TYPE => {
+                            Some((association.item_id, aux_type.clone()))
+                        }
+                        _ => None,
+                    })
+            })
+            .collect();
     }
 
     item_ids.sort_by_key(|(item_id, _)| *item_id);
@@ -2513,6 +2518,7 @@ fn parse_grid_item(
             cell_ids.len()
         )));
     }
+    let alpha_item_ids = grid_cell_alpha_item_ids(state, cell_ids)?;
     let mut cells = Vec::with_capacity(cell_count);
     for &item_id in cell_ids {
         let item_info = state
@@ -2554,9 +2560,115 @@ fn parse_grid_item(
         columns: parsed.columns,
         output_width: parsed.output_width,
         output_height: parsed.output_height,
-        payload: payload.to_vec(),
+        payload: encode_grid_alpha_map(payload, &alpha_item_ids),
         cells,
     })
+}
+
+fn grid_cell_alpha_item_ids(
+    state: &MetaState,
+    cell_ids: &[u32],
+) -> Result<Vec<(u32, u32)>, DecoderError> {
+    let mut mappings = Vec::new();
+    for &cell_id in cell_ids {
+        let alpha_ids = state
+            .item_references
+            .iter()
+            .filter(|reference| {
+                reference.reference_type == *b"auxl" && reference.from_item_id == cell_id
+            })
+            .flat_map(|reference| reference.to_item_ids.iter().copied())
+            .collect::<Vec<_>>();
+        let alpha_ids = if alpha_ids.is_empty() {
+            state
+                .item_references
+                .iter()
+                .filter(|reference| {
+                    reference.reference_type == *b"auxl"
+                        && reference.to_item_ids.contains(&cell_id)
+                        && state
+                            .item_property_associations
+                            .iter()
+                            .find(|association| association.item_id == reference.from_item_id)
+                            .is_some_and(|association| {
+                                association.associations.iter().any(|index| {
+                                    state
+                                        .item_properties
+                                        .get(usize::from(index.index).saturating_sub(1))
+                                        .is_some_and(|property| {
+                                            matches!(
+                                                property,
+                                                ItemProperty::AuxiliaryType(aux_type)
+                                                    if aux_type == ALPHA_AUX_TYPE
+                                            )
+                                        })
+                                })
+                            })
+                })
+                .map(|reference| reference.from_item_id)
+                .collect::<Vec<_>>()
+        } else {
+            alpha_ids
+        };
+        if alpha_ids.len() > 1 {
+            return Err(DecoderError::Unsupported(format!(
+                "grid cell {cell_id} references multiple alpha auxiliary items"
+            )));
+        }
+        if let Some(alpha_id) = alpha_ids.first() {
+            mappings.push((cell_id, *alpha_id));
+        }
+    }
+    Ok(mappings)
+}
+
+fn encode_grid_alpha_map(payload: &[u8], mappings: &[(u32, u32)]) -> Vec<u8> {
+    if mappings.is_empty() {
+        return payload.to_vec();
+    }
+    // GridImage has no spare public field for per-cell alpha ownership. Keep
+    // the original grid payload as a prefix and append this private parser
+    // trailer; decoder accessors strip the trailer without changing the API.
+    let mut encoded = Vec::with_capacity(payload.len() + 10 + mappings.len() * 8);
+    encoded.extend_from_slice(payload);
+    encoded.extend_from_slice(GRID_ALPHA_MAP_MAGIC);
+    encoded.extend_from_slice(&(mappings.len() as u16).to_be_bytes());
+    for &(cell_id, alpha_id) in mappings {
+        encoded.extend_from_slice(&cell_id.to_be_bytes());
+        encoded.extend_from_slice(&alpha_id.to_be_bytes());
+    }
+    encoded
+}
+
+pub(crate) fn grid_cell_alpha_item_id(payload: &[u8], cell_id: u32) -> Option<u32> {
+    let magic_offset = payload
+        .windows(GRID_ALPHA_MAP_MAGIC.len())
+        .rposition(|window| window == GRID_ALPHA_MAP_MAGIC)?;
+    let count_offset = magic_offset + GRID_ALPHA_MAP_MAGIC.len();
+    let count_bytes = payload.get(count_offset..count_offset + 2)?;
+    let count = usize::from(u16::from_be_bytes([count_bytes[0], count_bytes[1]]));
+    let records_end = count_offset.checked_add(2 + count.checked_mul(8)?)?;
+    if records_end != payload.len() {
+        return None;
+    }
+    let mut cursor = count_offset + 2;
+    for _ in 0..count {
+        let record = payload.get(cursor..cursor + 8)?;
+        let record_cell = u32::from_be_bytes(record[0..4].try_into().ok()?);
+        let alpha_id = u32::from_be_bytes(record[4..8].try_into().ok()?);
+        if record_cell == cell_id {
+            return Some(alpha_id);
+        }
+        cursor += 8;
+    }
+    None
+}
+
+pub(crate) fn grid_has_cell_alpha(payload: &[u8]) -> bool {
+    payload
+        .windows(GRID_ALPHA_MAP_MAGIC.len())
+        .rposition(|window| window == GRID_ALPHA_MAP_MAGIC)
+        .is_some()
 }
 
 #[cfg(test)]
@@ -2974,6 +3086,16 @@ mod tests {
 
     fn common_gain_map_payload() -> Vec<u8> {
         gain_map_payload(0, &[])
+    }
+
+    #[test]
+    fn grid_alpha_map_round_trips_cell_to_auxiliary_id() {
+        let payload = encode_grid_alpha_map(&[1, 2, 3], &[(2, 5), (3, 6)]);
+        assert_eq!(grid_cell_alpha_item_id(&payload, 2), Some(5));
+        assert_eq!(grid_cell_alpha_item_id(&payload, 3), Some(6));
+        assert_eq!(grid_cell_alpha_item_id(&payload, 4), None);
+        assert!(grid_has_cell_alpha(&payload));
+        assert_eq!(encode_grid_alpha_map(&[1, 2, 3], &[]), vec![1, 2, 3]);
     }
 
     #[test]

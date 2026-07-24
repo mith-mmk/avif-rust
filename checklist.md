@@ -2039,3 +2039,17 @@ conformance is green (`91 passed`, `2 ignored`). The seven-iteration release
 bench measured `81.1717/82.9439 ms` (native/RGBA) for
 `samples/WML2Viewer.avif`; this is a local checkpoint, not a portable speedup
 claim.
+
+On 2026-07-24, official libavif grid fixtures now cover two previously
+unsupported container cases: edge cells whose coded dimensions exceed the
+declared output rectangle, and per-cell alpha auxiliaries (including the
+reverse `auxl` association direction). A shared grid tile that decodes as
+monochrome is normalized to the color grid's plane configuration before native
+composition, while RGBA composition clips the coded edge cells to the visible
+80x80 output. The external conformance test compares both fixtures with the
+FFmpeg RGBA oracle and native-plane dimensions; the private grid-alpha map has
+a round-trip unit test. The full library suite is green (`424 passed`,
+`5 ignored`) and FFmpeg conformance is green (`92 passed`, `2 ignored`). The
+seven-iteration release bench measured `83.8378/83.3717 ms` (native/RGBA) for
+`samples/WML2Viewer.avif`; this is a local regression checkpoint, not a
+portable speedup claim.
