@@ -1891,3 +1891,12 @@ complete native planes and declared-range checks plus an FFmpeg RGBA oracle
 passes the complete-frame gate and RGBA oracle (average RGB error `31.54`,
 max `255`), extending the motion-compensation coverage through the highest
 currently supported AV1 bit depth.
+
+The strict Inter entropy probe was also narrowed to a reproducible boundary:
+the generated 8-bit Inter tile reaches its final decoded block (the last block
+is an 8x32 OBMC block), then the optional trailing-bit validator rejects the
+range-decoder position before any partial frame is returned. This is a
+bit-consumption/termination discrepancy, not an unhandled block syntax branch;
+strict Inter/Switch acceptance therefore remains disabled until the entropy
+position is reconciled with the motion/CDF traversal. The diagnostic probe and
+all temporary logging are kept out of the normal decode path.
