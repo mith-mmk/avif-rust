@@ -51,6 +51,7 @@ pub use sequence::{
 pub use syntax::UvPredictionMode;
 pub use syntax::{BlockSize, Partition, PredictionMode, TxSize, TxType};
 pub use tile::TileInfo;
+pub(crate) use tile_decode::BlockFilterState;
 pub(crate) use tile_decode::PostFilterState;
 #[cfg(test)]
 pub(crate) use tile_decode::RestorationUnit;

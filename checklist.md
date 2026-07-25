@@ -2482,3 +2482,15 @@ conformance passed `104` tests with `2` ignored. Two 11-iteration optimized
 WML2Viewer checkpoints measured `78.6205/78.3933 ms` and
 `80.3829/77.6366 ms` native/RGBA; the variation is retained as a same-host
 no-regression checkpoint rather than a portable speedup claim.
+
+The CDEF stage preparation now follows the AOM `skip_txfm` rule: the filtered
+8x8 mask is derived from decoded block state, while CDEF strength tables only
+control the signalled luma/chroma strengths. The previous synthetic
+strength-level skip fields were removed, and a focused mask vector covers both
+skipped and non-skipped blocks. The focused post-filter suite passed `14`
+tests, the full library suite passed `455` tests with `5` ignored, strict
+oracles passed `12` tests, and FFmpeg conformance passed `104` tests with `2`
+ignored. The parent AVIF integration passed `3` enabled and `1` disabled test.
+Two 11-iteration release runs measured `86.6428/85.5039 ms` and
+`81.6340/81.9742 ms` native/RGBA for `samples/WML2Viewer.avif`; this remains a
+same-host no-regression check, not a portable speedup claim.

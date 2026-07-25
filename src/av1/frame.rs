@@ -1721,11 +1721,6 @@ pub struct CdefStrength {
     pub y_sec: u8,
     pub uv_pri: u8,
     pub uv_sec: u8,
-    /// CDEF skip flags are retained in the private model; legacy AVIF
-    /// reduced-header writers omit these syntax bits and therefore default
-    /// them to false during parsing.
-    pub y_filter_skip: bool,
-    pub uv_filter_skip: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1747,8 +1742,6 @@ impl Default for CdefParams {
                 y_sec: 0,
                 uv_pri: 0,
                 uv_sec: 0,
-                y_filter_skip: false,
-                uv_filter_skip: false,
             }; 8],
         }
     }
