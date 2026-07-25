@@ -5,7 +5,7 @@ use super::{
 };
 use crate::DecoderError;
 use crate::av1::decode::{FrameBuffers, FrameDecodePlan, PlaneBuffer};
-use crate::av1::frame::{FrameHeader, InterpolationFilter};
+use crate::av1::frame::{FrameHeader, GlobalMotionType, InterpolationFilter};
 use crate::av1::predict::{
     IntraEdges, predict_filter_intra_into, predict_intra_with_edge_filter_into,
 };
@@ -178,6 +178,7 @@ pub(super) fn decode_plane_block_unit(
                 reference_plane,
                 secondary_reference_plane,
                 block_mode,
+                frame,
                 plane_index,
                 prediction_mode,
                 block_x,
@@ -236,6 +237,7 @@ pub(super) fn decode_plane_block_unit(
                 reference_plane,
                 secondary_reference_plane,
                 block_mode,
+                frame,
                 plane_index,
                 prediction_mode,
                 block_x,
@@ -288,6 +290,7 @@ pub(super) fn decode_plane_block_unit(
             reference_plane,
             secondary_reference_plane,
             block_mode,
+            frame,
             plane_index,
             prediction_mode,
             block_x,
@@ -584,6 +587,7 @@ fn predict_plane_block_into(
     reference_plane: Option<&PlaneBuffer>,
     secondary_reference_plane: Option<&PlaneBuffer>,
     block_mode: &BlockModeProbe,
+    frame: &FrameHeader,
     plane_index: usize,
     prediction_mode: PredictionMode,
     block_x: usize,
@@ -654,6 +658,39 @@ fn predict_plane_block_into(
             mask_geometry,
             output,
         )?;
+        if secondary_reference_plane.is_none() {
+            let global_model = block_mode
+                .global_motion_index
+                .and_then(|index| {
+                    frame
+                        .global_motion
+                        .types
+                        .get(index)
+                        .copied()
+                        .zip(frame.global_motion.matrices.get(index).copied())
+                })
+                .filter(|(motion_type, _)| {
+                    matches!(
+                        motion_type,
+                        GlobalMotionType::RotZoom | GlobalMotionType::Affine
+                    )
+                });
+            if let Some((_, matrix)) = global_model {
+                let _ = predict_global_motion_block_into(
+                    output,
+                    reference,
+                    x,
+                    y,
+                    width,
+                    height,
+                    subsampling_x,
+                    subsampling_y,
+                    bit_depth,
+                    frame.allow_high_precision_mv,
+                    matrix,
+                );
+            }
+        }
         match block_mode.motion_mode {
             MotionMode::Simple => {}
             MotionMode::Obmc => apply_obmc_edge_blend(
@@ -1079,6 +1116,70 @@ fn obmc_mask_value(length: usize, index: usize) -> u8 {
     clippy::too_many_arguments,
     reason = "local warp prediction keeps reference, block geometry, and filter state explicit"
 )]
+/// Reconstruct a single-reference GLOBALMV block with its signalled
+/// rotzoom/affine matrix.  Translation-only global motion intentionally stays
+/// on the cheaper regular predictor because the block-centre MV is equivalent.
+fn predict_global_motion_block_into(
+    output: &mut [u16],
+    reference: &PlaneBuffer,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    subsampling_x: usize,
+    subsampling_y: usize,
+    bit_depth: u8,
+    allow_high_precision_mv: bool,
+    matrix: [i32; 6],
+) -> bool {
+    let translation_shift = if allow_high_precision_mv { 3 } else { 4 };
+    let Some(translation_x) = i64::from(matrix[0]).checked_shl(translation_shift) else {
+        return false;
+    };
+    let Some(translation_y) = i64::from(matrix[1]).checked_shl(translation_shift) else {
+        return false;
+    };
+    let params = LocalWarpParams {
+        translation_x,
+        translation_y,
+        alpha: i64::from(matrix[2]),
+        beta: i64::from(matrix[3]),
+        gamma: i64::from(matrix[4]),
+        delta: i64::from(matrix[5]),
+    };
+    let Some((warp_alpha, warp_beta, warp_gamma, warp_delta)) = setup_warp_shear(&params) else {
+        return false;
+    };
+    let (inter_round0, inter_round1) = if bit_depth == 12 { (5, 9) } else { (3, 11) };
+    let mut intermediate = [0_i64; 15 * 8];
+    for row in (0..height).step_by(8) {
+        for col in (0..width).step_by(8) {
+            predict_warped_block_into(
+                output,
+                reference,
+                x,
+                y,
+                width,
+                height,
+                row,
+                col,
+                subsampling_x,
+                subsampling_y,
+                &params,
+                warp_alpha,
+                warp_beta,
+                warp_gamma,
+                warp_delta,
+                inter_round0,
+                inter_round1,
+                bit_depth,
+                &mut intermediate,
+            );
+        }
+    }
+    true
+}
+
 fn apply_local_warp_prediction(
     output: &mut [u16],
     reference: &PlaneBuffer,

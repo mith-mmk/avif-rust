@@ -63,6 +63,12 @@ pub struct BlockModeProbe {
     pub reference_frame_secondary: Option<u8>,
     pub motion_vector: Option<(i32, i32)>,
     pub motion_vector_secondary: Option<(i32, i32)>,
+    /// Reference-type index when the block selected AV1 GLOBALMV.  Keeping
+    /// this separate from the decoded motion vector lets reconstruction apply
+    /// the full rotzoom/affine model instead of reducing it to the block
+    /// centre translation.
+    pub global_motion_index: Option<usize>,
+    pub global_motion_index_secondary: Option<usize>,
     pub motion_mode: MotionMode,
     pub interintra_mode: Option<InterIntraMode>,
     pub interintra_wedge_index: Option<u8>,

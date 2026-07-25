@@ -225,6 +225,8 @@ impl<'a> TileDecoder<'a> {
             reference_frame_secondary: None,
             motion_vector: None,
             motion_vector_secondary: None,
+            global_motion_index: None,
+            global_motion_index_secondary: None,
             motion_mode: MotionMode::Simple,
             interintra_mode: None,
             interintra_wedge_index: None,
@@ -311,6 +313,8 @@ impl<'a> TileDecoder<'a> {
             self.inter_mv_candidate_count(x, y, block_size, reference_frame, false);
         let secondary_predictor = reference_frame_secondary
             .map(|reference| self.inter_mv_predictor_secondary(x, y, block_size, reference));
+        let mut global_motion_index = None;
+        let mut global_motion_index_secondary = None;
         let (motion_vector, motion_vector_secondary) = if is_compound {
             let mode = if skip {
                 1
@@ -377,6 +381,9 @@ impl<'a> TileDecoder<'a> {
                 }
             };
             let first = if mode == 6 {
+                global_motion_index = Some(reference_type);
+                global_motion_index_secondary =
+                    Some(reference_type_secondary.unwrap_or(reference_type));
                 frame.global_motion.motion_vector(
                     reference_type,
                     block_size,
@@ -416,6 +423,7 @@ impl<'a> TileDecoder<'a> {
                     };
                     self.inter_mv_candidate(x, y, block_size, reference_frame, ref_mv_index, false)
                 } else {
+                    global_motion_index = Some(reference_type);
                     frame.global_motion.motion_vector(
                         reference_type,
                         block_size,
@@ -605,6 +613,8 @@ impl<'a> TileDecoder<'a> {
             reference_frame_secondary,
             motion_vector: Some(motion_vector),
             motion_vector_secondary,
+            global_motion_index,
+            global_motion_index_secondary,
             motion_mode,
             interintra_mode,
             interintra_wedge_index,

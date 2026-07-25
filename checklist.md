@@ -2320,3 +2320,13 @@ non-affine CLUTs remain fail-closed. The nested library suite is `444 passed,
 `WML2Viewer.avif`. The checklist snapshot is now `157/171` (`91.81%`);
 external compatibility coverage remains `75/76` successful decodes
 (`98.68%`) with `100%` expected behavior.
+
+Single-reference GLOBALMV reconstruction now applies signalled rotzoom and
+affine matrices through the existing two-pass warped filter instead of using
+only the block-centre translation vector; translation and compound global
+motion retain the regular predictor path. The generated translation and affine
+global-motion FFmpeg samples remain green, with the affine sample improving to
+`30.57` average RGB absolute error (max `255`). The nested library suite is
+`446 passed, 5 ignored`; the checklist snapshot remains `157/171` (`91.81%`)
+and the external compatibility gate remains `75/76` successful decodes
+(`98.68%`) with `100%` expected behavior.
