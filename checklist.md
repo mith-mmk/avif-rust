@@ -992,7 +992,9 @@ same-host baseline confirms a stable speedup.
 - [x] Audit frame dimensions, item offsets/extents and frame-buffer allocations
       for overflow and resource limits.
 - [ ] Audit post-filter scratch-buffer sizing once normative filters are
-      enabled.
+      enabled. (The Wiener and SGRPROJ 64x64 paths are now exercised with
+      their full halo scratch requirements; remaining work is an end-to-end
+      large-frame allocation audit.)
 - [x] Reject malformed qmatrix levels and other unsupported AV1 tools before
       public decode returns an image.
 - [x] Keep public decode fail-closed (`Unsupported`) whenever an unimplemented

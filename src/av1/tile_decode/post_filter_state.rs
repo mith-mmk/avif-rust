@@ -1761,6 +1761,53 @@ mod tests {
     }
 
     #[test]
+    fn restoration_scratch_covers_maximum_64x64_unit_with_halo() {
+        let source = (0..64 * 64)
+            .map(|index| ((index * 29 + 17) & 4095) as u16)
+            .collect::<Vec<_>>();
+
+        let mut wiener_output = source.clone();
+        let mut wiener_scratch = Vec::new();
+        super::wiener_filter_unit_into_with_scratch_bit_depth(
+            &source,
+            &mut wiener_output,
+            64,
+            64,
+            0,
+            0,
+            64,
+            64,
+            [[1, 2, 3], [3, -2, 1]],
+            12,
+            &mut wiener_scratch,
+        );
+        assert!(wiener_scratch.capacity() >= 64 * (64 + 6));
+
+        let mut sgr_output = source.clone();
+        let mut sgr_scratch = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+        super::sgrproj_filter_unit_into_with_scratch_bit_depth(
+            &source,
+            &mut sgr_output,
+            64,
+            64,
+            0,
+            0,
+            64,
+            64,
+            0,
+            [12, 64],
+            12,
+            &mut sgr_scratch,
+        );
+        let expected = (64 + 4) * (64 + 4);
+        assert!(
+            sgr_scratch
+                .iter()
+                .all(|scratch| scratch.capacity() >= expected)
+        );
+    }
+
+    #[test]
     fn sgrproj_x_by_xplus1_matches_aom_rounding_table() {
         assert_eq!(sgr_x_by_xplus1(0), 1);
         assert_eq!(sgr_x_by_xplus1(1), 128);
