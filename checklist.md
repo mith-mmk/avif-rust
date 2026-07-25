@@ -2206,3 +2206,12 @@ avoid an optional-plane lookup for every pixel; both paths have regression
 coverage. The current checklist work-item snapshot is 156/170 (`91.76%`),
 while the external sample and benchmark percentages above remain separate
 validation metrics.
+
+On 2026-07-25, the 8-bit YUV420 RGBA8 conversion path now uses the same
+dedicated chroma-row traversal as the RGBA16 path when no auxiliary alpha is
+present, avoiding a generic per-pixel chroma-layout dispatch. The existing
+RGBA8/RGBA16 equivalence and scalar fast-path tolerance vectors remain green.
+A 15-iteration release checkpoint measured `48.7819/51.9314 ms` (native/RGBA)
+for `fox.profile0.8bpc.yuv420.avif`; `WML2Viewer.avif` measured
+`94.1903/97.9325 ms` in the same run. These are same-host measurements and
+do not establish a portable end-to-end speedup.

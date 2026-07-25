@@ -598,7 +598,41 @@ fn frame_buffers_to_rgba_8_sdr(
                 && plane.layout.width == buffers.width
                 && plane.layout.height == buffers.height
         });
+    let direct_yuv420 = fast_yuv_coefficients.is_some()
+        && buffers.planes.get(3).is_none()
+        && plane_y.layout.subsampling_x == 0
+        && plane_y.layout.subsampling_y == 0
+        && plane_y.layout.width == buffers.width
+        && plane_y.layout.height == buffers.height
+        && plane_u.is_some_and(|plane| {
+            plane.layout.subsampling_x == 1 && plane.layout.subsampling_y == 1
+        })
+        && plane_v.is_some_and(|plane| {
+            plane.layout.subsampling_x == 1 && plane.layout.subsampling_y == 1
+        });
     let mut rgba = vec![0u8; buffers.width * buffers.height * 4];
+    if direct_yuv420 {
+        let plane_u = plane_u.expect("direct YUV420 path requires U plane");
+        let plane_v = plane_v.expect("direct YUV420 path requires V plane");
+        let (kr, kb) = fast_yuv_coefficients.expect("YUV matrix was checked above");
+        convert_yuv420_to_rgba8(
+            &mut rgba,
+            buffers.width,
+            buffers.height,
+            plane_y,
+            plane_u,
+            plane_v,
+            fast_range,
+            kr,
+            kb,
+            color_config.chroma_sample_position,
+        );
+        return Ok(ImageBuffer {
+            width: buffers.width,
+            height: buffers.height,
+            rgba,
+        });
+    }
     if direct_yuv444 {
         let plane_u = plane_u.expect("direct YUV444 path requires U plane");
         let plane_v = plane_v.expect("direct YUV444 path requires V plane");
@@ -946,6 +980,38 @@ fn sample_plane(plane: &super::decode::PlaneBuffer, x: usize, y: usize) -> u16 {
     plane.samples[source_y * plane.layout.width + source_x]
 }
 
+fn convert_yuv420_to_rgba8(
+    rgba: &mut [u8],
+    width: usize,
+    height: usize,
+    plane_y: &super::decode::PlaneBuffer,
+    plane_u: &super::decode::PlaneBuffer,
+    plane_v: &super::decode::PlaneBuffer,
+    range: FastSampleRange,
+    kr: f32,
+    kb: f32,
+    position: Option<ChromaSamplePosition>,
+) {
+    convert_yuv420_to_rgba(
+        rgba,
+        width,
+        height,
+        plane_y,
+        plane_u,
+        plane_v,
+        range,
+        kr,
+        kb,
+        position,
+        |pixel, rgb| {
+            pixel[0] = u16_to_u8(rgb[0]);
+            pixel[1] = u16_to_u8(rgb[1]);
+            pixel[2] = u16_to_u8(rgb[2]);
+            pixel[3] = u8::MAX;
+        },
+    );
+}
+
 fn convert_yuv420_to_rgba16(
     rgba: &mut [u16],
     width: usize,
@@ -958,6 +1024,40 @@ fn convert_yuv420_to_rgba16(
     kb: f32,
     position: Option<ChromaSamplePosition>,
 ) {
+    convert_yuv420_to_rgba(
+        rgba,
+        width,
+        height,
+        plane_y,
+        plane_u,
+        plane_v,
+        range,
+        kr,
+        kb,
+        position,
+        |pixel, rgb| {
+            pixel[..3].copy_from_slice(&rgb);
+            pixel[3] = u16::MAX;
+        },
+    );
+}
+
+fn convert_yuv420_to_rgba<T, F>(
+    rgba: &mut [T],
+    width: usize,
+    height: usize,
+    plane_y: &super::decode::PlaneBuffer,
+    plane_u: &super::decode::PlaneBuffer,
+    plane_v: &super::decode::PlaneBuffer,
+    range: FastSampleRange,
+    kr: f32,
+    kb: f32,
+    position: Option<ChromaSamplePosition>,
+    write_pixel: F,
+) where
+    T: Send,
+    F: Fn(&mut [T], [u16; 3]) + Sync,
+{
     let chroma_width = plane_u.layout.width;
     let chroma_height = plane_u.layout.height;
     let interpolate_vertical = matches!(
@@ -990,8 +1090,7 @@ fn convert_yuv420_to_rgba16(
                 } else {
                     plane_v.samples[top]
                 };
-                pixel[..3].copy_from_slice(&yuv_to_rgb_u16_fast(luma, u, v, range, kr, kb));
-                pixel[3] = u16::MAX;
+                write_pixel(pixel, yuv_to_rgb_u16_fast(luma, u, v, range, kr, kb));
             }
         }
     });
