@@ -274,10 +274,10 @@ impl DecodedFrame {
     /// Gain-map frames may use a different native size and are resampled to
     /// the base dimensions during composition. Base-colour maps and alternate
     /// maps in supported CICP RGB primary sets are
-    /// supported; matrix-shaper and linear-affine ICC LUT alternate
-    /// conversions are supported while non-linear LUT profiles fail closed
-    /// because applying their tone curves to scalar gain samples would change
-    /// the gain semantics.
+    /// supported; matrix-shaper and linear-affine ICC LUT/mAB alternate
+    /// conversions are supported while non-linear or reverse-direction
+    /// profiles fail closed because applying their tone curves to scalar gain
+    /// samples would change the gain semantics.
     /// `hdr_headroom` is expressed in log2 headroom units; a value at the base
     /// headroom returns the base RGBA16 image unchanged. The default AVIF
     /// decode path never applies this method implicitly.

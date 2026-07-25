@@ -407,6 +407,9 @@ and RGBA gates.
 - [x] Accept ICC `mBA` multi-process LUT tags in the bounded RGB pipeline by
       applying the reverse B/matrix/M/CLUT/A stage order; a synthetic profile
       covers the path and alpha preservation.
+- [x] Compose linear-affine forward ICC `mft1`/`mft2`/`mAB` alternates in the
+      Gain Map path when curves and matrix offsets are identity-safe; reject
+      non-linear, non-affine, PCS-Lab and reverse-direction profiles.
 - [ ] Add display-specific HDR gamut/tone calibration and the remaining ICC
       display-conversion profile forms beyond the bounded `mBA`/PCS-Lab path.
 
@@ -2307,3 +2310,13 @@ sample gate provides `75/76` (`98.68%`) successful decode coverage and `100%`
 expected-behavior coverage. An 11-iteration optimized run measured
 `81.8133/81.6517 ms` for native/RGBA decoding of `WML2Viewer.avif`; this is a
 same-host regression checkpoint, not a portable speedup claim.
+
+The linear ICC gain-map boundary now also accepts forward `mAB` profiles when
+all embedded curves are identity, the CLUT is affine, the optional matrix has
+no offset, and the PCS is XYZ. Reverse `mBA`, PCS-Lab, non-linear curves and
+non-affine CLUTs remain fail-closed. The nested library suite is `444 passed,
+5 ignored`, FFmpeg conformance remains `98 passed, 2 ignored`, and the latest
+11-iteration optimized checkpoint is `79.5907/81.733 ms` native/RGBA for
+`WML2Viewer.avif`. The checklist snapshot is now `157/171` (`91.81%`);
+external compatibility coverage remains `75/76` successful decodes
+(`98.68%`) with `100%` expected behavior.

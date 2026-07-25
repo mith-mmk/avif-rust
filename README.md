@@ -37,7 +37,7 @@ passes the FFmpeg RGB oracle (average absolute error about 0.075, maximum 6).
 | AVIS Key/IntraOnly/Inter/Switch/show-existing sample decode by index or batch | Supported for tested motion-compensated Inter and Switch samples |
 | Animated AVIF multi-frame callback output | Supported for Key/IntraOnly/Inter/Switch/show-existing samples (`animation: true`) |
 | Layered-image selectors (`a1op=0`, `lsel=0`/`0xffff`) | Parsed and accepted; specific non-default layer/operating-point selection remains fail-closed |
-| `tmap` primary item base-image fallback | Supported (base `av01` decode); ISO 21496 gain-map metadata and the referenced AV1 gain-map item can be inspected/decoded; explicit base-colour-space HDR application supports CICP, matrix-shaper, and linear-affine ICC LUT alternates (non-linear LUTs fail closed) |
+| `tmap` primary item base-image fallback | Supported (base `av01` decode); ISO 21496 gain-map metadata and the referenced AV1 gain-map item can be inspected/decoded; explicit base-colour-space HDR application supports CICP, matrix-shaper, and linear-affine ICC LUT/mAB alternates (non-linear/reverse profiles fail closed) |
 | PQ/HLG transfer to bounded SDR RGBA16 | Supported (bounded tone mapping; no display-specific calibration) |
 | Display-specific HDR gamut calibration and non-matrix ICC display conversion | Not yet supported |
 
@@ -111,9 +111,10 @@ For a `tmap` image, `decode_gain_map_frame_bytes` returns the referenced AV1
 gain-map item and its `GainMapMetadata` without changing the default base-image
 decode. Call `DecodedFrame::to_rgba16_with_gain_map` with a selected display
 headroom to apply the explicit base-colour-space composition path. An
-alternate-colour-space CICP maps, matrix-shaper, and linear-affine ICC LUT
-alternates are supported; non-linear LUT-backed ICC alternates remain
-fail-closed because their tone curves are not valid for scalar gain samples.
+alternate-colour-space CICP maps, matrix-shaper, and linear-affine ICC
+LUT/mAB alternates are supported; non-linear or reverse-direction ICC
+alternates remain fail-closed because their tone curves are not valid for
+scalar gain samples.
 
 ## Validation
 

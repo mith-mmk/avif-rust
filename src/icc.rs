@@ -48,6 +48,7 @@ struct LutProfile {
 struct Clut {
     grid_points: [usize; 3],
     values: Vec<u16>,
+    bytes_per_value: usize,
 }
 
 pub(crate) fn apply_to_rgba16(rgba: &mut [u16], profile: &[u8]) -> Result<(), DecoderError> {
@@ -126,11 +127,12 @@ pub(crate) fn apply_to_rgba16(rgba: &mut [u16], profile: &[u8]) -> Result<(), De
 /// Converts linear sRGB values to or from a linear ICC colour transform.
 ///
 /// Gain-map composition operates on linear RGB, while the ordinary ICC
-/// output path has already converted the base image to sRGB.  A matrix-shaper
-/// profile therefore gives us a small, allocation-free 3x3 transform for the
-/// alternate colour space.  Non-linear LUT profiles deliberately remain
-/// unsupported at this boundary: applying their tone curves to scalar gain
-/// samples would silently change the gain semantics.
+/// output path has already converted the base image to sRGB.  Matrix-shaper
+/// profiles and the narrow linear-affine mft/mAB subsets therefore give us a
+/// small, allocation-free 3x3 transform for the alternate colour space.
+/// Non-linear or reverse-direction profiles deliberately remain unsupported
+/// at this boundary: applying their tone curves to scalar gain samples would
+/// silently change the gain semantics.
 pub(crate) fn convert_linear_srgb_with_profile(
     rgb: &mut [f64; 3],
     profile_bytes: &[u8],
@@ -162,9 +164,28 @@ pub(crate) fn convert_linear_srgb_with_profile(
             *rgb = converted;
             return Ok(());
         }
-        return Err(unsupported(
-            "ICC mAB/mBA profiles cannot be used for linear gain-map colour conversion",
-        ));
+        if signature == b"mAB " || signature == b"mBA " {
+            let profile = MabProfile::parse(profile_bytes, tag, signature == b"mBA ")?;
+            if let Some(profile_to_srgb) = profile.linear_to_srgb_matrix() {
+                let transform = if to_profile {
+                    invert_matrix(profile_to_srgb)?
+                } else {
+                    profile_to_srgb
+                };
+                let converted = multiply(transform, *rgb);
+                if !converted.iter().all(|value| value.is_finite()) {
+                    return Err(unsupported(
+                        "ICC mAB conversion produced a non-finite value",
+                    ));
+                }
+                *rgb = converted;
+                return Ok(());
+            }
+            return Err(unsupported(
+                "ICC mAB/mBA profiles are non-linear or reverse-direction for linear gain-map colour conversion",
+            ));
+        }
+        return Err(unsupported("ICC A2B tag is not an mft1/mft2/mAB/mBA LUT"));
     }
     let profile = MatrixShaperProfile::parse(profile_bytes)?;
     let profile_to_srgb = multiply_matrices(profile.xyz_to_srgb, profile.to_xyz);
@@ -364,6 +385,7 @@ impl LutProfile {
             clut: Clut {
                 grid_points: [grid_points; 3],
                 values: clut,
+                bytes_per_value,
             },
             output_tables,
         })
@@ -432,14 +454,20 @@ impl Clut {
             return None;
         }
         let mut matrix = [[0.0; 3]; 3];
-        for (column, coordinate) in [[1, 0, 0], [0, 1, 0], [0, 0, 1]].into_iter().enumerate() {
-            let point =
-                self.sample(coordinate.map(|value| value * self.grid_points[0].saturating_sub(1)));
+        let max_index = self.grid_points.map(|points| points.saturating_sub(1));
+        for (column, coordinate) in [
+            [max_index[0], 0, 0],
+            [0, max_index[1], 0],
+            [0, 0, max_index[2]],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let point = self.sample(coordinate);
             for row in 0..3 {
                 matrix[row][column] = point[row];
             }
         }
-        let max_index = self.grid_points.map(|points| points.saturating_sub(1));
         for blue in 0..self.grid_points[2] {
             for green in 0..self.grid_points[1] {
                 for red in 0..self.grid_points[0] {
@@ -660,6 +688,48 @@ impl MabProfile {
         pixel[1] = encode_srgb(rgb[1]);
         pixel[2] = encode_srgb(rgb[2]);
     }
+
+    /// Return the profile-to-linear-sRGB matrix for the narrow mAB subset
+    /// that is safe to use while composing scalar gain-map values.  Curves,
+    /// PCS-Lab conversion, matrix offsets, and reverse mBA direction all
+    /// change the meaning of zero/one gain samples and therefore remain
+    /// fail-closed.
+    fn linear_to_srgb_matrix(&self) -> Option<[[f64; 3]; 3]> {
+        if self.reverse || self.pcs_lab {
+            return None;
+        }
+        if !curves_are_identity(self.a_curves.as_ref())
+            || !curves_are_identity(self.m_curves.as_ref())
+            || !curves_are_identity(self.b_curves.as_ref())
+        {
+            return None;
+        }
+        let matrix = if let Some((matrix, offset)) = self.matrix {
+            if offset.iter().any(|value| value.abs() > 1e-9)
+                || matrix.iter().flatten().any(|value| !value.is_finite())
+            {
+                return None;
+            }
+            matrix
+        } else {
+            identity_matrix()
+        };
+        let clut = self.clut.as_ref().map_or_else(
+            || Some(identity_matrix()),
+            |clut| {
+                let tolerance = if clut.bytes_per_value == 1 {
+                    3.0 / 255.0
+                } else {
+                    3.0 / 65_535.0
+                };
+                clut.affine_matrix(tolerance)
+            },
+        )?;
+        Some(multiply_matrices(
+            self.xyz_to_srgb,
+            multiply_matrices(matrix, clut),
+        ))
+    }
 }
 
 fn apply_curves(values: &mut [f64; 3], curves: Option<&[Curve; 3]>) {
@@ -668,6 +738,28 @@ fn apply_curves(values: &mut [f64; 3], curves: Option<&[Curve; 3]>) {
             *value = curve.decode(*value);
         }
     }
+}
+
+fn curves_are_identity(curves: Option<&[Curve; 3]>) -> bool {
+    curves
+        .map(|curves| curves.iter().all(curve_is_identity))
+        .unwrap_or(true)
+}
+
+fn curve_is_identity(curve: &Curve) -> bool {
+    match curve {
+        Curve::Identity => true,
+        Curve::Gamma(gamma) => (*gamma - 1.0).abs() <= 1e-9,
+        Curve::Table(table) => table_is_identity(table),
+        Curve::Parametric {
+            function,
+            parameters,
+        } => *function == 0 && (parameters[0] - 1.0).abs() <= 1e-9,
+    }
+}
+
+fn identity_matrix() -> [[f64; 3]; 3] {
+    [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
 }
 
 fn apply_matrix(values: &mut [f64; 3], matrix: Option<([[f64; 3]; 3], [f64; 3])>) {
@@ -1009,6 +1101,7 @@ fn parse_mab_clut(profile: &[u8], start: usize, tag_end: usize) -> Result<Clut, 
     Ok(Clut {
         grid_points,
         values,
+        bytes_per_value,
     })
 }
 
@@ -1478,6 +1571,73 @@ mod tests {
         assert!(
             matches!(error, DecoderError::Unsupported(message) if message.contains("non-linear"))
         );
+    }
+
+    #[test]
+    fn affine_mab_linear_conversion_round_trips() {
+        let profile = synthetic_mab_profile(false, false);
+        let original = [0.2, 0.3, 0.4];
+        let mut converted = original;
+        convert_linear_srgb_with_profile(&mut converted, &profile, true).unwrap();
+        convert_linear_srgb_with_profile(&mut converted, &profile, false).unwrap();
+        for (actual, expected) in converted.into_iter().zip(original) {
+            assert!((actual - expected).abs() < 1e-4, "{actual} != {expected}");
+        }
+    }
+
+    #[test]
+    fn affine_clut_supports_non_uniform_grid_dimensions() {
+        let grid_points = [2, 3, 4];
+        let mut values = Vec::new();
+        for blue in 0..grid_points[2] {
+            for green in 0..grid_points[1] {
+                for red in 0..grid_points[0] {
+                    let input = [
+                        red as f64 / (grid_points[0] - 1) as f64,
+                        green as f64 / (grid_points[1] - 1) as f64,
+                        blue as f64 / (grid_points[2] - 1) as f64,
+                    ];
+                    for output in [input[0], input[1] * 0.75, input[2] * 0.5] {
+                        values.push((output * 65_535.0).round() as u16);
+                    }
+                }
+            }
+        }
+        let clut = Clut {
+            grid_points,
+            values,
+            bytes_per_value: 2,
+        };
+        let matrix = clut.affine_matrix(3.0 / 65_535.0).unwrap();
+        assert!((matrix[0][0] - 1.0).abs() < 1e-5);
+        assert!((matrix[1][1] - 0.75).abs() < 1e-5);
+        assert!((matrix[2][2] - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn reverse_mba_remains_rejected_for_linear_gain_conversion() {
+        let profile = synthetic_mba_profile(false, false);
+        let error =
+            convert_linear_srgb_with_profile(&mut [0.2, 0.3, 0.4], &profile, true).unwrap_err();
+        assert!(matches!(
+            error,
+            DecoderError::Unsupported(message) if message.contains("reverse-direction")
+        ));
+    }
+
+    #[test]
+    fn nonlinear_mab_remains_rejected_for_linear_gain_conversion() {
+        let mut profile = synthetic_mab_profile(false, false);
+        let (offset, _) = find_profile_tag(&profile, b"A2B0").unwrap().unwrap();
+        let a_offset = usize::try_from(read_u32(&profile, offset + 28).unwrap()).unwrap();
+        profile[offset + a_offset + 12..offset + a_offset + 14]
+            .copy_from_slice(&512_u16.to_be_bytes());
+        let error =
+            convert_linear_srgb_with_profile(&mut [0.2, 0.3, 0.4], &profile, true).unwrap_err();
+        assert!(matches!(
+            error,
+            DecoderError::Unsupported(message) if message.contains("non-linear")
+        ));
     }
 
     fn synthetic_lut_profile(signature: &[u8; 4], grid_points: u8, entries: u16) -> Vec<u8> {
