@@ -2229,3 +2229,12 @@ The checklist work-item snapshot remains `156/170` (`91.76%`). The refreshed
 external gate remains `75` successful decodes and `1` explicit fail-closed case
 out of `76` entries (`98.68%` successful decode coverage and `100%`
 expected-behavior coverage).
+
+The 4:2:0 fast conversion path now keeps the dedicated RGBA8/RGBA16 traversal
+when an auxiliary alpha plane is present, and selects chroma interpolation once
+per output row instead of once per pixel. The new alpha-bearing regression
+vector matches the scalar RGBA16 reference. A 15-iteration release checkpoint
+measured `46.8158/49.6258 ms` (native/RGBA) for
+`fox.profile0.8bpc.yuv420.avif`; `WML2Viewer.avif` measured
+`87.5215/94.6123 ms` in the same run. These same-host values are follow-up
+regression checkpoints, not a portable speedup claim.
