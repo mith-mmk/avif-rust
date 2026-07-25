@@ -11,9 +11,9 @@ use crate::av1::{
     ResidualProbe, SegmentationParams, SequenceHeader, TileEntropyState, TileGroup,
     alloc_coded_frame_buffers, apply_film_grain, apply_superres_horizontal,
     build_still_decode_plan, cdef_adjust_primary_strength,
-    cdef_filter_block_region_with_edge_mode_into_bit_depth, cdef_find_direction_with_variance,
-    convert_linear_rgb_primaries, crop_frame_buffers_to_plan,
-    deblock_filter_edge_with_visible_bounds,
+    cdef_filter_block_region_with_edge_mode_into_bit_depth_visible,
+    cdef_find_direction_with_variance_visible, convert_linear_rgb_primaries,
+    crop_frame_buffers_to_plan, deblock_filter_edge_with_visible_bounds,
     decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf,
     frame_buffers_to_rgba_16, parse_av1_config, parse_frame_header,
     parse_frame_header_with_references, parse_sequence_header, parse_show_existing_frame_index,
@@ -4010,9 +4010,11 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
     let unit_mask = (1usize << frame_header.cdef.bits) - 1;
     let luma_width = frame.buffers.planes[0].layout.width;
     let luma_height = frame.buffers.planes[0].layout.height;
+    let visible_luma_width = frame.width.min(luma_width);
+    let visible_luma_height = frame.height.min(luma_height);
     let cdef_coeff_shift = frame.bit_depth.saturating_sub(8);
-    let cdef_units_width = luma_width.div_ceil(64);
-    let cdef_units_height = luma_height.div_ceil(64);
+    let cdef_units_width = visible_luma_width.div_ceil(64);
+    let cdef_units_height = visible_luma_height.div_ceil(64);
     // CDEF indices are at most three bits wide. Keep a compact dense table so
     // the per-8x8 hot loop does not repeatedly unwrap an `Option<usize>`.
     // `u8::MAX` denotes a unit that was not present in the decoded state;
@@ -4034,12 +4036,15 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
         return;
     }
     let cdef = frame_header.cdef;
-    let filtered_blocks =
-        cdef_filtered_block_mask(&state.block_filter_states, luma_width, luma_height);
-    let filtered_blocks_width = luma_width.div_ceil(8);
+    let filtered_blocks = cdef_filtered_block_mask(
+        &state.block_filter_states,
+        visible_luma_width,
+        visible_luma_height,
+    );
+    let filtered_blocks_width = visible_luma_width.div_ceil(8);
     let mut cdef_block_origins = Vec::new();
-    for y in (0..luma_height).step_by(8) {
-        for x in (0..luma_width).step_by(8) {
+    for y in (0..visible_luma_height).step_by(8) {
+        for x in (0..visible_luma_width).step_by(8) {
             if !filtered_blocks[(y / 8) * filtered_blocks_width + x / 8] {
                 continue;
             }
@@ -4077,6 +4082,8 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
                                 luma_samples,
                                 luma_width,
                                 luma_height,
+                                luma_width,
+                                luma_height,
                                 cdef_coeff_shift,
                                 x,
                                 y,
@@ -4094,6 +4101,8 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
         for (x, y, index) in cdef_block_origins {
             cdef_blocks.push(cdef_direction_block(
                 &frame.buffers.planes[0].samples,
+                luma_width,
+                luma_height,
                 luma_width,
                 luma_height,
                 cdef_coeff_shift,
@@ -4121,6 +4130,8 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
                         subsampling_y,
                         cdef_coeff_shift,
                         cdef,
+                        ceil_shift(visible_luma_width, usize::from(subsampling_x)),
+                        ceil_shift(visible_luma_height, usize::from(subsampling_y)),
                         &cdef_blocks,
                     );
                 });
@@ -4136,6 +4147,8 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
             subsampling_y,
             cdef_coeff_shift,
             cdef,
+            ceil_shift(visible_luma_width, usize::from(subsampling_x)),
+            ceil_shift(visible_luma_height, usize::from(subsampling_y)),
             &cdef_blocks,
         );
     }
@@ -4181,15 +4194,19 @@ fn cdef_direction_block(
     luma_samples: &[u16],
     luma_width: usize,
     luma_height: usize,
+    visible_luma_width: usize,
+    visible_luma_height: usize,
     coeff_shift: u8,
     x: usize,
     y: usize,
     index: usize,
 ) -> (usize, usize, usize, usize, i32) {
-    let (detected_direction, variance) = cdef_find_direction_with_variance(
+    let (detected_direction, variance) = cdef_find_direction_with_variance_visible(
         luma_samples,
         luma_width,
         luma_height,
+        visible_luma_width,
+        visible_luma_height,
         x,
         y,
         coeff_shift,
@@ -4205,6 +4222,8 @@ fn apply_cdef_plane(
     subsampling_y: bool,
     cdef_coeff_shift: u8,
     cdef: crate::av1::CdefParams,
+    visible_width: usize,
+    visible_height: usize,
     cdef_blocks: &[(usize, usize, usize, usize, i32)],
 ) {
     let source = std::mem::take(&mut plane.samples);
@@ -4225,6 +4244,8 @@ fn apply_cdef_plane(
     let mut output = source.clone();
     let width = plane.layout.width;
     let height = plane.layout.height;
+    let visible_width = visible_width.min(width);
+    let visible_height = visible_height.min(height);
     let plane_subsampling_x = usize::from(plane_index > 0 && subsampling_x);
     let plane_subsampling_y = usize::from(plane_index > 0 && subsampling_y);
     let scale_x = 1usize << plane_subsampling_x;
@@ -4260,10 +4281,22 @@ fn apply_cdef_plane(
             continue;
         }
         let damping = cdef.damping.saturating_sub(u8::from(plane_index != 0));
-        let block_width = (width - plane_x).min(8usize.div_ceil(scale_x));
-        let block_height = (height - plane_y).min(8usize.div_ceil(scale_y));
-        cdef_filter_block_region_with_edge_mode_into_bit_depth(
+        let block_width = visible_width
+            .saturating_sub(plane_x)
+            .min(8usize.div_ceil(scale_x));
+        let block_height = visible_height
+            .saturating_sub(plane_y)
+            .min(8usize.div_ceil(scale_y));
+        if block_width == 0 || block_height == 0 {
+            continue;
+        }
+        // The aligned coded plane remains the filter source domain until the
+        // post-filter crop. Limit writes to the visible plane, but retain the
+        // coded padding taps used by the existing AV1 reconstruction path.
+        cdef_filter_block_region_with_edge_mode_into_bit_depth_visible(
             &source,
+            width,
+            height,
             width,
             height,
             plane_x,

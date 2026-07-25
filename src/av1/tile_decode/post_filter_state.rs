@@ -206,6 +206,48 @@ pub(crate) fn cdef_filter_block_region_with_edge_mode_into_bit_depth(
     use_edge_sentinel: bool,
     output: &mut [u16],
 ) {
+    cdef_filter_block_region_with_edge_mode_into_bit_depth_visible(
+        source,
+        width,
+        height,
+        width,
+        height,
+        origin_x,
+        origin_y,
+        block_width,
+        block_height,
+        direction,
+        primary_strength,
+        secondary_strength,
+        damping,
+        coeff_shift,
+        use_edge_sentinel,
+        output,
+    );
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scalar CDEF kernel parameters mirror the normative filter inputs"
+)]
+pub(crate) fn cdef_filter_block_region_with_edge_mode_into_bit_depth_visible(
+    source: &[u16],
+    width: usize,
+    height: usize,
+    visible_width: usize,
+    visible_height: usize,
+    origin_x: usize,
+    origin_y: usize,
+    block_width: usize,
+    block_height: usize,
+    direction: usize,
+    primary_strength: u8,
+    secondary_strength: u8,
+    damping: u8,
+    coeff_shift: u8,
+    use_edge_sentinel: bool,
+    output: &mut [u16],
+) {
     if output.len() < block_width.saturating_mul(block_height) {
         return;
     }
@@ -225,7 +267,9 @@ pub(crate) fn cdef_filter_block_region_with_edge_mode_into_bit_depth(
     };
     let secondary_taps = [2, 1];
     let sample = |x: isize, y: isize| -> i32 {
-        if use_edge_sentinel && (x < 0 || y < 0 || x >= width as isize || y >= height as isize) {
+        if use_edge_sentinel
+            && (x < 0 || y < 0 || x >= visible_width as isize || y >= visible_height as isize)
+        {
             return CDEF_VERY_LARGE;
         }
         let x = x.clamp(0, width.saturating_sub(1) as isize) as usize;
@@ -330,10 +374,34 @@ pub(crate) fn cdef_find_direction_with_variance(
     coeff_shift: u8,
     use_edge_sentinel: bool,
 ) -> (usize, i32) {
+    cdef_find_direction_with_variance_visible(
+        source,
+        width,
+        height,
+        width,
+        height,
+        origin_x,
+        origin_y,
+        coeff_shift,
+        use_edge_sentinel,
+    )
+}
+
+pub(crate) fn cdef_find_direction_with_variance_visible(
+    source: &[u16],
+    width: usize,
+    height: usize,
+    visible_width: usize,
+    visible_height: usize,
+    origin_x: usize,
+    origin_y: usize,
+    coeff_shift: u8,
+    use_edge_sentinel: bool,
+) -> (usize, i32) {
     const CDEF_VERY_LARGE: i64 = 0x4000;
     const DIV: [i64; 9] = [0, 840, 420, 280, 210, 168, 140, 120, 105];
     let sample = |x: usize, y: usize| -> i64 {
-        if use_edge_sentinel && (origin_x + x >= width || origin_y + y >= height) {
+        if use_edge_sentinel && (origin_x + x >= visible_width || origin_y + y >= visible_height) {
             return (CDEF_VERY_LARGE >> coeff_shift) - 128;
         }
         let x = (origin_x + x).min(width.saturating_sub(1));

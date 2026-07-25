@@ -70,8 +70,8 @@ pub use tile_decode::{
     probe_first_block_residuals, probe_tile_block_modes, probe_tile_partitions,
 };
 pub(crate) use tile_decode::{
-    cdef_adjust_primary_strength, cdef_filter_block_region_with_edge_mode_into_bit_depth,
-    cdef_find_direction_with_variance, deblock_filter_edge_with_visible_bounds,
+    cdef_adjust_primary_strength, cdef_filter_block_region_with_edge_mode_into_bit_depth_visible,
+    cdef_find_direction_with_variance_visible, deblock_filter_edge_with_visible_bounds,
     sgrproj_filter_unit_into_with_scratch_bit_depth_visible,
     wiener_filter_unit_into_with_scratch_bit_depth_visible,
 };

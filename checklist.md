@@ -2494,3 +2494,16 @@ ignored. The parent AVIF integration passed `3` enabled and `1` disabled test.
 Two 11-iteration release runs measured `86.6428/85.5039 ms` and
 `81.6340/81.9742 ms` native/RGBA for `samples/WML2Viewer.avif`; this remains a
 same-host no-regression check, not a portable speedup claim.
+
+The CDEF application path now separates the aligned coded-plane source stride
+from the visible write bounds. A regression vector covers a 5x5 visible frame
+inside an 8x8 coded plane and confirms that post-filter output never mutates
+the padding that is cropped later. Strict oracles remain `12 passed`, FFmpeg
+conformance remains `104 passed, 2 ignored`, and the external 8-bit gate
+converts all four retained YUV444 samples. Two 11-iteration release checks
+measured `83.0166/85.2867 ms` and `83.7684/79.8933 ms` native/RGBA; the spread
+is retained as host noise rather than a portable speedup or slowdown claim.
+The checklist implementation count remains `160/171` (`93.57%`), with the
+remaining 11 items still covering normative transform/filter exactness,
+display-profile completion, future-syntax malformed cases, and large-frame
+post-filter allocation auditing.

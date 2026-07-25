@@ -129,8 +129,76 @@ fn cdef_skips_a_plane_without_configured_strengths() {
         ..CdefParams::default()
     };
     cdef.strengths[0].uv_sec = 4;
-    apply_cdef_plane(&mut plane, 0, false, false, 0, cdef, &[(0, 0, 0, 0, 0)]);
+    apply_cdef_plane(
+        &mut plane,
+        0,
+        false,
+        false,
+        0,
+        cdef,
+        8,
+        8,
+        &[(0, 0, 0, 0, 0)],
+    );
     assert_eq!(plane.samples, source);
+}
+
+#[test]
+fn cdef_visible_bounds_preserve_coded_padding() {
+    let coded_width = 8;
+    let coded_height = 8;
+    let visible_width = 5;
+    let visible_height = 5;
+    let mut source = vec![0u16; coded_width * coded_height];
+    for row in 0..coded_height {
+        for col in 0..coded_width {
+            source[row * coded_width + col] = if col < visible_width && row < visible_height {
+                ((row * visible_width + col) * 7 + 80) as u16
+            } else {
+                60_000
+            };
+        }
+    }
+    let mut plane = PlaneBuffer {
+        layout: PlaneLayout {
+            plane: 0,
+            width: coded_width,
+            height: coded_height,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: source.len(),
+        },
+        samples: source.clone(),
+    };
+    let mut cdef = CdefParams {
+        enabled: true,
+        bits: 0,
+        ..CdefParams::default()
+    };
+    cdef.strengths[0].y_pri = 8;
+    cdef.strengths[0].y_sec = 4;
+    apply_cdef_plane(
+        &mut plane,
+        0,
+        false,
+        false,
+        0,
+        cdef,
+        visible_width,
+        visible_height,
+        &[(0, 0, 0, 0, 0)],
+    );
+    for row in 0..coded_height {
+        for col in 0..coded_width {
+            if col >= visible_width || row >= visible_height {
+                assert_eq!(
+                    plane.samples[row * coded_width + col],
+                    source[row * coded_width + col],
+                    "CDEF must not write coded padding at ({col}, {row})"
+                );
+            }
+        }
+    }
 }
 
 #[test]

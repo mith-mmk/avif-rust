@@ -24,8 +24,8 @@ pub(crate) use post_filter_state::RestorationUnit;
 pub(crate) use post_filter_state::wiener_filter_unit;
 pub(crate) use post_filter_state::{
     BlockFilterState, PostFilterState, cdef_adjust_primary_strength,
-    cdef_filter_block_region_with_edge_mode_into_bit_depth, cdef_find_direction_with_variance,
-    deblock_filter_edge_with_visible_bounds,
+    cdef_filter_block_region_with_edge_mode_into_bit_depth_visible,
+    cdef_find_direction_with_variance_visible, deblock_filter_edge_with_visible_bounds,
     sgrproj_filter_unit_into_with_scratch_bit_depth_visible,
     wiener_filter_unit_into_with_scratch_bit_depth_visible,
 };
