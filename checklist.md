@@ -2448,3 +2448,15 @@ remaining plane mismatch from 2,488 samples with a whole-frame substitution to
 13 samples; exact WML2Viewer oracle parity remains open pending the remaining
 normative post-filter investigation. The implementation-rate snapshot remains
 `157/171` (`91.81%`).
+
+HDR PQ/HLG display conversion now maps supported P3 and BT.2020 primaries
+through linear BT.709 before the existing bounded SDR shoulder; ICtCp keeps its
+existing display-reference path. The new primary-matrix and HDR transfer tests,
+the full library suite (`452 passed`, `5 ignored`), and FFmpeg conformance
+(`104 passed`, `2 ignored`) are green. Two 11-iteration optimized
+WML2Viewer checkpoints measured `82.7718/78.7947 ms` and
+`78.3757/79.6544 ms` native/RGBA; because the host spread is noisy, this is retained
+as a regression checkpoint rather than a portable speedup claim. The current
+checklist snapshot is `158/171` (`92.40%`); the remaining 13 items are
+normative transform/filter-oracle, display-profile, malformed-future-syntax,
+and scratch-sizing work.
