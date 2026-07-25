@@ -2215,3 +2215,17 @@ A 15-iteration release checkpoint measured `48.7819/51.9314 ms` (native/RGBA)
 for `fox.profile0.8bpc.yuv420.avif`; `WML2Viewer.avif` measured
 `94.1903/97.9325 ms` in the same run. These are same-host measurements and
 do not establish a portable end-to-end speedup.
+
+The strict Inter entropy audit on 2026-07-25 was reproduced with the generated
+64x64 libaom sequence used by the FFmpeg oracle. Forcing the internal terminal
+validator on the Inter sample reaches the final decoded blocks but reports
+`tell=11778`, `max_bits=1942`, and the first non-zero candidate at bit `11765`.
+Because the decoded frame still passes the public relaxed path, this is a
+decoder-state/CDF consumption discrepancy rather than a safe two-bit terminal
+offset correction. Inter and Switch therefore keep terminal validation in the
+diagnostic-only path until the arithmetic/CDF state is reconciled; the public
+decoder continues to fail closed for genuinely unsupported prediction tools.
+The checklist work-item snapshot remains `156/170` (`91.76%`). The refreshed
+external gate remains `75` successful decodes and `1` explicit fail-closed case
+out of `76` entries (`98.68%` successful decode coverage and `100%`
+expected-behavior coverage).
