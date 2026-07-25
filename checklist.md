@@ -291,7 +291,8 @@ public decoded-frame shape.
       against the WML2Viewer AOM restoration oracle.
 - [x] Enable public 8-bit 4:4:4 filtered decode and verify the WML2Viewer
       image and `wml2` callback path through deblock, CDEF and restoration.
-- [ ] Verify the complete reconstruction/filter order against plane oracles.
+- [x] Verify the complete reconstruction/filter order against plane oracles;
+      the required WML2Viewer final native-plane/RGBA fixture passes exactly.
 - [x] Enable the `WML2Viewer.avif` final oracle after the required filters are
       active and exact; the strict generated plane/RGBA oracle passes with the
       coded-stride/visible-bounds restoration path.
