@@ -69,6 +69,9 @@ impl<'a> EntropyDecoder<'a> {
             return Ok(0);
         }
         let bits = usize::BITS as usize - (n - 1).leading_zeros() as usize;
+        if n.is_power_of_two() {
+            return self.read_literal(bits).map(|value| value as usize);
+        }
         let threshold = (1usize << bits) - n;
         let mut value = 0usize;
         for _ in 0..bits - 1 {
@@ -325,6 +328,22 @@ mod tests {
         assert!(
             matches!(err, DecoderError::Bitstream(message) if message.contains("trailing zero bit"))
         );
+    }
+
+    #[test]
+    fn uniform_power_of_two_matches_literal_bits() {
+        let data = [0x5a, 0xc3, 0x7e, 0x19];
+        for n in [2usize, 4, 8, 16] {
+            let mut uniform = EntropyDecoder::new(&data, false).unwrap();
+            let mut literal = EntropyDecoder::new(&data, false).unwrap();
+            let bits = n.trailing_zeros() as usize;
+            for _ in 0..4 {
+                assert_eq!(
+                    uniform.read_uniform(n).unwrap(),
+                    literal.read_literal(bits).unwrap() as usize
+                );
+            }
+        }
     }
 
     #[test]
