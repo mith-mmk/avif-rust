@@ -488,7 +488,11 @@ pub(crate) fn reconstruct_transform_block_parts_into(
             dequant,
         )?;
     }
-    inverse_transform_into(tx_type, tx_size, dequant, bit_depth, residual)?;
+    // `non_zero_coefficients` was computed above.  Avoid scanning the full
+    // dequantized transform a second time just to rediscover that it is not
+    // empty; the transform kernels already produce an all-zero residual when
+    // quantization rounds every value to zero.
+    inverse_transform_into_nonzero(tx_type, tx_size, dequant, bit_depth, residual)?;
     add_residual_to_prediction_into(prediction, residual, bit_depth, reconstructed)?;
     write_plane_block(
         plane,
@@ -720,6 +724,7 @@ pub fn inverse_transform(
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn inverse_transform_into(
     tx_type: TxType,
     tx_size: TxSize,
@@ -727,13 +732,34 @@ pub(crate) fn inverse_transform_into(
     bit_depth: u8,
     output: &mut [i32],
 ) -> Result<(), DecoderError> {
+    inverse_transform_into_impl(tx_type, tx_size, dequant, bit_depth, output, true)
+}
+
+fn inverse_transform_into_nonzero(
+    tx_type: TxType,
+    tx_size: TxSize,
+    dequant: &[i32],
+    bit_depth: u8,
+    output: &mut [i32],
+) -> Result<(), DecoderError> {
+    inverse_transform_into_impl(tx_type, tx_size, dequant, bit_depth, output, false)
+}
+
+fn inverse_transform_into_impl(
+    tx_type: TxType,
+    tx_size: TxSize,
+    dequant: &[i32],
+    bit_depth: u8,
+    output: &mut [i32],
+    check_zero: bool,
+) -> Result<(), DecoderError> {
     validate_transform_bit_depth(bit_depth)?;
     if dequant.len() != tx_size.sample_count() || output.len() != tx_size.sample_count() {
         return Err(DecoderError::InvalidParam(
             "AV1 transform input/output count does not match transform size".to_string(),
         ));
     }
-    if dequant.iter().all(|value| *value == 0) {
+    if check_zero && dequant.iter().all(|value| *value == 0) {
         output.fill(0);
         return Ok(());
     }
@@ -2613,6 +2639,38 @@ mod tests {
             let expected = inverse_transform(tx_type, tx_size, &coefficients, 8).unwrap();
             let mut actual = vec![0; tx_size.sample_count()];
             inverse_transform_into(tx_type, tx_size, &coefficients, 8, &mut actual).unwrap();
+            assert_eq!(actual, expected, "{tx_size:?}");
+        }
+    }
+
+    #[test]
+    fn nonzero_transform_dispatch_matches_checked_zero_dispatch_when_dequant_is_zero() {
+        for tx_size in [
+            TxSize::Tx4x4,
+            TxSize::Tx8x8,
+            TxSize::Tx16x16,
+            TxSize::Tx32x32,
+            TxSize::Tx64x64,
+            TxSize::Tx4x8,
+            TxSize::Tx8x4,
+            TxSize::Tx8x16,
+            TxSize::Tx16x8,
+            TxSize::Tx16x32,
+            TxSize::Tx32x16,
+            TxSize::Tx32x64,
+            TxSize::Tx64x32,
+            TxSize::Tx4x16,
+            TxSize::Tx16x4,
+            TxSize::Tx8x32,
+            TxSize::Tx32x8,
+            TxSize::Tx16x64,
+            TxSize::Tx64x16,
+        ] {
+            let dequant = vec![0; tx_size.sample_count()];
+            let expected = inverse_transform(TxType::DctDct, tx_size, &dequant, 8).unwrap();
+            let mut actual = vec![0; dequant.len()];
+            inverse_transform_into_nonzero(TxType::DctDct, tx_size, &dequant, 8, &mut actual)
+                .unwrap();
             assert_eq!(actual, expected, "{tx_size:?}");
         }
     }

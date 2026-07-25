@@ -2281,3 +2281,11 @@ A fresh five-iteration optimized run measured `82.6459/79.0358 ms` for native
 value is close to the prior `82.6117 ms` checkpoint and the native value remains
 host-noisy; these are regression checkpoints rather than portable speedup
 claims.
+
+The reconstruction hot path now reuses its already-known quantized non-zero
+count and skips a second full dequantized-coefficient zero scan before inverse
+transform dispatch. A regression vector covers all 19 AV1 square and
+rectangular `TxSize` variants, including the case where quantization produces
+an all-zero dequantized buffer. An 11-iteration optimized run measured
+`79.8479/81.8986 ms` for `WML2Viewer.avif` native/RGBA; this is a same-host
+checkpoint and not a portable speedup claim.
