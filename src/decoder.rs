@@ -3563,12 +3563,18 @@ fn finish_decoded_still_frame(
     } = decoded;
     if validate_filters {
         apply_deblock_stage(&mut frame, &headers.frame, &post_filter_state);
+        let restoration_boundaries = headers
+            .frame
+            .restoration
+            .uses_lr
+            .then(|| capture_restoration_boundary_rows(&frame));
         apply_cdef_stage(&mut frame, &headers.frame, &post_filter_state);
-        apply_loop_restoration_stage(
+        apply_loop_restoration_stage_with_boundaries(
             &mut frame,
             &post_filter_state,
             headers.decode_plan.superblock_size << headers.frame.restoration.unit_shift,
             &[1, 2],
+            restoration_boundaries.as_deref(),
         );
         crop_frame_buffers_to_plan(&mut frame.buffers, &headers.decode_plan)?;
         apply_superres_horizontal(
@@ -4203,11 +4209,22 @@ fn cdef_indices_have_active_strengths(cdef: &crate::av1::CdefParams, indices: &[
     })
 }
 
+#[allow(dead_code)]
 fn apply_loop_restoration_stage(
     frame: &mut DecodedFrame,
     state: &PostFilterState,
     unit_size: usize,
     enabled_types: &[u8],
+) {
+    apply_loop_restoration_stage_with_boundaries(frame, state, unit_size, enabled_types, None);
+}
+
+fn apply_loop_restoration_stage_with_boundaries(
+    frame: &mut DecodedFrame,
+    state: &PostFilterState,
+    unit_size: usize,
+    enabled_types: &[u8],
+    boundaries: Option<&[RestorationBoundaryRows]>,
 ) {
     let bit_depth = frame.bit_depth;
     if state.restoration_units.is_empty()
@@ -4224,6 +4241,7 @@ fn apply_loop_restoration_stage(
     if post_filter_parallel_work_is_large_enough(frame) {
         std::thread::scope(|scope| {
             for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
+                let boundaries = boundaries.and_then(|boundaries| boundaries.get(plane_index));
                 scope.spawn(move || {
                     apply_loop_restoration_plane(
                         plane,
@@ -4232,6 +4250,7 @@ fn apply_loop_restoration_stage(
                         unit_size,
                         enabled_types,
                         bit_depth,
+                        boundaries,
                     );
                 });
             }
@@ -4239,6 +4258,7 @@ fn apply_loop_restoration_stage(
         return;
     }
     for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
+        let boundaries = boundaries.and_then(|boundaries| boundaries.get(plane_index));
         apply_loop_restoration_plane(
             plane,
             plane_index,
@@ -4246,6 +4266,7 @@ fn apply_loop_restoration_stage(
             unit_size,
             enabled_types,
             bit_depth,
+            boundaries,
         );
     }
 }
@@ -4276,6 +4297,106 @@ fn post_filter_parallel_work_is_large_enough(_frame: &DecodedFrame) -> bool {
     false
 }
 
+#[derive(Debug, Clone, Default)]
+struct RestorationBoundaryRows {
+    rows: Vec<(usize, Vec<u16>)>,
+}
+
+fn capture_restoration_boundary_rows(frame: &DecodedFrame) -> Vec<RestorationBoundaryRows> {
+    frame
+        .buffers
+        .planes
+        .iter()
+        .map(|plane| {
+            let stripe_height = 64usize >> usize::from(plane.layout.subsampling_y);
+            let stripe_offset = 8usize >> usize::from(plane.layout.subsampling_y);
+            let mut rows = Vec::new();
+            let mut stripe = 0usize;
+            loop {
+                let stripe_start = stripe
+                    .saturating_mul(stripe_height)
+                    .saturating_sub(stripe_offset);
+                if stripe_start >= plane.layout.height {
+                    break;
+                }
+                let stripe_end = ((stripe + 1) * stripe_height)
+                    .saturating_sub(stripe_offset)
+                    .min(plane.layout.height);
+                if stripe > 0 {
+                    for row in stripe_start.saturating_sub(2)..stripe_start {
+                        let start = row * plane.layout.width;
+                        rows.push((
+                            row,
+                            plane.samples[start..start + plane.layout.width].to_vec(),
+                        ));
+                    }
+                }
+                if stripe_end < plane.layout.height {
+                    for row in stripe_end..(stripe_end + 2).min(plane.layout.height) {
+                        let start = row * plane.layout.width;
+                        rows.push((
+                            row,
+                            plane.samples[start..start + plane.layout.width].to_vec(),
+                        ));
+                    }
+                }
+                stripe += 1;
+            }
+            RestorationBoundaryRows { rows }
+        })
+        .collect()
+}
+
+fn patch_restoration_stripe_boundaries(
+    source: &mut [u16],
+    width: usize,
+    height: usize,
+    stripe_y: usize,
+    stripe_height: usize,
+    frame_stripe: usize,
+    boundaries: &RestorationBoundaryRows,
+    saved: &mut Vec<(usize, Vec<u16>)>,
+) {
+    let mut patch_row = |target_row: usize, boundary_row: usize| {
+        if target_row >= height {
+            return;
+        }
+        let Some(samples) = boundaries
+            .rows
+            .iter()
+            .find_map(|&(row, ref samples)| (row == boundary_row).then_some(samples))
+        else {
+            return;
+        };
+        let start = target_row * width;
+        saved.push((target_row, source[start..start + width].to_vec()));
+        source[start..start + width].copy_from_slice(samples);
+    };
+    if frame_stripe > 0 {
+        let boundary_start = frame_stripe * 64 - 8;
+        patch_row(stripe_y.saturating_sub(3), boundary_start - 2);
+        patch_row(stripe_y.saturating_sub(2), boundary_start - 2);
+        patch_row(stripe_y.saturating_sub(1), boundary_start - 1);
+    }
+    let stripe_end = stripe_y + stripe_height;
+    if stripe_end < height {
+        patch_row(stripe_end, stripe_end);
+        patch_row(stripe_end + 1, stripe_end + 1);
+        patch_row(stripe_end + 2, stripe_end + 1);
+    }
+}
+
+fn restore_restoration_stripe_boundaries(
+    source: &mut [u16],
+    width: usize,
+    saved: &[(usize, Vec<u16>)],
+) {
+    for &(row, ref samples) in saved {
+        let start = row * width;
+        source[start..start + width].copy_from_slice(samples);
+    }
+}
+
 fn apply_loop_restoration_plane(
     plane: &mut PlaneBuffer,
     plane_index: usize,
@@ -4283,6 +4404,7 @@ fn apply_loop_restoration_plane(
     unit_size: usize,
     enabled_types: &[u8],
     bit_depth: u8,
+    boundaries: Option<&RestorationBoundaryRows>,
 ) {
     const RESTORATION_UNIT_OFFSET: usize = 8;
     if !state
@@ -4296,6 +4418,7 @@ fn apply_loop_restoration_plane(
     // Keep the unfiltered source available to restoration taps without first
     // zero-initializing an output buffer that is immediately overwritten.
     let mut output = source.clone();
+    let mut source = source;
     let mut wiener_scratch = Vec::new();
     let mut sgrproj_scratch = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
     for unit in state
@@ -4331,6 +4454,19 @@ fn apply_loop_restoration_plane(
             let nominal_height = 64 - usize::from(frame_stripe == 0) * RESTORATION_UNIT_OFFSET;
             let stripe_height = nominal_height.min(end_y - stripe_y);
             let procunit_width = 64;
+            let mut patched_rows = Vec::new();
+            if let Some(boundaries) = boundaries {
+                patch_restoration_stripe_boundaries(
+                    &mut source,
+                    plane.layout.width,
+                    plane.layout.height,
+                    stripe_y,
+                    stripe_height,
+                    frame_stripe,
+                    boundaries,
+                    &mut patched_rows,
+                );
+            }
             let mut chunk_x = 0;
             while chunk_x < unit_width {
                 let x = unit.x + chunk_x;
@@ -4381,6 +4517,7 @@ fn apply_loop_restoration_plane(
                 }
                 chunk_x += chunk_width;
             }
+            restore_restoration_stripe_boundaries(&mut source, plane.layout.width, &patched_rows);
             stripe_y += stripe_height;
         }
     }

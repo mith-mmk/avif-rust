@@ -1,8 +1,9 @@
 use super::{
-    DecodedFrame, apply_alpha_rows, apply_cdef_plane, apply_loop_filter_deltas,
-    apply_loop_restoration_stage, cdef_has_active_strengths, cdef_indices_have_active_strengths,
-    cdef_strengths_disabled, deblock_has_active_strengths, loop_filter_mode_delta_index,
-    loop_filter_reference_delta_index,
+    DecodedFrame, RestorationBoundaryRows, apply_alpha_rows, apply_cdef_plane,
+    apply_loop_filter_deltas, apply_loop_restoration_stage, cdef_has_active_strengths,
+    cdef_indices_have_active_strengths, cdef_strengths_disabled, deblock_has_active_strengths,
+    loop_filter_mode_delta_index, loop_filter_reference_delta_index,
+    patch_restoration_stripe_boundaries, restore_restoration_stripe_boundaries,
 };
 use crate::av1::CdefParams;
 use crate::av1::{
@@ -183,6 +184,35 @@ fn restoration_units_share_the_same_cdef_source_snapshot() {
     apply_loop_restoration_stage(&mut frame, &state, 8, &[1, 2]);
 
     assert_eq!(frame.buffers.planes[0].samples, expected);
+}
+
+#[test]
+fn restoration_boundary_patching_is_scoped_to_one_stripe() {
+    let width = 4;
+    let height = 8;
+    let original = (0..width * height)
+        .map(|value| value as u16)
+        .collect::<Vec<_>>();
+    let mut source = original.clone();
+    let boundaries = RestorationBoundaryRows {
+        rows: vec![(4, vec![100, 101, 102, 103]), (5, vec![110, 111, 112, 113])],
+    };
+    let mut saved = Vec::new();
+    patch_restoration_stripe_boundaries(
+        &mut source,
+        width,
+        height,
+        0,
+        4,
+        0,
+        &boundaries,
+        &mut saved,
+    );
+    assert_eq!(&source[4 * width..5 * width], &[100, 101, 102, 103]);
+    assert_eq!(&source[5 * width..6 * width], &[110, 111, 112, 113]);
+    assert_eq!(&source[6 * width..7 * width], &[110, 111, 112, 113]);
+    restore_restoration_stripe_boundaries(&mut source, width, &saved);
+    assert_eq!(source, original);
 }
 
 #[test]

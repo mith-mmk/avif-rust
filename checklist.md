@@ -2434,3 +2434,13 @@ A follow-up 15-iteration run with the CDEF worker cap fixed at eight measured
 from the earlier `77.2317/80.3228 ms` run is retained as host noise; both runs
 remain below the pre-parallel local `81.9244/82.9463 ms` checkpoint, without a
 portable speedup claim.
+
+The loop-restoration source now preserves AOM's internal-stripe boundary
+semantics: deblocked context rows are captured before CDEF, substituted only
+while the corresponding processing stripe is filtered, and restored before the
+next stripe. A deterministic regression test covers the scoped substitution and
+restoration. On a local WML2Viewer strict-oracle probe, this reduced the
+remaining plane mismatch from 2,488 samples with a whole-frame substitution to
+13 samples; exact WML2Viewer oracle parity remains open pending the remaining
+normative post-filter investigation. The implementation-rate snapshot remains
+`157/171` (`91.81%`).
