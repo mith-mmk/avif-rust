@@ -36,7 +36,7 @@ passes the FFmpeg RGB oracle (average absolute error about 0.075, maximum 6).
 | One-frame `avis` primary item | Supported |
 | AVIS Key/IntraOnly/Inter/Switch/show-existing sample decode by index or batch | Supported for tested motion-compensated Inter and Switch samples |
 | Animated AVIF multi-frame callback output | Supported for Key/IntraOnly/Inter/Switch/show-existing samples (`animation: true`) |
-| Layered-image selectors (`a1op=0`, `lsel=0`) | Parsed and accepted; non-default layer/operating-point selection remains fail-closed |
+| Layered-image selectors (`a1op=0`, `lsel=0`/`0xffff`) | Parsed and accepted; specific non-default layer/operating-point selection remains fail-closed |
 | `tmap` primary item base-image fallback | Supported (base `av01` decode); ISO 21496 gain-map metadata and the referenced AV1 gain-map item can be inspected/decoded; explicit base-colour-space HDR application supports CICP and matrix-shaper ICC alternates (LUT alternates fail closed) |
 | PQ/HLG transfer to bounded SDR RGBA16 | Supported (bounded tone mapping; no display-specific calibration) |
 | Display-specific HDR gamut calibration and non-matrix ICC display conversion | Not yet supported |

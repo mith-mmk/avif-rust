@@ -472,33 +472,53 @@ fn frame_buffers_to_rgba_8_high_bit_sdr(
         let MatrixCoefficients::Yuv { kr, kb } = matrix else {
             return Ok(None);
         };
-        let alpha = buffers.planes.get(3);
-        for_each_rgba_row_chunk(
-            &mut rgba,
-            buffers.width,
-            buffers.height,
-            |first_row, chunk| {
-                for (local_index, pixel) in chunk.chunks_exact_mut(4).enumerate() {
-                    let index = first_row * buffers.width + local_index;
-                    let rgb = yuv_to_rgb_u16_fast(
-                        plane_y.samples[index],
-                        plane_u.samples[index],
-                        plane_v.samples[index],
-                        fast_range,
-                        kr as f32,
-                        kb as f32,
-                    );
-                    pixel[0] = u16_to_u8(rgb[0]);
-                    pixel[1] = u16_to_u8(rgb[1]);
-                    pixel[2] = u16_to_u8(rgb[2]);
-                    pixel[3] = alpha
-                        .map(|plane| {
-                            u16_to_u8(scale_sample_to_u16(plane.samples[index], max_source))
-                        })
-                        .unwrap_or(u8::MAX);
-                }
-            },
-        );
+        if let Some(alpha) = buffers.planes.get(3) {
+            for_each_rgba_row_chunk(
+                &mut rgba,
+                buffers.width,
+                buffers.height,
+                |first_row, chunk| {
+                    for (local_index, pixel) in chunk.chunks_exact_mut(4).enumerate() {
+                        let index = first_row * buffers.width + local_index;
+                        let rgb = yuv_to_rgb_u16_fast(
+                            plane_y.samples[index],
+                            plane_u.samples[index],
+                            plane_v.samples[index],
+                            fast_range,
+                            kr as f32,
+                            kb as f32,
+                        );
+                        pixel[0] = u16_to_u8(rgb[0]);
+                        pixel[1] = u16_to_u8(rgb[1]);
+                        pixel[2] = u16_to_u8(rgb[2]);
+                        pixel[3] = u16_to_u8(scale_sample_to_u16(alpha.samples[index], max_source));
+                    }
+                },
+            );
+        } else {
+            for_each_rgba_row_chunk(
+                &mut rgba,
+                buffers.width,
+                buffers.height,
+                |first_row, chunk| {
+                    for (local_index, pixel) in chunk.chunks_exact_mut(4).enumerate() {
+                        let index = first_row * buffers.width + local_index;
+                        let rgb = yuv_to_rgb_u16_fast(
+                            plane_y.samples[index],
+                            plane_u.samples[index],
+                            plane_v.samples[index],
+                            fast_range,
+                            kr as f32,
+                            kb as f32,
+                        );
+                        pixel[0] = u16_to_u8(rgb[0]);
+                        pixel[1] = u16_to_u8(rgb[1]);
+                        pixel[2] = u16_to_u8(rgb[2]);
+                        pixel[3] = u8::MAX;
+                    }
+                },
+            );
+        }
         return Ok(Some(ImageBuffer {
             width: buffers.width,
             height: buffers.height,
@@ -640,31 +660,53 @@ fn frame_buffers_to_rgba_8_sdr(
         let MatrixCoefficients::Yuv { kr, kb } = matrix else {
             unreachable!("direct YUV444 path requires a YUV matrix");
         };
-        let alpha = buffers.planes.get(3);
-        for_each_rgba_row_chunk(
-            &mut rgba,
-            buffers.width,
-            buffers.height,
-            |first_row, chunk| {
-                for (local_index, pixel) in chunk.chunks_exact_mut(4).enumerate() {
-                    let index = first_row * buffers.width + local_index;
-                    let rgb = yuv_to_rgb_u16_fast(
-                        plane_y.samples[index],
-                        plane_u.samples[index],
-                        plane_v.samples[index],
-                        fast_range,
-                        kr as f32,
-                        kb as f32,
-                    );
-                    pixel[0] = u16_to_u8(rgb[0]);
-                    pixel[1] = u16_to_u8(rgb[1]);
-                    pixel[2] = u16_to_u8(rgb[2]);
-                    pixel[3] = alpha
-                        .map(|plane| plane.samples[index] as u8)
-                        .unwrap_or(u8::MAX);
-                }
-            },
-        );
+        if let Some(alpha) = buffers.planes.get(3) {
+            for_each_rgba_row_chunk(
+                &mut rgba,
+                buffers.width,
+                buffers.height,
+                |first_row, chunk| {
+                    for (local_index, pixel) in chunk.chunks_exact_mut(4).enumerate() {
+                        let index = first_row * buffers.width + local_index;
+                        let rgb = yuv_to_rgb_u16_fast(
+                            plane_y.samples[index],
+                            plane_u.samples[index],
+                            plane_v.samples[index],
+                            fast_range,
+                            kr as f32,
+                            kb as f32,
+                        );
+                        pixel[0] = u16_to_u8(rgb[0]);
+                        pixel[1] = u16_to_u8(rgb[1]);
+                        pixel[2] = u16_to_u8(rgb[2]);
+                        pixel[3] = alpha.samples[index] as u8;
+                    }
+                },
+            );
+        } else {
+            for_each_rgba_row_chunk(
+                &mut rgba,
+                buffers.width,
+                buffers.height,
+                |first_row, chunk| {
+                    for (local_index, pixel) in chunk.chunks_exact_mut(4).enumerate() {
+                        let index = first_row * buffers.width + local_index;
+                        let rgb = yuv_to_rgb_u16_fast(
+                            plane_y.samples[index],
+                            plane_u.samples[index],
+                            plane_v.samples[index],
+                            fast_range,
+                            kr as f32,
+                            kb as f32,
+                        );
+                        pixel[0] = u16_to_u8(rgb[0]);
+                        pixel[1] = u16_to_u8(rgb[1]);
+                        pixel[2] = u16_to_u8(rgb[2]);
+                        pixel[3] = u8::MAX;
+                    }
+                },
+            );
+        }
         return Ok(ImageBuffer {
             width: buffers.width,
             height: buffers.height,

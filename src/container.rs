@@ -1690,7 +1690,9 @@ fn validate_primary_item_metadata(state: &MetaState) -> Result<(), DecoderError>
                         association.item_id, op_index
                     )));
                 }
-                ItemProperty::LayerSelector(layer_id) if *layer_id != 0 => {
+                ItemProperty::LayerSelector(layer_id)
+                    if *layer_id != 0 && *layer_id != u16::MAX =>
+                {
                     return Err(DecoderError::Unsupported(format!(
                         "item {} lsel layer {} is not supported",
                         association.item_id, layer_id
@@ -4142,7 +4144,7 @@ mod tests {
 
     #[test]
     fn layered_image_selectors_fail_closed_outside_default_layer_policy() {
-        let state = MetaState {
+        let mut state = MetaState {
             primary_item_id: Some(1),
             item_infos: vec![ItemInfo {
                 item_id: 1,
@@ -4198,6 +4200,10 @@ mod tests {
             error,
             DecoderError::Unsupported(message) if message.contains("lsel layer 1")
         ));
+
+        state.item_properties[3] = ItemProperty::LayerSelector(u16::MAX);
+        validate_primary_item_metadata(&state)
+            .expect("lsel=0xffff progressive selection should use the default output policy");
     }
 
     #[test]

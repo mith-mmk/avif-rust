@@ -2267,3 +2267,17 @@ A fresh five-iteration optimized decode benchmark on the same host measured
 `image_from_bytes` on `samples/WML2Viewer.avif`. This is a host-specific
 regression checkpoint; the earlier 15-iteration `77.6818/78.2171 ms` run is
 retained as the lower-noise comparison point.
+
+The AVIF 1.2 layered-image boundary now accepts the normative `lsel=0xffff`
+progressive-selection value as equivalent to the decoder's existing default
+output policy, while concrete non-default layer IDs remain fail-closed. The
+container regression covers both behaviors; the work-item snapshot remains
+`156/170` (`91.76%`).
+
+The YUV444 SDR converter now selects alpha and no-alpha row writers outside the
+pixel loop, removing the optional-plane branch from the common no-alpha path.
+A fresh five-iteration optimized run measured `82.6459/79.0358 ms` for native
+`decode_frame_bytes`/`image_from_bytes` on `samples/WML2Viewer.avif`. The RGBA
+value is close to the prior `82.6117 ms` checkpoint and the native value remains
+host-noisy; these are regression checkpoints rather than portable speedup
+claims.
