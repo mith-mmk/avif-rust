@@ -70,6 +70,9 @@ pub(super) fn decode_plane_block_unit(
     } else {
         plane_block_size(block_mode.block_size, subsampling_x, subsampling_y)
     };
+    let has_nonzero_mv = block_mode
+        .motion_vector
+        .is_some_and(|(x, y)| x != 0 || y != 0);
     let (luma_plane, plane) = if plane_index == 0 {
         let plane = buffers.planes.get_mut(0).ok_or_else(|| {
             DecoderError::Bitstream("AV1 luma plane buffer is missing".to_string())
@@ -167,7 +170,17 @@ pub(super) fn decode_plane_block_unit(
     };
     if block_mode.skip {
         for transform in transforms.filter(|transform| transform_in_unit(transform)) {
-            decoder.record_transform_boundary(transform, TxType::DctDct, 0);
+            decoder.record_transform_boundary(
+                transform,
+                TxType::DctDct,
+                0,
+                block_mode.skip,
+                block_mode.is_inter,
+                block_mode.reference_frame,
+                has_nonzero_mv,
+                block_mode.y_mode,
+                block_mode.uv_mode,
+            );
             decoder.set_txb_entropy_context(transform, 0);
             let (top_right_available, bottom_left_available) =
                 decoder.reconstructed_extension_availability(plane, transform)?;
@@ -226,7 +239,17 @@ pub(super) fn decode_plane_block_unit(
             // Deblocking depends on transform boundaries even when the
             // coefficient block is entirely zero; retain the transform
             // geometry for the post-filter stage.
-            decoder.record_transform_boundary(transform, TxType::DctDct, 0);
+            decoder.record_transform_boundary(
+                transform,
+                TxType::DctDct,
+                0,
+                block_mode.skip,
+                block_mode.is_inter,
+                block_mode.reference_frame,
+                has_nonzero_mv,
+                block_mode.y_mode,
+                block_mode.uv_mode,
+            );
             decoder.set_txb_entropy_context(transform, 0);
             let (top_right_available, bottom_left_available) =
                 decoder.reconstructed_extension_availability(plane, transform)?;
@@ -360,6 +383,12 @@ pub(super) fn decode_plane_block_unit(
             reconstructed_transform.block,
             reconstructed_transform.tx_type,
             reconstructed_transform.non_zero_coefficients,
+            block_mode.skip,
+            block_mode.is_inter,
+            block_mode.reference_frame,
+            has_nonzero_mv,
+            block_mode.y_mode,
+            block_mode.uv_mode,
         );
         decoder.mark_reconstructed_transform(transform)?;
         if retain_coefficients {

@@ -3687,19 +3687,31 @@ fn apply_deblock_plane(
             .flatten()
     };
     let mut previous_vertical =
-        std::collections::HashMap::<(usize, usize), Vec<(usize, usize, usize)>>::new();
+        std::collections::HashMap::<(usize, usize), Vec<(usize, usize, usize, bool, bool)>>::new();
     let mut previous_horizontal =
-        std::collections::HashMap::<(usize, usize), Vec<(usize, usize, usize)>>::new();
+        std::collections::HashMap::<(usize, usize), Vec<(usize, usize, usize, bool, bool)>>::new();
     for boundary in &state.transform_boundaries {
         let block = boundary.block;
         previous_vertical
             .entry((block.plane, block.x + block.tx_size.width()))
             .or_default()
-            .push((block.y, block.tx_size.height(), block.tx_size.width()));
+            .push((
+                block.y,
+                block.tx_size.height(),
+                block.tx_size.width(),
+                boundary.skip,
+                boundary.is_inter,
+            ));
         previous_horizontal
             .entry((block.plane, block.y + block.tx_size.height()))
             .or_default()
-            .push((block.x, block.tx_size.width(), block.tx_size.height()));
+            .push((
+                block.x,
+                block.tx_size.width(),
+                block.tx_size.height(),
+                boundary.skip,
+                boundary.is_inter,
+            ));
     }
     let mut boundaries = state.transform_boundaries.iter().collect::<Vec<_>>();
     for vertical in [true, false] {
@@ -3784,14 +3796,10 @@ fn apply_deblock_plane(
                     })
                     .map(|deltas| deltas[delta_lf_index])
                     .unwrap_or(0);
-                let reference_delta_index = loop_filter_reference_delta_index(
-                    filter_state.is_some_and(|state| state.is_inter),
-                    filter_state.and_then(|state| state.reference_frame),
-                );
-                let mode_delta_index = loop_filter_mode_delta_index(
-                    filter_state.is_some_and(|state| state.is_inter),
-                    filter_state.is_some_and(|state| state.has_nonzero_mv),
-                );
+                let reference_delta_index =
+                    loop_filter_reference_delta_index(boundary.is_inter, boundary.reference_frame);
+                let mode_delta_index =
+                    loop_filter_mode_delta_index(boundary.is_inter, boundary.has_nonzero_mv);
                 let level = apply_loop_filter_deltas(
                     base_level,
                     frame_header.loop_filter.delta_enabled,
@@ -3849,18 +3857,45 @@ fn apply_deblock_plane(
                         .get(&(plane_index, edge_x))
                         .into_iter()
                         .flat_map(|entries| entries.iter())
-                        .find(|(y, height, _)| edge_y >= *y && edge_y < *y + *height)
-                        .map(|(_, _, width)| *width)
+                        .find(|(y, height, _, _, _)| edge_y >= *y && edge_y < *y + *height)
+                        .map(|(_, _, width, _, _)| *width)
                         .unwrap_or(dimension)
                 } else {
                     previous_horizontal
                         .get(&(plane_index, edge_y))
                         .into_iter()
                         .flat_map(|entries| entries.iter())
-                        .find(|(x, width, _)| edge_x >= *x && edge_x < *x + *width)
-                        .map(|(_, _, height)| *height)
+                        .find(|(x, width, _, _, _)| edge_x >= *x && edge_x < *x + *width)
+                        .map(|(_, _, height, _, _)| *height)
                         .unwrap_or(dimension)
                 };
+                let previous_skipped = if plane_index != 0 {
+                    previous_block.is_some_and(|previous| previous.skip && previous.is_inter)
+                } else if vertical {
+                    previous_vertical
+                        .get(&(plane_index, edge_x))
+                        .into_iter()
+                        .flat_map(|entries| entries.iter())
+                        .find(|(y, height, _, _, _)| edge_y >= *y && edge_y < *y + *height)
+                        .is_some_and(|(_, _, _, skip, is_inter)| *skip && *is_inter)
+                } else {
+                    previous_horizontal
+                        .get(&(plane_index, edge_y))
+                        .into_iter()
+                        .flat_map(|entries| entries.iter())
+                        .find(|(x, width, _, _, _)| edge_x >= *x && edge_x < *x + *width)
+                        .is_some_and(|(_, _, _, skip, is_inter)| *skip && *is_inter)
+                };
+                let current_block_start = filter_state.is_some_and(|current| {
+                    if vertical {
+                        edge_x == current.x
+                    } else {
+                        edge_y == current.y
+                    }
+                });
+                if boundary.skip && boundary.is_inter && previous_skipped && !current_block_start {
+                    continue;
+                }
                 let dimension = dimension.min(previous_dimension);
                 let filter_length = if plane_index == 0 {
                     if dimension <= 4 {

@@ -247,7 +247,7 @@ public decoded-frame shape.
 - [x] Aggregate CDEF indices into frame-private post-filter state during full/prefix traversal; retain the state for the filter-application stage.
 - [x] Retain transform boundaries and restoration unit type/coefficients in
       the frame-level filter state used by every stage.
-- [ ] Retain transform-boundary skip/mode state and consume it when deriving
+- [x] Retain transform-boundary skip/mode state and consume it when deriving
       normative deblock levels and edge lengths.
 - [ ] Integrate frame-level post-filter state and apply filters in fixed order:
       deblock -> CDEF -> loop restoration; verify each stage with plane oracles.

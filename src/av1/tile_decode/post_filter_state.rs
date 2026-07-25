@@ -1510,6 +1510,12 @@ pub(crate) struct TransformBoundary {
     pub(crate) block: TransformBlock,
     pub(crate) tx_type: TxType,
     pub(crate) non_zero_coefficients: usize,
+    pub(crate) skip: bool,
+    pub(crate) is_inter: bool,
+    pub(crate) reference_frame: Option<u8>,
+    pub(crate) has_nonzero_mv: bool,
+    pub(crate) y_mode: PredictionMode,
+    pub(crate) uv_mode: Option<UvPredictionMode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1630,6 +1636,12 @@ impl PostFilterState {
                         .iter()
                         .filter(|coefficient| **coefficient != 0)
                         .count(),
+                    skip: false,
+                    is_inter: false,
+                    reference_frame: None,
+                    has_nonzero_mv: false,
+                    y_mode: PredictionMode::Dc,
+                    uv_mode: Some(UvPredictionMode::Intra(PredictionMode::Dc)),
                 };
                 if !self
                     .transform_boundaries
@@ -1688,11 +1700,23 @@ impl<'a> TileDecoder<'a> {
         block: TransformBlock,
         tx_type: TxType,
         non_zero_coefficients: usize,
+        skip: bool,
+        is_inter: bool,
+        reference_frame: Option<u8>,
+        has_nonzero_mv: bool,
+        y_mode: PredictionMode,
+        uv_mode: Option<UvPredictionMode>,
     ) {
         self.transform_boundaries.push(TransformBoundary {
             block,
             tx_type,
             non_zero_coefficients,
+            skip,
+            is_inter,
+            reference_frame,
+            has_nonzero_mv,
+            y_mode,
+            uv_mode,
         });
     }
 
@@ -1747,15 +1771,16 @@ fn store_cdef_block_index(blocks: &mut Vec<CdefBlockIndex>, x: usize, y: usize, 
 #[cfg(test)]
 mod tests {
     use super::{
-        CDEF_DIRECTIONS, CdefUnit, PostFilterState, cdef_adjust_primary_strength, cdef_constrain,
-        cdef_filter_block, cdef_filter_block_region_with_edge_mode,
-        cdef_filter_block_region_with_edge_mode_into,
+        CDEF_DIRECTIONS, CdefUnit, PostFilterState, TransformBoundary,
+        cdef_adjust_primary_strength, cdef_constrain, cdef_filter_block,
+        cdef_filter_block_region_with_edge_mode, cdef_filter_block_region_with_edge_mode_into,
         cdef_filter_block_region_with_edge_mode_into_bit_depth, cdef_find_direction,
         cdef_unit_origin, deblock_filter_edge, deblock_filter_edge_with_length,
         deblock_filter_edge_with_visible_bounds, restoration_sample, sgr_x_by_xplus1,
         store_cdef_unit,
     };
-    use crate::av1::syntax::{BlockSize, PredictionMode, UvPredictionMode};
+    use crate::av1::syntax::{BlockSize, PredictionMode, TxSize, TxType, UvPredictionMode};
+    use crate::av1::transform::TransformBlock;
 
     #[test]
     fn cdef_filter_keeps_constant_block_unchanged() {
@@ -2328,5 +2353,39 @@ mod tests {
         assert_eq!(state.block_filter_states.len(), 1);
         assert!(state.block_filter_states[0].skip);
         assert_eq!(state.block_filter_states[0].block_size, BlockSize::Block8x8);
+    }
+
+    #[test]
+    fn post_filter_state_retains_transform_boundary_mode_metadata() {
+        let block = TransformBlock {
+            plane: 0,
+            x: 16,
+            y: 8,
+            tx_size: TxSize::Tx8x16,
+        };
+        let mut state = PostFilterState::default();
+        state.merge(PostFilterState {
+            cdef_units: Vec::new(),
+            cdef_blocks: Vec::new(),
+            transform_boundaries: vec![TransformBoundary {
+                block,
+                tx_type: TxType::DctDct,
+                non_zero_coefficients: 3,
+                skip: true,
+                is_inter: true,
+                reference_frame: Some(2),
+                has_nonzero_mv: true,
+                y_mode: PredictionMode::Dc,
+                uv_mode: Some(UvPredictionMode::Intra(PredictionMode::Dc)),
+            }],
+            restoration_units: Vec::new(),
+            block_filter_states: Vec::new(),
+        });
+        assert_eq!(state.transform_boundaries.len(), 1);
+        let boundary = &state.transform_boundaries[0];
+        assert!(boundary.skip);
+        assert!(boundary.is_inter);
+        assert_eq!(boundary.reference_frame, Some(2));
+        assert!(boundary.has_nonzero_mv);
     }
 }
