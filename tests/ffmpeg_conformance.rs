@@ -572,6 +572,79 @@ fn generated_inter_sequence_sample_is_classified_for_decoder_gate_when_encoder_p
 }
 
 #[test]
+fn generated_switch_sequence_samples_decode_when_encoder_present() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("AVIF crate parent directory should exist")
+        .join(format!(".test-avif-sequence-switch-{}", std::process::id()));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary switch AVIF directory: {err}");
+    }
+    let output_path = root.join("sequence.avifs");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .args(["-f", "lavfi", "-i", "testsrc2=size=64x64:rate=1"])
+        .args([
+            "-t",
+            "6",
+            "-c:v",
+            "libsvtav1",
+            "-preset",
+            "12",
+            "-crf",
+            "35",
+        ])
+        .args(["-g", "30"])
+        .args([
+            "-svtav1-params",
+            "sframe-dist=3:sframe-mode=3:sframe-posi=3",
+        ])
+        .args(["-f", "avif"])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated switch sequence sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libsvtav1 switch encoder is unavailable; skipping generated switch sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let data = std::fs::read(&output_path).expect("generated Switch AVIF should be readable");
+    let info = avif_rust::container::parse_avif(&data).expect("generated Switch AVIF should parse");
+    assert_eq!(info.sequence_sample_payloads.len(), 6);
+    let kinds = info
+        .sequence_sample_payloads
+        .iter()
+        .map(|sample| avif_rust::classify_av1_sequence_sample(sample).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(kinds[3], Some(avif_rust::AvifSequenceSampleKind::Switch));
+    for sample_index in 0..kinds.len() {
+        let decoded = avif_rust::decode_sequence_frame_bytes(&data, sample_index)
+            .unwrap_or_else(|err| panic!("generated Switch sample {sample_index} failed: {err}"));
+        assert_eq!((decoded.width, decoded.height), (64, 64));
+    }
+    if let Some(expected) = ffmpeg_decode_rgba_stream_frame(&output_path, 1, 3, 64, 64) {
+        let decoded = avif_rust::decode_sequence_frame_bytes(&data, 3)
+            .expect("generated Switch frame should decode");
+        let actual = decoded
+            .to_rgba8()
+            .expect("generated Switch frame should convert to RGBA8")
+            .rgba;
+        let metrics = diff_rgb_dynamic(&actual, &expected);
+        assert!(
+            metrics.average_rgb_abs <= 48.0,
+            "generated Switch FFmpeg RGB error average={} max={}",
+            metrics.average_rgb_abs,
+            metrics.max_rgb_abs
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn generated_reduced_inter_transform_sequence_decodes_when_encoder_present() {
     let root = std::env::temp_dir().join(format!(
         ".test-avif-sequence-inter-idtx-{}",

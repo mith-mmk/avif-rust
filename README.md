@@ -34,8 +34,8 @@ passes the FFmpeg RGB oracle (average absolute error about 0.075, maximum 6).
 | `iloc` item payloads in file data and meta `idat` | Supported (construction methods 0, 1, and indexed method 2) |
 | `clap`, `irot`, and `imir` composition | Supported |
 | One-frame `avis` primary item | Supported |
-| AVIS Key/IntraOnly/Inter/show-existing sample decode by index or batch | Supported for tested motion-compensated Inter samples (Switch remains fail-closed) |
-| Animated AVIF multi-frame callback output | Supported for Key/IntraOnly/Inter/show-existing samples (`animation: true`); Switch remains fail-closed |
+| AVIS Key/IntraOnly/Inter/Switch/show-existing sample decode by index or batch | Supported for tested motion-compensated Inter and Switch samples |
+| Animated AVIF multi-frame callback output | Supported for Key/IntraOnly/Inter/Switch/show-existing samples (`animation: true`) |
 | Layered-image selectors (`a1op=0`, `lsel=0`) | Parsed and accepted; non-default layer/operating-point selection remains fail-closed |
 | `tmap` primary item base-image fallback | Supported (base `av01` decode); ISO 21496 gain-map metadata and the referenced AV1 gain-map item can be inspected/decoded; explicit base-colour-space HDR application supports CICP and matrix-shaper ICC alternates (LUT alternates fail closed) |
 | PQ/HLG transfer to bounded SDR RGBA16 | Supported (bounded tone mapping; no display-specific calibration) |
@@ -98,10 +98,9 @@ assert_eq!(rgba16.rgba.len(), rgba16.width * rgba16.height * 4);
 ```
 
 For an AVIS sequence, `decode_sequence_frame_bytes` decodes an individual
-Key/IntraOnly, motion-compensated Inter, or `show_existing_frame` sample by
-index. Use `decode_sequence_frames_bytes` when all supported samples are
-needed in one pass. Switch samples remain fail-closed until their independent
-reference semantics are covered.
+Key/IntraOnly, motion-compensated Inter or Switch, or `show_existing_frame`
+sample by index. Use `decode_sequence_frames_bytes` when all supported samples
+are needed in one pass.
 
 The lower-level `parse_info` and `decode` functions accept a
 `bin-rs::reader::BinaryReader`. `decode` preserves the `wml2` callback order:

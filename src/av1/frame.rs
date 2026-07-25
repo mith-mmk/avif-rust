@@ -347,16 +347,29 @@ pub(crate) fn parse_frame_header_with_references(
     } else {
         reader.read_bits(3, "primary_ref_frame")? as u8
     };
-    let refresh_frame_flags = if frame_type == FrameType::Key && show_frame {
-        0xff
-    } else {
-        reader.read_bits(8, "refresh_frame_flags")? as u8
-    };
+    let refresh_frame_flags =
+        if (frame_type == FrameType::Key && show_frame) || frame_type == FrameType::Switch {
+            0xff
+        } else {
+            reader.read_bits(8, "refresh_frame_flags")? as u8
+        };
     let frame_id = read_current_frame_id(&mut reader, sequence)?;
 
     let frame_is_intra = frame_type_is_intra(frame_type);
     let mut reference_frame_indices = [0; 7];
     let mut reference_order_hints = [None; 7];
+    let frame_order_hints = if error_resilient_mode
+        && sequence.enable_order_hint
+        && (!frame_is_intra || refresh_frame_flags != 0xff)
+    {
+        let mut frame_order_hints = [0u32; 8];
+        for order_hint in &mut frame_order_hints {
+            *order_hint = reader.read_bits(sequence.order_hint_bits as usize, "ref_order_hint")?;
+        }
+        Some(frame_order_hints)
+    } else {
+        None
+    };
     let mut frame_refs_short_signaling = false;
     let mut allow_high_precision_mv = false;
     let mut is_filter_switchable = false;
@@ -377,12 +390,20 @@ pub(crate) fn parse_frame_header_with_references(
     } else {
         (frame_refs_short_signaling, reference_frame_indices) =
             parse_inter_reference_indices(&mut reader, sequence.enable_order_hint)?;
-        reference_order_hints = std::array::from_fn(|index| {
-            references
-                .get(usize::from(reference_frame_indices[index]))
-                .and_then(|reference| reference.as_ref())
-                .map(|reference| reference.order_hint)
-        });
+        reference_order_hints = if let Some(frame_order_hints) = frame_order_hints {
+            std::array::from_fn(|index| {
+                frame_order_hints
+                    .get(usize::from(reference_frame_indices[index]))
+                    .copied()
+            })
+        } else {
+            std::array::from_fn(|index| {
+                references
+                    .get(usize::from(reference_frame_indices[index]))
+                    .and_then(|reference| reference.as_ref())
+                    .map(|reference| reference.order_hint)
+            })
+        };
         validate_reference_frame_ids(frame_id, sequence, &reference_frame_indices, references)?;
         let (frame_size, render_size) = parse_inter_frame_size(
             &mut reader,

@@ -2253,3 +2253,17 @@ branch for every pixel. The equivalence and generated 4:2:0-alpha tests remain
 green. A follow-up 15-iteration release run measured `0.9581/1.1116 ms` for
 the generated alpha sample and `77.6818/78.2171 ms` for `WML2Viewer.avif`;
 these values are host-specific regression checkpoints.
+
+On 2026-07-25, Switch-frame header parsing now follows the AV1 S-frame rules:
+the refresh mask is inferred as `0xff`, and error-resilient reference order
+hints are consumed before the frame-size and tile syntax. A real six-sample
+SVT-AV1 fixture (including a Switch sample at index 3) now classifies and
+decodes every sample completely, with an FFmpeg RGBA oracle on the Switch
+frame. The FFmpeg conformance suite is `97 passed, 2 ignored` out of 99 tests;
+the work-item implementation snapshot remains `156/170` (`91.76%`).
+
+A fresh five-iteration optimized decode benchmark on the same host measured
+`81.5013 ms` for native `decode_frame_bytes` and `82.6117 ms` for
+`image_from_bytes` on `samples/WML2Viewer.avif`. This is a host-specific
+regression checkpoint; the earlier 15-iteration `77.6818/78.2171 ms` run is
+retained as the lower-noise comparison point.
