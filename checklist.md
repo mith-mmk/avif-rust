@@ -1425,6 +1425,15 @@ portable speedup claim. The checklist work-item rate remains `157/171`
 (`91.81%`) because this closes a hot-path optimization gap, not a normative
 filter item.
 
+The external conformance audit now recursively covers every sample under the
+official `supported/`, `unsupported/`, and `gainmap/` directories instead of
+only a hand-maintained subset. The dynamic gate passes all three classes with
+complete RGBA output; the animated auxiliary variant additionally verifies
+that the alpha plane is retained on all five frames and audio/depth variants
+do not synthesize one. This expands regression discovery without changing the
+explicit malformed/unsupported fail-closed cases. The checklist rate remains
+`157/171` (`91.81%`).
+
 On 2026-07-24, the entropy hot path was measured again after the fixed
 probability `read_bool` shortcut. Marking `read_raw_bit` and `renormalize` as
 always-inline reduced two 100-iteration release medians for

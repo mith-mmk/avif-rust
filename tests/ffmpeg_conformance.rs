@@ -4647,7 +4647,7 @@ fn every_external_unsupported_sample_decodes_completely() {
         .expect("workspace root should exist")
         .join("test/images/external/avif/unsupported");
     let mut paths = Vec::new();
-    collect_external_unsupported_samples(&root, &mut paths);
+    collect_external_samples(&root, &mut paths);
     if paths.is_empty() {
         eprintln!("external unsupported sample directory is unavailable; skipping dynamic audit");
         return;
@@ -4679,7 +4679,73 @@ fn every_external_unsupported_sample_decodes_completely() {
     }
 }
 
-fn collect_external_unsupported_samples(root: &Path, output: &mut Vec<std::path::PathBuf>) {
+#[test]
+fn every_external_supported_sample_decodes_completely() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("test/images/external/avif/supported");
+    let mut paths = Vec::new();
+    collect_external_samples(&root, &mut paths);
+    if paths.is_empty() {
+        eprintln!("external supported sample directory is unavailable; skipping audit");
+        return;
+    }
+    paths.sort();
+    for path in paths {
+        let data = std::fs::read(&path).expect("external supported sample should be readable");
+        let image = avif_rust::image_from_bytes(&data)
+            .unwrap_or_else(|error| panic!("{} should decode completely: {error}", path.display()));
+        assert!(
+            image.width > 0 && image.height > 0,
+            "{} has empty dimensions",
+            path.display()
+        );
+        assert_eq!(
+            image.rgba.len(),
+            image.width * image.height * 4,
+            "{} has partial RGBA output",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn every_external_gainmap_sample_keeps_complete_base_output() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("test/images/external/avif/gainmap");
+    let mut paths = Vec::new();
+    collect_external_samples(&root, &mut paths);
+    if paths.is_empty() {
+        eprintln!("external gain-map sample directory is unavailable; skipping audit");
+        return;
+    }
+    paths.sort();
+    for path in paths {
+        let data = std::fs::read(&path).expect("external gain-map sample should be readable");
+        let image = avif_rust::image_from_bytes(&data).unwrap_or_else(|error| {
+            panic!(
+                "{} should keep a complete base image: {error}",
+                path.display()
+            )
+        });
+        assert!(
+            image.width > 0 && image.height > 0,
+            "{} has empty dimensions",
+            path.display()
+        );
+        assert_eq!(
+            image.rgba.len(),
+            image.width * image.height * 4,
+            "{} has partial RGBA output",
+            path.display()
+        );
+    }
+}
+
+fn collect_external_samples(root: &Path, output: &mut Vec<std::path::PathBuf>) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
     };
@@ -4687,7 +4753,7 @@ fn collect_external_unsupported_samples(root: &Path, output: &mut Vec<std::path:
         let entry = entry.expect("external unsupported sample directory should be readable");
         let path = entry.path();
         if path.is_dir() {
-            collect_external_unsupported_samples(&path, output);
+            collect_external_samples(&path, output);
             continue;
         }
         let is_avif = path

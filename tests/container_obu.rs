@@ -665,6 +665,25 @@ fn external_animated_auxiliary_and_audio_variants_decode_when_present() {
         let frames = avif_rust::decode_sequence_frames_bytes(&data)
             .unwrap_or_else(|err| panic!("{name} should decode every frame: {err}"));
         assert_eq!(frames.len(), 5, "{name}");
+        if has_alpha {
+            assert!(
+                frames.iter().all(|frame| frame
+                    .buffers
+                    .planes
+                    .iter()
+                    .any(|plane| plane.layout.plane == 3)),
+                "{name} should retain the auxiliary alpha plane on every frame"
+            );
+        } else {
+            assert!(
+                frames.iter().all(|frame| !frame
+                    .buffers
+                    .planes
+                    .iter()
+                    .any(|plane| plane.layout.plane == 3)),
+                "{name} should not synthesize an auxiliary alpha plane"
+            );
+        }
     }
 }
 
