@@ -2343,3 +2343,9 @@ error (max `255`). The external compatibility snapshot remains `75/76`
 successful decodes (`98.68%`) with `100%` expected behavior.
 The nested library suite remains `446 passed, 5 ignored`; the expanded FFmpeg
 matrix is now `99 passed, 2 ignored`.
+
+The local-warp sample matrix now also includes a generated 10-bit 4:2:0
+sequence fixture, exercising the warped prediction and high-bit-depth conversion
+paths together. Entropy boolean/literal/symbol helpers are marked for release
+inlining; the change is allocation-free and remains a no-regression checkpoint
+until a quieter repeated benchmark proves a portable speedup.

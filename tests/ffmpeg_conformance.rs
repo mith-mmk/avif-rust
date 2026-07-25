@@ -854,6 +854,15 @@ fn generated_local_warp_12bit_sample_matches_ffmpeg_when_encoder_present() {
     );
 }
 
+#[test]
+fn generated_local_warp_10bit_sample_matches_ffmpeg_when_encoder_present() {
+    run_generated_local_warp_sample(
+        "localwarp-10bit",
+        "testsrc2=size=128x128:rate=1",
+        Some("yuv420p10le"),
+    );
+}
+
 fn run_generated_local_warp_sample(label: &str, input: &str, pixel_format: Option<&str>) {
     let root = std::env::temp_dir().join(format!(".test-avif-{label}-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {
