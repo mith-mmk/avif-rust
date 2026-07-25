@@ -839,10 +839,15 @@ fn decode_sequence_samples_from_info(
                         true,
                     )?;
                 let decoded = finish_decoded_still_frame(&headers, decoded_state, true)?;
+                references.refresh_with_cdf(
+                    headers.frame.refresh_frame_flags,
+                    &decoded,
+                    &headers.frame,
+                    &next_cdf_states,
+                );
                 if !headers.frame.disable_frame_end_update_cdf {
                     cdf_states = Some(next_cdf_states);
                 }
-                references.refresh(headers.frame.refresh_frame_flags, &decoded, &headers.frame);
                 if collect_all {
                     frames.push(decoded);
                 } else if index == stop_index {
@@ -875,15 +880,21 @@ fn decode_sequence_samples_from_info(
                     av1_config,
                     &reference_states,
                 )?;
+                let initial_cdfs =
+                    if !sample_info.has_sequence_header && headers.frame.primary_ref_frame != 7 {
+                        references
+                            .cdf_for_header(&headers.frame)
+                            .or(cdf_states.as_deref())
+                    } else {
+                        None
+                    };
                 let (decoded_state, next_cdf_states) =
                     match decode_still_frame_with_filter_policy_and_state_and_references_and_cdf(
                         &headers,
                         Some(info),
                         true,
                         references.buffers(),
-                        (!sample_info.has_sequence_header && headers.frame.primary_ref_frame != 7)
-                            .then_some(cdf_states.as_deref())
-                            .flatten(),
+                        initial_cdfs,
                         false,
                         true,
                     ) {
@@ -896,10 +907,15 @@ fn decode_sequence_samples_from_info(
                         Err(err) => return Err(err),
                     };
                 let decoded = finish_decoded_still_frame(&headers, decoded_state, true)?;
+                references.refresh_with_cdf(
+                    headers.frame.refresh_frame_flags,
+                    &decoded,
+                    &headers.frame,
+                    &next_cdf_states,
+                );
                 if !headers.frame.disable_frame_end_update_cdf {
                     cdf_states = Some(next_cdf_states);
                 }
-                references.refresh(headers.frame.refresh_frame_flags, &decoded, &headers.frame);
                 if collect_all {
                     frames.push(decoded);
                 } else if index == stop_index {
@@ -1074,13 +1090,25 @@ struct ReferenceFrame {
     film_grain: Option<FilmGrainParams>,
     frame_id: Option<u16>,
     global_motion: GlobalMotionParams,
+    cdf_states: Arc<Vec<CdfContext>>,
 }
 
 impl FrameReferenceSlots {
     fn refresh(&mut self, refresh_frame_flags: u8, frame: &DecodedFrame, header: &FrameHeader) {
+        self.refresh_with_cdf(refresh_frame_flags, frame, header, &[]);
+    }
+
+    fn refresh_with_cdf(
+        &mut self,
+        refresh_frame_flags: u8,
+        frame: &DecodedFrame,
+        header: &FrameHeader,
+        cdf_states: &[CdfContext],
+    ) {
         if refresh_frame_flags == 0 {
             return;
         }
+        let cdf_states = Arc::new(cdf_states.to_vec());
         // Keep the decoded planes shared between reference slots. Cloning a
         // full `DecodedFrame` here used to duplicate every plane once per
         // refresh, which is especially expensive for AVIS inter sequences.
@@ -1110,6 +1138,7 @@ impl FrameReferenceSlots {
                     film_grain: header.film_grain,
                     frame_id: header.frame_id,
                     global_motion: header.global_motion,
+                    cdf_states: Arc::clone(&cdf_states),
                 });
             }
         }
@@ -1151,6 +1180,16 @@ impl FrameReferenceSlots {
                 .as_ref()
                 .map(|reference| Arc::clone(&reference.buffers))
         })
+    }
+
+    fn cdf_for_header(&self, header: &FrameHeader) -> Option<&[CdfContext]> {
+        if header.primary_ref_frame == 7 {
+            return None;
+        }
+        let reference_type = usize::from(header.primary_ref_frame);
+        let slot = *header.reference_frame_indices.get(reference_type)?;
+        let cdf_states = &self.slots.get(usize::from(slot))?.as_ref()?.cdf_states;
+        (!cdf_states.is_empty()).then_some(cdf_states.as_slice())
     }
 
     fn frame_to_show(&self, index: u8) -> Result<DecodedFrame, DecoderError> {
@@ -1265,6 +1304,20 @@ mod reference_frame_tests {
         assert_eq!(reference.upscaled_width, 40);
         assert_eq!((reference.render_width, reference.render_height), (30, 20));
         assert_eq!(reference.order_hint, 7);
+    }
+
+    #[test]
+    fn refreshed_reference_keeps_primary_ref_cdf_state() {
+        let mut slots = FrameReferenceSlots::default();
+        let mut header = reference_header();
+        header.primary_ref_frame = 0;
+        header.reference_frame_indices[0] = 3;
+        let cdf = CdfContext::new(header.base_q_idx);
+
+        slots.refresh_with_cdf(1 << 3, &frame(3), &header, std::slice::from_ref(&cdf));
+
+        let restored = slots.cdf_for_header(&header).unwrap();
+        assert_eq!(restored, [cdf].as_slice());
     }
 
     fn reference_header() -> FrameHeader {
