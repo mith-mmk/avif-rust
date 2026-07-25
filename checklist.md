@@ -2403,3 +2403,15 @@ suite remains `448 passed, 5 ignored`, and the expanded FFmpeg suite is
 `82.4952/85.1529 ms` and `82.2884/85.6741 ms` native/RGBA. The allocation
 change is retained as a no-regression optimization checkpoint, not a portable
 speedup claim.
+
+The CDEF frame index table now stores the three-bit syntax values in a compact
+`u8` grid with an explicit absent-unit sentinel, removing `Option<usize>`
+unpacking from the per-8x8 filtering loop while preserving the default index-0
+behavior for missing units. The active-index fast path has a sentinel
+regression vector. The current suites are `449 passed, 5 ignored` in the
+library, `17 passed` in container tests, and `104 passed, 2 ignored` in FFmpeg
+conformance. A 15-iteration optimized WML2Viewer checkpoint measured
+`81.9244/82.9463 ms` native/RGBA; this is a same-host allocation/dispatch
+checkpoint, not a portable end-to-end speedup claim. The implementation-rate
+snapshot is `157/171` (`91.81%`); the remaining 14 items are intentionally
+open normative/filter-oracle work.

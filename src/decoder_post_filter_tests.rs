@@ -81,12 +81,9 @@ fn cdef_indices_skip_unused_strength_tables() {
         ..CdefParams::default()
     };
     cdef.strengths[2].uv_sec = 1;
-    assert!(!cdef_indices_have_active_strengths(
-        &cdef,
-        &[Some(0), Some(1)]
-    ));
-    assert!(cdef_indices_have_active_strengths(&cdef, &[Some(2)]));
-    assert!(!cdef_indices_have_active_strengths(&cdef, &[None]));
+    assert!(!cdef_indices_have_active_strengths(&cdef, &[0, 1]));
+    assert!(cdef_indices_have_active_strengths(&cdef, &[2]));
+    assert!(!cdef_indices_have_active_strengths(&cdef, &[u8::MAX]));
 }
 
 #[test]

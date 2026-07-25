@@ -3916,17 +3916,21 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
     let cdef_coeff_shift = frame.bit_depth.saturating_sub(8);
     let cdef_units_width = luma_width.div_ceil(64);
     let cdef_units_height = luma_height.div_ceil(64);
-    let mut cdef_indices = vec![None; cdef_units_width * cdef_units_height];
+    // CDEF indices are at most three bits wide. Keep a compact dense table so
+    // the per-8x8 hot loop does not repeatedly unwrap an `Option<usize>`.
+    // `u8::MAX` denotes a unit that was not present in the decoded state;
+    // those units retain the historical default index 0 when filtering.
+    let mut cdef_indices = vec![u8::MAX; cdef_units_width * cdef_units_height];
     for unit in &state.cdef_units {
         let index = (unit.y / 64) * cdef_units_width + unit.x / 64;
         if let Some(slot) = cdef_indices.get_mut(index) {
-            *slot = Some(unit.index as usize & unit_mask);
+            *slot = (unit.index as usize & unit_mask) as u8;
         }
     }
     for block in &state.cdef_blocks {
         let index = (block.y / 64) * cdef_units_width + block.x / 64;
         if let Some(slot) = cdef_indices.get_mut(index) {
-            *slot = Some(block.index as usize & unit_mask);
+            *slot = (block.index as usize & unit_mask) as u8;
         }
     }
     if !cdef_indices_have_active_strengths(&frame_header.cdef, &cdef_indices) {
@@ -3961,7 +3965,12 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
             }
             let unit_x = x & !63;
             let unit_y = y & !63;
-            let index = cdef_indices[(unit_y / 64) * cdef_units_width + unit_x / 64].unwrap_or(0);
+            let index = cdef_indices[(unit_y / 64) * cdef_units_width + unit_x / 64];
+            let index = if index == u8::MAX {
+                0
+            } else {
+                usize::from(index)
+            };
             let (detected_direction, variance) = cdef_find_direction_with_variance(
                 &frame.buffers.planes[0].samples,
                 luma_width,
@@ -4120,12 +4129,12 @@ fn cdef_has_active_strengths(cdef: &crate::av1::CdefParams) -> bool {
 }
 
 #[inline]
-fn cdef_indices_have_active_strengths(
-    cdef: &crate::av1::CdefParams,
-    indices: &[Option<usize>],
-) -> bool {
-    indices.iter().flatten().any(|&index| {
-        let Some(strength) = cdef.strengths.get(index) else {
+fn cdef_indices_have_active_strengths(cdef: &crate::av1::CdefParams, indices: &[u8]) -> bool {
+    indices.iter().any(|&index| {
+        if index == u8::MAX {
+            return false;
+        }
+        let Some(strength) = cdef.strengths.get(usize::from(index)) else {
             return false;
         };
         strength.y_pri != 0 || strength.y_sec != 0 || strength.uv_pri != 0 || strength.uv_sec != 0
