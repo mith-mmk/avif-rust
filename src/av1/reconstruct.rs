@@ -1082,7 +1082,29 @@ pub fn frame_buffers_to_rgba_16(
     }
 
     if let Some(transfer) = hdr_transfer {
-        apply_transfer_function_rows(&mut rgba, buffers.width, buffers.height, transfer);
+        if matches!(transfer, TransferFunction::Pq | TransferFunction::Hlg) {
+            let source_primaries = color_config
+                .color_description
+                .map(|description| description.color_primaries)
+                .unwrap_or(2);
+            // ICtCp is already a display-referred matrix path; preserve its
+            // existing transfer/oracle behavior and only gamut-map ordinary
+            // PQ/HLG RGB and YUV conversions.
+            let source_primaries = if matrix_coefficients == 14 {
+                1
+            } else {
+                source_primaries
+            };
+            apply_hdr_transfer_function_rows(
+                &mut rgba,
+                buffers.width,
+                buffers.height,
+                transfer,
+                source_primaries,
+            )?;
+        } else {
+            apply_transfer_function_rows(&mut rgba, buffers.width, buffers.height, transfer);
+        }
     }
 
     Ok(Rgba16ImageBuffer {
@@ -1606,6 +1628,43 @@ fn apply_transfer_function_rows(
     });
 }
 
+fn apply_hdr_transfer_function_rows(
+    rgba: &mut [u16],
+    width: usize,
+    height: usize,
+    transfer: TransferFunction,
+    source_primaries: u8,
+) -> Result<(), DecoderError> {
+    // PQ/HLG samples are decoded to linear light, converted from their
+    // declared source primaries into the RGBA API's BT.709 display space, and
+    // then passed through the existing bounded SDR shoulder.
+    let primary_matrix = if source_primaries == 1 || source_primaries == 2 {
+        None
+    } else {
+        Some(rgb_primary_matrix(source_primaries, 1)?)
+    };
+    for_each_rgba_row_chunk(rgba, width, height, |_, chunk| {
+        for pixel in chunk.chunks_exact_mut(4) {
+            let encoded_channels = [pixel[0], pixel[1], pixel[2]];
+            let mut linear = encoded_channels.map(|sample| {
+                let encoded = f64::from(sample) / f64::from(u16::MAX);
+                match transfer {
+                    TransferFunction::Pq => pq_to_linear(encoded) * 100.0,
+                    TransferFunction::Hlg => hlg_to_linear(encoded),
+                    _ => unreachable!("only HDR transfer functions use this path"),
+                }
+            });
+            if let Some(matrix) = primary_matrix {
+                linear = multiply_3x3_vector(matrix, linear);
+            }
+            for (sample, value) in pixel[..3].iter_mut().zip(linear) {
+                *sample = linear_to_srgb(hdr_linear_to_sdr(value.max(0.0)));
+            }
+        }
+    });
+    Ok(())
+}
+
 fn transfer_to_sdr(sample: u16, transfer: TransferFunction) -> u16 {
     let encoded = f64::from(sample) / f64::from(u16::MAX);
     match transfer {
@@ -1620,11 +1679,8 @@ fn transfer_to_sdr(sample: u16, transfer: TransferFunction) -> u16 {
 }
 
 fn hdr_to_sdr(encoded: f64, transfer: TransferFunction) -> u16 {
-    // Convert PQ to a 100-nit SDR reference and HLG to its relative scene
-    // value, then use a bounded Reinhard-style shoulder before sRGB encoding.
-    // This keeps the existing RGBA8/16 API display-safe without pretending to
-    // perform display-specific HDR gamut or tone calibration.
-    const HDR_REFERENCE_WHITE: f64 = 4.0;
+    // Scalar compatibility helper for tests and callers that do not have
+    // source-primary metadata; frame conversion uses the matrix-aware path.
     let linear = match transfer {
         TransferFunction::Pq => pq_to_linear(encoded) * 100.0,
         TransferFunction::Hlg => hlg_to_linear(encoded),
@@ -1637,8 +1693,35 @@ fn hdr_to_sdr(encoded: f64, transfer: TransferFunction) -> u16 {
             unreachable!("SDR transfer functions are handled before HDR tone mapping")
         }
     };
-    let mapped = (linear / (1.0 + linear)) * ((HDR_REFERENCE_WHITE + 1.0) / HDR_REFERENCE_WHITE);
-    linear_to_srgb(mapped.clamp(0.0, 1.0))
+    linear_to_srgb(hdr_linear_to_sdr(linear))
+}
+
+fn hdr_linear_to_sdr(linear: f64) -> f64 {
+    const HDR_REFERENCE_WHITE: f64 = 4.0;
+    ((linear / (1.0 + linear)) * ((HDR_REFERENCE_WHITE + 1.0) / HDR_REFERENCE_WHITE))
+        .clamp(0.0, 1.0)
+}
+
+fn rgb_primary_matrix(
+    source_primaries: u8,
+    destination_primaries: u8,
+) -> Result<[[f64; 3]; 3], DecoderError> {
+    if source_primaries == destination_primaries {
+        return Ok([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+    }
+    let source = rgb_to_xyz_matrix(source_primaries)?;
+    let destination = invert_3x3(rgb_to_xyz_matrix(destination_primaries)?)?;
+    Ok(multiply_3x3(destination, source))
+}
+
+fn multiply_3x3(left: [[f64; 3]; 3], right: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
+    std::array::from_fn(|row| {
+        std::array::from_fn(|column| {
+            (0..3)
+                .map(|index| left[row][index] * right[index][column])
+                .sum()
+        })
+    })
 }
 
 fn pq_to_linear(encoded: f64) -> f64 {
@@ -3233,6 +3316,18 @@ mod tests {
         convert_linear_rgb_primaries(&mut converted, 9, 1).unwrap();
         for (actual, expected) in converted.into_iter().zip(original) {
             assert!((actual - expected).abs() < 1e-10, "{actual} != {expected}");
+        }
+    }
+
+    #[test]
+    fn hdr_primary_matrix_preserves_d65_neutral_white() {
+        let matrix = rgb_primary_matrix(12, 1).unwrap();
+        let white = multiply_3x3_vector(matrix, [1.0, 1.0, 1.0]);
+        for value in white {
+            assert!(
+                (value - 1.0).abs() < 1e-10,
+                "neutral white mapped to {value}"
+            );
         }
     }
 

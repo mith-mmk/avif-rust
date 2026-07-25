@@ -8,8 +8,8 @@ use super::{
 use crate::av1::CdefParams;
 use crate::av1::{
     ColorConfig, ColorRange, FrameBuffers, LoopFilterParams, PlaneBuffer, PlaneLayout,
-    PostFilterState, RestorationUnit, SegmentationParams,
-    wiener_filter_unit, wiener_filter_unit_into_with_scratch_bit_depth_visible,
+    PostFilterState, RestorationUnit, SegmentationParams, wiener_filter_unit,
+    wiener_filter_unit_into_with_scratch_bit_depth_visible,
 };
 
 #[test]

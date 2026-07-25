@@ -413,6 +413,9 @@ and RGBA gates.
       non-linear, non-affine, PCS-Lab and reverse-direction profiles.
 - [ ] Add display-specific HDR gamut/tone calibration and the remaining ICC
       display-conversion profile forms beyond the bounded `mBA`/PCS-Lab path.
+      PQ/HLG RGBA conversion now maps supported P3/BT.2020 primaries through
+      linear BT.709 before the existing bounded SDR shoulder; display policy
+      and the remaining ICC forms are still open.
 
 ## 5. Safety, performance and release gate
 
