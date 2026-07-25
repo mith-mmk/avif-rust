@@ -2415,3 +2415,22 @@ conformance. A 15-iteration optimized WML2Viewer checkpoint measured
 checkpoint, not a portable end-to-end speedup claim. The implementation-rate
 snapshot is `157/171` (`91.81%`); the remaining 14 items are intentionally
 open normative/filter-oracle work.
+
+Large-frame CDEF direction analysis now partitions the immutable luma 8x8
+origins across scoped standard-library workers once the frame exceeds the
+existing post-filter threshold and has at least 512 candidate blocks. Results
+are joined in chunk order, so the per-plane filter output remains deterministic;
+small frames and Wasm retain the serial path. The library suite is `449 passed,
+5 ignored`, container tests are `17 passed`, and FFmpeg conformance is `104
+passed, 2 ignored`. A 15-iteration optimized WML2Viewer checkpoint measured
+`77.2317/80.3228 ms` native/RGBA, versus the prior `81.9244/82.9463 ms` local
+checkpoint; this is a same-host parallelism result, not a portable speedup
+claim. The implementation-rate snapshot remains `157/171` (`91.81%`) because
+the 14 open items are normative transform/filter-oracle boundaries rather than
+performance checklist items.
+
+A follow-up 15-iteration run with the CDEF worker cap fixed at eight measured
+`79.1971/79.8544 ms` native/RGBA for `samples/WML2Viewer.avif`. The variation
+from the earlier `77.2317/80.3228 ms` run is retained as host noise; both runs
+remain below the pre-parallel local `81.9244/82.9463 ms` checkpoint, without a
+portable speedup claim.

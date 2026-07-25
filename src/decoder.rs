@@ -3957,7 +3957,7 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
             filtered_blocks[row + start_x..row + end_x].fill(true);
         }
     }
-    let mut cdef_blocks = Vec::new();
+    let mut cdef_block_origins = Vec::new();
     for y in (0..luma_height).step_by(8) {
         for x in (0..luma_width).step_by(8) {
             if !filtered_blocks[(y / 8) * filtered_blocks_width + x / 8] {
@@ -3971,16 +3971,56 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
             } else {
                 usize::from(index)
             };
-            let (detected_direction, variance) = cdef_find_direction_with_variance(
+            cdef_block_origins.push((x, y, index));
+        }
+    }
+    let mut cdef_blocks = Vec::with_capacity(cdef_block_origins.len());
+    #[cfg(not(target_family = "wasm"))]
+    if post_filter_parallel_work_is_large_enough(frame)
+        && cdef_block_origins.len() >= PARALLEL_CDEF_DIRECTION_MIN_BLOCKS
+    {
+        let worker_count = std::thread::available_parallelism()
+            .map(usize::from)
+            .unwrap_or(1)
+            .min(MAX_CDEF_DIRECTION_WORKERS)
+            .min(cdef_block_origins.len());
+        let chunk_size = cdef_block_origins.len().div_ceil(worker_count);
+        let luma_samples = &frame.buffers.planes[0].samples;
+        std::thread::scope(|scope| {
+            let mut workers = Vec::with_capacity(worker_count);
+            for origins in cdef_block_origins.chunks(chunk_size) {
+                workers.push(scope.spawn(move || {
+                    origins
+                        .iter()
+                        .map(|&(x, y, index)| {
+                            cdef_direction_block(
+                                luma_samples,
+                                luma_width,
+                                luma_height,
+                                cdef_coeff_shift,
+                                x,
+                                y,
+                                index,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                }));
+            }
+            for worker in workers {
+                cdef_blocks.extend(worker.join().expect("CDEF direction worker panicked"));
+            }
+        });
+    } else {
+        for (x, y, index) in cdef_block_origins {
+            cdef_blocks.push(cdef_direction_block(
                 &frame.buffers.planes[0].samples,
                 luma_width,
                 luma_height,
+                cdef_coeff_shift,
                 x,
                 y,
-                cdef_coeff_shift,
-                true,
-            );
-            cdef_blocks.push((x, y, index, detected_direction, variance));
+                index,
+            ));
         }
     }
     let cdef = frame_header.cdef;
@@ -4018,6 +4058,28 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
             &cdef_blocks,
         );
     }
+}
+
+#[inline]
+fn cdef_direction_block(
+    luma_samples: &[u16],
+    luma_width: usize,
+    luma_height: usize,
+    coeff_shift: u8,
+    x: usize,
+    y: usize,
+    index: usize,
+) -> (usize, usize, usize, usize, i32) {
+    let (detected_direction, variance) = cdef_find_direction_with_variance(
+        luma_samples,
+        luma_width,
+        luma_height,
+        x,
+        y,
+        coeff_shift,
+        true,
+    );
+    (x, y, index, detected_direction, variance)
 }
 
 fn apply_cdef_plane(
@@ -4190,6 +4252,12 @@ fn apply_loop_restoration_stage(
 
 #[cfg(not(target_family = "wasm"))]
 const PARALLEL_POST_FILTER_MIN_SAMPLES: usize = 128 * 1024;
+
+#[cfg(not(target_family = "wasm"))]
+const PARALLEL_CDEF_DIRECTION_MIN_BLOCKS: usize = 512;
+
+#[cfg(not(target_family = "wasm"))]
+const MAX_CDEF_DIRECTION_WORKERS: usize = 8;
 
 #[cfg(not(target_family = "wasm"))]
 fn post_filter_parallel_work_is_large_enough(frame: &DecodedFrame) -> bool {
