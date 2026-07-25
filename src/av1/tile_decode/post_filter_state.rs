@@ -357,10 +357,33 @@ pub(crate) fn cdef_adjust_primary_strength(strength: u8, variance: i32) -> u8 {
 /// restoration stores only two rows at an internal stripe boundary and
 /// duplicates the outer row to provide the three convolution rows required by
 /// the 7-tap kernel. Frame edges continue to use the extended outermost row.
+#[cfg(test)]
 fn restoration_sample(
     source: &[u16],
     width: usize,
     height: usize,
+    x: isize,
+    y: isize,
+    origin_y: usize,
+    stripe_height: usize,
+) -> i32 {
+    restoration_sample_with_visible_bounds(
+        source,
+        width,
+        width,
+        height,
+        x,
+        y,
+        origin_y,
+        stripe_height,
+    )
+}
+
+fn restoration_sample_with_visible_bounds(
+    source: &[u16],
+    stride: usize,
+    visible_width: usize,
+    visible_height: usize,
     x: isize,
     y: isize,
     origin_y: usize,
@@ -371,13 +394,13 @@ fn restoration_sample(
     if origin_y > 0 && (sample_y == stripe_start - 3 || sample_y == stripe_start - 2) {
         sample_y = stripe_start - 2;
     }
-    let stripe_end = (origin_y + stripe_height).min(height) as isize;
-    if stripe_end < height as isize && sample_y == stripe_end + 2 {
+    let stripe_end = (origin_y + stripe_height).min(visible_height) as isize;
+    if stripe_end < visible_height as isize && sample_y == stripe_end + 2 {
         sample_y = stripe_end + 1;
     }
-    let sample_x = x.clamp(0, width.saturating_sub(1) as isize) as usize;
-    let sample_y = sample_y.clamp(0, height.saturating_sub(1) as isize) as usize;
-    source[sample_y * width + sample_x] as i32
+    let sample_x = x.clamp(0, visible_width.saturating_sub(1) as isize) as usize;
+    let sample_y = sample_y.clamp(0, visible_height.saturating_sub(1) as isize) as usize;
+    source[sample_y * stride + sample_x] as i32
 }
 
 #[allow(dead_code)]
@@ -488,16 +511,61 @@ pub(crate) fn wiener_filter_unit_into_with_scratch_bit_depth(
     bit_depth: u8,
     horizontal_scratch: &mut Vec<i32>,
 ) {
+    wiener_filter_unit_into_with_scratch_bit_depth_visible(
+        source,
+        output,
+        width,
+        height,
+        width,
+        height,
+        origin_x,
+        origin_y,
+        unit_width,
+        unit_height,
+        filters,
+        bit_depth,
+        horizontal_scratch,
+    );
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scalar Wiener kernel keeps coded stride and visible bounds explicit"
+)]
+pub(crate) fn wiener_filter_unit_into_with_scratch_bit_depth_visible(
+    source: &[u16],
+    output: &mut [u16],
+    width: usize,
+    _height: usize,
+    visible_width: usize,
+    visible_height: usize,
+    origin_x: usize,
+    origin_y: usize,
+    unit_width: usize,
+    unit_height: usize,
+    filters: [[i16; 3]; 2],
+    bit_depth: u8,
+    horizontal_scratch: &mut Vec<i32>,
+) {
     const FILTER_BITS: u32 = 7;
     const ROUND_0_BITS: u32 = 3;
     const ROUND_1_BITS: u32 = 2 * FILTER_BITS - ROUND_0_BITS;
-    let output_width = unit_width.min(width.saturating_sub(origin_x));
-    let output_height = unit_height.min(height.saturating_sub(origin_y));
+    let output_width = unit_width.min(visible_width.saturating_sub(origin_x));
+    let output_height = unit_height.min(visible_height.saturating_sub(origin_y));
     if output_width == 0 || output_height == 0 {
         return;
     }
     let sample = |x: isize, y: isize| {
-        restoration_sample(source, width, height, x, y, origin_y, output_height)
+        restoration_sample_with_visible_bounds(
+            source,
+            width,
+            visible_width,
+            visible_height,
+            x,
+            y,
+            origin_y,
+            output_height,
+        )
     };
     let residual_kernel = |axis: usize| {
         let [outer, middle, inner] = filters[axis].map(i32::from);
@@ -676,6 +744,44 @@ pub(crate) fn sgrproj_filter_unit_into_with_scratch_bit_depth(
     bit_depth: u8,
     scratch: &mut [Vec<i32>; 4],
 ) {
+    sgrproj_filter_unit_into_with_scratch_bit_depth_visible(
+        source,
+        output,
+        width,
+        height,
+        width,
+        height,
+        origin_x,
+        origin_y,
+        unit_width,
+        unit_height,
+        sgr_index,
+        xqd,
+        bit_depth,
+        scratch,
+    );
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scalar SGRPROJ kernel keeps coded stride and visible bounds explicit"
+)]
+pub(crate) fn sgrproj_filter_unit_into_with_scratch_bit_depth_visible(
+    source: &[u16],
+    output: &mut [u16],
+    width: usize,
+    _height: usize,
+    visible_width: usize,
+    visible_height: usize,
+    origin_x: usize,
+    origin_y: usize,
+    unit_width: usize,
+    unit_height: usize,
+    sgr_index: u8,
+    xqd: [i16; 2],
+    bit_depth: u8,
+    scratch: &mut [Vec<i32>; 4],
+) {
     const RADII: [[usize; 2]; 16] = [
         [2, 1],
         [2, 1],
@@ -713,13 +819,22 @@ pub(crate) fn sgrproj_filter_unit_into_with_scratch_bit_depth(
         [22, -1],
     ];
     let index = usize::from(sgr_index.min(15));
-    let output_width = unit_width.min(width.saturating_sub(origin_x));
-    let output_height = unit_height.min(height.saturating_sub(origin_y));
+    let output_width = unit_width.min(visible_width.saturating_sub(origin_x));
+    let output_height = unit_height.min(visible_height.saturating_sub(origin_y));
     if output_width == 0 || output_height == 0 {
         return;
     }
     let sample = |x: isize, y: isize| {
-        restoration_sample(source, width, height, x, y, origin_y, output_height)
+        restoration_sample_with_visible_bounds(
+            source,
+            width,
+            visible_width,
+            visible_height,
+            x,
+            y,
+            origin_y,
+            output_height,
+        )
     };
     let round_shift = |value: i64, shift: u32| -> i32 {
         ((value + (1_i64 << shift.saturating_sub(1))) >> shift) as i32

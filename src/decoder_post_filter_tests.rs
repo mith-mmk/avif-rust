@@ -8,7 +8,8 @@ use super::{
 use crate::av1::CdefParams;
 use crate::av1::{
     ColorConfig, ColorRange, FrameBuffers, LoopFilterParams, PlaneBuffer, PlaneLayout,
-    PostFilterState, RestorationUnit, SegmentationParams, wiener_filter_unit,
+    PostFilterState, RestorationUnit, SegmentationParams,
+    wiener_filter_unit, wiener_filter_unit_into_with_scratch_bit_depth_visible,
 };
 
 #[test]
@@ -202,6 +203,10 @@ fn restoration_boundary_patching_is_scoped_to_one_stripe() {
         &mut source,
         width,
         height,
+        width,
+        height,
+        0,
+        width,
         0,
         4,
         0,
@@ -302,6 +307,51 @@ fn restoration_runs_independently_for_multiple_planes() {
             "plane {plane} restoration mismatch"
         );
     }
+}
+
+#[test]
+fn restoration_visible_bounds_ignore_coded_padding() {
+    let coded_width = 8;
+    let coded_height = 8;
+    let visible_width = 5;
+    let visible_height = 5;
+    let mut source = vec![0u16; coded_width * coded_height];
+    for row in 0..coded_height {
+        for col in 0..coded_width {
+            source[row * coded_width + col] = if col < visible_width && row < visible_height {
+                100
+            } else {
+                60_000
+            };
+        }
+    }
+    let mut output = source.clone();
+    let mut scratch = Vec::new();
+    wiener_filter_unit_into_with_scratch_bit_depth_visible(
+        &source,
+        &mut output,
+        coded_width,
+        coded_height,
+        visible_width,
+        visible_height,
+        0,
+        0,
+        visible_width,
+        visible_height,
+        [[0, -3, 8], [0, 4, -7]],
+        8,
+        &mut scratch,
+    );
+    for row in 0..visible_height {
+        assert_eq!(
+            &output[row * coded_width..row * coded_width + visible_width],
+            &vec![100; visible_width]
+        );
+    }
+    assert_eq!(
+        &output[visible_width..coded_width],
+        &source[visible_width..coded_width]
+    );
 }
 
 #[test]
