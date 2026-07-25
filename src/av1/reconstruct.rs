@@ -996,31 +996,48 @@ fn convert_yuv420_to_rgba8(
     alpha_max_source: u32,
     position: Option<ChromaSamplePosition>,
 ) {
-    convert_yuv420_to_rgba(
-        rgba,
-        width,
-        height,
-        plane_y,
-        plane_u,
-        plane_v,
-        range,
-        kr,
-        kb,
-        position,
-        |pixel, rgb, x, y| {
-            pixel[0] = u16_to_u8(rgb[0]);
-            pixel[1] = u16_to_u8(rgb[1]);
-            pixel[2] = u16_to_u8(rgb[2]);
-            pixel[3] = alpha
-                .map(|plane| {
-                    u16_to_u8(scale_sample_to_u16(
-                        sample_plane(plane, x, y),
-                        alpha_max_source,
-                    ))
-                })
-                .unwrap_or(u8::MAX);
-        },
-    );
+    if let Some(alpha) = alpha {
+        convert_yuv420_to_rgba(
+            rgba,
+            width,
+            height,
+            plane_y,
+            plane_u,
+            plane_v,
+            range,
+            kr,
+            kb,
+            position,
+            |pixel, rgb, x, y| {
+                pixel[0] = u16_to_u8(rgb[0]);
+                pixel[1] = u16_to_u8(rgb[1]);
+                pixel[2] = u16_to_u8(rgb[2]);
+                pixel[3] = u16_to_u8(scale_sample_to_u16(
+                    sample_plane(alpha, x, y),
+                    alpha_max_source,
+                ));
+            },
+        );
+    } else {
+        convert_yuv420_to_rgba(
+            rgba,
+            width,
+            height,
+            plane_y,
+            plane_u,
+            plane_v,
+            range,
+            kr,
+            kb,
+            position,
+            |pixel, rgb, _, _| {
+                pixel[0] = u16_to_u8(rgb[0]);
+                pixel[1] = u16_to_u8(rgb[1]);
+                pixel[2] = u16_to_u8(rgb[2]);
+                pixel[3] = u8::MAX;
+            },
+        );
+    }
 }
 
 fn convert_yuv420_to_rgba16(
@@ -1037,24 +1054,41 @@ fn convert_yuv420_to_rgba16(
     alpha_max_source: u32,
     position: Option<ChromaSamplePosition>,
 ) {
-    convert_yuv420_to_rgba(
-        rgba,
-        width,
-        height,
-        plane_y,
-        plane_u,
-        plane_v,
-        range,
-        kr,
-        kb,
-        position,
-        |pixel, rgb, x, y| {
-            pixel[..3].copy_from_slice(&rgb);
-            pixel[3] = alpha
-                .map(|plane| scale_sample_to_u16(sample_plane(plane, x, y), alpha_max_source))
-                .unwrap_or(u16::MAX);
-        },
-    );
+    if let Some(alpha) = alpha {
+        convert_yuv420_to_rgba(
+            rgba,
+            width,
+            height,
+            plane_y,
+            plane_u,
+            plane_v,
+            range,
+            kr,
+            kb,
+            position,
+            |pixel, rgb, x, y| {
+                pixel[..3].copy_from_slice(&rgb);
+                pixel[3] = scale_sample_to_u16(sample_plane(alpha, x, y), alpha_max_source);
+            },
+        );
+    } else {
+        convert_yuv420_to_rgba(
+            rgba,
+            width,
+            height,
+            plane_y,
+            plane_u,
+            plane_v,
+            range,
+            kr,
+            kb,
+            position,
+            |pixel, rgb, _, _| {
+                pixel[..3].copy_from_slice(&rgb);
+                pixel[3] = u16::MAX;
+            },
+        );
+    }
 }
 
 fn convert_yuv420_to_rgba<T, F>(
@@ -1128,10 +1162,10 @@ fn convert_yuv420_row<T, F>(
             let chroma_x = (x >> 1).min(chroma_width - 1);
             let top = chroma_y * chroma_width + chroma_x;
             let bottom = chroma_next_y * chroma_width + chroma_x;
-            let u = ((u32::from(plane_u.samples[top]) + u32::from(plane_u.samples[bottom]) + 1) / 2)
-                as u16;
-            let v = ((u32::from(plane_v.samples[top]) + u32::from(plane_v.samples[bottom]) + 1) / 2)
-                as u16;
+            let u = (u32::from(plane_u.samples[top]) + u32::from(plane_u.samples[bottom]))
+                .div_ceil(2) as u16;
+            let v = (u32::from(plane_v.samples[top]) + u32::from(plane_v.samples[bottom]))
+                .div_ceil(2) as u16;
             write_pixel(pixel, yuv_to_rgb_u16_fast(luma, u, v, range, kr, kb), x, y);
         }
     } else {
@@ -1198,7 +1232,7 @@ fn sample_chroma_plane(
         {
             let next_y = (source_y + 1).min(plane.layout.height - 1);
             let bottom = plane.samples[next_y * plane.layout.width + source_x];
-            return ((u32::from(top) + u32::from(bottom) + 1) / 2) as u16;
+            return (u32::from(top) + u32::from(bottom)).div_ceil(2) as u16;
         }
         return top;
     }

@@ -307,9 +307,9 @@ and RGBA gates.
       coverage.
 - [x] Validate 4:2:0 chroma sample position consistency between the AVIF
       `av1C` property and the AV1 sequence header before public decode.
-- [x] Public alpha auxiliary composition for the 8-bit 4:4:4 sample, including
-      optional native `DecodedFrame.buffers.planes[3]` alpha output and RGBA
-      conversion coverage.
+- [x] Public alpha auxiliary composition for 8-bit 4:4:4 and 4:2:0 samples,
+      including optional native `DecodedFrame.buffers.planes[3]` alpha output
+      and RGBA conversion coverage.
 - [x] Honour the AVIF `prem` property by unpremultiplying RGB channels at the
       RGBA8/RGBA16 API boundary while preserving the encoded native planes;
       zero-alpha and 1x1 identity GBR vectors cover rounding and channel order.
@@ -2238,3 +2238,18 @@ measured `46.8158/49.6258 ms` (native/RGBA) for
 `fox.profile0.8bpc.yuv420.avif`; `WML2Viewer.avif` measured
 `87.5215/94.6123 ms` in the same run. These same-host values are follow-up
 regression checkpoints, not a portable speedup claim.
+
+The FFmpeg conformance suite now also generates an 8-bit 4:2:0 colour stream
+with a separate full-resolution alpha stream. The fixture verifies native
+4:2:0 chroma layouts, the auxiliary plane, and RGBA alpha against FFmpeg; the
+98-test suite remains green. A 15-iteration release checkpoint for this small
+alpha sample measured `0.9211/1.0831 ms` (native/RGBA), while the same run gave
+`78.3252/78.8205 ms` for `WML2Viewer.avif`. These are host-specific
+checkpoints, not portable end-to-end speedup claims.
+
+The 4:2:0 converter now selects the alpha and no-alpha pixel writers outside
+the row loop, so the common no-alpha path does not execute an optional-plane
+branch for every pixel. The equivalence and generated 4:2:0-alpha tests remain
+green. A follow-up 15-iteration release run measured `0.9581/1.1116 ms` for
+the generated alpha sample and `77.6818/78.2171 ms` for `WML2Viewer.avif`;
+these values are host-specific regression checkpoints.

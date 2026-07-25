@@ -2461,6 +2461,107 @@ fn generated_10bit_alpha_sample_decodes_native_and_rgba_when_encoder_present() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+#[test]
+fn generated_8bit_yuv420_alpha_sample_decodes_native_and_rgba_when_encoder_present() {
+    let root = std::env::temp_dir().join(format!(".test-avif-alpha420-{}", std::process::id()));
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        panic!("failed to create temporary 4:2:0 alpha directory: {err}");
+    }
+    let output_path = root.join("generated-alpha420.avif");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error"])
+        .args(["-f", "lavfi", "-i", "testsrc2=size=128x128:rate=1"])
+        .args(["-f", "lavfi", "-i", "color=gray:size=128x128:rate=1"])
+        .args([
+            "-filter_complex",
+            "[0:v]format=yuv420p[color];[1:v]format=gray[alpha]",
+            "-map",
+            "[color]",
+            "-map",
+            "[alpha]",
+            "-frames:v",
+            "1",
+            "-c:v",
+            "libaom-av1",
+            "-still-picture",
+            "1",
+            "-cpu-used",
+            "8",
+            "-crf",
+            "0",
+            "-b:v",
+            "0",
+            "-frame-parallel",
+            "1",
+            "-aom-params",
+            "enable-cdef=0:enable-restoration=0",
+            "-pix_fmt:v:0",
+            "yuv420p",
+            "-pix_fmt:v:1",
+            "gray",
+            "-f",
+            "avif",
+        ])
+        .arg(&output_path)
+        .status();
+    let Ok(status) = status else {
+        eprintln!("ffmpeg is not available; skipping generated 8-bit 4:2:0 alpha sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    };
+    if !status.success() {
+        eprintln!("libaom 8-bit 4:2:0 alpha encoder is unavailable; skipping generated sample");
+        let _ = std::fs::remove_dir_all(&root);
+        return;
+    }
+    let data =
+        std::fs::read(&output_path).expect("generated 8-bit 4:2:0 alpha AVIF should be readable");
+    let frame =
+        avif_rust::decode_frame_bytes(&data).expect("8-bit 4:2:0 alpha frame should decode");
+    assert_eq!((frame.width, frame.height), (128, 128));
+    assert_eq!(frame.bit_depth, 8);
+    assert_eq!(frame.buffers.planes.len(), 4);
+    assert_eq!(
+        (
+            frame.buffers.planes[1].layout.subsampling_x,
+            frame.buffers.planes[1].layout.subsampling_y
+        ),
+        (1, 1)
+    );
+    assert_eq!(frame.buffers.planes[3].layout.plane, 3);
+    assert_eq!(frame.buffers.planes[3].samples.len(), 128 * 128);
+    let image =
+        avif_rust::image_from_bytes(&data).expect("8-bit 4:2:0 alpha public decode should succeed");
+    assert_eq!((image.width, image.height), (128, 128));
+    if let Some(expected_alpha) = ffmpeg_decode_raw_stream(&output_path, Some(1), "gray") {
+        assert_eq!(expected_alpha.len(), 128 * 128);
+        let max_native_error = frame.buffers.planes[3]
+            .samples
+            .iter()
+            .zip(&expected_alpha)
+            .map(|(actual, expected)| actual.abs_diff(u16::from(*expected)))
+            .max()
+            .unwrap_or(0);
+        assert!(
+            max_native_error <= 1,
+            "8-bit 4:2:0 alpha native max error was {max_native_error}"
+        );
+        let max_rgba_error = image
+            .rgba
+            .chunks_exact(4)
+            .map(|rgba| rgba[3])
+            .zip(expected_alpha)
+            .map(|(actual, expected)| actual.abs_diff(expected))
+            .max()
+            .unwrap_or(0);
+        assert!(
+            max_rgba_error <= 1,
+            "8-bit 4:2:0 alpha RGBA max error was {max_rgba_error}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 fn generated_intrabc_sample_matches_ffmpeg(
     pixel_format: &str,
     expected_format: &str,
