@@ -2295,3 +2295,15 @@ AVIF sample and checks both the native horizontal-subsampling layout and the
 full-resolution alpha plane against FFmpeg. With this fixture included, the
 suite completes `98 passed, 2 ignored` tests; the work-item snapshot remains
 `156/170` (`91.76%`).
+
+Gain-map ICC composition now accepts linear-affine `mft1` and `mft2` LUT
+profiles when their input/output tables are identity and the CLUT is affine;
+non-linear LUTs and `mAB`/`mBA` pipelines remain fail-closed. The nested
+library suite completes `442 passed, 5 ignored`, the FFmpeg conformance suite
+completes `98 passed, 2 ignored`, and the external compatibility gate reports
+`75` successful decodes plus `1` expected failure with no partial PNGs. The
+implementation checklist remains `156/170` (`91.76%`), while the external
+sample gate provides `75/76` (`98.68%`) successful decode coverage and `100%`
+expected-behavior coverage. An 11-iteration optimized run measured
+`81.8133/81.6517 ms` for native/RGBA decoding of `WML2Viewer.avif`; this is a
+same-host regression checkpoint, not a portable speedup claim.
