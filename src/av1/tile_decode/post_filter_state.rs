@@ -168,6 +168,44 @@ pub(crate) fn cdef_filter_block_region_with_edge_mode_into(
     use_edge_sentinel: bool,
     output: &mut [u16],
 ) {
+    cdef_filter_block_region_with_edge_mode_into_bit_depth(
+        source,
+        width,
+        height,
+        origin_x,
+        origin_y,
+        block_width,
+        block_height,
+        direction,
+        primary_strength,
+        secondary_strength,
+        damping,
+        0,
+        use_edge_sentinel,
+        output,
+    );
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scalar CDEF kernel parameters mirror the normative filter inputs"
+)]
+pub(crate) fn cdef_filter_block_region_with_edge_mode_into_bit_depth(
+    source: &[u16],
+    width: usize,
+    height: usize,
+    origin_x: usize,
+    origin_y: usize,
+    block_width: usize,
+    block_height: usize,
+    direction: usize,
+    primary_strength: u8,
+    secondary_strength: u8,
+    damping: u8,
+    coeff_shift: u8,
+    use_edge_sentinel: bool,
+    output: &mut [u16],
+) {
     if output.len() < block_width.saturating_mul(block_height) {
         return;
     }
@@ -176,6 +214,10 @@ pub(crate) fn cdef_filter_block_region_with_edge_mode_into(
     let enable_primary = primary_strength != 0;
     let enable_secondary = secondary_strength != 0;
     let clipping_required = enable_primary && enable_secondary;
+    let strength_scale = 1u8.checked_shl(u32::from(coeff_shift)).unwrap_or(u8::MAX);
+    let scaled_primary_strength = primary_strength.saturating_mul(strength_scale);
+    let scaled_secondary_strength = secondary_strength.saturating_mul(strength_scale);
+    let scaled_damping = damping.saturating_add(coeff_shift);
     let primary_taps = if primary_strength & 1 == 0 {
         [4, 2]
     } else {
@@ -206,7 +248,11 @@ pub(crate) fn cdef_filter_block_region_with_edge_mode_into(
                     for sign in [-1isize, 1] {
                         let value = sample(x as isize + sign * dx, y as isize + sign * dy);
                         sum += primary_taps[tap_index]
-                            * cdef_constrain(value - center, primary_strength, damping);
+                            * cdef_constrain(
+                                value - center,
+                                scaled_primary_strength,
+                                scaled_damping,
+                            );
                         if clipping_required && value != CDEF_VERY_LARGE {
                             min_value = min_value.min(value);
                             max_value = max_value.max(value);
@@ -222,7 +268,11 @@ pub(crate) fn cdef_filter_block_region_with_edge_mode_into(
                         for sign in [-1isize, 1] {
                             let value = sample(x as isize + sign * dx, y as isize + sign * dy);
                             sum += secondary_taps[tap_index]
-                                * cdef_constrain(value - center, secondary_strength, damping);
+                                * cdef_constrain(
+                                    value - center,
+                                    scaled_secondary_strength,
+                                    scaled_damping,
+                                );
                             if clipping_required && value != CDEF_VERY_LARGE {
                                 min_value = min_value.min(value);
                                 max_value = max_value.max(value);
@@ -1631,8 +1681,9 @@ mod tests {
     use super::{
         CDEF_DIRECTIONS, CdefUnit, PostFilterState, cdef_adjust_primary_strength, cdef_constrain,
         cdef_filter_block, cdef_filter_block_region_with_edge_mode,
-        cdef_filter_block_region_with_edge_mode_into, cdef_find_direction, cdef_unit_origin,
-        deblock_filter_edge, deblock_filter_edge_with_length,
+        cdef_filter_block_region_with_edge_mode_into,
+        cdef_filter_block_region_with_edge_mode_into_bit_depth, cdef_find_direction,
+        cdef_unit_origin, deblock_filter_edge, deblock_filter_edge_with_length,
         deblock_filter_edge_with_visible_bounds, restoration_sample, sgr_x_by_xplus1,
         store_cdef_unit,
     };
@@ -1669,6 +1720,35 @@ mod tests {
             &mut actual,
         );
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn cdef_high_bit_depth_scales_strengths_and_damping() {
+        let source = (0..32 * 32)
+            .map(|index| 2048 + ((index * 3) % 128) as u16)
+            .collect::<Vec<_>>();
+        let unscaled =
+            cdef_filter_block_region_with_edge_mode(&source, 32, 32, 8, 8, 8, 8, 3, 3, 2, 3, true);
+        let mut scaled = vec![0u16; 64];
+        cdef_filter_block_region_with_edge_mode_into_bit_depth(
+            &source,
+            32,
+            32,
+            8,
+            8,
+            8,
+            8,
+            3,
+            3,
+            2,
+            3,
+            2,
+            true,
+            &mut scaled,
+        );
+
+        assert_ne!(scaled, unscaled);
+        assert!(scaled.iter().all(|&sample| sample <= 4095));
     }
 
     #[test]

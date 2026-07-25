@@ -11,7 +11,7 @@ use crate::av1::{
     ResidualProbe, SegmentationParams, SequenceHeader, TileEntropyState, TileGroup,
     alloc_coded_frame_buffers, apply_film_grain, apply_superres_horizontal,
     build_still_decode_plan, cdef_adjust_primary_strength,
-    cdef_filter_block_region_with_edge_mode_into, cdef_find_direction_with_variance,
+    cdef_filter_block_region_with_edge_mode_into_bit_depth, cdef_find_direction_with_variance,
     convert_linear_rgb_primaries, crop_frame_buffers_to_plan,
     deblock_filter_edge_with_visible_bounds,
     decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf,
@@ -4046,6 +4046,7 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
                         plane_index,
                         subsampling_x,
                         subsampling_y,
+                        cdef_coeff_shift,
                         cdef,
                         &cdef_blocks,
                     );
@@ -4060,6 +4061,7 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
             plane_index,
             subsampling_x,
             subsampling_y,
+            cdef_coeff_shift,
             cdef,
             &cdef_blocks,
         );
@@ -4093,6 +4095,7 @@ fn apply_cdef_plane(
     plane_index: usize,
     subsampling_x: bool,
     subsampling_y: bool,
+    cdef_coeff_shift: u8,
     cdef: crate::av1::CdefParams,
     cdef_blocks: &[(usize, usize, usize, usize, i32)],
 ) {
@@ -4152,7 +4155,7 @@ fn apply_cdef_plane(
         let damping = cdef.damping.saturating_sub(u8::from(plane_index != 0));
         let block_width = (width - plane_x).min(8usize.div_ceil(scale_x));
         let block_height = (height - plane_y).min(8usize.div_ceil(scale_y));
-        cdef_filter_block_region_with_edge_mode_into(
+        cdef_filter_block_region_with_edge_mode_into_bit_depth(
             &source,
             width,
             height,
@@ -4164,6 +4167,7 @@ fn apply_cdef_plane(
             primary_strength,
             secondary_strength,
             damping,
+            cdef_coeff_shift,
             true,
             &mut filtered,
         );

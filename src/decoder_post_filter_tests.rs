@@ -108,7 +108,7 @@ fn cdef_skips_a_plane_without_configured_strengths() {
         ..CdefParams::default()
     };
     cdef.strengths[0].uv_sec = 4;
-    apply_cdef_plane(&mut plane, 0, false, false, cdef, &[(0, 0, 0, 0, 0)]);
+    apply_cdef_plane(&mut plane, 0, false, false, 0, cdef, &[(0, 0, 0, 0, 0)]);
     assert_eq!(plane.samples, source);
 }
 
