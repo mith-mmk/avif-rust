@@ -2349,3 +2349,15 @@ sequence fixture, exercising the warped prediction and high-bit-depth conversion
 paths together. Entropy boolean/literal/symbol helpers are marked for release
 inlining; the change is allocation-free and remains a no-regression checkpoint
 until a quieter repeated benchmark proves a portable speedup.
+
+The Inter/Switch AVIS path was rechecked with strict entropy termination enabled
+against the generated 8-bit inter sample. Reconstruction reaches the complete
+frame, but the AV1 trailing-padding oracle still rejects the tile at bit 11765
+(`tell=11778`, `padding_end=13720`). The production path therefore keeps the
+existing fail-closed boundary (`validate_entropy=false` for predicted frames)
+instead of weakening the entropy oracle. A power-of-two `read_uniform` fast path
+now dispatches directly to literal-bit reads and has an equivalence regression
+test. Two seven-iteration optimized checkpoints measured
+`80.8061/82.4734 ms` and `83.7614/87.5665 ms` native/RGBA for
+`samples/WML2Viewer.avif`; this remains host-noisy and is not claimed as a
+portable speedup. The implementation snapshot remains `157/171` (`91.81%`).
