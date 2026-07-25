@@ -88,6 +88,7 @@ fn sample_frame_header_and_tile_group_are_exposed_through_public_api() {
     assert_eq!(header.render_width, 900);
     assert_eq!(header.render_height, 900);
     assert!(header.tile_info.uniform_tile_spacing);
+    assert!(!header.tile_info.loop_filter_across_tiles);
     assert_eq!(header.tile_info.tile_cols, 1);
     assert_eq!(header.tile_info.tile_rows, 1);
     assert_eq!(header.tile_info.tile_size_bytes, 0);

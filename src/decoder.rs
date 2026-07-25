@@ -3758,6 +3758,11 @@ fn apply_deblock_plane(
                 } else {
                     edge_y << subsampling_y
                 };
+                if !frame_header.tile_info.loop_filter_across_tiles
+                    && is_tile_edge(frame_header, luma_x, luma_y, vertical)
+                {
+                    continue;
+                }
                 let filter_state = block_filter_state_at(luma_x, luma_y);
                 // Select the per-block reference/motion deltas for both still
                 // images and AVIS inter frames. Intra blocks use the
@@ -3889,6 +3894,40 @@ fn apply_deblock_plane(
     }
 }
 
+fn is_tile_edge(frame_header: &FrameHeader, x: usize, y: usize, vertical: bool) -> bool {
+    let tile_info = &frame_header.tile_info;
+    if tile_info.tile_cols * tile_info.tile_rows <= 1 {
+        return false;
+    }
+    if vertical {
+        if x == 0 {
+            return false;
+        }
+        tile_id_at(tile_info, x - 1, y) != tile_id_at(tile_info, x, y)
+    } else {
+        if y == 0 {
+            return false;
+        }
+        tile_id_at(tile_info, x, y - 1) != tile_id_at(tile_info, x, y)
+    }
+}
+
+fn tile_id_at(tile_info: &crate::av1::TileInfo, x: usize, y: usize) -> usize {
+    let mi_x = (x / 4) as u32;
+    let mi_y = (y / 4) as u32;
+    let col = tile_info
+        .mi_col_starts
+        .windows(2)
+        .position(|range| mi_x >= range[0] && mi_x < range[1])
+        .unwrap_or(tile_info.mi_col_starts.len().saturating_sub(2));
+    let row = tile_info
+        .mi_row_starts
+        .windows(2)
+        .position(|range| mi_y >= range[0] && mi_y < range[1])
+        .unwrap_or(tile_info.mi_row_starts.len().saturating_sub(2));
+    row * tile_info.tile_cols as usize + col
+}
+
 #[inline]
 fn deblock_has_active_strengths(
     loop_filter: &LoopFilterParams,
@@ -3996,8 +4035,30 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
     }
     let filtered_blocks_width = luma_width.div_ceil(8);
     let filtered_blocks_height = luma_height.div_ceil(8);
+    let cdef = frame_header.cdef;
+    let mut non_skipped_units = vec![false; cdef_indices.len()];
+    for block in &state.block_filter_states {
+        if !block.skip {
+            let unit_index = (block.y / 64) * cdef_units_width + block.x / 64;
+            if let Some(slot) = non_skipped_units.get_mut(unit_index) {
+                *slot = true;
+            }
+        }
+    }
     let mut filtered_blocks = vec![false; filtered_blocks_width * filtered_blocks_height];
-    for block in state.block_filter_states.iter().filter(|block| !block.skip) {
+    let mut filtered_block_skips = vec![false; filtered_blocks_width * filtered_blocks_height];
+    for block in &state.block_filter_states {
+        let unit_index = (block.y / 64) * cdef_units_width + block.x / 64;
+        let index = cdef_indices.get(unit_index).copied().unwrap_or(u8::MAX);
+        let strength = (index != u8::MAX)
+            .then(|| cdef.strengths[usize::from(index)])
+            .unwrap_or_default();
+        let filter_skip = strength.y_filter_skip || strength.uv_filter_skip;
+        if block.skip
+            && (!filter_skip || !non_skipped_units.get(unit_index).copied().unwrap_or(false))
+        {
+            continue;
+        }
         let start_x = (block.x / 8).min(filtered_blocks_width);
         let start_y = (block.y / 8).min(filtered_blocks_height);
         let end_x = block
@@ -4013,6 +4074,7 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
         for y in start_y..end_y {
             let row = y * filtered_blocks_width;
             filtered_blocks[row + start_x..row + end_x].fill(true);
+            filtered_block_skips[row + start_x..row + end_x].fill(block.skip);
         }
     }
     let mut cdef_block_origins = Vec::new();
@@ -4029,7 +4091,12 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
             } else {
                 usize::from(index)
             };
-            cdef_block_origins.push((x, y, index));
+            cdef_block_origins.push((
+                x,
+                y,
+                index,
+                filtered_block_skips[(y / 8) * filtered_blocks_width + x / 8],
+            ));
         }
     }
     let mut cdef_blocks = Vec::with_capacity(cdef_block_origins.len());
@@ -4050,7 +4117,7 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
                 workers.push(scope.spawn(move || {
                     origins
                         .iter()
-                        .map(|&(x, y, index)| {
+                        .map(|&(x, y, index, skip)| {
                             cdef_direction_block(
                                 luma_samples,
                                 luma_width,
@@ -4059,6 +4126,7 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
                                 x,
                                 y,
                                 index,
+                                skip,
                             )
                         })
                         .collect::<Vec<_>>()
@@ -4069,7 +4137,7 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
             }
         });
     } else {
-        for (x, y, index) in cdef_block_origins {
+        for (x, y, index, skip) in cdef_block_origins {
             cdef_blocks.push(cdef_direction_block(
                 &frame.buffers.planes[0].samples,
                 luma_width,
@@ -4078,10 +4146,10 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
                 x,
                 y,
                 index,
+                skip,
             ));
         }
     }
-    let cdef = frame_header.cdef;
     let subsampling_x = frame.color_config.subsampling_x;
     let subsampling_y = frame.color_config.subsampling_y;
     let cdef_blocks = cdef_blocks.as_slice();
@@ -4129,7 +4197,8 @@ fn cdef_direction_block(
     x: usize,
     y: usize,
     index: usize,
-) -> (usize, usize, usize, usize, i32) {
+    skip: bool,
+) -> (usize, usize, usize, usize, i32, bool) {
     let (detected_direction, variance) = cdef_find_direction_with_variance(
         luma_samples,
         luma_width,
@@ -4139,7 +4208,7 @@ fn cdef_direction_block(
         coeff_shift,
         true,
     );
-    (x, y, index, detected_direction, variance)
+    (x, y, index, detected_direction, variance, skip)
 }
 
 fn apply_cdef_plane(
@@ -4149,15 +4218,15 @@ fn apply_cdef_plane(
     subsampling_y: bool,
     cdef_coeff_shift: u8,
     cdef: crate::av1::CdefParams,
-    cdef_blocks: &[(usize, usize, usize, usize, i32)],
+    cdef_blocks: &[(usize, usize, usize, usize, i32, bool)],
 ) {
     let source = std::mem::take(&mut plane.samples);
-    let plane_has_configured_strength = cdef_blocks.iter().any(|&(_, _, index, _, _)| {
+    let plane_has_configured_strength = cdef_blocks.iter().any(|&(_, _, index, _, _, skip)| {
         let strength = &cdef.strengths[index];
         if plane_index == 0 {
-            strength.y_pri != 0 || strength.y_sec != 0
+            strength.y_pri != 0 || strength.y_sec != 0 || (skip && strength.y_filter_skip)
         } else {
-            strength.uv_pri != 0 || strength.uv_sec != 0
+            strength.uv_pri != 0 || strength.uv_sec != 0 || (skip && strength.uv_filter_skip)
         }
     });
     if !plane_has_configured_strength {
@@ -4174,32 +4243,43 @@ fn apply_cdef_plane(
     let scale_x = 1usize << plane_subsampling_x;
     let scale_y = 1usize << plane_subsampling_y;
     let mut filtered = vec![0u16; 64];
-    for &(x, y, index, detected_direction, variance) in cdef_blocks {
+    for &(x, y, index, detected_direction, variance, skip) in cdef_blocks {
         let plane_x = x / scale_x;
         let plane_y = y / scale_y;
         if plane_x >= width || plane_y >= height {
             continue;
         }
         let strength = &cdef.strengths[index];
-        let primary_strength = if plane_index == 0 {
-            cdef_adjust_primary_strength(strength.y_pri, variance)
+        let filter_skip = if plane_index == 0 {
+            strength.y_filter_skip
         } else {
-            strength.uv_pri
+            strength.uv_filter_skip
         };
-        let configured_primary = if plane_index == 0 {
+        if skip && !filter_skip {
+            continue;
+        }
+        let mut primary_strength = if plane_index == 0 {
             strength.y_pri
         } else {
             strength.uv_pri
         };
+        let mut secondary_strength = if plane_index == 0 {
+            strength.y_sec
+        } else {
+            strength.uv_sec
+        };
+        if skip && filter_skip && primary_strength == 0 && secondary_strength == 0 {
+            primary_strength = 19;
+            secondary_strength = 7;
+        }
+        let configured_primary = primary_strength;
+        if plane_index == 0 {
+            primary_strength = cdef_adjust_primary_strength(primary_strength, variance);
+        }
         let direction = if configured_primary == 0 {
             0
         } else {
             detected_direction
-        };
-        let secondary_strength = if plane_index == 0 {
-            strength.y_sec
-        } else {
-            strength.uv_sec
         };
         if cdef_strengths_disabled(primary_strength, secondary_strength) {
             continue;
@@ -4249,6 +4329,8 @@ fn cdef_has_active_strengths(cdef: &crate::av1::CdefParams) -> bool {
                 || strength.y_sec != 0
                 || strength.uv_pri != 0
                 || strength.uv_sec != 0
+                || strength.y_filter_skip
+                || strength.uv_filter_skip
         })
 }
 
@@ -4261,7 +4343,12 @@ fn cdef_indices_have_active_strengths(cdef: &crate::av1::CdefParams, indices: &[
         let Some(strength) = cdef.strengths.get(usize::from(index)) else {
             return false;
         };
-        strength.y_pri != 0 || strength.y_sec != 0 || strength.uv_pri != 0 || strength.uv_sec != 0
+        strength.y_pri != 0
+            || strength.y_sec != 0
+            || strength.uv_pri != 0
+            || strength.uv_sec != 0
+            || strength.y_filter_skip
+            || strength.uv_filter_skip
     })
 }
 
@@ -6576,6 +6663,8 @@ mod tile_group_merge_tests {
     fn tile_info() -> crate::av1::TileInfo {
         crate::av1::TileInfo {
             uniform_tile_spacing: true,
+            dependent_tiles: false,
+            loop_filter_across_tiles: false,
             tile_cols: 2,
             tile_rows: 1,
             tile_cols_log2: 1,

@@ -164,6 +164,8 @@ fn sample_frame(base_q_idx: u8) -> FrameHeader {
         disable_frame_end_update_cdf: false,
         tile_info: TileInfo {
             uniform_tile_spacing: true,
+            dependent_tiles: false,
+            loop_filter_across_tiles: false,
             tile_cols: 1,
             tile_rows: 1,
             tile_cols_log2: 0,
@@ -213,6 +215,8 @@ fn sample_frame(base_q_idx: u8) -> FrameHeader {
                 y_sec: 0,
                 uv_pri: 0,
                 uv_sec: 0,
+                y_filter_skip: false,
+                uv_filter_skip: false,
             }; 8],
         },
         restoration: RestorationParams {

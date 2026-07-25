@@ -33,6 +33,8 @@ struct NonUniformTileLimits {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TileInfo {
     pub uniform_tile_spacing: bool,
+    pub dependent_tiles: bool,
+    pub loop_filter_across_tiles: bool,
     pub tile_cols: u32,
     pub tile_rows: u32,
     pub tile_cols_log2: u8,
@@ -109,6 +111,20 @@ pub(crate) fn parse_tile_info(
     } else {
         0
     };
+    // Reduced still-picture headers used by AVIF omit these dependency flags
+    // even when their derived tile grid has multiple tiles. Full AV1 frame
+    // headers carry the normative fields between the tile grid and sizes.
+    let dependent_tiles = if !sequence.reduced_still_picture_header && tile_rows_log2 > 0 {
+        reader.read_bool("dependent_tiles")?
+    } else {
+        false
+    };
+    let loop_filter_across_tiles =
+        if !sequence.reduced_still_picture_header && (tile_rows_log2 > 0 || tile_cols_log2 > 0) {
+            reader.read_bool("loop_filter_across_tiles")?
+        } else {
+            tile_count > 1
+        };
     let tile_size_bytes = if tile_count > 1 {
         reader.read_bits(2, "tile_size_bytes_minus_1")? as u8 + 1
     } else {
@@ -117,6 +133,8 @@ pub(crate) fn parse_tile_info(
 
     Ok(TileInfo {
         uniform_tile_spacing,
+        dependent_tiles,
+        loop_filter_across_tiles,
         tile_cols,
         tile_rows,
         tile_cols_log2,

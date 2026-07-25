@@ -116,6 +116,8 @@ mod tests {
     fn rejects_truncated_tile_size_field() {
         let tile_info = TileInfo {
             uniform_tile_spacing: true,
+            dependent_tiles: false,
+            loop_filter_across_tiles: false,
             tile_cols: 2,
             tile_rows: 1,
             tile_cols_log2: 1,
@@ -137,6 +139,8 @@ mod tests {
     fn rejects_tile_payload_extending_beyond_tile_group() {
         let tile_info = TileInfo {
             uniform_tile_spacing: true,
+            dependent_tiles: false,
+            loop_filter_across_tiles: false,
             tile_cols: 2,
             tile_rows: 1,
             tile_cols_log2: 1,

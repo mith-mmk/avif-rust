@@ -262,6 +262,10 @@ public decoded-frame shape.
 - [x] Implement the scalar CDEF constrain, direction search and 8x8 block
       kernel.
 - [x] Collect tile-local CDEF indices during traversal.
+- Tile geometry now retains dependency and cross-tile filtering state for full
+  AV1 headers while preserving reduced-still AVIF header compatibility; the
+  deblock walker has a tile-ID boundary predicate ready for the normative
+  cross-tile strength gate.
 - [ ] Integrate frame-level CDEF state and apply each decoded per-block index
       after deblock; verify all planes against a CDEF oracle.
 - [x] Map each luma CDEF block to its subsampled chroma-plane origin and block

@@ -3,7 +3,7 @@ use super::{
     apply_loop_filter_deltas, apply_loop_restoration_stage, cdef_has_active_strengths,
     cdef_indices_have_active_strengths, cdef_strengths_disabled, deblock_has_active_strengths,
     loop_filter_mode_delta_index, loop_filter_reference_delta_index,
-    patch_restoration_stripe_boundaries, restore_restoration_stripe_boundaries,
+    patch_restoration_stripe_boundaries, restore_restoration_stripe_boundaries, tile_id_at,
 };
 use crate::av1::CdefParams;
 use crate::av1::{
@@ -11,6 +11,27 @@ use crate::av1::{
     PostFilterState, RestorationUnit, SegmentationParams, wiener_filter_unit,
     wiener_filter_unit_into_with_scratch_bit_depth_visible,
 };
+
+#[test]
+fn tile_id_lookup_uses_mi_starts_for_both_axes() {
+    let tile_info = crate::av1::TileInfo {
+        uniform_tile_spacing: true,
+        dependent_tiles: false,
+        loop_filter_across_tiles: false,
+        tile_cols: 2,
+        tile_rows: 2,
+        tile_cols_log2: 1,
+        tile_rows_log2: 1,
+        tile_size_bytes: 1,
+        context_update_tile_id: 0,
+        mi_col_starts: vec![0, 16, 32],
+        mi_row_starts: vec![0, 16, 32],
+    };
+    assert_eq!(tile_id_at(&tile_info, 0, 0), 0);
+    assert_eq!(tile_id_at(&tile_info, 64, 0), 1);
+    assert_eq!(tile_id_at(&tile_info, 0, 64), 2);
+    assert_eq!(tile_id_at(&tile_info, 64, 64), 3);
+}
 
 #[test]
 fn segmentation_loop_filter_delta_is_applied_before_other_deltas() {
@@ -73,6 +94,9 @@ fn all_zero_cdef_indices_skip_the_whole_stage() {
     assert!(!cdef_has_active_strengths(&cdef));
     cdef.strengths[2].uv_sec = 1;
     assert!(cdef_has_active_strengths(&cdef));
+    cdef.strengths[2].uv_sec = 0;
+    cdef.strengths[2].y_filter_skip = true;
+    assert!(cdef_has_active_strengths(&cdef));
 }
 
 #[test]
@@ -108,7 +132,15 @@ fn cdef_skips_a_plane_without_configured_strengths() {
         ..CdefParams::default()
     };
     cdef.strengths[0].uv_sec = 4;
-    apply_cdef_plane(&mut plane, 0, false, false, 0, cdef, &[(0, 0, 0, 0, 0)]);
+    apply_cdef_plane(
+        &mut plane,
+        0,
+        false,
+        false,
+        0,
+        cdef,
+        &[(0, 0, 0, 0, 0, false)],
+    );
     assert_eq!(plane.samples, source);
 }
 
