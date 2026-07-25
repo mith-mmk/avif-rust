@@ -1262,18 +1262,23 @@ pub(crate) fn deblock_filter_edge_with_visible_bounds(
     filter_length: u8,
 ) {
     let radius = match filter_length {
-        14 => 6,
-        8 => 3,
-        6 => 2,
-        _ => 1,
+        // The filter length names the number of taps, but the frame-edge
+        // guard must cover the farthest sample actually read on either side.
+        14 => 7,
+        8 => 4,
+        6 => 3,
+        _ => 2,
     };
     if level == 0
-        || (vertical && (edge_x < radius || edge_x + radius >= visible_width))
-        || (!vertical && (edge_y < radius || edge_y + radius >= visible_height))
+        || (vertical && (edge_x < radius || edge_x.saturating_add(radius) > visible_width))
+        || (!vertical && (edge_y < radius || edge_y.saturating_add(radius) > visible_height))
     {
         return;
     }
     let shift = u32::from(bit_depth.saturating_sub(8));
+    let signed_limit = 128i32 << shift;
+    let signed_min = -signed_limit;
+    let signed_max = signed_limit - 1;
     let mut inside = i32::from(level) >> u32::from((sharpness > 0) as u8 + (sharpness > 4) as u8);
     if sharpness > 0 {
         inside = inside.min(9 - i32::from(sharpness));
@@ -1535,11 +1540,11 @@ pub(crate) fn deblock_filter_edge_with_visible_bounds(
         // AOM clamps the outer-tap contribution to signed-byte range before
         // adding the inner-tap term; clamping only the final sum changes the
         // rounding for high-contrast edges.
-        let outer_filter = (p1 - q1).clamp(-128, 127) * hev_mask;
+        let outer_filter = (p1 - q1).clamp(signed_min, signed_max) * hev_mask;
         let mut filter = outer_filter + 3 * (q0 - p0);
-        filter = filter.clamp(-128 << shift, 127 << shift);
-        let f1 = (filter + 4).clamp(-128, 127) >> 3;
-        let f2 = (filter + 3).clamp(-128, 127) >> 3;
+        filter = filter.clamp(signed_min, signed_max);
+        let f1 = (filter + 4).clamp(signed_min, signed_max) >> 3;
+        let f2 = (filter + 3).clamp(signed_min, signed_max) >> 3;
         let np0 = (p0 + f2).clamp(0, max_sample) as u16;
         let nq0 = (q0 - f1).clamp(0, max_sample) as u16;
         let outer = if hev_mask == 0 { (f1 + 1) >> 1 } else { 0 };
@@ -2301,6 +2306,103 @@ mod tests {
         deblock_filter_edge(&mut samples, 16, 16, 8, 0, true, 23, 0, 8);
         assert_eq!(samples[7], 197);
         assert_eq!(samples[8], 188);
+    }
+
+    #[test]
+    fn deblock_strength_vectors_match_aom_for_8bit_and_highbit_depth() {
+        let mut lowbd = vec![0u16; 16 * 4];
+        for row in lowbd.chunks_exact_mut(16) {
+            row[0..4].copy_from_slice(&[100, 100, 125, 125]);
+        }
+        deblock_filter_edge_with_visible_bounds(&mut lowbd, 16, 4, 16, 4, 2, 0, true, 20, 0, 8, 4);
+        assert_eq!(&lowbd[0..4], &[105, 109, 116, 120]);
+
+        let mut highbd = vec![0u16; 16 * 4];
+        for row in highbd.chunks_exact_mut(16) {
+            row[0..4].copy_from_slice(&[400, 400, 500, 500]);
+        }
+        deblock_filter_edge_with_visible_bounds(
+            &mut highbd,
+            16,
+            4,
+            16,
+            4,
+            2,
+            0,
+            true,
+            20,
+            0,
+            10,
+            4,
+        );
+        assert_eq!(&highbd[0..4], &[419, 437, 462, 481]);
+
+        let mut sharp = vec![0u16; 16 * 4];
+        for row in sharp.chunks_exact_mut(16) {
+            row[0..4].copy_from_slice(&[100, 100, 125, 125]);
+        }
+        let before = sharp.clone();
+        deblock_filter_edge_with_visible_bounds(&mut sharp, 16, 4, 16, 4, 2, 0, true, 20, 7, 8, 4);
+        assert_eq!(sharp, before);
+    }
+
+    #[test]
+    fn deblock_boundary_guard_covers_the_farthest_tap_and_keeps_exact_edge() {
+        for (filter_length, invalid_edge, valid_edge) in
+            [(4, 1, 2), (6, 2, 3), (8, 3, 4), (14, 6, 7)]
+        {
+            let original = vec![128u16; 16 * 16];
+            let mut vertical_invalid = original.clone();
+            deblock_filter_edge_with_visible_bounds(
+                &mut vertical_invalid,
+                16,
+                16,
+                16,
+                16,
+                invalid_edge,
+                0,
+                true,
+                20,
+                0,
+                8,
+                filter_length,
+            );
+            assert_eq!(vertical_invalid, original);
+
+            let mut vertical_valid = original.clone();
+            deblock_filter_edge_with_visible_bounds(
+                &mut vertical_valid,
+                16,
+                16,
+                16,
+                16,
+                valid_edge,
+                0,
+                true,
+                20,
+                0,
+                8,
+                filter_length,
+            );
+            assert_eq!(vertical_valid, original);
+
+            let mut horizontal_invalid = original.clone();
+            deblock_filter_edge_with_visible_bounds(
+                &mut horizontal_invalid,
+                16,
+                16,
+                16,
+                16,
+                0,
+                invalid_edge,
+                false,
+                20,
+                0,
+                8,
+                filter_length,
+            );
+            assert_eq!(horizontal_invalid, original);
+        }
     }
 
     #[test]

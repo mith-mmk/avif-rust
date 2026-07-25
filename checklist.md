@@ -254,7 +254,7 @@ public decoded-frame shape.
 - [x] Preserve aligned coded-plane storage through the filter pipeline and crop
       only after filtering; deblock eligibility is bounded by the visible frame
       while retaining the coded stride for neighbor taps.
-- [ ] Implement deblocking in normative order with boundary and strength
+- [x] Implement deblocking in normative order with boundary and strength
       vectors.
 - [x] Implement the scalar 4-tap deblock edge kernel and limit/HEV mask.
 - [x] Connect deblock stage traversal to retained transform boundaries for
