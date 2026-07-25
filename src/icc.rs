@@ -101,6 +101,28 @@ pub(crate) fn apply_to_rgba16(rgba: &mut [u16], profile: &[u8]) -> Result<(), De
         }
         return Err(unsupported("ICC A2B tag is not an mft1/mft2/mAB/mBA LUT"));
     }
+    // A display profile exposes the PCS-to-device direction through B2A.
+    // It is a distinct boundary from source RGB-to-PCS conversion: the
+    // mBA pipeline result is already encoded device RGB and must not receive
+    // a second sRGB transfer function.
+    let b2a_tag = find_profile_tag(profile, b"B2A0")?
+        .or(find_profile_tag(profile, b"B2A1")?)
+        .or(find_profile_tag(profile, b"B2A2")?);
+    if let Some(tag) = b2a_tag {
+        let signature = profile
+            .get(tag.0..tag.0 + 4)
+            .ok_or_else(|| unsupported("ICC B2A tag is outside the profile"))?;
+        if signature != b"mBA " {
+            return Err(unsupported("ICC B2A tag is not an mBA LUT"));
+        }
+        let profile = MabProfile::parse(profile, tag, true)?;
+        for_each_rgba16_chunk(rgba, |chunk| {
+            for pixel in chunk.chunks_exact_mut(4) {
+                profile.apply_to_display(pixel);
+            }
+        });
+        return Ok(());
+    }
     let profile = MatrixShaperProfile::parse(profile)?;
     for_each_rgba16_chunk(rgba, |chunk| {
         for pixel in chunk.chunks_exact_mut(4) {
@@ -655,11 +677,34 @@ impl MabProfile {
     }
 
     fn apply(&self, pixel: &mut [u16]) {
-        let source = [
+        let values = self.transform_values([
             f64::from(pixel[0]) / f64::from(u16::MAX),
             f64::from(pixel[1]) / f64::from(u16::MAX),
             f64::from(pixel[2]) / f64::from(u16::MAX),
-        ];
+        ]);
+        let xyz = if self.pcs_lab {
+            lab_to_xyz(values, self.white)
+        } else {
+            values
+        };
+        let rgb = multiply(self.xyz_to_srgb, xyz);
+        pixel[0] = encode_srgb(rgb[0]);
+        pixel[1] = encode_srgb(rgb[1]);
+        pixel[2] = encode_srgb(rgb[2]);
+    }
+
+    fn apply_to_display(&self, pixel: &mut [u16]) {
+        let values = self.transform_values([
+            f64::from(pixel[0]) / f64::from(u16::MAX),
+            f64::from(pixel[1]) / f64::from(u16::MAX),
+            f64::from(pixel[2]) / f64::from(u16::MAX),
+        ]);
+        for (sample, value) in pixel[..3].iter_mut().zip(values) {
+            *sample = (value.clamp(0.0, 1.0) * f64::from(u16::MAX)).round() as u16;
+        }
+    }
+
+    fn transform_values(&self, source: [f64; 3]) -> [f64; 3] {
         let mut values = source;
         if self.reverse {
             apply_curves(&mut values, self.b_curves.as_ref());
@@ -678,15 +723,7 @@ impl MabProfile {
             apply_matrix(&mut values, self.matrix);
             apply_curves(&mut values, self.b_curves.as_ref());
         }
-        let xyz = if self.pcs_lab {
-            lab_to_xyz(values, self.white)
-        } else {
-            values
-        };
-        let rgb = multiply(self.xyz_to_srgb, xyz);
-        pixel[0] = encode_srgb(rgb[0]);
-        pixel[1] = encode_srgb(rgb[1]);
-        pixel[2] = encode_srgb(rgb[2]);
+        values
     }
 
     /// Return the profile-to-linear-sRGB matrix for the narrow mAB subset
@@ -2071,6 +2108,20 @@ mod tests {
             assert!(rgba[..3].iter().any(|value| *value != 0));
             assert_eq!(rgba[3], 12_345);
         }
+    }
+
+    #[test]
+    fn b2a_display_profile_emits_encoded_device_rgb_without_srgb_reapplication() {
+        let mut profile = synthetic_mba_profile(false, false);
+        let a2b = find_profile_tag(&profile, b"A2B0").unwrap().unwrap();
+        profile[132..136].copy_from_slice(b"B2A0");
+        profile[a2b.0..a2b.0 + 4].copy_from_slice(b"mBA ");
+
+        let mut rgba = [u16::MAX, 32_768, 0, 54_321];
+        apply_to_rgba16(&mut rgba, &profile).unwrap();
+
+        assert_eq!(&rgba[..3], &[41_196, 38_072, 4_095]);
+        assert_eq!(rgba[3], 54_321);
     }
 
     #[test]

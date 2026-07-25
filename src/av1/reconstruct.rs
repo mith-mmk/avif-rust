@@ -1657,8 +1657,9 @@ fn apply_hdr_transfer_function_rows(
             if let Some(matrix) = primary_matrix {
                 linear = multiply_3x3_vector(matrix, linear);
             }
+            linear = map_hdr_linear_to_bt709_display(linear);
             for (sample, value) in pixel[..3].iter_mut().zip(linear) {
-                *sample = linear_to_srgb(hdr_linear_to_sdr(value.max(0.0)));
+                *sample = linear_to_srgb(hdr_linear_to_sdr(value));
             }
         }
     });
@@ -1700,6 +1701,36 @@ fn hdr_linear_to_sdr(linear: f64) -> f64 {
     const HDR_REFERENCE_WHITE: f64 = 4.0;
     ((linear / (1.0 + linear)) * ((HDR_REFERENCE_WHITE + 1.0) / HDR_REFERENCE_WHITE))
         .clamp(0.0, 1.0)
+}
+
+/// Compresses only the out-of-gamut direction around BT.709 luminance.
+///
+/// Primary conversion can produce a negative channel even though the source
+/// RGB is non-negative.  Independent clipping changes hue and can turn a
+/// saturated colour into black; a luminance-axis compression keeps the hue
+/// direction while retaining HDR values above one for the tone mapper.
+fn map_hdr_linear_to_bt709_display(rgb: [f64; 3]) -> [f64; 3] {
+    const BT709_LUMA: [f64; 3] = [0.2126, 0.7152, 0.0722];
+    let luminance = rgb
+        .into_iter()
+        .zip(BT709_LUMA)
+        .map(|(value, weight)| value * weight)
+        .sum::<f64>()
+        .max(0.0);
+    let compression = rgb
+        .into_iter()
+        .filter_map(|value| {
+            (value < 0.0).then(|| {
+                let delta = value - luminance;
+                if delta < 0.0 { luminance / -delta } else { 0.0 }
+            })
+        })
+        .fold(1.0, f64::min)
+        .clamp(0.0, 1.0);
+    if compression >= 1.0 {
+        return rgb;
+    }
+    rgb.map(|value| luminance + compression * (value - luminance))
 }
 
 fn rgb_primary_matrix(
@@ -3537,6 +3568,30 @@ mod tests {
         apply_transfer_function(&mut rgba, TransferFunction::Pq);
         assert_eq!(rgba[3], 1234);
         assert!(rgba[..3].iter().all(|sample| *sample <= u16::MAX));
+    }
+
+    #[test]
+    fn hdr_display_gamut_mapping_preserves_neutral_and_compresses_negative_channels() {
+        let neutral = map_hdr_linear_to_bt709_display([2.0, 2.0, 2.0]);
+        assert_eq!(neutral, [2.0, 2.0, 2.0]);
+
+        let source = [1.2, -0.4, 0.6];
+        let mapped = map_hdr_linear_to_bt709_display(source);
+        assert!(mapped.iter().all(|value| *value >= 0.0));
+        assert!(mapped[0] > mapped[2]);
+        assert!(mapped[2] > mapped[1]);
+
+        let source_luma = source
+            .into_iter()
+            .zip([0.2126, 0.7152, 0.0722])
+            .map(|(value, weight)| value * weight)
+            .sum::<f64>();
+        let mapped_luma = mapped
+            .into_iter()
+            .zip([0.2126, 0.7152, 0.0722])
+            .map(|(value, weight)| value * weight)
+            .sum::<f64>();
+        assert!((source_luma - mapped_luma).abs() < 1e-12);
     }
 
     #[test]

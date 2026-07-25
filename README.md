@@ -38,8 +38,8 @@ passes the FFmpeg RGB oracle (average absolute error about 0.075, maximum 6).
 | Animated AVIF multi-frame callback output | Supported for Key/IntraOnly/Inter/Switch/show-existing samples (`animation: true`) |
 | Layered-image selectors (`a1op=0`, `lsel=0`/`0xffff`) | Parsed and accepted; specific non-default layer/operating-point selection remains fail-closed |
 | `tmap` primary item base-image fallback | Supported (base `av01` decode); ISO 21496 gain-map metadata and the referenced AV1 gain-map item can be inspected/decoded; explicit base-colour-space HDR application supports CICP, matrix-shaper, and linear-affine ICC LUT/mAB alternates (non-linear/reverse profiles fail closed) |
-| PQ/HLG transfer to bounded SDR RGBA16 | Supported (bounded tone mapping; no display-specific calibration) |
-| Display-specific HDR gamut calibration and non-matrix ICC display conversion | Not yet supported |
+| PQ/HLG transfer to bounded SDR RGBA16 | Supported (BT.709 luminance-axis gamut compression and bounded tone mapping) |
+| Display-specific HDR gamut calibration and non-matrix ICC display conversion | Supported (bounded BT.709 display policy and B2A0/B2A1/B2A2 `mBA` device-RGB conversion) |
 
 Unsupported composition or AV1 tools return `DecoderError::Unsupported`. The
 decoder intentionally fails closed instead of returning a partially decoded

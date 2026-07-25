@@ -464,6 +464,104 @@ fn restoration_visible_bounds_ignore_coded_padding() {
 }
 
 #[test]
+fn restoration_large_frame_reuses_scratch_across_units() {
+    let width = 128;
+    let height = 128;
+    let source = (0..width * height)
+        .map(|index| ((index * 37 + index / width * 19) & 4095) as u16)
+        .collect::<Vec<_>>();
+    let state = PostFilterState {
+        restoration_units: vec![
+            RestorationUnit {
+                x: 0,
+                y: 0,
+                plane: 0,
+                restoration_type: 1,
+                wiener: Some([[0, -3, 8], [0, 4, -7]]),
+                sgrproj: None,
+                sgrproj_index: None,
+            },
+            RestorationUnit {
+                x: 64,
+                y: 0,
+                plane: 0,
+                restoration_type: 2,
+                wiener: None,
+                sgrproj: Some([12, 64]),
+                sgrproj_index: Some(0),
+            },
+            RestorationUnit {
+                x: 0,
+                y: 64,
+                plane: 0,
+                restoration_type: 1,
+                wiener: Some([[0, 5, -9], [0, -2, 6]]),
+                sgrproj: None,
+                sgrproj_index: None,
+            },
+            RestorationUnit {
+                x: 64,
+                y: 64,
+                plane: 0,
+                restoration_type: 2,
+                wiener: None,
+                sgrproj: Some([12, 64]),
+                sgrproj_index: Some(0),
+            },
+        ],
+        ..PostFilterState::default()
+    };
+    let layout = PlaneLayout {
+        plane: 0,
+        width,
+        height,
+        subsampling_x: 0,
+        subsampling_y: 0,
+        sample_count: source.len(),
+    };
+    let mut frame = DecodedFrame {
+        width,
+        height,
+        render_width: width,
+        render_height: height,
+        bit_depth: 12,
+        color_config: ColorConfig {
+            high_bitdepth: true,
+            twelve_bit: true,
+            bit_depth: 12,
+            monochrome: true,
+            color_description: None,
+            color_range: ColorRange::Full,
+            subsampling_x: false,
+            subsampling_y: false,
+            chroma_sample_position: None,
+            separate_uv_delta_q: false,
+        },
+        color_information: None,
+        alpha_premultiplied: false,
+        buffers: FrameBuffers {
+            width,
+            height,
+            planes: vec![PlaneBuffer {
+                layout,
+                samples: source.clone(),
+            }],
+        },
+    };
+
+    apply_loop_restoration_stage(&mut frame, &state, 64, &[1, 2]);
+
+    assert_eq!(frame.buffers.planes[0].samples.len(), source.len());
+    assert!(
+        frame.buffers.planes[0]
+            .samples
+            .iter()
+            .zip(source)
+            .any(|(filtered, original)| filtered != &original)
+    );
+}
+
+#[test]
 fn alpha_row_chunks_match_one_pass_with_subsampling() {
     let width = 8;
     let height = 4;

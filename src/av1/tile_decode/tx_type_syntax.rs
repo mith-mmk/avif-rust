@@ -230,3 +230,108 @@ pub(super) fn filter_intra_mode_to_tx_cdf_mode(
         ))),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::av1::{
+        BlockSize, build_still_decode_plan, parse_frame_header, parse_sequence_header,
+    };
+    use crate::container::parse_avif;
+    use crate::obu::{ObuType, find_obu_payload};
+
+    fn sample_frame_and_mode() -> (FrameHeader, BlockModeProbe) {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let data = std::fs::read(root.join("test_data/images/WML2Viewer.avif"))
+            .expect("WML2Viewer AVIF should be readable");
+        let info = parse_avif(&data).expect("WML2Viewer AVIF should parse");
+        let sequence_payload =
+            find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
+                .expect("sequence header OBU should be present")
+                .expect("sequence header payload should be present");
+        let sequence = parse_sequence_header(sequence_payload).expect("sequence should parse");
+        let frame_payload = find_obu_payload(&info.primary_item_payload, ObuType::Frame)
+            .expect("frame OBU should be present")
+            .expect("frame payload should be present");
+        let frame = parse_frame_header(frame_payload, &sequence).expect("frame should parse");
+        let tile_group = crate::av1::parse_tile_group(
+            frame_payload,
+            frame.uncompressed_header_bits,
+            &frame.tile_info,
+        )
+        .expect("tile group should parse");
+        let plan = build_still_decode_plan(&sequence, &frame, &tile_group)
+            .expect("still decode plan should build");
+        let mode = crate::av1::probe_tile_block_modes(
+            frame_payload,
+            &tile_group,
+            &sequence,
+            &frame,
+            &plan,
+        )
+        .expect("first block mode should probe")
+        .into_iter()
+        .next()
+        .expect("sample should contain a block mode");
+        assert_eq!(mode.block_size, BlockSize::Block64x64);
+        (frame, mode)
+    }
+
+    #[test]
+    fn chroma_transform_derivation_matches_av1_mode_table() {
+        let (frame, mut block_mode) = sample_frame_and_mode();
+        let cases = [
+            (PredictionMode::Dc, TxType::DctDct),
+            (PredictionMode::Vertical, TxType::AdstDct),
+            (PredictionMode::Horizontal, TxType::DctAdst),
+            (PredictionMode::D45, TxType::DctDct),
+            (PredictionMode::D135, TxType::AdstAdst),
+            (PredictionMode::D113, TxType::AdstDct),
+            (PredictionMode::D157, TxType::DctAdst),
+            (PredictionMode::D203, TxType::DctAdst),
+            (PredictionMode::D67, TxType::AdstDct),
+            (PredictionMode::Smooth, TxType::AdstAdst),
+            (PredictionMode::SmoothVertical, TxType::AdstDct),
+            (PredictionMode::SmoothHorizontal, TxType::DctAdst),
+            (PredictionMode::Paeth, TxType::AdstAdst),
+        ];
+        for (mode, expected) in cases {
+            block_mode.uv_mode = Some(UvPredictionMode::Intra(mode));
+            assert_eq!(
+                chroma_intra_tx_type(&frame, &block_mode, TxSize::Tx16x16),
+                expected,
+                "UV mode {mode:?}"
+            );
+        }
+        block_mode.uv_mode = Some(UvPredictionMode::Cfl);
+        assert_eq!(
+            chroma_intra_tx_type(&frame, &block_mode, TxSize::Tx16x16),
+            TxType::DctDct
+        );
+        block_mode.uv_mode = None;
+        assert_eq!(
+            chroma_intra_tx_type(&frame, &block_mode, TxSize::Tx16x16),
+            TxType::DctDct
+        );
+    }
+
+    #[test]
+    fn large_chroma_transforms_are_fixed_to_dct() {
+        let (frame, mut block_mode) = sample_frame_and_mode();
+        block_mode.uv_mode = Some(UvPredictionMode::Intra(PredictionMode::Vertical));
+        for tx_size in [
+            TxSize::Tx32x32,
+            TxSize::Tx64x64,
+            TxSize::Tx16x32,
+            TxSize::Tx32x16,
+            TxSize::Tx16x64,
+            TxSize::Tx64x16,
+        ] {
+            assert_eq!(
+                chroma_intra_tx_type(&frame, &block_mode, tx_size),
+                TxType::DctDct,
+                "large chroma transform {tx_size:?}"
+            );
+        }
+    }
+}

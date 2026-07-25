@@ -1962,6 +1962,61 @@ mod tests {
     }
 
     #[test]
+    fn all_transform_sizes_preserve_rectangular_placement_at_plane_edges() {
+        let transform_sizes = [
+            TxSize::Tx4x4,
+            TxSize::Tx8x8,
+            TxSize::Tx16x16,
+            TxSize::Tx32x32,
+            TxSize::Tx64x64,
+            TxSize::Tx4x8,
+            TxSize::Tx8x4,
+            TxSize::Tx8x16,
+            TxSize::Tx16x8,
+            TxSize::Tx16x32,
+            TxSize::Tx32x16,
+            TxSize::Tx32x64,
+            TxSize::Tx64x32,
+            TxSize::Tx4x16,
+            TxSize::Tx16x4,
+            TxSize::Tx8x32,
+            TxSize::Tx32x8,
+            TxSize::Tx16x64,
+            TxSize::Tx64x16,
+        ];
+        for tx_size in transform_sizes {
+            let x = 4;
+            let y = 6;
+            let frame_width = 96;
+            let frame_height = 80;
+            let blocks = plan_transform_blocks_with_tx_size(
+                1,
+                x,
+                y,
+                BlockSize::Block64x64,
+                tx_size,
+                frame_width,
+                frame_height,
+            );
+            let available_width = 64.min(frame_width - x);
+            let available_height = 64.min(frame_height - y);
+            let expected_count = available_width.div_ceil(tx_size.width())
+                * available_height.div_ceil(tx_size.height());
+            assert_eq!(blocks.len(), expected_count, "{tx_size:?} count");
+            assert!(
+                blocks.iter().all(|block| {
+                    block.plane == 1
+                        && block.x >= x
+                        && block.y >= y
+                        && block.x < x + available_width
+                        && block.y < y + available_height
+                }),
+                "{tx_size:?} placement"
+            );
+        }
+    }
+
+    #[test]
     fn transform_plan_clips_at_frame_edge() {
         let blocks = plan_transform_blocks(0, 896, 896, BlockSize::Block128x128, 900, 900);
 
@@ -2640,6 +2695,56 @@ mod tests {
             let mut actual = vec![0; tx_size.sample_count()];
             inverse_transform_into(tx_type, tx_size, &coefficients, 8, &mut actual).unwrap();
             assert_eq!(actual, expected, "{tx_size:?}");
+        }
+    }
+
+    #[test]
+    fn all_transform_size_reference_anchors_match_aom_vectors() {
+        let cases = [
+            (TxSize::Tx4x4, [2, 2, 1, 1, 2], 32, 1, 3),
+            (TxSize::Tx8x8, [1, 1, 1, 1, 1], 66, 0, 2),
+            (TxSize::Tx16x16, [0, 0, 0, 0, 1], 143, 0, 1),
+            (TxSize::Tx32x32, [0, 0, 0, 0, 1], 574, 0, 1),
+            (TxSize::Tx64x64, [0, 0, 0, 0, 1], 2292, 0, 1),
+            (TxSize::Tx4x8, [1, 1, 1, 2, 2], 46, 1, 2),
+            (TxSize::Tx8x4, [1, 1, 2, 2, 2], 46, 1, 2),
+            (TxSize::Tx8x16, [1, 1, 1, 1, 1], 109, 0, 1),
+            (TxSize::Tx16x8, [1, 1, 1, 1, 1], 110, 0, 1),
+            (TxSize::Tx16x32, [1, 1, 1, 1, 1], 438, 0, 1),
+            (TxSize::Tx32x16, [1, 1, 1, 1, 1], 434, 0, 1),
+            (TxSize::Tx32x64, [1, 1, 1, 1, 1], 1736, 0, 1),
+            (TxSize::Tx64x32, [1, 1, 1, 1, 1], 1736, 0, 1),
+            (TxSize::Tx4x16, [1, 1, 1, 1, 1], 66, 0, 2),
+            (TxSize::Tx16x4, [1, 1, 1, 1, 1], 66, 0, 2),
+            (TxSize::Tx8x32, [0, 0, 0, 1, 1], 140, 0, 1),
+            (TxSize::Tx32x8, [0, 0, 0, 1, 1], 136, 0, 1),
+            (TxSize::Tx16x64, [0, 0, 0, 1, 1], 560, 0, 1),
+            (TxSize::Tx64x16, [0, 0, 0, 1, 1], 558, 0, 1),
+        ];
+        for (tx_size, expected_anchors, expected_sum, expected_min, expected_max) in cases {
+            let mut coefficients = vec![0; tx_size.sample_count()];
+            coefficients[0] = 64;
+            coefficients[1] = -17;
+            coefficients[tx_size.height()] = 9;
+            let residual = inverse_transform(TxType::DctDct, tx_size, &coefficients, 8).unwrap();
+            let positions = [
+                0,
+                1,
+                tx_size.width(),
+                residual.len() / 2,
+                residual.len() - 1,
+            ];
+            let sum = residual.iter().map(|value| i64::from(*value)).sum::<i64>();
+            let min = residual.iter().copied().min().unwrap();
+            let max = residual.iter().copied().max().unwrap();
+            assert_eq!(
+                positions.map(|position| residual[position]),
+                expected_anchors,
+                "{tx_size:?}"
+            );
+            assert_eq!(sum, expected_sum, "{tx_size:?} sum");
+            assert_eq!(min, expected_min, "{tx_size:?} min");
+            assert_eq!(max, expected_max, "{tx_size:?} max");
         }
     }
 

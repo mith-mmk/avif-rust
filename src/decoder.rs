@@ -6229,6 +6229,142 @@ mod prefilter_diagnostic_tests {
     }
 
     #[test]
+    fn wml2viewer_post_filter_stages_match_strict_plane_oracle() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let avif_path = root.join("test_data/images/WML2Viewer.avif");
+        let data = std::fs::read(&avif_path).expect("WML2Viewer AVIF should be readable");
+        let info = parse_avif(&data).expect("WML2Viewer AVIF should parse");
+        let headers = parse_av1_headers(&info).expect("WML2Viewer AV1 headers should parse");
+        let DecodedStillFrame {
+            frame: raw,
+            post_filter_state,
+            ..
+        } = decode_still_frame_with_filter_policy_and_state_and_references(
+            &headers,
+            Some(&info),
+            true,
+            std::array::from_fn(|_| None),
+        )
+        .expect("WML2Viewer raw reconstruction should decode");
+
+        assert!(
+            !post_filter_state.cdef_blocks.is_empty(),
+            "the strict sample must retain decoded CDEF block indices"
+        );
+        assert!(
+            !post_filter_state.restoration_units.is_empty(),
+            "the strict sample must retain decoded restoration units"
+        );
+
+        let mut deblocked = raw.clone();
+        apply_deblock_stage(&mut deblocked, &headers.frame, &post_filter_state);
+        let deblock_changes = raw
+            .buffers
+            .planes
+            .iter()
+            .zip(&deblocked.buffers.planes)
+            .map(|(before, after)| {
+                before
+                    .samples
+                    .iter()
+                    .zip(&after.samples)
+                    .filter(|(before, after)| before != after)
+                    .count()
+            })
+            .sum::<usize>();
+        assert!(
+            deblock_changes > 0,
+            "deblock stage must change the strict sample"
+        );
+
+        let restoration_boundaries = headers
+            .frame
+            .restoration
+            .uses_lr
+            .then(|| capture_restoration_boundary_rows(&deblocked));
+        let mut cdef = deblocked.clone();
+        apply_cdef_stage(&mut cdef, &headers.frame, &post_filter_state);
+        let cdef_changes = deblocked
+            .buffers
+            .planes
+            .iter()
+            .zip(&cdef.buffers.planes)
+            .map(|(before, after)| {
+                before
+                    .samples
+                    .iter()
+                    .zip(&after.samples)
+                    .filter(|(before, after)| before != after)
+                    .count()
+            })
+            .sum::<usize>();
+        assert!(
+            cdef_changes > 0,
+            "CDEF stage must apply retained block indices"
+        );
+
+        let before_restoration = cdef.clone();
+        apply_loop_restoration_stage_with_boundaries(
+            &mut cdef,
+            &post_filter_state,
+            headers.decode_plan.superblock_size << headers.frame.restoration.unit_shift,
+            &[1, 2],
+            restoration_boundaries.as_deref(),
+        );
+        crop_frame_buffers_to_plan(&mut cdef.buffers, &headers.decode_plan)
+            .expect("WML2Viewer filtered buffers should crop");
+        let restoration_changes = before_restoration
+            .buffers
+            .planes
+            .iter()
+            .zip(&cdef.buffers.planes)
+            .map(|(before, after)| {
+                before
+                    .samples
+                    .iter()
+                    .zip(&after.samples)
+                    .filter(|(before, after)| before != after)
+                    .count()
+            })
+            .sum::<usize>();
+        assert!(
+            restoration_changes > 0,
+            "loop restoration stage must change the strict sample"
+        );
+
+        for (plane_index, plane) in cdef.buffers.planes.iter().enumerate() {
+            let plane_name = ["y", "u", "v"]
+                .get(plane_index)
+                .unwrap_or_else(|| panic!("unexpected WML2Viewer plane {plane_index}"));
+            let path = root.join(format!("test_data/planes/WML2Viewer.{plane_name}.u16le"));
+            let expected = std::fs::read(&path)
+                .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+            let expected = expected
+                .chunks_exact(2)
+                .map(|sample| u16::from_le_bytes([sample[0], sample[1]]))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                plane.samples, expected,
+                "WML2Viewer final plane {plane_index} must match the strict oracle"
+            );
+        }
+    }
+
+    #[test]
+    fn truncated_post_filter_sample_fails_closed_without_partial_rgba() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let data = std::fs::read(root.join("test_data/images/WML2Viewer.avif"))
+            .expect("WML2Viewer AVIF should be readable");
+        let failures = (1..=64)
+            .filter(|trim| crate::image_from_bytes(&data[..data.len() - trim]).is_err())
+            .count();
+        assert!(
+            failures >= 32,
+            "truncating the filtered AVIF should fail closed for most suffixes, got {failures}/64"
+        );
+    }
+
+    #[test]
     #[ignore = "diagnostic execution of the private post-filter pipeline"]
     fn runs_wml2viewer_private_post_filter_pipeline() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

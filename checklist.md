@@ -145,7 +145,7 @@ exact native-plane fixture before the next feature is enabled.
 - [x] Verify palette-mode filter-intra exclusion, entropy termination and
       complete coded-tile coverage through the aligned MI edge for
       `WML2Viewer.avif` and the strict filter-disabled fixtures.
-- [ ] Validate all 19 rectangular and square transform sizes, including
+- [x] Validate all 19 rectangular and square transform sizes, including
       32x32/64x64 paths, against standalone normative vectors.
 - [x] Verify the default zig-zag scan used by the supported 2-D
       `ADST_DCT`/`DCT_ADST` classes with known vectors.
@@ -174,7 +174,7 @@ exact native-plane fixture before the next feature is enabled.
 - [x] Verify coefficient context selection with known vectors for the enabled
       transform sizes and plane types.
 - [x] Verify palette and filter-intra syntax gating for the supported profile.
-- [ ] Support all 19 AV1 transform sizes, including rectangular transform
+- [x] Support all 19 AV1 transform sizes, including rectangular transform
       placement and per-plane coordinates.
 - [x] Derive intra chroma transform types from the signalled UV mode and transform
       set for the supported sub-32 transform sizes.
@@ -191,7 +191,7 @@ exact native-plane fixture before the next feature is enabled.
       range clamps and rounding, and pin the `WML2Viewer` `Tx16x64` path.
 - [x] Route `Tx64x64 DctDct` through the staged row/column core and transpose
       its lossy coefficient storage at the inverse-transform boundary.
-- [ ] Validate the remaining chroma transform derivation and 32x32/64x64
+- [x] Validate the remaining chroma transform derivation and 32x32/64x64
       transform paths against normative reference vectors.
 - [x] Reject partial tile groups before accepting a still-image decode.
 - [x] Require entropy termination/trailing-bit validation before accepting a
@@ -249,7 +249,7 @@ public decoded-frame shape.
       the frame-level filter state used by every stage.
 - [x] Retain transform-boundary skip/mode state and consume it when deriving
       normative deblock levels and edge lengths.
-- [ ] Integrate frame-level post-filter state and apply filters in fixed order:
+- [x] Integrate frame-level post-filter state and apply filters in fixed order:
       deblock -> CDEF -> loop restoration; verify each stage with plane oracles.
 - [x] Preserve aligned coded-plane storage through the filter pipeline and crop
       only after filtering; deblock eligibility is bounded by the visible frame
@@ -266,7 +266,7 @@ public decoded-frame shape.
   AV1 headers while preserving reduced-still AVIF header compatibility; the
   deblock walker has a tile-ID boundary predicate ready for the normative
   cross-tile strength gate.
-- [ ] Integrate frame-level CDEF state and apply each decoded per-block index
+- [x] Integrate frame-level CDEF state and apply each decoded per-block index
       after deblock; verify all planes against a CDEF oracle.
 - [x] Map each luma CDEF block to its subsampled chroma-plane origin and block
       extent; add a generated non-lossless 4:2:0 CDEF sample against FFmpeg
@@ -419,11 +419,12 @@ and RGBA gates.
 - [x] Compose linear-affine forward ICC `mft1`/`mft2`/`mAB` alternates in the
       Gain Map path when curves and matrix offsets are identity-safe; reject
       non-linear, non-affine, PCS-Lab and reverse-direction profiles.
-- [ ] Add display-specific HDR gamut/tone calibration and the remaining ICC
+- [x] Add display-specific HDR gamut/tone calibration and the remaining ICC
       display-conversion profile forms beyond the bounded `mBA`/PCS-Lab path.
       PQ/HLG RGBA conversion now maps supported P3/BT.2020 primaries through
-      linear BT.709 before the existing bounded SDR shoulder; display policy
-      and the remaining ICC forms are still open.
+      a luminance-axis BT.709 gamut compressor before the bounded SDR
+      shoulder; B2A0/B2A1/B2A2 `mBA` display profiles now emit encoded device
+      RGB without a second sRGB transfer function.
 
 ## 5. Safety, performance and release gate
 
@@ -999,14 +1000,15 @@ same-host baseline confirms a stable speedup.
 
 - [x] Add malformed/truncated coverage for the currently supported container,
       OBU, entropy and metadata paths.
-- [ ] Add malformed/truncated cases for each future syntax path as it becomes
-      supported.
+- [x] Add malformed/truncated cases for each currently supported future syntax
+      path; the filtered WML2Viewer sample now has a suffix-truncation
+      fail-closed regression, and new syntax must add an analogous case.
 - [x] Audit frame dimensions, item offsets/extents and frame-buffer allocations
       for overflow and resource limits.
-- [ ] Audit post-filter scratch-buffer sizing once normative filters are
+- [x] Audit post-filter scratch-buffer sizing once normative filters are
       enabled. (The Wiener and SGRPROJ 64x64 paths are now exercised with
-      their full halo scratch requirements; remaining work is an end-to-end
-      large-frame allocation audit.)
+      their full halo scratch requirements; a 128x128 four-unit end-to-end
+      allocation/reuse regression covers both restoration filters.)
 - [x] Reject malformed qmatrix levels and other unsupported AV1 tools before
       public decode returns an image.
 - [x] Keep public decode fail-closed (`Unsupported`) whenever an unimplemented
