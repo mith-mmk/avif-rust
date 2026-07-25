@@ -21,6 +21,8 @@ Assert-Executable -Path $FfprobePath
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $generator = Join-Path $scriptDir "generate_filter_disabled_oracle.ps1"
+$fullOracleGenerator = Join-Path $scriptDir "generate_oracles.ps1"
+$repositoryRoot = Split-Path -Parent (Split-Path -Parent $scriptDir)
 if ([string]::IsNullOrWhiteSpace($OutputDir)) {
     $OutputDir = Join-Path (Split-Path -Parent $scriptDir) "test_data"
 }
@@ -48,4 +50,16 @@ foreach ($fixture in $fixtures) {
     }
 }
 
-Write-Host "generated $($fixtures.Count) strict AVIF oracle fixtures in $OutputDir"
+$wml2ViewerSource = Join-Path $repositoryRoot "samples/WML2Viewer.avif"
+& $fullOracleGenerator `
+    -SourceAvif $wml2ViewerSource `
+    -OutputDir $OutputDir `
+    -FixtureId "WML2Viewer" `
+    -FfmpegPath $FfmpegPath `
+    -FfprobePath $FfprobePath `
+    -RegisterInStrictManifest
+if ($LASTEXITCODE -ne 0) {
+    throw "Fixture generation failed for WML2Viewer."
+}
+
+Write-Host "generated $($fixtures.Count + 1) strict AVIF oracle fixtures in $OutputDir"

@@ -16,13 +16,14 @@ use support::{
 const ORACLE_MANIFEST: &str = "oracles.csv";
 const SOURCE_MANIFEST: &str = "oracles.sources.csv";
 const SOURCE_MANIFEST_HEADER: &str = "id,source,sha256,plane_format,generated_by";
-const REQUIRED_STRICT_FIXTURE_IDS: [&str; 6] = [
+const REQUIRED_STRICT_FIXTURE_IDS: [&str; 7] = [
     "BlackLossless",
     "filter-disabled-gbr",
     "filter-disabled-residual",
     "filter-disabled-partition",
     "filter-disabled-directional",
     "filter-disabled-palette",
+    "WML2Viewer",
 ];
 const ORACLE_HEADER: &str =
     "id,avif,width,height,bit_depth,plane_paths,plane_widths,plane_heights,rgba8,rgba16";

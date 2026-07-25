@@ -3601,9 +3601,61 @@ fn apply_deblock_stage(
     if !deblock_has_active_strengths(&frame_header.loop_filter, &frame_header.segmentation, state) {
         return;
     }
+    let frame_width = frame.width;
+    let frame_height = frame.height;
+    let bit_depth = frame.bit_depth;
+    let subsampling_x = frame.color_config.subsampling_x;
+    let subsampling_y = frame.color_config.subsampling_y;
+    #[cfg(not(target_family = "wasm"))]
+    if post_filter_parallel_work_is_large_enough(frame) {
+        std::thread::scope(|scope| {
+            for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
+                scope.spawn(move || {
+                    apply_deblock_plane(
+                        plane,
+                        plane_index,
+                        frame_width,
+                        frame_height,
+                        bit_depth,
+                        subsampling_x,
+                        subsampling_y,
+                        frame_header,
+                        state,
+                    );
+                });
+            }
+        });
+        return;
+    }
+    for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
+        apply_deblock_plane(
+            plane,
+            plane_index,
+            frame_width,
+            frame_height,
+            bit_depth,
+            subsampling_x,
+            subsampling_y,
+            frame_header,
+            state,
+        );
+    }
+}
+
+fn apply_deblock_plane(
+    plane: &mut PlaneBuffer,
+    target_plane_index: usize,
+    frame_width: usize,
+    frame_height: usize,
+    bit_depth: u8,
+    subsampling_x: bool,
+    subsampling_y: bool,
+    frame_header: &FrameHeader,
+    state: &PostFilterState,
+) {
     const FILTER_GRID_STEP: usize = 8;
-    let filter_grid_width = frame.width.div_ceil(FILTER_GRID_STEP);
-    let filter_grid_height = frame.height.div_ceil(FILTER_GRID_STEP);
+    let filter_grid_width = frame_width.div_ceil(FILTER_GRID_STEP);
+    let filter_grid_height = frame_height.div_ceil(FILTER_GRID_STEP);
     let mut filter_grid = vec![None; filter_grid_width * filter_grid_height];
     for candidate in &state.block_filter_states {
         let start_x = (candidate.x / FILTER_GRID_STEP).min(filter_grid_width);
@@ -3662,11 +3714,11 @@ fn apply_deblock_stage(
         for boundary in &boundaries {
             let block = boundary.block;
             let plane_index = block.plane;
-            let Some(plane) = frame.buffers.planes.get_mut(plane_index) else {
+            if plane_index != target_plane_index {
                 continue;
-            };
-            let subsampling_x = usize::from(plane_index > 0 && frame.color_config.subsampling_x);
-            let subsampling_y = usize::from(plane_index > 0 && frame.color_config.subsampling_y);
+            }
+            let subsampling_x = usize::from(plane_index > 0 && subsampling_x);
+            let subsampling_y = usize::from(plane_index > 0 && subsampling_y);
             let base_level = if plane_index == 0 {
                 frame_header.loop_filter.levels[usize::from(!vertical)]
             } else if plane_index == 1 {
@@ -3822,14 +3874,14 @@ fn apply_deblock_stage(
                     &mut plane.samples,
                     plane.layout.width,
                     plane.layout.height,
-                    ceil_shift(frame.width, subsampling_x),
-                    ceil_shift(frame.height, subsampling_y),
+                    ceil_shift(frame_width, subsampling_x),
+                    ceil_shift(frame_height, subsampling_y),
                     edge_x,
                     edge_y,
                     vertical,
                     level,
                     frame_header.loop_filter.sharpness,
-                    frame.bit_depth,
+                    bit_depth,
                     filter_length,
                 );
             }
