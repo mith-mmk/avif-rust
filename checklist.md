@@ -2330,3 +2330,14 @@ global-motion FFmpeg samples remain green, with the affine sample improving to
 `446 passed, 5 ignored`; the checklist snapshot remains `157/171` (`91.81%`)
 and the external compatibility gate remains `75/76` successful decodes
 (`98.68%`) with `100%` expected behavior.
+
+GLOBAL_GLOBALMV now preserves the two independently signalled affine/rotzoom
+models: each reference prediction is reconstructed through the warped filter
+into the reusable compound scratch before the existing mask/weight blend.
+Translation-only and unsupported warp-model fallbacks remain on the regular
+inter predictor. The generated affine-global matrix now covers both 8-bit and
+10-bit samples; the new 10-bit oracle reports `39.68` average RGB absolute
+error (max `255`). The external compatibility snapshot remains `75/76`
+successful decodes (`98.68%`) with `100%` expected behavior.
+The nested library suite remains `446 passed, 5 ignored`; the expanded FFmpeg
+matrix is now `99 passed, 2 ignored`.

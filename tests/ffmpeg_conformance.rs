@@ -1082,16 +1082,29 @@ fn generated_global_motion_sample_matches_ffmpeg_when_encoder_present() {
 
 #[test]
 fn generated_affine_global_motion_sample_matches_ffmpeg_when_encoder_present() {
-    let root =
-        std::env::temp_dir().join(format!(".test-avif-global-affine-{}", std::process::id()));
+    run_generated_affine_global_motion_sample("global-affine", None);
+}
+
+#[test]
+fn generated_affine_global_motion_10bit_sample_matches_ffmpeg_when_encoder_present() {
+    run_generated_affine_global_motion_sample("global-affine-10bit", Some("yuv420p10le"));
+}
+
+fn run_generated_affine_global_motion_sample(label: &str, pixel_format: Option<&str>) {
+    let root = std::env::temp_dir().join(format!(".test-avif-{label}-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {
         panic!("failed to create temporary AVIF affine-global directory: {err}");
     }
     let output_path = root.join("global-affine.avifs");
-    let status = Command::new("ffmpeg")
+    let mut command = Command::new("ffmpeg");
+    command
         .args(["-y", "-loglevel", "error"])
         .args(["-f", "lavfi", "-i", "testsrc2=size=256x256:rate=1"])
-        .args(["-vf", "rotate=0.03*n:fillcolor=black", "-t", "4"])
+        .args(["-vf", "rotate=0.03*n:fillcolor=black", "-t", "4"]);
+    if let Some(pixel_format) = pixel_format {
+        command.args(["-pix_fmt", pixel_format]);
+    }
+    let status = command
         .args(["-c:v", "libaom-av1", "-cpu-used", "6", "-crf", "25"])
         .args([
             "-g",
@@ -1109,12 +1122,12 @@ fn generated_affine_global_motion_sample_matches_ffmpeg_when_encoder_present() {
         .arg(&output_path)
         .status();
     let Ok(status) = status else {
-        eprintln!("ffmpeg is not available; skipping generated affine-global sample");
+        eprintln!("ffmpeg is not available; skipping generated {label} sample");
         let _ = std::fs::remove_dir_all(&root);
         return;
     };
     if !status.success() {
-        eprintln!("libaom affine global-motion encoder options are unavailable; skipping sample");
+        eprintln!("libaom {label} encoder options are unavailable; skipping sample");
         let _ = std::fs::remove_dir_all(&root);
         return;
     }
@@ -1139,7 +1152,7 @@ fn generated_affine_global_motion_sample_matches_ffmpeg_when_encoder_present() {
             &expected,
         );
         eprintln!(
-            "generated affine-global frame: average RGB absolute error={}, max={}",
+            "generated {label} frame: average RGB absolute error={}, max={}",
             metrics.average_rgb_abs, metrics.max_rgb_abs
         );
         assert!(

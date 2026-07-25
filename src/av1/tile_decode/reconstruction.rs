@@ -658,24 +658,11 @@ fn predict_plane_block_into(
             mask_geometry,
             output,
         )?;
+        let global_model = global_motion_matrix(frame, block_mode.global_motion_index);
+        let secondary_global_model =
+            global_motion_matrix(frame, block_mode.global_motion_index_secondary);
         if secondary_reference_plane.is_none() {
-            let global_model = block_mode
-                .global_motion_index
-                .and_then(|index| {
-                    frame
-                        .global_motion
-                        .types
-                        .get(index)
-                        .copied()
-                        .zip(frame.global_motion.matrices.get(index).copied())
-                })
-                .filter(|(motion_type, _)| {
-                    matches!(
-                        motion_type,
-                        GlobalMotionType::RotZoom | GlobalMotionType::Affine
-                    )
-                });
-            if let Some((_, matrix)) = global_model {
+            if let Some(matrix) = global_model {
                 let _ = predict_global_motion_block_into(
                     output,
                     reference,
@@ -689,6 +676,149 @@ fn predict_plane_block_into(
                     frame.allow_high_precision_mv,
                     matrix,
                 );
+            }
+        } else if let Some(secondary) = secondary_reference_plane {
+            // GLOBAL_GLOBALMV carries two independent global models. Decode
+            // each prediction into its own reusable buffer before applying
+            // the already-decoded compound mask/weight.
+            if global_model.is_some() || secondary_global_model.is_some() {
+                if let Some(matrix) = global_model {
+                    let applied = predict_global_motion_block_into(
+                        output,
+                        reference,
+                        x,
+                        y,
+                        width,
+                        height,
+                        subsampling_x,
+                        subsampling_y,
+                        bit_depth,
+                        frame.allow_high_precision_mv,
+                        matrix,
+                    );
+                    if !applied {
+                        predict_inter_block_into(
+                            reference,
+                            None,
+                            x,
+                            y,
+                            width,
+                            height,
+                            mv,
+                            None,
+                            subsampling_x,
+                            subsampling_y,
+                            block_mode.interpolation_filter.unwrap_or((
+                                InterpolationFilter::Regular,
+                                InterpolationFilter::Regular,
+                            )),
+                            None,
+                            None,
+                            bit_depth,
+                            mask_geometry,
+                            output,
+                        )?;
+                    }
+                } else {
+                    predict_inter_block_into(
+                        reference,
+                        None,
+                        x,
+                        y,
+                        width,
+                        height,
+                        mv,
+                        None,
+                        subsampling_x,
+                        subsampling_y,
+                        block_mode.interpolation_filter.unwrap_or((
+                            InterpolationFilter::Regular,
+                            InterpolationFilter::Regular,
+                        )),
+                        None,
+                        None,
+                        bit_depth,
+                        mask_geometry,
+                        output,
+                    )?;
+                }
+                let secondary_output = &mut inter_intra_scratch[..output.len()];
+                if let Some(matrix) = secondary_global_model {
+                    let applied = predict_global_motion_block_into(
+                        secondary_output,
+                        secondary,
+                        x,
+                        y,
+                        width,
+                        height,
+                        subsampling_x,
+                        subsampling_y,
+                        bit_depth,
+                        frame.allow_high_precision_mv,
+                        matrix,
+                    );
+                    if !applied {
+                        predict_inter_block_into(
+                            secondary,
+                            None,
+                            x,
+                            y,
+                            width,
+                            height,
+                            block_mode.motion_vector_secondary.unwrap_or(mv),
+                            None,
+                            subsampling_x,
+                            subsampling_y,
+                            block_mode.interpolation_filter.unwrap_or((
+                                InterpolationFilter::Regular,
+                                InterpolationFilter::Regular,
+                            )),
+                            None,
+                            None,
+                            bit_depth,
+                            mask_geometry,
+                            secondary_output,
+                        )?;
+                    }
+                } else {
+                    predict_inter_block_into(
+                        secondary,
+                        None,
+                        x,
+                        y,
+                        width,
+                        height,
+                        block_mode.motion_vector_secondary.unwrap_or(mv),
+                        None,
+                        subsampling_x,
+                        subsampling_y,
+                        block_mode.interpolation_filter.unwrap_or((
+                            InterpolationFilter::Regular,
+                            InterpolationFilter::Regular,
+                        )),
+                        None,
+                        None,
+                        bit_depth,
+                        mask_geometry,
+                        secondary_output,
+                    )?;
+                }
+                for row in 0..height {
+                    for col in 0..width {
+                        let index = row * width + col;
+                        output[index] = blend_compound_prediction(
+                            output[index],
+                            secondary_output[index],
+                            block_mode.compound_weight,
+                            block_mode.compound_mask,
+                            bit_depth,
+                            mask_geometry.x + col,
+                            mask_geometry.y + row,
+                            mask_geometry.width,
+                            mask_geometry.height,
+                        );
+                    }
+                }
             }
         }
         match block_mode.motion_mode {
@@ -1112,13 +1242,25 @@ fn obmc_mask_value(length: usize, index: usize) -> u8 {
     mask[index.min(mask.len().saturating_sub(1))]
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "local warp prediction keeps reference, block geometry, and filter state explicit"
-)]
+fn global_motion_matrix(frame: &FrameHeader, index: Option<usize>) -> Option<[i32; 6]> {
+    let index = index?;
+    let motion_type = frame.global_motion.types.get(index).copied()?;
+    if !matches!(
+        motion_type,
+        GlobalMotionType::RotZoom | GlobalMotionType::Affine
+    ) {
+        return None;
+    }
+    frame.global_motion.matrices.get(index).copied()
+}
+
 /// Reconstruct a single-reference GLOBALMV block with its signalled
 /// rotzoom/affine matrix.  Translation-only global motion intentionally stays
 /// on the cheaper regular predictor because the block-centre MV is equivalent.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "global motion prediction keeps matrix and plane geometry explicit"
+)]
 fn predict_global_motion_block_into(
     output: &mut [u16],
     reference: &PlaneBuffer,
@@ -1180,6 +1322,10 @@ fn predict_global_motion_block_into(
     true
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "local warp prediction keeps reference, block geometry, and filter state explicit"
+)]
 fn apply_local_warp_prediction(
     output: &mut [u16],
     reference: &PlaneBuffer,
