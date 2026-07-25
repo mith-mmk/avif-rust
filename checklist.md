@@ -1414,6 +1414,17 @@ extension does not add a measurable cost to the normal large-frame decode;
 the numbers remain host-specific checkpoints rather than a cross-machine
 speedup claim.
 
+The YUV422 RGBA8/RGBA16 conversion path now has a dedicated row traversal for
+full-resolution luma plus horizontally subsampled chroma, including odd-width
+frames and auxiliary alpha. The new 10-bit alpha vector asserts RGBA8 output
+against the RGBA16 conversion, and the 4:2:2 external conformance samples
+remain green. A seven-iteration release benchmark measured
+`53.7754/56.5244 ms` native/RGBA for
+`fox.profile2.8bpc.yuv422.avif`; this is a same-host checkpoint rather than a
+portable speedup claim. The checklist work-item rate remains `157/171`
+(`91.81%`) because this closes a hot-path optimization gap, not a normative
+filter item.
+
 On 2026-07-24, the entropy hot path was measured again after the fixed
 probability `read_bool` shortcut. Marking `read_raw_bit` and `renormalize` as
 always-inline reduced two 100-iteration release medians for

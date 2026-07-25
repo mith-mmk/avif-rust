@@ -629,6 +629,23 @@ fn frame_buffers_to_rgba_8_sdr(
         && plane_v.is_some_and(|plane| {
             plane.layout.subsampling_x == 1 && plane.layout.subsampling_y == 1
         });
+    let direct_yuv422 = fast_yuv_coefficients.is_some()
+        && plane_y.layout.subsampling_x == 0
+        && plane_y.layout.subsampling_y == 0
+        && plane_y.layout.width == buffers.width
+        && plane_y.layout.height == buffers.height
+        && plane_u.is_some_and(|plane| {
+            plane.layout.subsampling_x == 1
+                && plane.layout.subsampling_y == 0
+                && plane.layout.width == buffers.width.div_ceil(2)
+                && plane.layout.height == buffers.height
+        })
+        && plane_v.is_some_and(|plane| {
+            plane.layout.subsampling_x == 1
+                && plane.layout.subsampling_y == 0
+                && plane.layout.width == buffers.width.div_ceil(2)
+                && plane.layout.height == buffers.height
+        });
     let mut rgba = vec![0u8; buffers.width * buffers.height * 4];
     if direct_yuv420 {
         let plane_u = plane_u.expect("direct YUV420 path requires U plane");
@@ -647,6 +664,29 @@ fn frame_buffers_to_rgba_8_sdr(
             buffers.planes.get(3),
             255,
             color_config.chroma_sample_position,
+        );
+        return Ok(ImageBuffer {
+            width: buffers.width,
+            height: buffers.height,
+            rgba,
+        });
+    }
+    if direct_yuv422 {
+        let plane_u = plane_u.expect("direct YUV422 path requires U plane");
+        let plane_v = plane_v.expect("direct YUV422 path requires V plane");
+        let (kr, kb) = fast_yuv_coefficients.expect("YUV matrix was checked above");
+        convert_yuv422_to_rgba8(
+            &mut rgba,
+            buffers.width,
+            buffers.height,
+            plane_y,
+            plane_u,
+            plane_v,
+            fast_range,
+            kr,
+            kb,
+            buffers.planes.get(3),
+            255,
         );
         return Ok(ImageBuffer {
             width: buffers.width,
@@ -915,6 +955,23 @@ pub fn frame_buffers_to_rgba_16(
             && plane_v.is_some_and(|plane| {
                 plane.layout.subsampling_x == 1 && plane.layout.subsampling_y == 1
             });
+        let direct_yuv422 = fast_yuv_coefficients.is_some()
+            && plane_y.layout.subsampling_x == 0
+            && plane_y.layout.subsampling_y == 0
+            && plane_y.layout.width == buffers.width
+            && plane_y.layout.height == buffers.height
+            && plane_u.is_some_and(|plane| {
+                plane.layout.subsampling_x == 1
+                    && plane.layout.subsampling_y == 0
+                    && plane.layout.width == buffers.width.div_ceil(2)
+                    && plane.layout.height == buffers.height
+            })
+            && plane_v.is_some_and(|plane| {
+                plane.layout.subsampling_x == 1
+                    && plane.layout.subsampling_y == 0
+                    && plane.layout.width == buffers.width.div_ceil(2)
+                    && plane.layout.height == buffers.height
+            });
         if direct_yuv420 {
             let plane_u = plane_u.expect("direct YUV420 path requires U plane");
             let plane_v = plane_v.expect("direct YUV420 path requires V plane");
@@ -932,6 +989,23 @@ pub fn frame_buffers_to_rgba_16(
                 buffers.planes.get(3),
                 alpha_max_source,
                 color_config.chroma_sample_position,
+            );
+        } else if direct_yuv422 {
+            let plane_u = plane_u.expect("direct YUV422 path requires U plane");
+            let plane_v = plane_v.expect("direct YUV422 path requires V plane");
+            let (kr, kb) = fast_yuv_coefficients.expect("YUV matrix was checked above");
+            convert_yuv422_to_rgba16(
+                &mut rgba,
+                buffers.width,
+                buffers.height,
+                plane_y,
+                plane_u,
+                plane_v,
+                fast_range,
+                kr,
+                kb,
+                buffers.planes.get(3),
+                alpha_max_source,
             );
         } else if direct_yuv444 {
             let plane_u = plane_u.expect("direct YUV444 path requires U plane");
@@ -1174,6 +1248,152 @@ fn convert_yuv420_to_rgba<T, F>(
                 kb,
                 &write_pixel,
             );
+        }
+    });
+}
+
+fn convert_yuv422_to_rgba8(
+    rgba: &mut [u8],
+    width: usize,
+    height: usize,
+    plane_y: &super::decode::PlaneBuffer,
+    plane_u: &super::decode::PlaneBuffer,
+    plane_v: &super::decode::PlaneBuffer,
+    range: FastSampleRange,
+    kr: f32,
+    kb: f32,
+    alpha: Option<&super::decode::PlaneBuffer>,
+    alpha_max_source: u32,
+) {
+    if let Some(alpha) = alpha {
+        convert_yuv422_to_rgba(
+            rgba,
+            width,
+            height,
+            plane_y,
+            plane_u,
+            plane_v,
+            range,
+            kr,
+            kb,
+            |pixel, rgb, x, y| {
+                pixel[0] = u16_to_u8(rgb[0]);
+                pixel[1] = u16_to_u8(rgb[1]);
+                pixel[2] = u16_to_u8(rgb[2]);
+                pixel[3] = u16_to_u8(scale_sample_to_u16(
+                    sample_plane(alpha, x, y),
+                    alpha_max_source,
+                ));
+            },
+        );
+    } else {
+        convert_yuv422_to_rgba(
+            rgba,
+            width,
+            height,
+            plane_y,
+            plane_u,
+            plane_v,
+            range,
+            kr,
+            kb,
+            |pixel, rgb, _, _| {
+                pixel[0] = u16_to_u8(rgb[0]);
+                pixel[1] = u16_to_u8(rgb[1]);
+                pixel[2] = u16_to_u8(rgb[2]);
+                pixel[3] = u8::MAX;
+            },
+        );
+    }
+}
+
+fn convert_yuv422_to_rgba16(
+    rgba: &mut [u16],
+    width: usize,
+    height: usize,
+    plane_y: &super::decode::PlaneBuffer,
+    plane_u: &super::decode::PlaneBuffer,
+    plane_v: &super::decode::PlaneBuffer,
+    range: FastSampleRange,
+    kr: f32,
+    kb: f32,
+    alpha: Option<&super::decode::PlaneBuffer>,
+    alpha_max_source: u32,
+) {
+    if let Some(alpha) = alpha {
+        convert_yuv422_to_rgba(
+            rgba,
+            width,
+            height,
+            plane_y,
+            plane_u,
+            plane_v,
+            range,
+            kr,
+            kb,
+            |pixel, rgb, x, y| {
+                pixel[..3].copy_from_slice(&rgb);
+                pixel[3] = scale_sample_to_u16(sample_plane(alpha, x, y), alpha_max_source);
+            },
+        );
+    } else {
+        convert_yuv422_to_rgba(
+            rgba,
+            width,
+            height,
+            plane_y,
+            plane_u,
+            plane_v,
+            range,
+            kr,
+            kb,
+            |pixel, rgb, _, _| {
+                pixel[..3].copy_from_slice(&rgb);
+                pixel[3] = u16::MAX;
+            },
+        );
+    }
+}
+
+fn convert_yuv422_to_rgba<T, F>(
+    rgba: &mut [T],
+    width: usize,
+    height: usize,
+    plane_y: &super::decode::PlaneBuffer,
+    plane_u: &super::decode::PlaneBuffer,
+    plane_v: &super::decode::PlaneBuffer,
+    range: FastSampleRange,
+    kr: f32,
+    kb: f32,
+    write_pixel: F,
+) where
+    T: Send,
+    F: Fn(&mut [T], [u16; 3], usize, usize) + Sync,
+{
+    let chroma_width = plane_u.layout.width;
+    let chroma_height = plane_u.layout.height;
+    for_each_rgba_row_chunk(rgba, width, height, |first_row, chunk| {
+        for (row_offset, row) in chunk.chunks_exact_mut(width * 4).enumerate() {
+            let y = first_row + row_offset;
+            let luma_row = y * plane_y.layout.width;
+            let chroma_row = y.min(chroma_height - 1) * chroma_width;
+            for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                let chroma_x = (x >> 1).min(chroma_width - 1);
+                let chroma_index = chroma_row + chroma_x;
+                write_pixel(
+                    pixel,
+                    yuv_to_rgb_u16_fast(
+                        plane_y.samples[luma_row + x],
+                        plane_u.samples[chroma_index],
+                        plane_v.samples[chroma_index],
+                        range,
+                        kr,
+                        kb,
+                    ),
+                    x,
+                    y,
+                );
+            }
         }
     });
 }
@@ -2391,6 +2611,81 @@ mod tests {
         let image = frame_buffers_to_rgba_8(&buffers, &color_config).unwrap();
 
         assert_eq!(image.rgba, vec![0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn rgba8_yuv422_alpha_fast_path_matches_rgba16_conversion() {
+        let width = 5;
+        let height = 2;
+        let luma_layout = PlaneLayout {
+            plane: 0,
+            width,
+            height,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: width * height,
+        };
+        let chroma_layout = PlaneLayout {
+            plane: 1,
+            width: width.div_ceil(2),
+            height,
+            subsampling_x: 1,
+            subsampling_y: 0,
+            sample_count: width.div_ceil(2) * height,
+        };
+        let buffers = FrameBuffers {
+            width,
+            height,
+            planes: vec![
+                PlaneBuffer {
+                    layout: luma_layout,
+                    samples: vec![64, 128, 192, 256, 320, 384, 448, 512, 576, 640],
+                },
+                PlaneBuffer {
+                    layout: chroma_layout,
+                    samples: vec![512, 640, 768, 384, 512, 640],
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout {
+                        plane: 2,
+                        ..chroma_layout
+                    },
+                    samples: vec![512, 384, 640, 768, 512, 384],
+                },
+                PlaneBuffer {
+                    layout: PlaneLayout {
+                        plane: 3,
+                        ..luma_layout
+                    },
+                    samples: vec![0, 128, 256, 512, 768, 1023, 900, 700, 400, 100],
+                },
+            ],
+        };
+        let color_config = ColorConfig {
+            high_bitdepth: true,
+            twelve_bit: false,
+            bit_depth: 10,
+            monochrome: false,
+            color_description: Some(ColorDescription {
+                color_primaries: 1,
+                transfer_characteristics: 13,
+                matrix_coefficients: 1,
+            }),
+            color_range: ColorRange::Full,
+            subsampling_x: true,
+            subsampling_y: false,
+            chroma_sample_position: None,
+            separate_uv_delta_q: false,
+        };
+
+        let rgba8 = frame_buffers_to_rgba_8(&buffers, &color_config).unwrap();
+        let rgba16 = frame_buffers_to_rgba_16(&buffers, &color_config).unwrap();
+        let expected = rgba16
+            .rgba
+            .iter()
+            .map(|sample| u16_to_u8(*sample))
+            .collect::<Vec<_>>();
+        assert_eq!(rgba8.rgba, expected);
     }
 
     #[test]
