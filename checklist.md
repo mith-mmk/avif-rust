@@ -2361,3 +2361,25 @@ test. Two seven-iteration optimized checkpoints measured
 `80.8061/82.4734 ms` and `83.7614/87.5665 ms` native/RGBA for
 `samples/WML2Viewer.avif`; this remains host-noisy and is not claimed as a
 portable speedup. The implementation snapshot remains `157/171` (`91.81%`).
+
+The official animated sequence boundary is now covered by public batch and
+indexed-frame tests: `colors-animated-8bpc.avif` decodes all five samples
+(including Key/Inter/show-existing), and
+`colors-animated-12bpc-keyframes-0-2-3.avif` decodes all five 12-bit samples.
+Both batch results match their indexed lookups, so the earlier animated
+sequence audit is no longer an unverified Unsupported gap. The checklist
+work-item rate remains `157/171` (`91.81%`) because this closes a validation
+hole rather than a still-unchecked normative filter item.
+
+The same checkpoint's seven-iteration release recheck measured
+`82.6161/85.0707 ms` and `82.0771/82.4811 ms` for native/RGBA decoding of
+`samples/WML2Viewer.avif`. These remain same-host no-regression checkpoints;
+the spread confirms that a portable speedup claim requires a quieter harness.
+
+TileDecoder now reserves frame-scale capacity for CDEF units, transform
+boundaries, and block filter metadata before reconstruction. The full library
+suite remains `448 passed, 5 ignored`, and the expanded FFmpeg suite is
+`102 passed, 2 ignored`; seven-iteration WML2Viewer rechecks measured
+`82.4952/85.1529 ms` and `82.2884/85.6741 ms` native/RGBA. The allocation
+change is retained as a no-regression optimization checkpoint, not a portable
+speedup claim.

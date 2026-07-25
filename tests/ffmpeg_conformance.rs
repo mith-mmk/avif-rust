@@ -573,10 +573,8 @@ fn generated_inter_sequence_sample_is_classified_for_decoder_gate_when_encoder_p
 
 #[test]
 fn generated_switch_sequence_samples_decode_when_encoder_present() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("AVIF crate parent directory should exist")
-        .join(format!(".test-avif-sequence-switch-{}", std::process::id()));
+    let root =
+        std::env::temp_dir().join(format!(".test-avif-sequence-switch-{}", std::process::id()));
     if let Err(err) = std::fs::create_dir_all(&root) {
         panic!("failed to create temporary switch AVIF directory: {err}");
     }
@@ -4557,6 +4555,88 @@ fn all_official_unsupported_samples_decode_without_partial_output() {
             width * height * 4,
             "{name} partial RGBA output"
         );
+    }
+}
+
+#[test]
+fn official_animated_8bpc_sequence_decodes_all_frames_when_present() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("test/images/external/avif/unsupported/colors-animated-8bpc.avif");
+    if !path.is_file() {
+        eprintln!("official animated sample is unavailable; skipping sequence decode");
+        return;
+    }
+    let data = std::fs::read(&path).expect("official animated sample should be readable");
+    let info = avif_rust::container::parse_avif(&data)
+        .expect("official animated sample metadata should parse");
+    assert_eq!(info.sequence_sample_payloads.len(), 5);
+    let kinds: Vec<_> = info
+        .sequence_sample_payloads
+        .iter()
+        .map(|payload| avif_rust::classify_av1_sequence_sample(payload).unwrap())
+        .collect();
+    assert!(matches!(
+        kinds.first(),
+        Some(Some(avif_rust::AvifSequenceSampleKind::Key))
+    ));
+    assert!(kinds.iter().any(|kind| {
+        matches!(
+            kind,
+            Some(avif_rust::AvifSequenceSampleKind::ShowExisting { .. })
+        )
+    }));
+    assert!(
+        kinds
+            .iter()
+            .any(|kind| { matches!(kind, Some(avif_rust::AvifSequenceSampleKind::Inter)) })
+    );
+    let frames = avif_rust::decode_sequence_frames_bytes(&data)
+        .expect("official animated sample should decode all frames");
+    assert_eq!(frames.len(), info.sequence_sample_payloads.len());
+    assert!(
+        frames
+            .iter()
+            .all(|frame| (frame.width, frame.height) == (150, 150))
+    );
+    for (index, expected) in frames.iter().enumerate() {
+        let indexed =
+            avif_rust::decode_sequence_frame_bytes(&data, index).unwrap_or_else(|error| {
+                panic!("official animated frame {index} should decode: {error}")
+            });
+        assert_eq!(indexed, *expected, "indexed animated frame {index}");
+    }
+}
+
+#[test]
+fn official_animated_12bpc_keyframes_decode_all_frames_when_present() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("test/images/external/avif/unsupported/colors-animated-12bpc-keyframes-0-2-3.avif");
+    if !path.is_file() {
+        eprintln!("official 12-bit animated sample is unavailable; skipping sequence decode");
+        return;
+    }
+    let data = std::fs::read(&path).expect("official 12-bit animated sample should be readable");
+    let info = avif_rust::container::parse_avif(&data)
+        .expect("official 12-bit animated sample metadata should parse");
+    assert_eq!(info.sequence_sample_payloads.len(), 5);
+    let frames = avif_rust::decode_sequence_frames_bytes(&data)
+        .expect("official 12-bit animated sample should decode all frames");
+    assert_eq!(frames.len(), 5);
+    assert!(
+        frames
+            .iter()
+            .all(|frame| { (frame.width, frame.height, frame.bit_depth) == (64, 64, 12) })
+    );
+    for (index, expected) in frames.iter().enumerate() {
+        let indexed =
+            avif_rust::decode_sequence_frame_bytes(&data, index).unwrap_or_else(|error| {
+                panic!("official 12-bit animated frame {index} should decode: {error}")
+            });
+        assert_eq!(indexed, *expected, "indexed 12-bit animated frame {index}");
     }
 }
 

@@ -230,6 +230,12 @@ impl<'a> TileDecoder<'a> {
         let mi_count = mi_cols.checked_mul(mi_rows).ok_or_else(|| {
             DecoderError::InvalidParam("AV1 frame dimensions are too large".to_string())
         })?;
+        // Post-filter metadata is recorded once per decoded block/unit. Reserve
+        // the usual frame-scale capacity up front so large tiled frames do not
+        // repeatedly grow these vectors while reconstruction is in progress;
+        // caps keep very large resource-limit-sized frames from over-reserving.
+        let block_filter_capacity = mi_count.div_ceil(4).min(32_768);
+        let cdef_capacity = mi_count.div_ceil(256).min(4_096);
         Ok(Self {
             reader: EntropyDecoder::new(payload, frame.disable_cdf_update)?,
             cdf: initial_cdf.unwrap_or_else(|| CdfContext::new(frame.base_q_idx)),
@@ -273,11 +279,11 @@ impl<'a> TileDecoder<'a> {
             // its outer coefficient is implicit zero and is not signaled.
             wiener_refs: [[[3, -7, 15]; 2], [[0, -7, 15]; 2], [[0, -7, 15]; 2]],
             sgrproj_refs: [[-32, 31]; 3],
-            cdef_units: Vec::new(),
-            cdef_blocks: Vec::new(),
-            transform_boundaries: Vec::new(),
+            cdef_units: Vec::with_capacity(cdef_capacity),
+            cdef_blocks: Vec::with_capacity(cdef_capacity),
+            transform_boundaries: Vec::with_capacity(block_filter_capacity),
             restoration_units: Vec::new(),
-            block_filter_states: Vec::new(),
+            block_filter_states: Vec::with_capacity(block_filter_capacity),
             coefficient_scratch: Vec::with_capacity(TxSize::Tx64x64.sample_count()),
             dequant_scratch: [0; 64 * 64],
             residual_scratch: [0; 64 * 64],
