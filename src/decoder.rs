@@ -10,8 +10,8 @@ use crate::av1::{
     LoopFilterParams, PartitionProbe, PlaneBuffer, PlaneLayout, QuantState, ReferenceFrameState,
     ResidualProbe, SegmentationParams, SequenceHeader, TileEntropyState, TileGroup,
     alloc_coded_frame_buffers, apply_film_grain, apply_superres_horizontal,
-    build_still_decode_plan, cdef_adjust_primary_strength,
-    cdef_filter_block_region_with_edge_mode_into_bit_depth_visible,
+    build_still_decode_plan, cdef_adjust_primary_strength, cdef_chroma_direction,
+    cdef_filter_block_region_with_edge_mode_into_bit_depth_visible_scaled,
     cdef_find_direction_with_variance_visible, convert_linear_rgb_primaries,
     crop_frame_buffers_to_plan, deblock_filter_edge_with_visible_bounds,
     decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf,
@@ -4293,7 +4293,7 @@ fn apply_cdef_plane(
             continue;
         }
         let strength = &cdef.strengths[index];
-        let mut primary_strength = if plane_index == 0 {
+        let primary_strength = if plane_index == 0 {
             strength.y_pri
         } else {
             strength.uv_pri
@@ -4303,19 +4303,32 @@ fn apply_cdef_plane(
         } else {
             strength.uv_sec
         };
-        let configured_primary = primary_strength;
-        if plane_index == 0 {
-            primary_strength = cdef_adjust_primary_strength(primary_strength, variance);
-        }
-        let direction = if configured_primary == 0 {
+        let strength_scale = 1u8
+            .checked_shl(u32::from(cdef_coeff_shift))
+            .unwrap_or(u8::MAX);
+        let configured_scaled_primary_strength = primary_strength.saturating_mul(strength_scale);
+        let scaled_primary_strength = if plane_index == 0 {
+            cdef_adjust_primary_strength(configured_scaled_primary_strength, variance)
+        } else {
+            configured_scaled_primary_strength
+        };
+        let scaled_secondary_strength = secondary_strength.saturating_mul(strength_scale);
+        let direction = if configured_scaled_primary_strength == 0 {
             0
         } else {
-            detected_direction
+            cdef_chroma_direction(
+                detected_direction,
+                plane_index > 0 && subsampling_x,
+                plane_index > 0 && subsampling_y,
+            )
         };
-        if cdef_strengths_disabled(primary_strength, secondary_strength) {
+        if cdef_strengths_disabled(scaled_primary_strength, scaled_secondary_strength) {
             continue;
         }
-        let damping = cdef.damping.saturating_sub(u8::from(plane_index != 0));
+        let scaled_damping = cdef
+            .damping
+            .saturating_sub(u8::from(plane_index != 0))
+            .saturating_add(cdef_coeff_shift);
         let block_width = visible_width
             .saturating_sub(plane_x)
             .min(8usize.div_ceil(scale_x));
@@ -4328,7 +4341,7 @@ fn apply_cdef_plane(
         // The aligned coded plane remains the filter source domain until the
         // post-filter crop. Limit writes to the visible plane, but retain the
         // coded padding taps used by the existing AV1 reconstruction path.
-        cdef_filter_block_region_with_edge_mode_into_bit_depth_visible(
+        cdef_filter_block_region_with_edge_mode_into_bit_depth_visible_scaled(
             &source,
             width,
             height,
@@ -4339,9 +4352,9 @@ fn apply_cdef_plane(
             block_width,
             block_height,
             direction,
-            primary_strength,
-            secondary_strength,
-            damping,
+            scaled_primary_strength,
+            scaled_secondary_strength,
+            scaled_damping,
             cdef_coeff_shift,
             true,
             &mut filtered,

@@ -272,12 +272,14 @@ public decoded-frame shape.
       extent; add a generated non-lossless 4:2:0 CDEF sample against FFmpeg
       (native YUV average error <=`2`, maximum <=`32`; RGB average error
       `1.217`, maximum `179`).
-- [ ] Match normative CDEF frame preparation and block semantics: luma
+- [x] Match normative CDEF frame preparation and block semantics: luma
       direction/variance is shared with chroma, luma primary strength uses the
       directional-variance adjustment, secondary strength `3` maps to `4`,
-      and frame-edge sentinel/clipping behavior remains to be made exact. The
-      scalar direction table now follows AOM's axis order; 8-bit chroma damping
-      applies the normative one-step reduction.
+      and frame-edge sentinel/clipping behavior matches the normative filter.
+      The scalar direction table now follows AOM's axis order; asymmetric
+      4:2:2/4:4:0 direction conversion, high-bit-depth strength scaling, and
+      8-bit chroma damping apply the normative rules. Strict fixture oracles,
+      generated 4:2:0/4:2:2 samples, and 10/12-bit samples pass.
 - [x] Generate a local diagnostic oracle with deblock enabled and restoration
       disabled; keep the CDEF result non-authoritative until all plane values
       are exact and add a reproducible bootstrap recipe before release.

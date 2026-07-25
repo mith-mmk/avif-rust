@@ -248,19 +248,61 @@ pub(crate) fn cdef_filter_block_region_with_edge_mode_into_bit_depth_visible(
     use_edge_sentinel: bool,
     output: &mut [u16],
 ) {
+    let strength_scale = 1u8.checked_shl(u32::from(coeff_shift)).unwrap_or(u8::MAX);
+    let scaled_primary_strength = primary_strength.saturating_mul(strength_scale);
+    let scaled_secondary_strength = secondary_strength.saturating_mul(strength_scale);
+    let scaled_damping = damping.saturating_add(coeff_shift);
+    cdef_filter_block_region_with_edge_mode_into_bit_depth_visible_scaled(
+        source,
+        width,
+        height,
+        visible_width,
+        visible_height,
+        origin_x,
+        origin_y,
+        block_width,
+        block_height,
+        direction,
+        scaled_primary_strength,
+        scaled_secondary_strength,
+        scaled_damping,
+        coeff_shift,
+        use_edge_sentinel,
+        output,
+    );
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scalar CDEF kernel parameters mirror the normative filter inputs"
+)]
+pub(crate) fn cdef_filter_block_region_with_edge_mode_into_bit_depth_visible_scaled(
+    source: &[u16],
+    width: usize,
+    height: usize,
+    visible_width: usize,
+    visible_height: usize,
+    origin_x: usize,
+    origin_y: usize,
+    block_width: usize,
+    block_height: usize,
+    direction: usize,
+    scaled_primary_strength: u8,
+    scaled_secondary_strength: u8,
+    scaled_damping: u8,
+    coeff_shift: u8,
+    use_edge_sentinel: bool,
+    output: &mut [u16],
+) {
     if output.len() < block_width.saturating_mul(block_height) {
         return;
     }
     const CDEF_VERY_LARGE: i32 = 0x4000;
     let direction = direction & 7;
-    let enable_primary = primary_strength != 0;
-    let enable_secondary = secondary_strength != 0;
+    let enable_primary = scaled_primary_strength != 0;
+    let enable_secondary = scaled_secondary_strength != 0;
     let clipping_required = enable_primary && enable_secondary;
-    let strength_scale = 1u8.checked_shl(u32::from(coeff_shift)).unwrap_or(u8::MAX);
-    let scaled_primary_strength = primary_strength.saturating_mul(strength_scale);
-    let scaled_secondary_strength = secondary_strength.saturating_mul(strength_scale);
-    let scaled_damping = damping.saturating_add(coeff_shift);
-    let primary_taps = if primary_strength & 1 == 0 {
+    let primary_taps = if (scaled_primary_strength >> coeff_shift) & 1 == 0 {
         [4, 2]
     } else {
         [3, 3]
@@ -297,9 +339,11 @@ pub(crate) fn cdef_filter_block_region_with_edge_mode_into_bit_depth_visible(
                                 scaled_primary_strength,
                                 scaled_damping,
                             );
-                        if clipping_required && value != CDEF_VERY_LARGE {
+                        if clipping_required {
                             min_value = min_value.min(value);
-                            max_value = max_value.max(value);
+                            if value != CDEF_VERY_LARGE {
+                                max_value = max_value.max(value);
+                            }
                         }
                     }
                 }
@@ -317,9 +361,11 @@ pub(crate) fn cdef_filter_block_region_with_edge_mode_into_bit_depth_visible(
                                     scaled_secondary_strength,
                                     scaled_damping,
                                 );
-                            if clipping_required && value != CDEF_VERY_LARGE {
+                            if clipping_required {
                                 min_value = min_value.min(value);
-                                max_value = max_value.max(value);
+                                if value != CDEF_VERY_LARGE {
+                                    max_value = max_value.max(value);
+                                }
                             }
                         }
                     }
@@ -469,6 +515,26 @@ pub(crate) fn cdef_adjust_primary_strength(strength: u8, variance: i32) -> u8 {
         (i32::BITS - 1 - scaled.leading_zeros()).min(12) as i32
     };
     ((i32::from(strength) * (4 + i) + 8) >> 4) as u8
+}
+
+/// Map the luma CDEF direction to a subsampled chroma plane.
+///
+/// AV1 derives direction and variance from the luma 8x8 block.  4:2:0 keeps
+/// that direction, while the asymmetric 4:2:2 and 4:4:0 layouts use the
+/// normative plane-specific lookup tables.
+pub(crate) fn cdef_chroma_direction(
+    direction: usize,
+    subsampling_x: bool,
+    subsampling_y: bool,
+) -> usize {
+    const CONV_422: [usize; 8] = [7, 0, 2, 4, 5, 6, 6, 6];
+    const CONV_440: [usize; 8] = [1, 2, 2, 2, 3, 4, 6, 0];
+    let direction = direction & 7;
+    match (subsampling_x, subsampling_y) {
+        (true, false) => CONV_422[direction],
+        (false, true) => CONV_440[direction],
+        _ => direction,
+    }
 }
 
 /// Read a restoration stripe with AOM's three-row stripe halo. Loop
@@ -1772,7 +1838,7 @@ fn store_cdef_block_index(blocks: &mut Vec<CdefBlockIndex>, x: usize, y: usize, 
 mod tests {
     use super::{
         CDEF_DIRECTIONS, CdefUnit, PostFilterState, TransformBoundary,
-        cdef_adjust_primary_strength, cdef_constrain, cdef_filter_block,
+        cdef_adjust_primary_strength, cdef_chroma_direction, cdef_constrain, cdef_filter_block,
         cdef_filter_block_region_with_edge_mode, cdef_filter_block_region_with_edge_mode_into,
         cdef_filter_block_region_with_edge_mode_into_bit_depth, cdef_find_direction,
         cdef_unit_origin, deblock_filter_edge, deblock_filter_edge_with_length,
@@ -1882,6 +1948,79 @@ mod tests {
         assert_eq!(cdef_adjust_primary_strength(8, 0), 0);
         assert_eq!(cdef_adjust_primary_strength(8, 64), 2);
         assert_eq!(cdef_adjust_primary_strength(8, 4096), 5);
+        assert_eq!(cdef_adjust_primary_strength(16, 64), 4);
+        assert_eq!(cdef_adjust_primary_strength(16, 4096), 10);
+    }
+
+    #[test]
+    fn cdef_scaled_strength_wrapper_matches_bit_depth_wrapper() {
+        let source = (0..16 * 16)
+            .map(|index| ((index * 29 + index / 16 * 7) & 1023) as u16)
+            .collect::<Vec<_>>();
+        let mut wrapper = vec![0u16; 64];
+        let mut scaled = vec![0u16; 64];
+        super::cdef_filter_block_region_with_edge_mode_into_bit_depth_visible(
+            &source,
+            16,
+            16,
+            13,
+            12,
+            5,
+            4,
+            8,
+            8,
+            3,
+            3,
+            2,
+            3,
+            2,
+            true,
+            &mut wrapper,
+        );
+        super::cdef_filter_block_region_with_edge_mode_into_bit_depth_visible_scaled(
+            &source,
+            16,
+            16,
+            13,
+            12,
+            5,
+            4,
+            8,
+            8,
+            3,
+            12,
+            8,
+            5,
+            2,
+            true,
+            &mut scaled,
+        );
+        assert_eq!(wrapper, scaled);
+    }
+
+    #[test]
+    fn cdef_chroma_direction_maps_asymmetric_subsampling() {
+        let directions = 0..8;
+        assert_eq!(
+            directions
+                .clone()
+                .map(|direction| cdef_chroma_direction(direction, true, false))
+                .collect::<Vec<_>>(),
+            vec![7, 0, 2, 4, 5, 6, 6, 6]
+        );
+        assert_eq!(
+            directions
+                .clone()
+                .map(|direction| cdef_chroma_direction(direction, false, true))
+                .collect::<Vec<_>>(),
+            vec![1, 2, 2, 2, 3, 4, 6, 0]
+        );
+        assert_eq!(
+            directions
+                .map(|direction| cdef_chroma_direction(direction, true, true))
+                .collect::<Vec<_>>(),
+            (0..8).collect::<Vec<_>>()
+        );
     }
 
     #[test]
