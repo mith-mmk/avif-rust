@@ -2289,3 +2289,9 @@ rectangular `TxSize` variants, including the case where quantization produces
 an all-zero dequantized buffer. An 11-iteration optimized run measured
 `79.8479/81.8986 ms` for `WML2Viewer.avif` native/RGBA; this is a same-host
 checkpoint and not a portable speedup claim.
+
+The FFmpeg conformance suite now generates an 8-bit 4:2:2 color-plus-alpha
+AVIF sample and checks both the native horizontal-subsampling layout and the
+full-resolution alpha plane against FFmpeg. With this fixture included, the
+suite completes `98 passed, 2 ignored` tests; the work-item snapshot remains
+`156/170` (`91.76%`).
