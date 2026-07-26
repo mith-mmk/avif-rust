@@ -142,6 +142,66 @@ fn ffmpeg_decode_rgba_stream_frame(
     Some(output.stdout[start..end].to_vec())
 }
 
+fn ffmpeg_decode_gray_stream_frame(
+    path: &Path,
+    stream_index: usize,
+    frame_index: usize,
+    width: usize,
+    height: usize,
+) -> Option<Vec<u8>> {
+    let executable = std::env::var_os("AVIF_FFMPEG")
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_file())
+        .or_else(|| {
+            let bundled = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("workspace root should exist")
+                .join("test/images/external/plugins/ffmpeg/ffmpeg.exe");
+            bundled.is_file().then_some(bundled)
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from("ffmpeg"));
+    let output = match Command::new(executable)
+        .args(["-v", "error", "-nostdin"])
+        .arg("-i")
+        .arg(path)
+        .args(["-map", &format!("0:{stream_index}")])
+        .args([
+            "-frames:v",
+            &(frame_index.saturating_add(1)).to_string(),
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "gray",
+            "-",
+        ])
+        .output()
+    {
+        Ok(output) => output,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return None,
+        Err(err) => panic!("failed to execute ffmpeg: {err}"),
+    };
+    assert!(
+        output.status.success(),
+        "ffmpeg alpha sequence decode failed for {}: {}",
+        path.display(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let frame_len = width * height;
+    let start = frame_index
+        .checked_mul(frame_len)
+        .expect("ffmpeg alpha frame offset should not overflow");
+    let end = start
+        .checked_add(frame_len)
+        .expect("ffmpeg alpha frame end should not overflow");
+    assert!(
+        output.stdout.len() >= end,
+        "ffmpeg alpha stream {} has no frame {}",
+        stream_index,
+        frame_index
+    );
+    Some(output.stdout[start..end].to_vec())
+}
+
 fn ffmpeg_decode_rgba_with_filter(
     path: &Path,
     width: usize,
@@ -297,6 +357,350 @@ fn ffmpeg_decode_alpha_plane(path: &Path, width: usize, height: usize) -> Option
     );
     assert_eq!(output.stdout.len(), width * height);
     Some(output.stdout)
+}
+
+fn external_avif_path(relative: &str) -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root should exist")
+        .join("test/images/external/avif")
+        .join(relative)
+}
+
+fn native_plane_metrics(
+    frame: &avif_rust::DecodedFrame,
+    expected: &[u8],
+    bit_depth: u8,
+) -> Vec<(u16, f64)> {
+    let bytes_per_sample = if bit_depth > 8 { 2 } else { 1 };
+    let mut offset = 0usize;
+    frame
+        .buffers
+        .planes
+        .iter()
+        .map(|plane| {
+            let count = plane.samples.len();
+            let byte_count = count * bytes_per_sample;
+            let expected_plane = &expected[offset..offset + byte_count];
+            offset += byte_count;
+            let mut max_error = 0u16;
+            let mut sum = 0u64;
+            for (index, actual) in plane.samples.iter().enumerate() {
+                let expected = if bytes_per_sample == 1 {
+                    u16::from(expected_plane[index])
+                } else {
+                    u16::from_le_bytes([expected_plane[index * 2], expected_plane[index * 2 + 1]])
+                };
+                let error = actual.abs_diff(expected);
+                max_error = max_error.max(error);
+                sum += u64::from(error);
+            }
+            (max_error, sum as f64 / count as f64)
+        })
+        .collect()
+}
+
+fn native_plane_region_metrics(
+    frame: &avif_rust::DecodedFrame,
+    expected: &[u8],
+    bit_depth: u8,
+    plane_index: usize,
+    x_range: std::ops::Range<usize>,
+    y_range: std::ops::Range<usize>,
+) -> (u16, f64) {
+    let bytes_per_sample = if bit_depth > 8 { 2 } else { 1 };
+    let offset: usize = frame
+        .buffers
+        .planes
+        .iter()
+        .take(plane_index)
+        .map(|plane| plane.samples.len() * bytes_per_sample)
+        .sum();
+    let plane = &frame.buffers.planes[plane_index];
+    let mut max_error = 0u16;
+    let mut sum = 0u64;
+    let mut count = 0usize;
+    for y in y_range {
+        for x in x_range.clone() {
+            let index = y * plane.layout.width + x;
+            let expected = if bytes_per_sample == 1 {
+                u16::from(expected[offset + index])
+            } else {
+                u16::from_le_bytes([
+                    expected[offset + index * 2],
+                    expected[offset + index * 2 + 1],
+                ])
+            };
+            let error = plane.samples[index].abs_diff(expected);
+            max_error = max_error.max(error);
+            sum += u64::from(error);
+            count += 1;
+        }
+    }
+    (max_error, sum as f64 / count as f64)
+}
+
+#[test]
+fn external_hq720_native_planes_and_rgba_match_ffmpeg() {
+    let path = external_avif_path("hq720.avif");
+    if !path.is_file() {
+        return;
+    }
+    let data = std::fs::read(&path).expect("hq720 should be readable");
+    let frame = avif_rust::decode_frame_bytes(&data).expect("hq720 should decode");
+    assert_eq!((frame.width, frame.height), (720, 404));
+    assert_eq!(frame.buffers.planes.len(), 3);
+    let Some(expected_native) = ffmpeg_decode_raw(&path, "yuv420p") else {
+        return;
+    };
+    let metrics = native_plane_metrics(&frame, &expected_native, 8);
+    eprintln!("hq720 native plane metrics: {metrics:?}");
+    for plane_index in 0..3 {
+        let plane = &frame.buffers.planes[plane_index];
+        eprintln!(
+            "hq720 plane {plane_index} quadrants: left-top={:?} right-top={:?} left-bottom={:?} right-bottom={:?}",
+            native_plane_region_metrics(
+                &frame,
+                &expected_native,
+                8,
+                plane_index,
+                0..plane.layout.width / 2,
+                0..plane.layout.height / 2
+            ),
+            native_plane_region_metrics(
+                &frame,
+                &expected_native,
+                8,
+                plane_index,
+                plane.layout.width / 2..plane.layout.width,
+                0..plane.layout.height / 2
+            ),
+            native_plane_region_metrics(
+                &frame,
+                &expected_native,
+                8,
+                plane_index,
+                0..plane.layout.width / 2,
+                plane.layout.height / 2..plane.layout.height
+            ),
+            native_plane_region_metrics(
+                &frame,
+                &expected_native,
+                8,
+                plane_index,
+                plane.layout.width / 2..plane.layout.width,
+                plane.layout.height / 2..plane.layout.height
+            ),
+        );
+    }
+    assert!(
+        metrics
+            .iter()
+            .all(|(max, average)| *max <= 8 && *average <= 1.0)
+    );
+
+    let Some(expected_rgba) = ffmpeg_decode_rgba_dynamic(&path, 720, 404) else {
+        return;
+    };
+    let actual_rgba = frame
+        .to_rgba8()
+        .expect("hq720 RGBA conversion should succeed");
+    let rgba_metrics = diff_rgb_dynamic(&actual_rgba.rgba, &expected_rgba);
+    eprintln!(
+        "hq720 RGBA metrics: {rgba_metrics:?}, chroma_position={:?}, color_range={:?}",
+        frame.color_config.chroma_sample_position, frame.color_config.color_range
+    );
+    assert!(
+        rgba_metrics.average_rgb_abs <= 2.0 && rgba_metrics.max_rgb_abs <= 64,
+        "hq720 RGBA error average={} max={}",
+        rgba_metrics.average_rgb_abs,
+        rgba_metrics.max_rgb_abs
+    );
+}
+
+#[test]
+fn external_seine_hdr_native_planes_and_rgba_match_ffmpeg() {
+    for name in [
+        "gainmap/seine_hdr_rec2020.avif",
+        "gainmap/seine_hdr_srgb.avif",
+    ] {
+        let path = external_avif_path(name);
+        if !path.is_file() {
+            continue;
+        }
+        let data = std::fs::read(&path).expect("HDR AVIF should be readable");
+        let frame = avif_rust::decode_frame_bytes(&data).expect("HDR AVIF should decode");
+        assert_eq!((frame.width, frame.height), (400, 300));
+        assert_eq!(frame.buffers.planes.len(), 3);
+        let Some(expected_native) = ffmpeg_decode_raw(&path, "yuv444p10le") else {
+            continue;
+        };
+        let metrics = native_plane_metrics(&frame, &expected_native, 10);
+        eprintln!("{name} native plane metrics: {metrics:?}");
+        for plane_index in 0..3 {
+            let plane = &frame.buffers.planes[plane_index];
+            eprintln!(
+                "{name} plane {plane_index} quadrants: left-top={:?} right-top={:?} left-bottom={:?} right-bottom={:?}",
+                native_plane_region_metrics(
+                    &frame,
+                    &expected_native,
+                    10,
+                    plane_index,
+                    0..plane.layout.width / 2,
+                    0..plane.layout.height / 2
+                ),
+                native_plane_region_metrics(
+                    &frame,
+                    &expected_native,
+                    10,
+                    plane_index,
+                    plane.layout.width / 2..plane.layout.width,
+                    0..plane.layout.height / 2
+                ),
+                native_plane_region_metrics(
+                    &frame,
+                    &expected_native,
+                    10,
+                    plane_index,
+                    0..plane.layout.width / 2,
+                    plane.layout.height / 2..plane.layout.height
+                ),
+                native_plane_region_metrics(
+                    &frame,
+                    &expected_native,
+                    10,
+                    plane_index,
+                    plane.layout.width / 2..plane.layout.width,
+                    plane.layout.height / 2..plane.layout.height
+                ),
+            );
+        }
+        assert!(
+            metrics
+                .iter()
+                .all(|(max, average)| *max <= 8 && *average <= 1.0)
+        );
+
+        let Some(expected_rgba) = ffmpeg_decode_rgba_with_filter(
+            &path,
+            400,
+            300,
+            "zscale=transferin=smpte2084:primariesin=bt2020:matrixin=2020_ncl:rangein=full:transfer=bt709:primaries=bt709:matrix=709:range=full,format=rgba",
+        ) else {
+            continue;
+        };
+        let actual_rgba = frame
+            .to_rgba8()
+            .expect("HDR RGBA conversion should succeed");
+        let metrics = diff_rgb_dynamic(&actual_rgba.rgba, &expected_rgba);
+        let over_64 = actual_rgba
+            .rgba
+            .iter()
+            .zip(&expected_rgba)
+            .enumerate()
+            .filter(|(index, (actual, expected))| {
+                index % 4 != 3 && actual.abs_diff(**expected) > 64
+            })
+            .count();
+        eprintln!("{name} RGBA metrics: {metrics:?}");
+        eprintln!("{name} RGBA channels over 64: {over_64}");
+        // FFmpeg's zscale path is an independent display-space oracle.  The
+        // Rust API applies its own bounded PQ/BT.2020-to-sRGB shoulder, so
+        // the tolerance is intentionally wider than the native-plane oracle
+        // while still catching a quadrant-sized spatial shift.
+        assert!(
+            metrics.average_rgb_abs <= 16.0 && over_64 <= 128,
+            "{name} HDR display error average={} channels_over_64={over_64}",
+            metrics.average_rgb_abs
+        );
+    }
+}
+
+#[test]
+fn external_animated_frames_match_ffmpeg_and_keep_alpha_track() {
+    let cases = [
+        ("unsupported/colors-animated-8bpc.avif", 150, 150, 1, None),
+        (
+            "unsupported/colors-animated-8bpc-alpha-exif-xmp.avif",
+            150,
+            150,
+            2,
+            Some(3),
+        ),
+        (
+            "unsupported/colors-animated-8bpc-depth-exif-xmp.avif",
+            150,
+            150,
+            2,
+            None,
+        ),
+        (
+            "unsupported/colors-animated-8bpc-audio.avif",
+            150,
+            150,
+            1,
+            None,
+        ),
+        ("unsupported/star-8bpc.avif", 159, 159, 1, None),
+    ];
+    for (relative, width, height, color_stream, alpha_stream) in cases {
+        let path = external_avif_path(relative);
+        if !path.is_file() {
+            continue;
+        }
+        let data = std::fs::read(&path).expect("animated AVIF should be readable");
+        let frames = avif_rust::decode_sequence_frames_bytes(&data)
+            .unwrap_or_else(|err| panic!("{relative} should decode all frames: {err}"));
+        assert_eq!(frames.len(), 5, "{relative} frame count");
+        for (index, frame) in frames.iter().enumerate() {
+            assert_eq!(
+                (frame.width, frame.height),
+                (width, height),
+                "{relative} frame {index}"
+            );
+            let Some(expected) =
+                ffmpeg_decode_rgba_stream_frame(&path, color_stream, index, width, height)
+            else {
+                return;
+            };
+            let actual = frame
+                .to_rgba8()
+                .unwrap_or_else(|err| panic!("{relative} frame {index} RGBA conversion: {err}"));
+            let metrics = diff_rgb_dynamic(&actual.rgba, &expected);
+            assert!(
+                metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 48,
+                "{relative} frame {index} FFmpeg RGB error average={} max={}",
+                metrics.average_rgb_abs,
+                metrics.max_rgb_abs
+            );
+            if let Some(alpha_stream) = alpha_stream {
+                let Some(expected_alpha) =
+                    ffmpeg_decode_gray_stream_frame(&path, alpha_stream, index, width, height)
+                else {
+                    return;
+                };
+                let alpha = frame
+                    .buffers
+                    .planes
+                    .iter()
+                    .find(|plane| plane.layout.plane == 3)
+                    .expect("alpha AVIS frame should have an alpha plane");
+                assert_eq!(alpha.layout.width, width, "{relative} alpha width");
+                assert_eq!(alpha.layout.height, height, "{relative} alpha height");
+                let max_error = alpha
+                    .samples
+                    .iter()
+                    .zip(expected_alpha)
+                    .map(|(actual, expected)| actual.abs_diff(u16::from(expected)))
+                    .max()
+                    .unwrap_or(0);
+                assert!(
+                    max_error <= 8,
+                    "{relative} frame {index} alpha max={max_error}"
+                );
+            }
+        }
+    }
 }
 
 fn diff_rgb_dynamic(left: &[u8], right: &[u8]) -> DiffMetrics {
@@ -3787,7 +4191,7 @@ fn public_sequence_primary_item_decodes_first_frame_when_present() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root should exist")
-        .join("test/images/external/avif/unsupported/star-8bpc.avifs");
+        .join("test/images/external/avif/unsupported/star-8bpc.avif");
     if !path.is_file() {
         eprintln!("external sequence sample is unavailable; skipping oracle");
         return;
@@ -3812,7 +4216,7 @@ fn public_sequence_inter_sample_decodes_when_present() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root should exist")
-        .join("test/images/external/avif/unsupported/star-8bpc.avifs");
+        .join("test/images/external/avif/unsupported/star-8bpc.avif");
     if !path.is_file() {
         eprintln!("external sequence sample is unavailable; skipping inter oracle");
         return;
@@ -4533,7 +4937,7 @@ fn all_official_unsupported_samples_decode_without_partial_output() {
         ("sofa_grid1x5_420.avif", 1024, 770),
         ("sofa_grid1x5_420_dimg_repeat.avif", 1024, 770),
         ("sofa_grid1x5_420_reversed_dimg_order.avif", 1024, 770),
-        ("star-8bpc.avifs", 159, 159),
+        ("star-8bpc.avif", 159, 159),
     ];
     assert_eq!(cases.len(), 35);
     for (name, width, height) in cases {

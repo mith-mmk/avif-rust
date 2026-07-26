@@ -117,6 +117,19 @@ pub struct AvifInfo {
     pub sequence_sample_payloads: Vec<Vec<u8>>,
 }
 
+/// Samples and timing information extracted from the AVIS movie tracks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AvifSequence {
+    /// Color-track samples in presentation order.
+    pub color_samples: Vec<Vec<u8>>,
+    /// Color-frame durations in milliseconds, one value per color sample.
+    pub color_durations_ms: Vec<u64>,
+    /// Alpha-track samples in presentation order, when an alpha track exists.
+    pub alpha_samples: Vec<Vec<u8>>,
+    /// Alpha-frame durations in milliseconds.
+    pub alpha_durations_ms: Vec<u64>,
+}
+
 impl AvifInfo {
     pub fn is_avif_brand(&self) -> bool {
         brand_is_avif(&self.major_brand) || self.compatible_brands.iter().any(brand_is_avif)
@@ -492,8 +505,7 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
 
     let decode_primary_item_id = effective_primary_item_id(&meta)?;
     let primary_item_payload = item_payload(data, &meta, decode_primary_item_id)?;
-    let sequence_sample_payloads =
-        sequence_sample_payloads(data, &major_brand, &compatible_brands)?;
+    let sequence = parse_avif_sequence_with_brands(data, &major_brand, &compatible_brands)?;
     validate_primary_item_metadata(&meta)?;
     let alpha_auxiliary_items =
         alpha_auxiliary_items_for(data, &meta, Some(decode_primary_item_id))?;
@@ -517,7 +529,7 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
         mirror: primary_metadata.mirror,
         av1_config: primary_metadata.av1_config,
         primary_item_payload,
-        sequence_sample_payloads,
+        sequence_sample_payloads: sequence.color_samples,
     })
 }
 
@@ -2161,31 +2173,64 @@ fn effective_primary_item_id(state: &MetaState) -> Result<u32, DecoderError> {
     Ok(base_item_id)
 }
 
-fn sequence_sample_payloads(
+/// Parses the AVIS movie tracks without decoding their AV1 payloads.
+pub fn parse_avif_sequence(data: &[u8]) -> Result<AvifSequence, DecoderError> {
+    let (major_brand, compatible_brands) = parse_ftyp(data)?;
+    parse_avif_sequence_with_brands(data, &major_brand, &compatible_brands)
+}
+
+fn parse_avif_sequence_with_brands(
     data: &[u8],
     major_brand: &[u8; 4],
     compatible_brands: &[[u8; 4]],
-) -> Result<Vec<Vec<u8>>, DecoderError> {
+) -> Result<AvifSequence, DecoderError> {
     if major_brand != BRAND_AVIS && !compatible_brands.iter().any(|brand| brand == BRAND_AVIS) {
-        return Ok(Vec::new());
+        return Ok(AvifSequence {
+            color_samples: Vec::new(),
+            color_durations_ms: Vec::new(),
+            alpha_samples: Vec::new(),
+            alpha_durations_ms: Vec::new(),
+        });
     }
-    let mut samples = None;
+    let mut color = None;
+    let mut alpha = None;
     for_each_top_level_box(data, |header| {
-        if header.box_type == *b"moov" && samples.is_none() {
+        if header.box_type == *b"moov" {
             let payload = box_payload(data, header)?;
-            if let Some(track_samples) = parse_sequence_track(data, payload)? {
-                samples = Some(track_samples);
+            for track in parse_sequence_tracks(data, payload)? {
+                if track.is_alpha {
+                    if alpha.is_none() {
+                        alpha = Some(track);
+                    }
+                } else if color.is_none() {
+                    color = Some(track);
+                }
             }
         }
         Ok(())
     })?;
-    Ok(samples.unwrap_or_default())
+    let color = color.unwrap_or_default();
+    let alpha = alpha.unwrap_or_default();
+    Ok(AvifSequence {
+        color_samples: color.samples,
+        color_durations_ms: color.durations_ms,
+        alpha_samples: alpha.samples,
+        alpha_durations_ms: alpha.durations_ms,
+    })
 }
 
-fn parse_sequence_track(
+#[derive(Debug, Default)]
+struct SequenceTrack {
+    samples: Vec<Vec<u8>>,
+    durations_ms: Vec<u64>,
+    is_alpha: bool,
+}
+
+fn parse_sequence_tracks(
     data: &[u8],
     moov_payload: &[u8],
-) -> Result<Option<Vec<Vec<u8>>>, DecoderError> {
+) -> Result<Vec<SequenceTrack>, DecoderError> {
+    let mut tracks = Vec::new();
     for trak in child_boxes(moov_payload)?
         .into_iter()
         .filter(|header| header.box_type == *b"trak")
@@ -2195,12 +2240,25 @@ fn parse_sequence_track(
             continue;
         };
         let mdia_payload = box_payload(trak_payload, mdia)?;
+        let auxl_track_ids = if let Some(tref) = child_box(trak_payload, b"tref")? {
+            let tref_payload = box_payload(trak_payload, tref)?;
+            child_box(tref_payload, b"auxl")?
+                .map(|auxl| box_payload(tref_payload, auxl))
+                .transpose()?
+                .map(parse_track_reference_ids)
+                .transpose()?
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         let Some(hdlr) = child_box(mdia_payload, b"hdlr")? else {
             continue;
         };
         let hdlr_payload = box_payload(mdia_payload, hdlr)?;
         if hdlr_payload.len() < 12
-            || (&hdlr_payload[8..12] != b"vide" && &hdlr_payload[8..12] != b"pict")
+            || (&hdlr_payload[8..12] != b"vide"
+                && &hdlr_payload[8..12] != b"pict"
+                && &hdlr_payload[8..12] != b"auxv")
         {
             continue;
         }
@@ -2220,6 +2278,12 @@ fn parse_sequence_track(
         if sample_descriptions.iter().all(Option::is_none) {
             continue;
         }
+        let auxiliary_type = sample_descriptions
+            .iter()
+            .filter_map(Option::as_ref)
+            .find_map(|description| parse_auxiliary_type_from_sample_description(description));
+        let is_alpha =
+            !auxl_track_ids.is_empty() && auxiliary_type.as_deref() == Some(ALPHA_AUX_TYPE);
         let Some(stsc) = child_box(stbl_payload, b"stsc")? else {
             continue;
         };
@@ -2278,9 +2342,115 @@ fn parse_sequence_track(
                 samples.last().expect("sample was pushed"),
             )?;
         }
-        return Ok(Some(samples));
+        let timescale = child_box(mdia_payload, b"mdhd")?
+            .map(|mdhd| box_payload(mdia_payload, mdhd))
+            .transpose()?
+            .map(|payload| parse_mdhd_timescale(payload))
+            .transpose()?
+            .unwrap_or(1);
+        let durations_ms = child_box(stbl_payload, b"stts")?
+            .map(|stts| box_payload(stbl_payload, stts))
+            .transpose()?
+            .map(|payload| parse_sample_durations(payload, samples.len(), timescale))
+            .transpose()?
+            .unwrap_or_else(|| vec![0; samples.len()]);
+        tracks.push(SequenceTrack {
+            samples,
+            durations_ms,
+            is_alpha,
+        });
     }
-    Ok(None)
+    Ok(tracks)
+}
+
+fn parse_track_reference_ids(payload: &[u8]) -> Result<Vec<u32>, DecoderError> {
+    if payload.is_empty() || payload.len() % 4 != 0 {
+        return Err(DecoderError::NotEnoughData(
+            "track reference payload is too short".to_string(),
+        ));
+    }
+    (0..payload.len() / 4)
+        .map(|index| read_u32(payload, index * 4))
+        .collect()
+}
+
+fn parse_auxiliary_type_from_sample_description(description: &[u8]) -> Option<String> {
+    let marker = description
+        .windows(4)
+        .position(|window| window == b"auxi")?;
+    let payload = description.get(marker + 8..)?;
+    let end = payload
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(payload.len());
+    std::str::from_utf8(&payload[..end])
+        .ok()
+        .map(str::to_string)
+}
+
+fn parse_mdhd_timescale(payload: &[u8]) -> Result<u32, DecoderError> {
+    if payload.len() < 16 {
+        return Err(DecoderError::NotEnoughData(
+            "mdhd payload is too short".to_string(),
+        ));
+    }
+    let version = payload[0];
+    let offset: usize = if version == 1 { 20 } else { 12 };
+    let end = offset.checked_add(4).ok_or_else(|| {
+        DecoderError::Bitstream("mdhd timescale offset overflows usize".to_string())
+    })?;
+    if end > payload.len() {
+        return Err(DecoderError::NotEnoughData(
+            "mdhd timescale is truncated".to_string(),
+        ));
+    }
+    let timescale = read_u32(payload, offset)?;
+    if timescale == 0 {
+        return Err(DecoderError::Bitstream(
+            "mdhd timescale must be non-zero".to_string(),
+        ));
+    }
+    Ok(timescale)
+}
+
+fn parse_sample_durations(
+    payload: &[u8],
+    sample_count: usize,
+    timescale: u32,
+) -> Result<Vec<u64>, DecoderError> {
+    if payload.len() < 8 {
+        return Err(DecoderError::NotEnoughData(
+            "stts payload is too short".to_string(),
+        ));
+    }
+    let entry_count = usize::try_from(read_u32(payload, 4)?)
+        .map_err(|_| DecoderError::Bitstream("stts entry count is too large".to_string()))?;
+    let mut durations = Vec::with_capacity(sample_count);
+    let mut offset: usize = 8;
+    for _ in 0..entry_count {
+        let end = offset.checked_add(8).ok_or_else(|| {
+            DecoderError::Bitstream("stts entry offset overflows usize".to_string())
+        })?;
+        if end > payload.len() {
+            return Err(DecoderError::NotEnoughData(
+                "stts entries are truncated".to_string(),
+            ));
+        }
+        let count = usize::try_from(read_u32(payload, offset)?)
+            .map_err(|_| DecoderError::Bitstream("stts sample count is too large".to_string()))?;
+        let duration = u64::from(read_u32(payload, offset + 4)?);
+        let milliseconds =
+            (duration.saturating_mul(1000) + u64::from(timescale) / 2) / u64::from(timescale);
+        durations.extend(std::iter::repeat_n(milliseconds, count));
+        offset = end;
+    }
+    if durations.len() != sample_count {
+        return Err(DecoderError::Bitstream(format!(
+            "stts describes {} samples, expected {sample_count}",
+            durations.len()
+        )));
+    }
+    Ok(durations)
 }
 
 fn sample_contains_sequence_header(sample: &[u8]) -> Result<bool, DecoderError> {

@@ -28,7 +28,7 @@ fn external_star_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root should exist")
-        .join("test/images/external/avif/unsupported/star-8bpc.avifs")
+        .join("test/images/external/avif/unsupported/star-8bpc.avif")
 }
 
 fn external_animated_root() -> PathBuf {
@@ -532,6 +532,13 @@ fn external_avis_sequence_exposes_all_track_samples_when_present() {
     let info = parse_avif(&data).expect("external AVIS metadata should parse");
     assert_eq!(&info.major_brand, b"avis");
     assert_eq!(info.sequence_sample_payloads.len(), 5);
+    let sequence = avif_rust::parse_avif_sequence(&data).expect("AVIS tracks should parse");
+    eprintln!(
+        "AVIS track audit: color={} color_durations={:?} alpha={}",
+        sequence.color_samples.len(),
+        sequence.color_durations_ms,
+        sequence.alpha_samples.len()
+    );
     assert_eq!(info.sequence_sample_payloads[0], info.primary_item_payload);
     let kinds: Vec<_> = info
         .sequence_sample_payloads
@@ -660,7 +667,27 @@ fn external_animated_auxiliary_and_audio_variants_decode_when_present() {
         }
         let data = std::fs::read(&path).expect("animated variant should be readable");
         let info = parse_avif(&data).expect("animated variant metadata should parse");
+        let sequence = avif_rust::parse_avif_sequence(&data)
+            .unwrap_or_else(|err| panic!("{name} track metadata should parse: {err}"));
         assert_eq!(info.sequence_sample_payloads.len(), 5, "{name}");
+        assert_eq!(sequence.color_samples.len(), 5, "{name} color track");
+        assert_eq!(
+            sequence.color_durations_ms.len(),
+            5,
+            "{name} color durations"
+        );
+        assert!(
+            sequence
+                .color_durations_ms
+                .iter()
+                .all(|duration| *duration > 0),
+            "{name} color durations should be positive"
+        );
+        assert_eq!(
+            sequence.alpha_samples.len(),
+            if has_alpha { 5 } else { 0 },
+            "{name} alpha track"
+        );
         assert_eq!(!info.alpha_auxiliary_items.is_empty(), has_alpha, "{name}");
         let frames = avif_rust::decode_sequence_frames_bytes(&data)
             .unwrap_or_else(|err| panic!("{name} should decode every frame: {err}"));

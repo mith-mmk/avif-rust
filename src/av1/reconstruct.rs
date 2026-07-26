@@ -143,6 +143,40 @@ pub(crate) fn read_intra_edges_into(
     above: &mut [u16],
     left: &mut [u16],
 ) -> Result<(bool, bool, u16), DecoderError> {
+    read_intra_edges_into_with_bounds(
+        plane,
+        x,
+        y,
+        width,
+        height,
+        bit_depth,
+        top_right_available,
+        bottom_left_available,
+        0,
+        0,
+        plane.layout.width,
+        plane.layout.height,
+        above,
+        left,
+    )
+}
+
+pub(crate) fn read_intra_edges_into_with_bounds(
+    plane: &PlaneBuffer,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    bit_depth: u8,
+    top_right_available: usize,
+    bottom_left_available: usize,
+    tile_left: usize,
+    tile_top: usize,
+    tile_right: usize,
+    tile_bottom: usize,
+    above: &mut [u16],
+    left: &mut [u16],
+) -> Result<(bool, bool, u16), DecoderError> {
     let mid = 1u16 << (bit_depth - 1);
     let directional_edge_len = width
         .checked_add(height)
@@ -152,8 +186,10 @@ pub(crate) fn read_intra_edges_into(
             "AV1 intra edge scratch is shorter than the prediction block".to_string(),
         ));
     }
-    let above_available = y > 0 && plane.layout.width > 0;
-    let left_available = x > 0 && plane.layout.height > 0;
+    let tile_right = tile_right.min(plane.layout.width).max(tile_left);
+    let tile_bottom = tile_bottom.min(plane.layout.height).max(tile_top);
+    let above_available = y > tile_top && tile_right > tile_left;
+    let left_available = x > tile_left && tile_bottom > tile_top;
 
     for dx in 0..directional_edge_len {
         above[dx] = if !above_available {
@@ -165,7 +201,7 @@ pub(crate) fn read_intra_edges_into(
             } else {
                 dx
             };
-            let sample_x = (x + edge_dx).min(plane.layout.width - 1);
+            let sample_x = (x + edge_dx).min(tile_right.saturating_sub(1));
             plane.samples[(y - 1) * plane.layout.width + sample_x]
         };
     }
@@ -180,12 +216,12 @@ pub(crate) fn read_intra_edges_into(
             } else {
                 dy
             };
-            let sample_y = (y + edge_dy).min(plane.layout.height - 1);
+            let sample_y = (y + edge_dy).min(tile_bottom.saturating_sub(1));
             plane.samples[sample_y * plane.layout.width + x - 1]
         };
     }
 
-    let above_left = if x == 0 || y == 0 || plane.layout.width == 0 {
+    let above_left = if x <= tile_left || y <= tile_top || tile_right == 0 || tile_bottom == 0 {
         mid
     } else {
         plane.samples[(y - 1) * plane.layout.width + x - 1]
@@ -1520,10 +1556,9 @@ fn sample_chroma_plane(
         }
         return top;
     }
-    // The current AV1 sample positions use only integer source coordinates:
-    // 4:2:2/4:4:0 are co-located and 4:2:0 optionally averages the two
-    // vertically adjacent samples. Keep this path to avoid the former
-    // four-load blend.
+    // The current AV1 sample positions use integer source coordinates, with
+    // the unspecified/reserved 4:2:0 position following the existing WML2
+    // vertical chroma reconstruction policy.
     debug_assert!(subsampling_x != 0 || subsampling_y != 0);
     plane.samples[source_y * plane.layout.width + source_x]
 }

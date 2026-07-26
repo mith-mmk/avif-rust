@@ -14,14 +14,16 @@ mod image;
 pub mod obu;
 
 pub use compat::{
-    CallbackResponse, DataMap, DecodeOptions, DrawCallback, DrawOptions, InitOptions, Metadata,
-    ResponseCommand, TerminateOptions, VerboseOptions,
+    CallbackResponse, DataMap, DecodeOptions, DrawCallback, DrawOptions, ImageRect, InitOptions,
+    Metadata, NextBlend, NextDispose, NextOptions, ResponseCommand, TerminateOptions,
+    VerboseOptions,
 };
 pub use container::{
-    AuxiliaryImage, AvifInfo, AvifSequenceSampleKind, CleanAperture, ColorInformation,
-    GainMapChannel, GainMapMetadata, GainMapRational, GridCell, GridImage, ImageMirror,
-    ImageRotation, ImageSpatialExtents, NclxColorInformation, PixelChannelInformation,
-    PixelInformation, PixelSubsampling, classify_av1_sequence_sample, parse_gain_map_metadata,
+    AuxiliaryImage, AvifInfo, AvifSequence, AvifSequenceSampleKind, CleanAperture,
+    ColorInformation, GainMapChannel, GainMapMetadata, GainMapRational, GridCell, GridImage,
+    ImageMirror, ImageRotation, ImageSpatialExtents, NclxColorInformation, PixelChannelInformation,
+    PixelInformation, PixelSubsampling, classify_av1_sequence_sample, parse_avif_sequence,
+    parse_gain_map_metadata,
 };
 pub use decoder::{
     DecodedFrame, DecodedGainMapFrame, decode, decode_frame_bytes, decode_gain_map_frame_bytes,

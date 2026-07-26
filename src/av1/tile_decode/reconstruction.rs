@@ -10,7 +10,7 @@ use crate::av1::predict::{
     IntraEdges, predict_filter_intra_into, predict_intra_with_edge_filter_into,
 };
 use crate::av1::quant::QuantState;
-use crate::av1::reconstruct::{read_intra_edges_into, write_plane_block};
+use crate::av1::reconstruct::{read_intra_edges_into_with_bounds, write_plane_block};
 use crate::av1::sequence::SequenceHeader;
 use crate::av1::syntax::{PredictionMode, TxSize, TxType};
 use crate::av1::tile_decode::palette::PALETTE_MAX_SIZE;
@@ -36,6 +36,7 @@ pub(super) fn decode_plane_block_unit(
     decoder: &mut TileDecoder<'_>,
     sequence: &SequenceHeader,
     frame: &FrameHeader,
+    tile_plan: &crate::av1::TileDecodePlan,
     plan: &FrameDecodePlan,
     buffers: &mut FrameBuffers,
     block_mode: &BlockModeProbe,
@@ -63,6 +64,33 @@ pub(super) fn decode_plane_block_unit(
     let coded_height = decoder.mi_rows << 2;
     let plane_width = ceil_shift(coded_width, subsampling_x);
     let plane_height = ceil_shift(coded_height, subsampling_y);
+    // The luma plane layout is naturally full-resolution even when the
+    // sequence is subsampled.  Use the sequence configuration for luma so
+    // that YUV intra references cannot cross a tile boundary.  Identity RGB
+    // content is kept full-frame because its planes are independent GBR
+    // channels rather than YUV luma/chroma.
+    let identity_rgb = !sequence.color_config.monochrome
+        && sequence
+            .color_config
+            .color_description
+            .is_some_and(|description| matches!(description.matrix_coefficients, 0 | 3));
+    let use_tile_bounds = !identity_rgb && plan.tiles.len() > 1;
+    let (tile_left, tile_top, tile_right, tile_bottom) = if !use_tile_bounds {
+        (0, 0, plane_width, plane_height)
+    } else {
+        (
+            tile_plan.pixel_x >> subsampling_x,
+            tile_plan.pixel_y >> subsampling_y,
+            ceil_shift(
+                tile_plan.pixel_x.saturating_add(tile_plan.pixel_width),
+                subsampling_x,
+            ),
+            ceil_shift(
+                tile_plan.pixel_y.saturating_add(tile_plan.pixel_height),
+                subsampling_y,
+            ),
+        )
+    };
     let block_x = plane_block_origin(x, block_mode.block_size.width(), subsampling_x);
     let block_y = plane_block_origin(y, block_mode.block_size.height(), subsampling_y);
     let plane_block_size = if plane_index == 0 {
@@ -207,6 +235,10 @@ pub(super) fn decode_plane_block_unit(
                 smooth_neighbour,
                 top_right_available,
                 bottom_left_available,
+                tile_left,
+                tile_top,
+                tile_right,
+                tile_bottom,
                 luma_plane,
                 cfl_alpha_q3,
                 block_mode.intra_block_copy_mv,
@@ -276,6 +308,10 @@ pub(super) fn decode_plane_block_unit(
                 smooth_neighbour,
                 top_right_available,
                 bottom_left_available,
+                tile_left,
+                tile_top,
+                tile_right,
+                tile_bottom,
                 luma_plane,
                 cfl_alpha_q3,
                 block_mode.intra_block_copy_mv,
@@ -329,6 +365,10 @@ pub(super) fn decode_plane_block_unit(
             smooth_neighbour,
             top_right_available,
             bottom_left_available,
+            tile_left,
+            tile_top,
+            tile_right,
+            tile_bottom,
             luma_plane,
             cfl_alpha_q3,
             block_mode.intra_block_copy_mv,
@@ -441,6 +481,10 @@ pub(super) fn predict_block(
         smooth_neighbour,
         top_right_available,
         bottom_left_available,
+        0,
+        0,
+        plane.layout.width,
+        plane.layout.height,
         &mut output,
     )?;
     Ok(output)
@@ -464,6 +508,10 @@ fn predict_block_into(
     smooth_neighbour: bool,
     top_right_available: usize,
     bottom_left_available: usize,
+    tile_left: usize,
+    tile_top: usize,
+    tile_right: usize,
+    tile_bottom: usize,
     output: &mut [u16],
 ) -> Result<(), DecoderError> {
     // AV1 prediction blocks can reach 128x128, so each directional edge needs
@@ -487,7 +535,7 @@ fn predict_block_into(
     }
     let mut above_storage = [0u16; MAX_INTRA_EDGE_LEN];
     let mut left_storage = [0u16; MAX_INTRA_EDGE_LEN];
-    let (above_available, left_available, edge_above_left) = read_intra_edges_into(
+    let (above_available, left_available, edge_above_left) = read_intra_edges_into_with_bounds(
         plane,
         x,
         y,
@@ -496,6 +544,10 @@ fn predict_block_into(
         bit_depth,
         top_right_available,
         bottom_left_available,
+        tile_left,
+        tile_top,
+        tile_right,
+        tile_bottom,
         &mut above_storage,
         &mut left_storage,
     )?;
@@ -592,10 +644,12 @@ fn plane_block_size(
         BlockSize::Block4x4 if subsampling_y == 1 => BlockSize::Block4x8,
         BlockSize::Block4x8 if subsampling_x == 1 => BlockSize::Block8x8,
         BlockSize::Block4x8 if subsampling_y == 1 => BlockSize::Block4x8,
+        BlockSize::Block8x4 if subsampling_x == 1 && subsampling_y == 1 => BlockSize::Block8x8,
         BlockSize::Block8x4 if subsampling_x == 1 => BlockSize::Block8x4,
         BlockSize::Block8x4 if subsampling_y == 1 => BlockSize::Block8x8,
         BlockSize::Block4x16 if subsampling_x == 1 => BlockSize::Block8x16,
         BlockSize::Block4x16 if subsampling_y == 1 => BlockSize::Block4x16,
+        BlockSize::Block16x4 if subsampling_x == 1 && subsampling_y == 1 => BlockSize::Block16x8,
         BlockSize::Block16x4 if subsampling_x == 1 => BlockSize::Block16x4,
         BlockSize::Block16x4 if subsampling_y == 1 => BlockSize::Block16x8,
         _ => block_size,
@@ -632,6 +686,10 @@ fn predict_plane_block_into(
     smooth_neighbour: bool,
     top_right_available: usize,
     bottom_left_available: usize,
+    tile_left: usize,
+    tile_top: usize,
+    tile_right: usize,
+    tile_bottom: usize,
     luma_plane: Option<&PlaneBuffer>,
     cfl_alpha_q3: Option<i8>,
     intra_block_copy_mv: Option<(i32, i32)>,
@@ -904,7 +962,19 @@ fn predict_plane_block_into(
                 InterIntraMode::Smooth => PredictionMode::Smooth,
             };
             if prediction_mode == PredictionMode::Dc {
-                predict_dc_block_into(plane, x, y, width, height, bit_depth, intra_prediction);
+                predict_dc_block_into_with_bounds(
+                    plane,
+                    x,
+                    y,
+                    width,
+                    height,
+                    bit_depth,
+                    tile_left,
+                    tile_top,
+                    tile_right,
+                    tile_bottom,
+                    intra_prediction,
+                );
             } else {
                 predict_block_into(
                     plane,
@@ -920,6 +990,10 @@ fn predict_plane_block_into(
                     false,
                     top_right_available,
                     bottom_left_available,
+                    tile_left,
+                    tile_top,
+                    tile_right,
+                    tile_bottom,
                     intra_prediction,
                 )?;
             }
@@ -995,7 +1069,19 @@ fn predict_plane_block_into(
                 output,
             );
         } else if prediction_mode == PredictionMode::Dc && filter_intra_mode.is_none() {
-            predict_dc_block_into(plane, x, y, width, height, bit_depth, output);
+            predict_dc_block_into_with_bounds(
+                plane,
+                x,
+                y,
+                width,
+                height,
+                bit_depth,
+                tile_left,
+                tile_top,
+                tile_right,
+                tile_bottom,
+                output,
+            );
         } else {
             predict_block_into(
                 plane,
@@ -1011,6 +1097,10 @@ fn predict_plane_block_into(
                 smooth_neighbour,
                 top_right_available,
                 bottom_left_available,
+                tile_left,
+                tile_top,
+                tile_right,
+                tile_bottom,
                 output,
             )?;
         }
@@ -2692,34 +2782,38 @@ fn predict_intra_block_copy_into(
     Ok(())
 }
 
-fn predict_dc_block_into(
+fn predict_dc_block_into_with_bounds(
     plane: &PlaneBuffer,
     x: usize,
     y: usize,
     width: usize,
     height: usize,
     bit_depth: u8,
+    tile_left: usize,
+    tile_top: usize,
+    tile_right: usize,
+    tile_bottom: usize,
     output: &mut [u16],
 ) {
-    let above_available = y > 0 && plane.layout.width > 0;
-    let left_available = x > 0 && plane.layout.height > 0;
+    let tile_right = tile_right.min(plane.layout.width).max(tile_left);
+    let tile_bottom = tile_bottom.min(plane.layout.height).max(tile_top);
+    let above_available = y > tile_top && tile_right > tile_left;
+    let left_available = x > tile_left && tile_bottom > tile_top;
     let value = match (above_available, left_available) {
         (true, true) => {
             let above_sum: u32 = (0..width)
                 .map(|offset| {
                     u32::from(
-                        plane.samples[(y - 1) * plane.layout.width
-                            + (x + offset).min(plane.layout.width - 1)],
+                        plane.samples
+                            [(y - 1) * plane.layout.width + (x + offset).min(tile_right - 1)],
                     )
                 })
                 .sum();
             let left_sum: u32 = (0..height)
                 .map(|offset| {
                     u32::from(
-                        plane.samples[((y + offset).min(plane.layout.height - 1))
-                            * plane.layout.width
-                            + x
-                            - 1],
+                        plane.samples
+                            [((y + offset).min(tile_bottom - 1)) * plane.layout.width + x - 1],
                     )
                 })
                 .sum();
@@ -2729,8 +2823,8 @@ fn predict_dc_block_into(
             let sum: u32 = (0..width)
                 .map(|offset| {
                     u32::from(
-                        plane.samples[(y - 1) * plane.layout.width
-                            + (x + offset).min(plane.layout.width - 1)],
+                        plane.samples
+                            [(y - 1) * plane.layout.width + (x + offset).min(tile_right - 1)],
                     )
                 })
                 .sum();
@@ -2740,10 +2834,8 @@ fn predict_dc_block_into(
             let sum: u32 = (0..height)
                 .map(|offset| {
                     u32::from(
-                        plane.samples[((y + offset).min(plane.layout.height - 1))
-                            * plane.layout.width
-                            + x
-                            - 1],
+                        plane.samples
+                            [((y + offset).min(tile_bottom - 1)) * plane.layout.width + x - 1],
                     )
                 })
                 .sum();
@@ -2753,6 +2845,31 @@ fn predict_dc_block_into(
     };
     let value = value.min((1u32 << bit_depth) - 1) as u16;
     output.fill(value);
+}
+
+#[cfg(test)]
+fn predict_dc_block_into(
+    plane: &PlaneBuffer,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    bit_depth: u8,
+    output: &mut [u16],
+) {
+    predict_dc_block_into_with_bounds(
+        plane,
+        x,
+        y,
+        width,
+        height,
+        bit_depth,
+        0,
+        0,
+        plane.layout.width,
+        plane.layout.height,
+        output,
+    );
 }
 
 #[cfg(test)]

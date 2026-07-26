@@ -158,6 +158,7 @@ pub(super) fn decode_luma_leaf_block(
             decoder,
             sequence,
             frame,
+            tile_plan,
             plan,
             buffers,
             &block_mode,

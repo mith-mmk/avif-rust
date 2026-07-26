@@ -59,6 +59,14 @@ pub trait DrawCallback: Sync + Send {
         data: &[u8],
         option: Option<DrawOptions>,
     ) -> Result<Option<CallbackResponse>, Error>;
+    /// Starts the next animation frame.
+    ///
+    /// This method has a default implementation so existing compatibility
+    /// clients remain source-compatible. Decoders that expose animation call
+    /// it before each frame's draw operation.
+    fn next(&mut self, _option: Option<NextOptions>) -> Result<Option<CallbackResponse>, Error> {
+        Ok(Some(CallbackResponse::cont()))
+    }
     fn terminate(
         &mut self,
         term: Option<TerminateOptions>,
@@ -85,6 +93,55 @@ pub struct InitOptions {
 /// Draw options placeholder kept for shape compatibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DrawOptions {}
+
+/// A rectangle occupied by one animation frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImageRect {
+    pub start_x: i32,
+    pub start_y: i32,
+    pub width: usize,
+    pub height: usize,
+}
+
+/// Disposal behavior for the preceding animation frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NextDispose {
+    None,
+    Background,
+    Previous,
+}
+
+/// Blending behavior for the animation frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NextBlend {
+    Source,
+    Override,
+}
+
+/// Per-frame animation timing and composition options.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NextOptions {
+    pub await_time: u64,
+    pub image_rect: Option<ImageRect>,
+    pub dispose: NextDispose,
+    pub blend: NextBlend,
+}
+
+impl NextOptions {
+    pub fn full_canvas(width: usize, height: usize, await_time: u64) -> Self {
+        Self {
+            await_time,
+            image_rect: Some(ImageRect {
+                start_x: 0,
+                start_y: 0,
+                width,
+                height,
+            }),
+            dispose: NextDispose::None,
+            blend: NextBlend::Override,
+        }
+    }
+}
 
 /// Termination options placeholder kept for shape compatibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
