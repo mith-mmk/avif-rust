@@ -34,6 +34,21 @@ fn push_local_warp_offset(
     }
 }
 
+fn push_mv_candidate(
+    values: &mut [Option<(i32, i32)>; 4],
+    value_len: &mut usize,
+    candidate: Option<(i32, i32)>,
+) {
+    let Some(candidate) = candidate else {
+        return;
+    };
+    if *value_len == 4 || values[..*value_len].contains(&Some(candidate)) {
+        return;
+    }
+    values[*value_len] = Some(candidate);
+    *value_len += 1;
+}
+
 impl<'a> TileDecoder<'a> {
     pub(super) fn obmc_neighbors(
         &self,
@@ -185,42 +200,104 @@ impl<'a> TileDecoder<'a> {
         let mi_col = x >> 2;
         let mi_row = y >> 2;
         let block_mi_width = (block_size.width() / 4).max(1);
-        let candidates = [
-            (mi_col, mi_row.saturating_sub(1)),
-            (mi_col.saturating_sub(1), mi_row),
-            (mi_col.saturating_sub(1), mi_row.saturating_sub(1)),
-            (
-                mi_col.saturating_add(block_mi_width),
-                mi_row.saturating_sub(1),
-            ),
-        ];
         let mut values = [None; 4];
+        let mut value_len = 0usize;
         let reference_grid = if secondary {
-            &self.reference_frame_secondary_grid
+            &self.reference_frame_secondary_type_grid
         } else {
-            &self.reference_frame_grid
+            &self.reference_frame_type_grid
         };
         let motion_grid = if secondary {
             &self.motion_vector_secondary_grid
         } else {
             &self.motion_vector_grid
         };
-        for (candidate_index, (candidate_col, candidate_row)) in candidates.into_iter().enumerate()
-        {
-            if candidate_col < self.tile_mi_col_start
-                || candidate_row < self.tile_mi_row_start
-                || candidate_col >= self.mi_cols
-                || candidate_row >= self.mi_rows
-            {
-                continue;
+        if mi_row > self.tile_mi_row_start {
+            let candidate_row = mi_row - 1;
+            let mut candidate_col = mi_col;
+            let end_col = mi_col.saturating_add(block_mi_width).min(self.mi_cols);
+            while candidate_col < end_col && value_len < 4 {
+                let index = candidate_row * self.mi_cols + candidate_col;
+                let Some(source_size) = self.motion_block_size_grid[index] else {
+                    candidate_col += 1;
+                    continue;
+                };
+                let source_w4 = (source_size.width() / 4).max(1);
+                let source_h4 = (source_size.height() / 4).max(1);
+                let origin_col = candidate_col & !(source_w4 - 1);
+                let origin_row = candidate_row & !(source_h4 - 1);
+                if origin_row + source_h4 == mi_row {
+                    let origin_index = origin_row * self.mi_cols + origin_col;
+                    if reference_grid[origin_index] == Some(reference_frame) {
+                        push_mv_candidate(
+                            &mut values,
+                            &mut value_len,
+                            motion_grid[origin_index],
+                        );
+                    }
+                }
+                candidate_col = candidate_col
+                    .saturating_add(1)
+                    .max(origin_col.saturating_add(source_w4));
             }
-            let index = candidate_row * self.mi_cols + candidate_col;
-            if reference_grid[index] == Some(reference_frame) {
-                values[candidate_index] = motion_grid[index];
+        }
+        if mi_col > self.tile_mi_col_start {
+            let candidate_col = mi_col - 1;
+            let mut candidate_row = mi_row;
+            let end_row = mi_row
+                .saturating_add((block_size.height() / 4).max(1))
+                .min(self.mi_rows);
+            while candidate_row < end_row && value_len < 4 {
+                let index = candidate_row * self.mi_cols + candidate_col;
+                let Some(source_size) = self.motion_block_size_grid[index] else {
+                    candidate_row += 1;
+                    continue;
+                };
+                let source_w4 = (source_size.width() / 4).max(1);
+                let source_h4 = (source_size.height() / 4).max(1);
+                let origin_col = candidate_col & !(source_w4 - 1);
+                let origin_row = candidate_row & !(source_h4 - 1);
+                if origin_col + source_w4 == mi_col {
+                    let origin_index = origin_row * self.mi_cols + origin_col;
+                    if reference_grid[origin_index] == Some(reference_frame) {
+                        push_mv_candidate(
+                            &mut values,
+                            &mut value_len,
+                            motion_grid[origin_index],
+                        );
+                    }
+                }
+                candidate_row = candidate_row
+                    .saturating_add(1)
+                    .max(origin_row.saturating_add(source_h4));
+            }
+        }
+        if mi_row > self.tile_mi_row_start {
+            let candidate_row = mi_row - 1;
+            let candidate_col = mi_col.saturating_add(block_mi_width);
+            if candidate_col < self.mi_cols {
+                let index = candidate_row * self.mi_cols + candidate_col;
+                if let Some(source_size) = self.motion_block_size_grid[index] {
+                    let source_w4 = (source_size.width() / 4).max(1);
+                    let source_h4 = (source_size.height() / 4).max(1);
+                    let origin_col = candidate_col & !(source_w4 - 1);
+                    let origin_row = candidate_row & !(source_h4 - 1);
+                    let origin_index = origin_row * self.mi_cols + origin_col;
+                    if origin_row + source_h4 == mi_row
+                        && reference_grid[origin_index] == Some(reference_frame)
+                    {
+                        push_mv_candidate(
+                            &mut values,
+                            &mut value_len,
+                            motion_grid[origin_index],
+                        );
+                    }
+                }
             }
         }
         values
     }
+
 
     pub(super) fn local_warp_sample_candidates(
         &self,
@@ -361,8 +438,8 @@ impl<'a> TileDecoder<'a> {
             return None;
         }
         let index = mv_row * self.mi_cols + mv_col;
-        if self.reference_frame_grid[index] != Some(reference_frame)
-            || self.reference_frame_secondary_grid[index].is_some()
+        if self.reference_frame_type_grid[index] != Some(reference_frame)
+            || self.reference_frame_secondary_type_grid[index].is_some()
         {
             return None;
         }
@@ -431,6 +508,150 @@ impl<'a> TileDecoder<'a> {
             .unwrap_or((0, 0))
     }
 
+    pub(super) fn inter_mode_context(
+        &self,
+        x: usize,
+        y: usize,
+        block_size: BlockSize,
+        reference_frame: u8,
+    ) -> usize {
+        let mi_col = x / 4;
+        let mi_row = y / 4;
+        let block_w = (block_size.width() / 4).max(1);
+        let block_h = (block_size.height() / 4).max(1);
+        let mut row_matches = 0usize;
+        let mut col_matches = 0usize;
+        let mut new_mv_count = 0usize;
+        let mut seen = [(0usize, 0usize, false); 8];
+        let mut seen_len = 0usize;
+
+        let visit = |candidate_col: usize,
+                         candidate_row: usize,
+                         row: bool,
+                         row_matches: &mut usize,
+                         col_matches: &mut usize,
+                         new_mv_count: &mut usize,
+                         seen: &mut [(usize, usize, bool); 8],
+                         seen_len: &mut usize| {
+            if candidate_col < self.tile_mi_col_start
+                || candidate_row < self.tile_mi_row_start
+                || candidate_col >= self.mi_cols
+                || candidate_row >= self.mi_rows
+            {
+                return;
+            }
+            let index = candidate_row * self.mi_cols + candidate_col;
+            let Some(source_size) = self.motion_block_size_grid[index] else {
+                return;
+            };
+            let source_w = (source_size.width() / 4).max(1);
+            let source_h = (source_size.height() / 4).max(1);
+            let origin_col = candidate_col & !(source_w - 1);
+            let origin_row = candidate_row & !(source_h - 1);
+            let origin_index = origin_row * self.mi_cols + origin_col;
+            if origin_col + source_w > self.mi_cols
+                || origin_row + source_h > self.mi_rows
+                || self.reference_frame_type_grid[origin_index] != Some(reference_frame)
+                || seen[..*seen_len].contains(&(origin_col, origin_row, row))
+            {
+                return;
+            }
+            if *seen_len < seen.len() {
+                seen[*seen_len] = (origin_col, origin_row, row);
+                *seen_len += 1;
+            }
+            if row {
+                *row_matches += 1;
+            } else {
+                *col_matches += 1;
+            }
+            if self.inter_new_mv_grid[origin_index].unwrap_or(false) {
+                *new_mv_count += 1;
+            }
+        };
+
+        if mi_row > self.tile_mi_row_start {
+            let above_row = mi_row - 1;
+            for offset in 0..block_w {
+                visit(
+                    mi_col + offset,
+                    above_row,
+                    true,
+                    &mut row_matches,
+                    &mut col_matches,
+                    &mut new_mv_count,
+                    &mut seen,
+                    &mut seen_len,
+                );
+            }
+        }
+        if mi_col > self.tile_mi_col_start {
+            let left_col = mi_col - 1;
+            for offset in 0..block_h {
+                visit(
+                    left_col,
+                    mi_row + offset,
+                    false,
+                    &mut row_matches,
+                    &mut col_matches,
+                    &mut new_mv_count,
+                    &mut seen,
+                    &mut seen_len,
+                );
+            }
+        }
+        if mi_row > self.tile_mi_row_start {
+            visit(
+                mi_col + block_w,
+                mi_row - 1,
+                true,
+                &mut row_matches,
+                &mut col_matches,
+                &mut new_mv_count,
+                &mut seen,
+                &mut seen_len,
+            );
+        }
+        let nearest_match = usize::from(row_matches > 0) + usize::from(col_matches > 0);
+        let ref_match_count = nearest_match;
+        let new_context = match nearest_match {
+            0 => usize::from(ref_match_count >= 1),
+            1 => if new_mv_count > 0 { 2 } else { 3 },
+            _ => if new_mv_count > 0 { 4 } else { 5 },
+        };
+        let ref_context = match nearest_match {
+            0 => match ref_match_count {
+                0 => 0,
+                1 => 1,
+                _ => 2,
+            },
+            1 => if ref_match_count >= 2 { 4 } else { 3 },
+            _ => 5,
+        };
+        let global_context = self
+            .temporal_motion_field
+            .as_deref()
+            .and_then(|field| {
+                let sample_row = (mi_row) | 1;
+                let sample_col = (mi_col) | 1;
+                if sample_row >= field.mi_rows || sample_col >= field.mi_cols {
+                    return None;
+                }
+                let index = sample_row / 2 * field.mi_cols + sample_col / 2;
+                (field.reference_frames[index] == Some(reference_frame))
+                    .then(|| field.motion_vectors[index])
+                    .flatten()
+            })
+            .map(|motion_vector| {
+                usize::from(
+                    motion_vector.0.abs() >= 16
+                        || motion_vector.1.abs() >= 16,
+                )
+            })
+            .unwrap_or(0);
+        new_context | (global_context << 3) | (ref_context << 4)
+    }
+
     pub(super) fn inter_mv_candidate(
         &self,
         x: usize,
@@ -494,8 +715,11 @@ impl<'a> TileDecoder<'a> {
         y: usize,
         block_size: BlockSize,
         reference_frame: u8,
+        reference_frame_type: u8,
         motion_vector: (i32, i32),
+        has_new_mv: bool,
         reference_frame_secondary: Option<u8>,
+        reference_frame_secondary_type: Option<u8>,
         motion_vector_secondary: Option<(i32, i32)>,
         interpolation_filters: (InterpolationFilter, InterpolationFilter),
     ) {
@@ -507,6 +731,24 @@ impl<'a> TileDecoder<'a> {
             y,
             block_size,
             reference_frame,
+        );
+        super::context_grid::fill_mi_grid(
+            &mut self.inter_new_mv_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            has_new_mv,
+        );
+        super::context_grid::fill_mi_grid(
+            &mut self.reference_frame_type_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            reference_frame_type,
         );
         super::context_grid::fill_mi_grid(
             &mut self.motion_vector_grid,
@@ -545,6 +787,15 @@ impl<'a> TileDecoder<'a> {
             reference_frame_secondary,
         );
         super::context_grid::fill_mi_grid_clone(
+            &mut self.reference_frame_secondary_type_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            reference_frame_secondary_type,
+        );
+        super::context_grid::fill_mi_grid_clone(
             &mut self.motion_vector_secondary_grid,
             self.mi_cols,
             self.mi_rows,
@@ -558,6 +809,24 @@ impl<'a> TileDecoder<'a> {
     pub(super) fn clear_inter_mv(&mut self, x: usize, y: usize, block_size: BlockSize) {
         super::context_grid::fill_mi_grid_clone(
             &mut self.reference_frame_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            None,
+        );
+        super::context_grid::fill_mi_grid_clone(
+            &mut self.reference_frame_type_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            None,
+        );
+        super::context_grid::fill_mi_grid_clone(
+            &mut self.inter_new_mv_grid,
             self.mi_cols,
             self.mi_rows,
             x,
@@ -594,6 +863,15 @@ impl<'a> TileDecoder<'a> {
         );
         super::context_grid::fill_mi_grid_clone(
             &mut self.reference_frame_secondary_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            None,
+        );
+        super::context_grid::fill_mi_grid_clone(
+            &mut self.reference_frame_secondary_type_grid,
             self.mi_cols,
             self.mi_rows,
             x,

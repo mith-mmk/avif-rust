@@ -54,7 +54,7 @@ use diagnostic::{CoeffBaseProbe, CoeffBaseRead, CoeffBrProbe, CoeffSignRead};
 pub(crate) use public_api::decode_luma_root_block_prefix_with_post_filter_state_and_entropy;
 #[cfg(test)]
 pub(crate) use public_api::decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options;
-pub(crate) use public_api::decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf;
+pub(crate) use public_api::decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf_and_motion;
 pub use public_api::{
     decode_first_luma_block, decode_first_luma_transform, decode_luma_root_block_prefix,
     decode_luma_root_blocks, prepare_tile_entropy, probe_first_block_residuals,
@@ -99,6 +99,48 @@ pub struct PaletteBlockInfo {
     uv: Option<PalettePlaneInfo>,
 }
 
+/// Motion vectors and reference slots retained for AV1 temporal MV
+/// prediction. Entries are stored at 4x4-MI granularity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MotionField {
+    pub(crate) mi_cols: usize,
+    pub(crate) mi_rows: usize,
+    pub(crate) reference_frames: Vec<Option<u8>>,
+    pub(crate) motion_vectors: Vec<Option<(i32, i32)>>,
+}
+
+impl MotionField {
+    pub(crate) fn empty(mi_cols: usize, mi_rows: usize) -> Self {
+        let count = mi_cols.saturating_mul(mi_rows);
+        Self {
+            mi_cols,
+            mi_rows,
+            reference_frames: vec![None; count],
+            motion_vectors: vec![None; count],
+        }
+    }
+
+    pub(crate) fn merge(&mut self, tile: Self) {
+        if self.mi_cols != tile.mi_cols || self.mi_rows != tile.mi_rows {
+            return;
+        }
+        for (destination, source) in self
+            .reference_frames
+            .iter_mut()
+            .zip(tile.reference_frames)
+        {
+            if source.is_some() {
+                *destination = source;
+            }
+        }
+        for (destination, source) in self.motion_vectors.iter_mut().zip(tile.motion_vectors) {
+            if source.is_some() {
+                *destination = source;
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CflParams {
     alpha_u_q3: i8,
@@ -139,10 +181,13 @@ pub struct TileDecoder<'a> {
     y_mode_grid: Vec<Option<usize>>,
     is_inter_grid: Vec<Option<bool>>,
     reference_frame_grid: Vec<Option<u8>>,
+    reference_frame_type_grid: Vec<Option<u8>>,
+    inter_new_mv_grid: Vec<Option<bool>>,
     motion_vector_grid: Vec<Option<(i32, i32)>>,
     interpolation_filter_grid: Vec<Option<(InterpolationFilter, InterpolationFilter)>>,
     motion_block_size_grid: Vec<Option<BlockSize>>,
     reference_frame_secondary_grid: Vec<Option<u8>>,
+    reference_frame_secondary_type_grid: Vec<Option<u8>>,
     motion_vector_secondary_grid: Vec<Option<(i32, i32)>>,
     intra_bc_mv_grid: Vec<Option<(i32, i32)>>,
     y_palette_size_grid: Vec<Option<usize>>,
@@ -152,6 +197,7 @@ pub struct TileDecoder<'a> {
     y_smooth_grid: Vec<Option<bool>>,
     uv_smooth_grid: Vec<Option<bool>>,
     skip_grid: Vec<Option<bool>>,
+    skip_mode_grid: Vec<Option<bool>>,
     segmentation_map: Vec<u8>,
     above_partition_context: Vec<u8>,
     left_partition_context: Vec<u8>,
@@ -182,6 +228,7 @@ pub struct TileDecoder<'a> {
     current_qindex: u8,
     current_delta_lf: [i8; 4],
     reference_buffers: [Option<Arc<FrameBuffers>>; 8],
+    temporal_motion_field: Option<Arc<MotionField>>,
 }
 
 pub(super) fn is_chroma_reference(
@@ -247,10 +294,13 @@ impl<'a> TileDecoder<'a> {
             y_mode_grid: vec![None; mi_count],
             is_inter_grid: vec![None; mi_count],
             reference_frame_grid: vec![None; mi_count],
+            reference_frame_type_grid: vec![None; mi_count],
+            inter_new_mv_grid: vec![None; mi_count],
             motion_vector_grid: vec![None; mi_count],
             interpolation_filter_grid: vec![None; mi_count],
             motion_block_size_grid: vec![None; mi_count],
             reference_frame_secondary_grid: vec![None; mi_count],
+            reference_frame_secondary_type_grid: vec![None; mi_count],
             motion_vector_secondary_grid: vec![None; mi_count],
             intra_bc_mv_grid: vec![None; mi_count],
             y_palette_size_grid: vec![None; mi_count],
@@ -260,6 +310,7 @@ impl<'a> TileDecoder<'a> {
             y_smooth_grid: vec![None; mi_count],
             uv_smooth_grid: vec![None; mi_count],
             skip_grid: vec![None; mi_count],
+            skip_mode_grid: vec![None; mi_count],
             segmentation_map: vec![0; mi_count],
             above_partition_context: vec![0; mi_cols],
             left_partition_context: vec![0; mi_rows],
@@ -295,6 +346,7 @@ impl<'a> TileDecoder<'a> {
             current_qindex: frame.segmentation.effective_qindex(frame.base_q_idx),
             current_delta_lf: [0; 4],
             reference_buffers,
+            temporal_motion_field: None,
         })
     }
 
@@ -315,6 +367,19 @@ impl<'a> TileDecoder<'a> {
     pub(super) fn set_tile_bounds(&mut self, tile: &crate::av1::TileDecodePlan) {
         self.tile_mi_col_start = tile.mi_col_start as usize;
         self.tile_mi_row_start = tile.mi_row_start as usize;
+    }
+
+    pub(super) fn set_temporal_motion_field(&mut self, field: Option<Arc<MotionField>>) {
+        self.temporal_motion_field = field;
+    }
+
+    pub(super) fn motion_field(&self) -> MotionField {
+        MotionField {
+            mi_cols: self.mi_cols,
+            mi_rows: self.mi_rows,
+            reference_frames: self.reference_frame_grid.clone(),
+            motion_vectors: self.motion_vector_grid.clone(),
+        }
     }
 
     pub(super) fn read_segmentation_id(
@@ -373,6 +438,56 @@ impl<'a> TileDecoder<'a> {
             .segmentation
             .effective_qindex_for_segment(frame.base_q_idx, segment_id);
         Ok(segment_id)
+    }
+
+    pub(super) fn read_skip_mode(
+        &mut self,
+        frame: &FrameHeader,
+        block_size: BlockSize,
+        x: usize,
+        y: usize,
+        segment_id: u8,
+    ) -> Result<bool, DecoderError> {
+        let allowed = frame.skip_mode_present
+            && block_size.width() >= 8
+            && block_size.height() >= 8
+            && !frame.segmentation.segment_skip[usize::from(segment_id)];
+        let skip_mode = if allowed {
+            let context = self.skip_mode_context(x, y);
+            self.reader
+                .read_symbol(self.cdf.skip_mode_cdf_mut(context))?
+                != 0
+        } else {
+            false
+        };
+        self.set_skip_mode(block_size, x, y, skip_mode);
+        Ok(skip_mode)
+    }
+
+    fn skip_mode_context(&self, x: usize, y: usize) -> usize {
+        let mi_col = x / 4;
+        let mi_row = y / 4;
+        let above = (mi_row > self.tile_mi_row_start)
+            .then(|| self.skip_mode_grid[(mi_row - 1) * self.mi_cols + mi_col])
+            .flatten()
+            .unwrap_or(false);
+        let left = (mi_col > self.tile_mi_col_start)
+            .then(|| self.skip_mode_grid[mi_row * self.mi_cols + mi_col - 1])
+            .flatten()
+            .unwrap_or(false);
+        usize::from(above) + usize::from(left)
+    }
+
+    fn set_skip_mode(&mut self, block_size: BlockSize, x: usize, y: usize, value: bool) {
+        context_grid::fill_mi_grid(
+            &mut self.skip_mode_grid,
+            self.mi_cols,
+            self.mi_rows,
+            x,
+            y,
+            block_size,
+            value,
+        );
     }
 
     fn set_segmentation_id(&mut self, block_size: BlockSize, x: usize, y: usize, segment_id: u8) {

@@ -117,6 +117,7 @@ pub struct FrameHeader {
     pub use_ref_frame_mvs: bool,
     pub reference_select: bool,
     pub skip_mode_present: bool,
+    pub skip_mode_frame: [u8; 2],
     pub allow_warped_motion: bool,
     pub global_motion: GlobalMotionParams,
     pub frame_width: u32,
@@ -282,6 +283,7 @@ pub(crate) fn parse_frame_header_with_references(
             use_ref_frame_mvs: false,
             reference_select: false,
             skip_mode_present: false,
+            skip_mode_frame: [0; 2],
             allow_warped_motion: false,
             global_motion: GlobalMotionParams::default(),
             frame_width: frame_size.width,
@@ -487,6 +489,7 @@ pub(crate) fn parse_frame_header_with_references(
         use_ref_frame_mvs,
         reference_select: trailing.reference_select,
         skip_mode_present: trailing.skip_mode_present,
+        skip_mode_frame: trailing.skip_mode_frame,
         allow_warped_motion: trailing.allow_warped_motion,
         global_motion,
         frame_width: frame_size.width,
@@ -1282,6 +1285,9 @@ fn parse_frame_header_trailing_params(
     } else {
         false
     };
+    let skip_mode_frame = skip_mode_present
+        .then(|| derive_skip_mode_frame(sequence, order_hint, &reference_frame_indices, references))
+        .unwrap_or([0; 2]);
     let allow_warped_motion =
         if frame_is_intra || error_resilient_mode || !sequence.enable_warped_motion {
             false
@@ -1305,6 +1311,7 @@ fn parse_frame_header_trailing_params(
         tx_mode,
         reference_select,
         skip_mode_present,
+        skip_mode_frame,
         allow_warped_motion,
         reduced_tx_set,
     })
@@ -1345,6 +1352,52 @@ fn skip_mode_allowed(
     forward > 0 && (backward > 0 || forward > 1)
 }
 
+fn derive_skip_mode_frame(
+    sequence: &SequenceHeader,
+    order_hint: u32,
+    reference_frame_indices: &[u8; 7],
+    references: &[Option<ReferenceFrameState>; 8],
+) -> [u8; 2] {
+    let mut closest_forward = None::<(usize, i32)>;
+    let mut second_forward = None::<(usize, i32)>;
+    let mut closest_backward = None::<(usize, i32)>;
+    for (reference_type, &slot) in reference_frame_indices.iter().enumerate() {
+        let Some(reference) = references
+            .get(usize::from(slot))
+            .and_then(Option::as_ref)
+        else {
+            continue;
+        };
+        let distance = relative_order_hint_distance(
+            sequence.order_hint_bits,
+            reference.order_hint,
+            order_hint,
+        );
+        if distance < 0 {
+            if closest_forward.is_none_or(|(_, current)| distance > current) {
+                second_forward = closest_forward;
+                closest_forward = Some((reference_type, distance));
+            } else if second_forward.is_none_or(|(_, current)| distance > current) {
+                second_forward = Some((reference_type, distance));
+            }
+        } else if distance > 0
+            && closest_backward.is_none_or(|(_, current)| distance < current)
+        {
+            closest_backward = Some((reference_type, distance));
+        }
+    }
+    match (closest_forward, closest_backward, second_forward) {
+        (Some((forward, _)), Some((backward, _)), _) => [
+            forward.min(backward) as u8,
+            forward.max(backward) as u8,
+        ],
+        (Some((forward, _)), None, Some((second, _))) => {
+            [forward.min(second) as u8, forward.max(second) as u8]
+        }
+        _ => [0; 2],
+    }
+}
+
 fn relative_order_hint_distance(bits: u8, reference: u32, current: u32) -> i32 {
     if bits == 0 {
         return 0;
@@ -1370,6 +1423,7 @@ pub struct FrameHeaderTrailingParams {
     pub tx_mode: TxMode,
     pub reference_select: bool,
     pub skip_mode_present: bool,
+    pub skip_mode_frame: [u8; 2],
     pub allow_warped_motion: bool,
     pub reduced_tx_set: bool,
 }

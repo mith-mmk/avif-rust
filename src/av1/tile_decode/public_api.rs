@@ -2,7 +2,7 @@ use super::decode_flow::{decode_luma_block_tree, decode_luma_root_block};
 use super::post_filter_state::PostFilterState;
 use super::{
     BlockModeProbe, DecodedBlockPrefix, DecodedLumaBlock, DecodedTransform, PartitionProbe,
-    ResidualProbe, TileDecoder, TileEntropyState,
+    ResidualProbe, TileDecoder, TileEntropyState, MotionField,
 };
 use crate::DecoderError;
 use crate::av1::cdf::CdfContext;
@@ -449,7 +449,8 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
     clippy::too_many_arguments,
     reason = "internal prefix decode exposes each independently testable pipeline input"
 )]
-pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf(
+#[cfg(test)]
+fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf(
     data: &[u8],
     tile_group: &TileGroup,
     sequence: &SequenceHeader,
@@ -463,6 +464,49 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
     initial_cdfs: Option<&[CdfContext]>,
     collect_cdf: bool,
 ) -> Result<(DecodedBlockPrefix, PostFilterState, Vec<CdfContext>), DecoderError> {
+    let (prefix, state, cdfs, _) =
+        decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf_and_motion(
+            data,
+            tile_group,
+            sequence,
+            frame,
+            plan,
+            buffers,
+            max_blocks,
+            validate_entropy,
+            collect_diagnostics,
+            reference_buffers,
+            initial_cdfs,
+            collect_cdf,
+            None,
+        )?;
+    Ok((prefix, state, cdfs))
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "internal prefix decode exposes each independently testable pipeline input"
+)]
+pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf_and_motion(
+    data: &[u8],
+    tile_group: &TileGroup,
+    sequence: &SequenceHeader,
+    frame: &FrameHeader,
+    plan: &FrameDecodePlan,
+    buffers: &mut FrameBuffers,
+    max_blocks: usize,
+    validate_entropy: bool,
+    collect_diagnostics: bool,
+    reference_buffers: [Option<Arc<FrameBuffers>>; 8],
+    initial_cdfs: Option<&[CdfContext]>,
+    collect_cdf: bool,
+    temporal_motion_field: Option<Arc<MotionField>>,
+) -> Result<(
+    DecodedBlockPrefix,
+    PostFilterState,
+    Vec<CdfContext>,
+    Option<MotionField>,
+), DecoderError> {
     if tile_group.tiles.is_empty() {
         return Err(DecoderError::Bitstream(
             "AV1 tile group has no tile payloads".to_string(),
@@ -473,6 +517,7 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
     let mut decoded_block_count = 0;
     let mut post_filter_state = PostFilterState::default();
     let mut final_cdfs = Vec::with_capacity(tile_group.tiles.len());
+    let mut motion_field = None;
 
     for (tile_index, tile_payload) in tile_group.tiles.iter().enumerate() {
         let payload = tile_payload_bytes(data, tile_payload)?;
@@ -486,6 +531,9 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
             initial_cdfs.and_then(|cdfs| cdfs.get(tile_index)).cloned(),
         )?;
         decoder.set_tile_bounds(tile_plan);
+        if frame.use_ref_frame_mvs {
+            decoder.set_temporal_motion_field(temporal_motion_field.clone());
+        }
         for sb_row in tile_plan.sb_row_start..tile_plan.sb_row_end {
             decoder.reset_left_superblock_contexts();
             for sb_col in tile_plan.sb_col_start..tile_plan.sb_col_end {
@@ -493,6 +541,7 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
                     if collect_cdf {
                         final_cdfs.push(decoder.cdf_snapshot());
                     }
+                    let motion_field = decoder.motion_field();
                     post_filter_state.merge(decoder.take_post_filter_state());
                     return Ok((
                         DecodedBlockPrefix {
@@ -501,6 +550,7 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
                         },
                         post_filter_state,
                         final_cdfs,
+                        Some(motion_field),
                     ));
                 }
                 let x = (sb_col as usize * plan.superblock_size).min(plan.width);
@@ -530,6 +580,7 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
                         if collect_cdf {
                             final_cdfs.push(decoder.cdf_snapshot());
                         }
+                        let motion_field = decoder.motion_field();
                         post_filter_state.merge(decoder.take_post_filter_state());
                         return Ok((
                             DecodedBlockPrefix {
@@ -538,6 +589,7 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
                             },
                             post_filter_state,
                             final_cdfs,
+                            Some(motion_field),
                         ));
                     }
                     Err(err) => return Err(err),
@@ -558,6 +610,12 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
         if collect_cdf {
             final_cdfs.push(decoder.cdf_snapshot());
         }
+        let tile_motion_field = decoder.motion_field();
+        let mut frame_motion_field = motion_field.take().unwrap_or_else(|| {
+            MotionField::empty(tile_motion_field.mi_cols, tile_motion_field.mi_rows)
+        });
+        frame_motion_field.merge(tile_motion_field);
+        motion_field = Some(frame_motion_field);
         post_filter_state.merge(decoder.take_post_filter_state());
     }
 
@@ -568,6 +626,7 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
         },
         post_filter_state,
         final_cdfs,
+        motion_field,
     ))
 }
 

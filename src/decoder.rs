@@ -14,13 +14,13 @@ use crate::av1::{
     cdef_filter_block_region_with_edge_mode_into_bit_depth_visible_scaled,
     cdef_find_direction_with_variance_visible, convert_linear_rgb_primaries,
     crop_frame_buffers_to_plan, deblock_filter_edge_with_visible_bounds,
-    decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf,
+    decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf_and_motion,
     frame_buffers_to_rgba_16, parse_av1_config, parse_frame_header,
     parse_frame_header_with_references, parse_sequence_header, parse_show_existing_frame_index,
     parse_tile_group, plan_transform_blocks_with_tx_size, prepare_tile_entropy,
     probe_first_block_residuals, probe_tile_block_modes, probe_tile_partitions,
     sgrproj_filter_unit_into_with_scratch_bit_depth_visible,
-    wiener_filter_unit_into_with_scratch_bit_depth_visible,
+    wiener_filter_unit_into_with_scratch_bit_depth_visible, MotionField,
 };
 use crate::compat::{DataMap, DecodeOptions, InitOptions, NextOptions};
 use crate::container::{
@@ -916,25 +916,42 @@ fn decode_sequence_samples_from_info(
                         unit.has_sequence_header,
                         av1_config,
                     )?;
+                    let initial_cdfs =
+                        (!unit.has_sequence_header && headers.frame.primary_ref_frame != 7)
+                            .then_some(cdf_states.as_deref())
+                            .flatten();
                     let (decoded_state, next_cdf_states) =
                         decode_still_frame_with_filter_policy_and_state_and_references_and_cdf(
                             &headers,
                             Some(info),
                             true,
                             std::array::from_fn(|_| None),
-                            (!unit.has_sequence_header && headers.frame.primary_ref_frame != 7)
-                                .then_some(cdf_states.as_deref())
-                                .flatten(),
+                            initial_cdfs,
                             true,
                             true,
                         )?;
-                    let decoded = finish_decoded_still_frame(&headers, decoded_state, true)?;
-                    references.refresh_with_cdf(
+                    let (decoded, motion_field) =
+                        finish_decoded_still_frame(&headers, decoded_state, true)?;
+                    let reference_cdfs = if headers.frame.disable_frame_end_update_cdf {
+                        initial_cdfs
+                            .map(ToOwned::to_owned)
+                            .unwrap_or_else(|| {
+                                vec![
+                                    CdfContext::new(headers.frame.base_q_idx);
+                                    next_cdf_states.len()
+                                ]
+                            })
+                    } else {
+                        next_cdf_states.clone()
+                    };
+                    references.refresh_with_cdf_and_motion(
                         headers.frame.refresh_frame_flags,
                         &decoded,
                         &headers.frame,
-                        &next_cdf_states,
+                        &reference_cdfs,
+                        &motion_field,
                     );
+                    references.set_previous_motion_field(motion_field);
                     if !headers.frame.disable_frame_end_update_cdf {
                         cdf_states = Some(next_cdf_states);
                     }
@@ -960,6 +977,7 @@ fn decode_sequence_samples_from_info(
                         .then_some(info.av1_config.as_deref())
                         .flatten();
                     let reference_states = references.states();
+                    let temporal_motion_field = references.previous_motion_field();
                     let headers = parse_av1_sequence_sample_headers_with_references(
                         info,
                         &sequence_prefix,
@@ -977,12 +995,13 @@ fn decode_sequence_samples_from_info(
                             None
                         };
                     let (decoded_state, next_cdf_states) =
-                        match decode_still_frame_with_filter_policy_and_state_and_references_and_cdf(
+                        match decode_still_frame_with_filter_policy_and_state_and_references_and_cdf_and_motion(
                             &headers,
                             Some(info),
                             true,
                             references.buffers(),
                             initial_cdfs,
+                            temporal_motion_field,
                             false,
                             true,
                         ) {
@@ -994,13 +1013,28 @@ fn decode_sequence_samples_from_info(
                             }
                             Err(err) => return Err(err),
                         };
-                    let decoded = finish_decoded_still_frame(&headers, decoded_state, true)?;
-                    references.refresh_with_cdf(
+                    let (decoded, motion_field) =
+                        finish_decoded_still_frame(&headers, decoded_state, true)?;
+                    let reference_cdfs = if headers.frame.disable_frame_end_update_cdf {
+                        initial_cdfs
+                            .map(ToOwned::to_owned)
+                            .unwrap_or_else(|| {
+                                vec![
+                                    CdfContext::new(headers.frame.base_q_idx);
+                                    next_cdf_states.len()
+                                ]
+                            })
+                    } else {
+                        next_cdf_states.clone()
+                    };
+                    references.refresh_with_cdf_and_motion(
                         headers.frame.refresh_frame_flags,
                         &decoded,
                         &headers.frame,
-                        &next_cdf_states,
+                        &reference_cdfs,
+                        &motion_field,
                     );
+                    references.set_previous_motion_field(motion_field);
                     if !headers.frame.disable_frame_end_update_cdf {
                         cdf_states = Some(next_cdf_states);
                     }
@@ -1081,6 +1115,7 @@ fn parse_av1_sequence_sample_headers_with_references(
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct FrameReferenceSlots {
     slots: [Option<ReferenceFrame>; 8],
+    previous_motion_field: Option<Arc<MotionField>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1110,6 +1145,7 @@ struct ReferenceFrame {
     frame_id: Option<u16>,
     global_motion: GlobalMotionParams,
     cdf_states: Arc<Vec<CdfContext>>,
+    motion_field: Arc<MotionField>,
 }
 
 impl FrameReferenceSlots {
@@ -1123,6 +1159,24 @@ impl FrameReferenceSlots {
         frame: &DecodedFrame,
         header: &FrameHeader,
         cdf_states: &[CdfContext],
+    ) {
+        let motion_field = MotionField::empty(0, 0);
+        self.refresh_with_cdf_and_motion(
+            refresh_frame_flags,
+            frame,
+            header,
+            cdf_states,
+            &motion_field,
+        );
+    }
+
+    fn refresh_with_cdf_and_motion(
+        &mut self,
+        refresh_frame_flags: u8,
+        frame: &DecodedFrame,
+        header: &FrameHeader,
+        cdf_states: &[CdfContext],
+        motion_field: &MotionField,
     ) {
         if refresh_frame_flags == 0 {
             return;
@@ -1158,6 +1212,7 @@ impl FrameReferenceSlots {
                     frame_id: header.frame_id,
                     global_motion: header.global_motion,
                     cdf_states: Arc::clone(&cdf_states),
+                    motion_field: Arc::new(motion_field.clone()),
                 });
             }
         }
@@ -1209,6 +1264,14 @@ impl FrameReferenceSlots {
         let slot = *header.reference_frame_indices.get(reference_type)?;
         let cdf_states = &self.slots.get(usize::from(slot))?.as_ref()?.cdf_states;
         (!cdf_states.is_empty()).then_some(cdf_states.as_slice())
+    }
+
+    fn set_previous_motion_field(&mut self, motion_field: MotionField) {
+        self.previous_motion_field = Some(Arc::new(motion_field));
+    }
+
+    fn previous_motion_field(&self) -> Option<Arc<MotionField>> {
+        self.previous_motion_field.clone()
     }
 
     fn frame_to_show(&self, index: u8) -> Result<DecodedFrame, DecoderError> {
@@ -3574,18 +3637,19 @@ fn decode_still_frame_with_filter_policy(
     validate_filters: bool,
 ) -> Result<DecodedFrame, DecoderError> {
     let decoded = decode_still_frame_with_filter_policy_and_state(headers, info, validate_filters)?;
-    finish_decoded_still_frame(headers, decoded, validate_filters)
+    finish_decoded_still_frame(headers, decoded, validate_filters).map(|(frame, _)| frame)
 }
 
 fn finish_decoded_still_frame(
     headers: &Av1Headers,
     decoded: DecodedStillFrame,
     validate_filters: bool,
-) -> Result<DecodedFrame, DecoderError> {
+) -> Result<(DecodedFrame, MotionField), DecoderError> {
     let DecodedStillFrame {
         mut frame,
         post_filter_state,
         film_grain,
+        motion_field,
     } = decoded;
     if validate_filters {
         apply_deblock_stage(&mut frame, &headers.frame, &post_filter_state);
@@ -3613,7 +3677,7 @@ fn finish_decoded_still_frame(
             apply_film_grain(&mut frame.buffers, &frame.color_config, &film_grain);
         }
     }
-    Ok(frame)
+    Ok((frame, motion_field))
 }
 
 fn apply_deblock_stage(
@@ -4059,6 +4123,7 @@ struct DecodedStillFrame {
     frame: DecodedFrame,
     post_filter_state: PostFilterState,
     film_grain: Option<FilmGrainParams>,
+    motion_field: MotionField,
 }
 
 fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state: &PostFilterState) {
@@ -4822,12 +4887,34 @@ fn decode_still_frame_with_filter_policy_and_state_and_references_and_cdf(
     validate_entropy: bool,
     collect_cdf: bool,
 ) -> Result<(DecodedStillFrame, Vec<CdfContext>), DecoderError> {
+    decode_still_frame_with_filter_policy_and_state_and_references_and_cdf_and_motion(
+        headers,
+        info,
+        validate_filters,
+        reference_buffers,
+        initial_cdfs,
+        None,
+        validate_entropy,
+        collect_cdf,
+    )
+}
+
+fn decode_still_frame_with_filter_policy_and_state_and_references_and_cdf_and_motion(
+    headers: &Av1Headers,
+    info: Option<&AvifInfo>,
+    validate_filters: bool,
+    reference_buffers: [Option<Arc<FrameBuffers>>; 8],
+    initial_cdfs: Option<&[CdfContext]>,
+    temporal_motion_field: Option<Arc<MotionField>>,
+    validate_entropy: bool,
+    collect_cdf: bool,
+) -> Result<(DecodedStillFrame, Vec<CdfContext>), DecoderError> {
     if validate_filters {
         validate_public_decode_tools(headers)?;
     }
     let mut buffers = alloc_coded_frame_buffers(&headers.decode_plan)?;
-    let (prefix, post_filter_state, final_cdfs) =
-        decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf(
+    let (prefix, post_filter_state, final_cdfs, motion_field) =
+        decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf_and_motion(
             &headers.tile_group.tile_data,
             &headers.tile_group.group,
             &headers.sequence,
@@ -4840,6 +4927,7 @@ fn decode_still_frame_with_filter_policy_and_state_and_references_and_cdf(
             reference_buffers,
             initial_cdfs,
             collect_cdf,
+            temporal_motion_field,
         )?;
     if let Some(err) = prefix.next_unsupported {
         return Err(err);
@@ -4862,6 +4950,16 @@ fn decode_still_frame_with_filter_policy_and_state_and_references_and_cdf(
             },
             post_filter_state,
             film_grain: headers.frame.film_grain,
+            motion_field: motion_field.unwrap_or_else(|| {
+                MotionField::empty(
+                    usize::try_from(headers.frame.frame_width)
+                        .unwrap_or_default()
+                        .div_ceil(4),
+                    usize::try_from(headers.frame.frame_height)
+                        .unwrap_or_default()
+                        .div_ceil(4),
+                )
+            }),
         },
         final_cdfs,
     ))

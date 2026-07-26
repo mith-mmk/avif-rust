@@ -58,6 +58,7 @@ pub struct BlockModeProbe {
     pub skip_context: usize,
     pub skip_symbol: usize,
     pub skip: bool,
+    pub skip_mode: bool,
     pub is_inter: bool,
     pub reference_frame: Option<u8>,
     pub reference_frame_secondary: Option<u8>,

@@ -26,11 +26,12 @@ outside the repository under `test/images/external/avif`.
 
 ### AV1 Inter reconstruction for external color AVIS
 
-`colors-animated-8bpc.avif` currently fails the strict FFmpeg RGBA oracle at
-visible frame 1. The first visible Inter frame's native samples are near the
-black reference (`Y/U/V` approximately `0/128/124` at the first pixel), while
-FFmpeg expects the blue frame (`29/254/108`). The mismatch is present before
-RGBA conversion and is not caused by alpha composition or duration handling.
+`colors-animated-8bpc.avif` and `star-8bpc.avif` still fail the strict FFmpeg
+RGBA oracle on Inter frames. For `star-8bpc.avif`, frame 1 is currently about
+40.8 average RGB error (maximum 240); the decoded image remains close to the
+key-frame prediction instead of the rotated star. The mismatch is present
+before RGBA conversion and is not caused by alpha composition or duration
+handling.
 
 The frame headers show a valid hidden-reference sequence followed by a
 `show_frame` Inter frame. `PRIMARY_REF_NONE` was checked against the AV1

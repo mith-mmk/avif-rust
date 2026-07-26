@@ -360,10 +360,14 @@ fn ffmpeg_decode_alpha_plane(path: &Path, width: usize, height: usize) -> Option
 }
 
 fn external_avif_path(relative: &str) -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("workspace root should exist")
-        .join("test/images/external/avif")
+    std::env::var_os("AVIF_ANIMATED_SAMPLE_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("workspace root should exist")
+                .join("test/images/external/avif")
+        })
         .join(relative)
 }
 

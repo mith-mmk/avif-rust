@@ -8,6 +8,14 @@ use crate::av1::tile_decode::context_grid::{
     fill_mi_grid, has_smooth_neighbour, intra_mode_context,
 };
 
+fn compound_mode_context(mode_context: usize) -> usize {
+    const COMPOUND_MODE_CONTEXT_MAP: [[usize; 5]; 3] =
+        [[0, 1, 1, 1, 1], [1, 2, 3, 4, 4], [4, 4, 5, 6, 7]];
+    let newmv_context = (mode_context & 7).min(4);
+    let refmv_context = ((mode_context >> 4) & 7).min(5);
+    COMPOUND_MODE_CONTEXT_MAP[refmv_context >> 1][newmv_context].min(5)
+}
+
 impl<'a> TileDecoder<'a> {
     pub fn read_intra_frame_block_mode(
         &mut self,
@@ -41,24 +49,26 @@ impl<'a> TileDecoder<'a> {
         self.current_cfl = None;
 
         let skip_context = self.skip_context(x, y);
-        let (skip_symbol, segment_id) = if frame.segmentation.preskip {
+        let (skip_symbol, segment_id, skip_mode) = if frame.segmentation.preskip {
             let segment_id = self.read_segmentation_id(frame, block_size, x, y, false)?;
+            let skip_mode = self.read_skip_mode(frame, block_size, x, y, segment_id)?;
             let skip_symbol = if frame.segmentation.segment_skip[usize::from(segment_id)] {
                 1usize
             } else {
                 self.reader
                     .read_symbol(self.cdf.skip_cdf_mut(skip_context))?
             };
-            (skip_symbol, segment_id)
+            (skip_symbol, segment_id, skip_mode)
         } else {
             let skip_symbol = self
                 .reader
                 .read_symbol(self.cdf.skip_cdf_mut(skip_context))?;
             let skip = skip_symbol != 0;
             let segment_id = self.read_segmentation_id(frame, block_size, x, y, skip)?;
-            (skip_symbol, segment_id)
+            let skip_mode = self.read_skip_mode(frame, block_size, x, y, segment_id)?;
+            (skip_symbol, segment_id, skip_mode)
         };
-        let skip = skip_symbol != 0;
+        let skip = skip_mode || skip_symbol != 0;
         let cdef_idx = self.read_cdef_index(sequence, frame, skip, x, y)?;
         let qindex = self.read_delta_qindex(sequence, frame, block_size, skip, x, y)?;
         let delta_lf = self.read_delta_lf(sequence, frame, block_size, skip, x, y)?;
@@ -86,6 +96,7 @@ impl<'a> TileDecoder<'a> {
                 skip_context,
                 skip_symbol,
                 skip,
+                skip_mode,
                 cdef_idx,
             );
         }
@@ -207,8 +218,15 @@ impl<'a> TileDecoder<'a> {
         self.set_skip_context(x, y, block_size, skip);
         let mut palette = palette;
         self.read_palette_tokens(sequence, block_size, x, y, &mut palette)?;
-        let (tx_size_context, tx_size_symbol, tx_size) =
-            self.read_intra_tx_size(frame, block_size, skip, use_intrabc, x, y)?;
+        let (tx_size_context, tx_size_symbol, tx_size) = self.read_intra_tx_size(
+            frame,
+            block_size,
+            skip,
+            false,
+            use_intrabc,
+            x,
+            y,
+        )?;
         self.clear_inter_mv(x, y, block_size);
 
         Ok(BlockModeProbe {
@@ -220,6 +238,7 @@ impl<'a> TileDecoder<'a> {
             skip_context,
             skip_symbol,
             skip,
+            skip_mode: false,
             is_inter: false,
             reference_frame: None,
             reference_frame_secondary: None,
@@ -276,18 +295,30 @@ impl<'a> TileDecoder<'a> {
         skip_context: usize,
         skip_symbol: usize,
         skip: bool,
+        skip_mode: bool,
         cdef_idx: Option<u32>,
     ) -> Result<BlockModeProbe, DecoderError> {
         let ref_context = self.intra_inter_context(x, y).min(4);
-        let is_compound = frame.reference_select
+        let is_compound = skip_mode
+            || (frame.reference_select
             && self
                 .reader
                 .read_symbol(self.cdf.comp_inter_cdf_mut(ref_context))?
-                != 0;
+                != 0);
         let (reference_type, reference_type_secondary) = if is_compound {
-            self.read_compound_reference_types(ref_context, frame)?
+            if skip_mode {
+                (
+                    usize::from(frame.skip_mode_frame[0]),
+                    Some(usize::from(frame.skip_mode_frame[1])),
+                )
+            } else {
+                self.read_compound_reference_types(ref_context, frame)?
+            }
         } else {
-            (self.read_single_reference_type(ref_context)?, None)
+            (
+                self.read_single_reference_type([self.intra_inter_context(x, y).min(4); 6])?,
+                None,
+            )
         };
         let reference_frame = *frame
             .reference_frame_indices
@@ -307,22 +338,36 @@ impl<'a> TileDecoder<'a> {
         // Keeping the predictor in the MI grid is required for ordinary
         // NEWMV/NEARMV inter blocks and avoids treating every delta as an
         // absolute vector.
-        let mode_context = self.intra_inter_context(x, y).min(5);
-        let primary_predictor = self.inter_mv_predictor(x, y, block_size, reference_frame);
+        let mode_context = self.inter_mode_context(x, y, block_size, reference_type as u8);
+        let newmv_context = mode_context & 7;
+        let zeromv_context = (mode_context >> 3) & 1;
+        let refmv_context = ((mode_context >> 4) & 7).min(5);
+        let primary_predictor = self.inter_mv_predictor(x, y, block_size, reference_type as u8);
         let primary_candidate_count =
-            self.inter_mv_candidate_count(x, y, block_size, reference_frame, false);
+            self.inter_mv_candidate_count(x, y, block_size, reference_type as u8, false);
         let secondary_predictor = reference_frame_secondary
-            .map(|reference| self.inter_mv_predictor_secondary(x, y, block_size, reference));
+            .zip(reference_type_secondary)
+            .map(|(_, reference_type)| {
+                self.inter_mv_predictor_secondary(x, y, block_size, reference_type as u8)
+            });
+
         let mut global_motion_index = None;
         let mut global_motion_index_secondary = None;
+        let has_new_mv;
         let (motion_vector, motion_vector_secondary) = if is_compound {
-            let mode = if skip {
+            let compound_mode_context = compound_mode_context(mode_context);
+            let mode = if skip_mode {
                 1
             } else {
                 self.reader
-                    .read_symbol(self.cdf.inter_compound_mode_cdf_mut(mode_context))?
+                    .read_symbol(
+                        self.cdf
+                            .inter_compound_mode_cdf_mut(compound_mode_context),
+                    )?
             };
-            let ref_mv_index = if matches!(mode, 1 | 4 | 5) {
+            let ref_mv_index = if skip_mode {
+                0
+            } else if matches!(mode, 1 | 4 | 5) {
                 self.read_drl_index(1, primary_candidate_count)?
             } else if mode == 7 {
                 self.read_drl_index(0, primary_candidate_count)?
@@ -331,15 +376,16 @@ impl<'a> TileDecoder<'a> {
             };
             let first_new = matches!(mode, 3 | 5 | 7);
             let second_new = matches!(mode, 2 | 4 | 7);
+            has_new_mv = first_new || second_new;
             let first = if first_new {
                 let predictor = if matches!(mode, 5 | 7) {
-                    self.inter_mv_candidate(x, y, block_size, reference_frame, ref_mv_index, false)
+                    self.inter_mv_candidate(x, y, block_size, reference_type as u8, ref_mv_index, false)
                 } else {
                     primary_predictor
                 };
                 self.read_new_mv(predictor, frame)?
             } else {
-                self.inter_mv_candidate(x, y, block_size, reference_frame, ref_mv_index, false)
+                self.inter_mv_candidate(x, y, block_size, reference_type as u8, ref_mv_index, false)
             };
             let second = if second_new {
                 let predictor = if matches!(mode, 4 | 7) {
@@ -347,7 +393,7 @@ impl<'a> TileDecoder<'a> {
                         x,
                         y,
                         block_size,
-                        reference_frame_secondary.unwrap_or(reference_frame),
+                        reference_type_secondary.unwrap_or(reference_type) as u8,
                         ref_mv_index,
                         true,
                     )
@@ -372,7 +418,7 @@ impl<'a> TileDecoder<'a> {
                                 x,
                                 y,
                                 block_size,
-                                reference_frame_secondary.unwrap_or(reference_frame),
+                                reference_type_secondary.unwrap_or(reference_type) as u8,
                                 ref_mv_index,
                                 true,
                             )
@@ -399,29 +445,30 @@ impl<'a> TileDecoder<'a> {
         } else {
             let new_mv = self
                 .reader
-                .read_symbol(self.cdf.newmv_cdf_mut(mode_context))?
+                .read_symbol(self.cdf.newmv_cdf_mut(newmv_context))?
                 == 0;
+            has_new_mv = new_mv;
             let motion_vector = if new_mv {
                 let ref_mv_index = self.read_drl_index(0, primary_candidate_count)?;
                 self.read_new_mv(
-                    self.inter_mv_candidate(x, y, block_size, reference_frame, ref_mv_index, false),
+                    self.inter_mv_candidate(x, y, block_size, reference_type as u8, ref_mv_index, false),
                     frame,
                 )?
             } else {
                 let zero_mv = self
                     .reader
-                    .read_symbol(self.cdf.zeromv_cdf_mut(mode_context.min(1)))?
+                    .read_symbol(self.cdf.zeromv_cdf_mut(zeromv_context))?
                     == 0;
                 if !zero_mv {
                     let nearest_or_near = self
                         .reader
-                        .read_symbol(self.cdf.refmv_cdf_mut(mode_context))?;
+                        .read_symbol(self.cdf.refmv_cdf_mut(refmv_context))?;
                     let ref_mv_index = if nearest_or_near == 0 {
                         0
                     } else {
                         self.read_drl_index(1, primary_candidate_count)?
                     };
-                    self.inter_mv_candidate(x, y, block_size, reference_frame, ref_mv_index, false)
+                    self.inter_mv_candidate(x, y, block_size, reference_type as u8, ref_mv_index, false)
                 } else {
                     global_motion_index = Some(reference_type);
                     frame.global_motion.motion_vector(
@@ -438,9 +485,11 @@ impl<'a> TileDecoder<'a> {
         };
         let (interintra_mode, interintra_wedge_index) = if sequence.enable_interintra_compound
             && !is_compound
-            && !skip
+            && !skip_mode
             && block_size.width() >= 8
             && block_size.height() >= 8
+            && block_size.width() <= 32
+            && block_size.height() <= 32
         {
             let interintra = self
                 .reader
@@ -462,13 +511,14 @@ impl<'a> TileDecoder<'a> {
                         )));
                     }
                 };
+                let wedge_cdf_index = block_size.filter_intra_cdf_index();
                 let use_wedge = self
                     .reader
-                    .read_symbol(self.cdf.wedge_interintra_cdf_mut(block_size as usize))?
+                    .read_symbol(self.cdf.wedge_interintra_cdf_mut(wedge_cdf_index))?
                     != 0;
                 let wedge_index = use_wedge.then(|| {
                     self.reader
-                        .read_symbol(self.cdf.wedge_idx_cdf_mut(block_size as usize))
+                        .read_symbol(self.cdf.wedge_idx_cdf_mut(wedge_cdf_index))
                         .map(|symbol| symbol as u8)
                 });
                 let wedge_index = wedge_index.transpose()?;
@@ -479,14 +529,16 @@ impl<'a> TileDecoder<'a> {
         };
         let motion_mode = if interintra_mode.is_some() {
             MotionMode::Simple
-        } else if frame.is_motion_mode_switchable
+        } else if !skip_mode
+            && frame.is_motion_mode_switchable
             && block_size.width() >= 8
             && block_size.height() >= 8
         {
-            match self.reader.read_symbol(
+            let symbol = self.reader.read_symbol(
                 self.cdf
                     .motion_mode_cdf_mut(block_size.motion_mode_cdf_index()),
-            )? {
+            )?;
+            match symbol {
                 0 => MotionMode::Simple,
                 1 => MotionMode::Obmc,
                 2 => MotionMode::LocalWarp,
@@ -501,19 +553,19 @@ impl<'a> TileDecoder<'a> {
         };
         let local_warp_neighbors = if motion_mode == MotionMode::LocalWarp {
             let neighbors =
-                self.inter_mv_neighbor_candidates(x, y, block_size, reference_frame, false);
+                self.inter_mv_neighbor_candidates(x, y, block_size, reference_type as u8, false);
             [neighbors[0], neighbors[1], neighbors[2], neighbors[3]]
         } else {
             [None; 4]
         };
         let local_warp_samples = if motion_mode == MotionMode::LocalWarp {
-            self.local_warp_sample_candidates(x, y, block_size, reference_frame, motion_vector)
+            self.local_warp_sample_candidates(x, y, block_size, reference_type as u8, motion_vector)
         } else {
             [None; 8]
         };
         let mut compound_weight = None;
         let mut compound_mask = None;
-        if is_compound && !skip {
+        if is_compound && !skip_mode {
             let masked_compound_used = sequence.enable_masked_compound
                 && block_size.width() >= 8
                 && block_size.height() >= 8;
@@ -536,12 +588,12 @@ impl<'a> TileDecoder<'a> {
             } else if comp_group_idx == 1 {
                 let compound_type = self
                     .reader
-                    .read_symbol(self.cdf.compound_type_cdf_mut(block_size as usize))?;
+                    .read_symbol(self.cdf.compound_type_cdf_mut(block_size.filter_intra_cdf_index()))?;
                 match compound_type {
                     0 => {
                         let wedge_index = self
                             .reader
-                            .read_symbol(self.cdf.wedge_idx_cdf_mut(block_size as usize))?
+                            .read_symbol(self.cdf.wedge_idx_cdf_mut(block_size.filter_intra_cdf_index()))?
                             as u8;
                         let inverse = self.reader.read_bool()? != 0;
                         compound_mask = Some(CompoundMask::Wedge {
@@ -576,23 +628,32 @@ impl<'a> TileDecoder<'a> {
         } else {
             Some((frame.interpolation_filter, frame.interpolation_filter))
         };
-
         self.set_inter_context(x, y, block_size, true);
         self.set_inter_mv(
             x,
             y,
             block_size,
             reference_frame,
+            reference_type as u8,
             motion_vector,
+            has_new_mv,
             reference_frame_secondary,
+            reference_type_secondary.map(|reference_type| reference_type as u8),
             motion_vector_secondary,
             interpolation_filter
                 .unwrap_or((InterpolationFilter::Regular, InterpolationFilter::Regular)),
         );
         self.set_smooth_context(x, y, block_size, false, false);
         self.set_skip_context(x, y, block_size, skip);
-        let (tx_size_context, tx_size_symbol, tx_size) =
-            self.read_intra_tx_size(frame, block_size, skip, false, x, y)?;
+        let (tx_size_context, tx_size_symbol, tx_size) = self.read_intra_tx_size(
+            frame,
+            block_size,
+            skip,
+            true,
+            false,
+            x,
+            y,
+        )?;
         let has_chroma = !sequence.color_config.monochrome && chroma_reference;
         let (uv_mode_symbol, uv_mode) = if has_chroma {
             (Some(0), Some(UvPredictionMode::Intra(PredictionMode::Dc)))
@@ -608,6 +669,7 @@ impl<'a> TileDecoder<'a> {
             skip_context,
             skip_symbol,
             skip,
+            skip_mode,
             is_inter: true,
             reference_frame: Some(reference_frame),
             reference_frame_secondary,
@@ -645,21 +707,21 @@ impl<'a> TileDecoder<'a> {
         })
     }
 
-    fn read_single_reference_type(&mut self, context: usize) -> Result<usize, DecoderError> {
+    fn read_single_reference_type(&mut self, contexts: [usize; 6]) -> Result<usize, DecoderError> {
         Ok(
             if self
                 .reader
-                .read_symbol(self.cdf.single_ref_cdf_mut(context, 0))?
+                .read_symbol(self.cdf.single_ref_cdf_mut(contexts[0], 0))?
                 != 0
             {
                 if self
                     .reader
-                    .read_symbol(self.cdf.single_ref_cdf_mut(context, 1))?
+                    .read_symbol(self.cdf.single_ref_cdf_mut(contexts[1], 1))?
                     == 0
                 {
                     if self
                         .reader
-                        .read_symbol(self.cdf.single_ref_cdf_mut(context, 5))?
+                        .read_symbol(self.cdf.single_ref_cdf_mut(contexts[5], 5))?
                         != 0
                     {
                         5
@@ -671,12 +733,12 @@ impl<'a> TileDecoder<'a> {
                 }
             } else if self
                 .reader
-                .read_symbol(self.cdf.single_ref_cdf_mut(context, 2))?
+                .read_symbol(self.cdf.single_ref_cdf_mut(contexts[2], 2))?
                 != 0
             {
                 if self
                     .reader
-                    .read_symbol(self.cdf.single_ref_cdf_mut(context, 4))?
+                    .read_symbol(self.cdf.single_ref_cdf_mut(contexts[4], 4))?
                     != 0
                 {
                     3
@@ -685,7 +747,7 @@ impl<'a> TileDecoder<'a> {
                 }
             } else if self
                 .reader
-                .read_symbol(self.cdf.single_ref_cdf_mut(context, 3))?
+                .read_symbol(self.cdf.single_ref_cdf_mut(contexts[3], 3))?
                 != 0
             {
                 1
@@ -983,6 +1045,7 @@ impl<'a> TileDecoder<'a> {
         frame: &FrameHeader,
         block_size: BlockSize,
         skip: bool,
+        is_inter: bool,
         use_intrabc: bool,
         x: usize,
         y: usize,
@@ -997,7 +1060,11 @@ impl<'a> TileDecoder<'a> {
             // skip_txfm suppresses coefficient payloads. IntrABC is parsed as
             // an inter block by the AV1 syntax, so skipped IntrABC blocks do
             // not carry this transform-size symbol.
-            TxMode::Select if block_size.signals_tx_size() && !(use_intrabc && skip) => {
+            TxMode::Select
+                if block_size.signals_tx_size()
+                    && !(is_inter && skip)
+                    && !(use_intrabc && skip) =>
+            {
                 let context = self.tx_size_context(x, y, block_size);
                 let category = block_size.tx_size_category();
                 let symbol = self

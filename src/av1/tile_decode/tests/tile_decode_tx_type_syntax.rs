@@ -153,6 +153,7 @@ fn sample_frame(base_q_idx: u8) -> FrameHeader {
         use_ref_frame_mvs: false,
         reference_select: false,
         skip_mode_present: false,
+        skip_mode_frame: [0; 2],
         allow_warped_motion: false,
         global_motion: GlobalMotionParams::default(),
         frame_width: 64,

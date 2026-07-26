@@ -86,6 +86,9 @@ impl<'a> TileDecoder<'a> {
         frame: &FrameHeader,
         transform: TransformBlock,
     ) -> Result<Option<TxTypeProbe>, DecoderError> {
+        if frame.coded_lossless() {
+            return Ok(None);
+        }
         // AV1 selects the inter transform set from the smaller and larger
         // square-up dimensions. Sizes above 32 are DCT-only and fall through
         // to fixed_tx_type; all other sets consume one luma CDF symbol.

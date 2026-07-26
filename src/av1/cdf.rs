@@ -2159,6 +2159,12 @@ pub const DEFAULT_CFL_ALPHA_CDF: [[u16; 17]; 6] = [
     ],
 ];
 
+pub const DEFAULT_SKIP_MODE_CDF: [[u16; 3]; 3] = [
+    [32621, 32768, 0],
+    [20708, 32768, 0],
+    [8127, 32768, 0],
+];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CdfContext {
     pub partition_w8: [[u16; 5]; PARTITION_CONTEXTS],
@@ -2167,6 +2173,7 @@ pub struct CdfContext {
     pub partition_w64: [[u16; 11]; PARTITION_CONTEXTS],
     pub partition_w128: [[u16; 9]; PARTITION_CONTEXTS],
     pub skip: [[u16; 3]; SKIP_CONTEXTS],
+    pub skip_mode: [[u16; 3]; 3],
     pub intra_inter: [[u16; 3]; 4],
     pub newmv: [[u16; 3]; 6],
     pub zeromv: [[u16; 3]; 2],
@@ -2256,6 +2263,7 @@ impl CdfContext {
             partition_w64: DEFAULT_PARTITION_W64_CDF,
             partition_w128: DEFAULT_PARTITION_W128_CDF,
             skip: DEFAULT_SKIP_CDF,
+            skip_mode: DEFAULT_SKIP_MODE_CDF,
             intra_inter: DEFAULT_INTRA_INTER_CDF,
             newmv: DEFAULT_NEWMV_CDF,
             zeromv: DEFAULT_ZEROMV_CDF,
@@ -2354,6 +2362,10 @@ impl CdfContext {
 
     pub fn skip_cdf_mut(&mut self, context: usize) -> &mut [u16] {
         &mut self.skip[context]
+    }
+
+    pub fn skip_mode_cdf_mut(&mut self, context: usize) -> &mut [u16] {
+        &mut self.skip_mode[context]
     }
 
     pub fn intra_inter_cdf_mut(&mut self, context: usize) -> &mut [u16] {

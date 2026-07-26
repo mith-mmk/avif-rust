@@ -59,7 +59,8 @@ pub(crate) use tile_decode::RestorationUnit;
 pub(crate) use tile_decode::decode_luma_root_block_prefix_with_post_filter_state_and_entropy;
 #[cfg(test)]
 pub(crate) use tile_decode::decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options;
-pub(crate) use tile_decode::decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf;
+pub(crate) use tile_decode::decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf_and_motion;
+pub(crate) use tile_decode::MotionField;
 #[cfg(test)]
 pub(crate) use tile_decode::wiener_filter_unit;
 pub use tile_decode::{
