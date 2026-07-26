@@ -124,11 +124,7 @@ impl MotionField {
         if self.mi_cols != tile.mi_cols || self.mi_rows != tile.mi_rows {
             return;
         }
-        for (destination, source) in self
-            .reference_frames
-            .iter_mut()
-            .zip(tile.reference_frames)
-        {
+        for (destination, source) in self.reference_frames.iter_mut().zip(tile.reference_frames) {
             if source.is_some() {
                 *destination = source;
             }

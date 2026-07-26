@@ -1,8 +1,8 @@
 use super::decode_flow::{decode_luma_block_tree, decode_luma_root_block};
 use super::post_filter_state::PostFilterState;
 use super::{
-    BlockModeProbe, DecodedBlockPrefix, DecodedLumaBlock, DecodedTransform, PartitionProbe,
-    ResidualProbe, TileDecoder, TileEntropyState, MotionField,
+    BlockModeProbe, DecodedBlockPrefix, DecodedLumaBlock, DecodedTransform, MotionField,
+    PartitionProbe, ResidualProbe, TileDecoder, TileEntropyState,
 };
 use crate::DecoderError;
 use crate::av1::cdf::CdfContext;
@@ -501,12 +501,15 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
     initial_cdfs: Option<&[CdfContext]>,
     collect_cdf: bool,
     temporal_motion_field: Option<Arc<MotionField>>,
-) -> Result<(
-    DecodedBlockPrefix,
-    PostFilterState,
-    Vec<CdfContext>,
-    Option<MotionField>,
-), DecoderError> {
+) -> Result<
+    (
+        DecodedBlockPrefix,
+        PostFilterState,
+        Vec<CdfContext>,
+        Option<MotionField>,
+    ),
+    DecoderError,
+> {
     if tile_group.tiles.is_empty() {
         return Err(DecoderError::Bitstream(
             "AV1 tile group has no tile payloads".to_string(),

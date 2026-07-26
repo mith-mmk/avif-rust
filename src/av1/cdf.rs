@@ -2159,11 +2159,8 @@ pub const DEFAULT_CFL_ALPHA_CDF: [[u16; 17]; 6] = [
     ],
 ];
 
-pub const DEFAULT_SKIP_MODE_CDF: [[u16; 3]; 3] = [
-    [32621, 32768, 0],
-    [20708, 32768, 0],
-    [8127, 32768, 0],
-];
+pub const DEFAULT_SKIP_MODE_CDF: [[u16; 3]; 3] =
+    [[32621, 32768, 0], [20708, 32768, 0], [8127, 32768, 0]];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CdfContext {

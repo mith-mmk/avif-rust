@@ -1362,10 +1362,7 @@ fn derive_skip_mode_frame(
     let mut second_forward = None::<(usize, i32)>;
     let mut closest_backward = None::<(usize, i32)>;
     for (reference_type, &slot) in reference_frame_indices.iter().enumerate() {
-        let Some(reference) = references
-            .get(usize::from(slot))
-            .and_then(Option::as_ref)
-        else {
+        let Some(reference) = references.get(usize::from(slot)).and_then(Option::as_ref) else {
             continue;
         };
         let distance = relative_order_hint_distance(
@@ -1380,17 +1377,14 @@ fn derive_skip_mode_frame(
             } else if second_forward.is_none_or(|(_, current)| distance > current) {
                 second_forward = Some((reference_type, distance));
             }
-        } else if distance > 0
-            && closest_backward.is_none_or(|(_, current)| distance < current)
-        {
+        } else if distance > 0 && closest_backward.is_none_or(|(_, current)| distance < current) {
             closest_backward = Some((reference_type, distance));
         }
     }
     match (closest_forward, closest_backward, second_forward) {
-        (Some((forward, _)), Some((backward, _)), _) => [
-            forward.min(backward) as u8,
-            forward.max(backward) as u8,
-        ],
+        (Some((forward, _)), Some((backward, _)), _) => {
+            [forward.min(backward) as u8, forward.max(backward) as u8]
+        }
         (Some((forward, _)), None, Some((second, _))) => {
             [forward.min(second) as u8, forward.max(second) as u8]
         }

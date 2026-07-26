@@ -229,11 +229,7 @@ impl<'a> TileDecoder<'a> {
                 if origin_row + source_h4 == mi_row {
                     let origin_index = origin_row * self.mi_cols + origin_col;
                     if reference_grid[origin_index] == Some(reference_frame) {
-                        push_mv_candidate(
-                            &mut values,
-                            &mut value_len,
-                            motion_grid[origin_index],
-                        );
+                        push_mv_candidate(&mut values, &mut value_len, motion_grid[origin_index]);
                     }
                 }
                 candidate_col = candidate_col
@@ -260,11 +256,7 @@ impl<'a> TileDecoder<'a> {
                 if origin_col + source_w4 == mi_col {
                     let origin_index = origin_row * self.mi_cols + origin_col;
                     if reference_grid[origin_index] == Some(reference_frame) {
-                        push_mv_candidate(
-                            &mut values,
-                            &mut value_len,
-                            motion_grid[origin_index],
-                        );
+                        push_mv_candidate(&mut values, &mut value_len, motion_grid[origin_index]);
                     }
                 }
                 candidate_row = candidate_row
@@ -286,18 +278,13 @@ impl<'a> TileDecoder<'a> {
                     if origin_row + source_h4 == mi_row
                         && reference_grid[origin_index] == Some(reference_frame)
                     {
-                        push_mv_candidate(
-                            &mut values,
-                            &mut value_len,
-                            motion_grid[origin_index],
-                        );
+                        push_mv_candidate(&mut values, &mut value_len, motion_grid[origin_index]);
                     }
                 }
             }
         }
         values
     }
-
 
     pub(super) fn local_warp_sample_candidates(
         &self,
@@ -526,13 +513,13 @@ impl<'a> TileDecoder<'a> {
         let mut seen_len = 0usize;
 
         let visit = |candidate_col: usize,
-                         candidate_row: usize,
-                         row: bool,
-                         row_matches: &mut usize,
-                         col_matches: &mut usize,
-                         new_mv_count: &mut usize,
-                         seen: &mut [(usize, usize, bool); 8],
-                         seen_len: &mut usize| {
+                     candidate_row: usize,
+                     row: bool,
+                     row_matches: &mut usize,
+                     col_matches: &mut usize,
+                     new_mv_count: &mut usize,
+                     seen: &mut [(usize, usize, bool); 8],
+                     seen_len: &mut usize| {
             if candidate_col < self.tile_mi_col_start
                 || candidate_row < self.tile_mi_row_start
                 || candidate_col >= self.mi_cols
@@ -616,8 +603,20 @@ impl<'a> TileDecoder<'a> {
         let ref_match_count = nearest_match;
         let new_context = match nearest_match {
             0 => usize::from(ref_match_count >= 1),
-            1 => if new_mv_count > 0 { 2 } else { 3 },
-            _ => if new_mv_count > 0 { 4 } else { 5 },
+            1 => {
+                if new_mv_count > 0 {
+                    2
+                } else {
+                    3
+                }
+            }
+            _ => {
+                if new_mv_count > 0 {
+                    4
+                } else {
+                    5
+                }
+            }
         };
         let ref_context = match nearest_match {
             0 => match ref_match_count {
@@ -625,7 +624,13 @@ impl<'a> TileDecoder<'a> {
                 1 => 1,
                 _ => 2,
             },
-            1 => if ref_match_count >= 2 { 4 } else { 3 },
+            1 => {
+                if ref_match_count >= 2 {
+                    4
+                } else {
+                    3
+                }
+            }
             _ => 5,
         };
         let global_context = self
@@ -643,10 +648,7 @@ impl<'a> TileDecoder<'a> {
                     .flatten()
             })
             .map(|motion_vector| {
-                usize::from(
-                    motion_vector.0.abs() >= 16
-                        || motion_vector.1.abs() >= 16,
-                )
+                usize::from(motion_vector.0.abs() >= 16 || motion_vector.1.abs() >= 16)
             })
             .unwrap_or(0);
         new_context | (global_context << 3) | (ref_context << 4)

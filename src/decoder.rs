@@ -7,9 +7,9 @@ use crate::av1::decode_luma_root_block_prefix_with_post_filter_state_and_entropy
 use crate::av1::{
     Av1CodecConfiguration, BlockModeProbe, CdfContext, ChromaSamplePosition, ColorConfig,
     FilmGrainParams, FrameBuffers, FrameDecodePlan, FrameHeader, FrameType, GlobalMotionParams,
-    LoopFilterParams, PartitionProbe, PlaneBuffer, PlaneLayout, QuantState, ReferenceFrameState,
-    ResidualProbe, SegmentationParams, SequenceHeader, TileEntropyState, TileGroup,
-    alloc_coded_frame_buffers, apply_film_grain, apply_superres_horizontal,
+    LoopFilterParams, MotionField, PartitionProbe, PlaneBuffer, PlaneLayout, QuantState,
+    ReferenceFrameState, ResidualProbe, SegmentationParams, SequenceHeader, TileEntropyState,
+    TileGroup, alloc_coded_frame_buffers, apply_film_grain, apply_superres_horizontal,
     build_still_decode_plan, cdef_adjust_primary_strength, cdef_chroma_direction,
     cdef_filter_block_region_with_edge_mode_into_bit_depth_visible_scaled,
     cdef_find_direction_with_variance_visible, convert_linear_rgb_primaries,
@@ -20,7 +20,7 @@ use crate::av1::{
     parse_tile_group, plan_transform_blocks_with_tx_size, prepare_tile_entropy,
     probe_first_block_residuals, probe_tile_block_modes, probe_tile_partitions,
     sgrproj_filter_unit_into_with_scratch_bit_depth_visible,
-    wiener_filter_unit_into_with_scratch_bit_depth_visible, MotionField,
+    wiener_filter_unit_into_with_scratch_bit_depth_visible,
 };
 use crate::compat::{DataMap, DecodeOptions, InitOptions, NextOptions};
 use crate::container::{
@@ -916,10 +916,10 @@ fn decode_sequence_samples_from_info(
                         unit.has_sequence_header,
                         av1_config,
                     )?;
-                    let initial_cdfs =
-                        (!unit.has_sequence_header && headers.frame.primary_ref_frame != 7)
-                            .then_some(cdf_states.as_deref())
-                            .flatten();
+                    let initial_cdfs = (!unit.has_sequence_header
+                        && headers.frame.primary_ref_frame != 7)
+                        .then_some(cdf_states.as_deref())
+                        .flatten();
                     let (decoded_state, next_cdf_states) =
                         decode_still_frame_with_filter_policy_and_state_and_references_and_cdf(
                             &headers,
@@ -933,14 +933,9 @@ fn decode_sequence_samples_from_info(
                     let (decoded, motion_field) =
                         finish_decoded_still_frame(&headers, decoded_state, true)?;
                     let reference_cdfs = if headers.frame.disable_frame_end_update_cdf {
-                        initial_cdfs
-                            .map(ToOwned::to_owned)
-                            .unwrap_or_else(|| {
-                                vec![
-                                    CdfContext::new(headers.frame.base_q_idx);
-                                    next_cdf_states.len()
-                                ]
-                            })
+                        initial_cdfs.map(ToOwned::to_owned).unwrap_or_else(|| {
+                            vec![CdfContext::new(headers.frame.base_q_idx); next_cdf_states.len()]
+                        })
                     } else {
                         next_cdf_states.clone()
                     };
@@ -1016,14 +1011,9 @@ fn decode_sequence_samples_from_info(
                     let (decoded, motion_field) =
                         finish_decoded_still_frame(&headers, decoded_state, true)?;
                     let reference_cdfs = if headers.frame.disable_frame_end_update_cdf {
-                        initial_cdfs
-                            .map(ToOwned::to_owned)
-                            .unwrap_or_else(|| {
-                                vec![
-                                    CdfContext::new(headers.frame.base_q_idx);
-                                    next_cdf_states.len()
-                                ]
-                            })
+                        initial_cdfs.map(ToOwned::to_owned).unwrap_or_else(|| {
+                            vec![CdfContext::new(headers.frame.base_q_idx); next_cdf_states.len()]
+                        })
                     } else {
                         next_cdf_states.clone()
                     };

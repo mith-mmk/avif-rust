@@ -218,15 +218,8 @@ impl<'a> TileDecoder<'a> {
         self.set_skip_context(x, y, block_size, skip);
         let mut palette = palette;
         self.read_palette_tokens(sequence, block_size, x, y, &mut palette)?;
-        let (tx_size_context, tx_size_symbol, tx_size) = self.read_intra_tx_size(
-            frame,
-            block_size,
-            skip,
-            false,
-            use_intrabc,
-            x,
-            y,
-        )?;
+        let (tx_size_context, tx_size_symbol, tx_size) =
+            self.read_intra_tx_size(frame, block_size, skip, false, use_intrabc, x, y)?;
         self.clear_inter_mv(x, y, block_size);
 
         Ok(BlockModeProbe {
@@ -301,10 +294,10 @@ impl<'a> TileDecoder<'a> {
         let ref_context = self.intra_inter_context(x, y).min(4);
         let is_compound = skip_mode
             || (frame.reference_select
-            && self
-                .reader
-                .read_symbol(self.cdf.comp_inter_cdf_mut(ref_context))?
-                != 0);
+                && self
+                    .reader
+                    .read_symbol(self.cdf.comp_inter_cdf_mut(ref_context))?
+                    != 0);
         let (reference_type, reference_type_secondary) = if is_compound {
             if skip_mode {
                 (
@@ -345,11 +338,12 @@ impl<'a> TileDecoder<'a> {
         let primary_predictor = self.inter_mv_predictor(x, y, block_size, reference_type as u8);
         let primary_candidate_count =
             self.inter_mv_candidate_count(x, y, block_size, reference_type as u8, false);
-        let secondary_predictor = reference_frame_secondary
-            .zip(reference_type_secondary)
-            .map(|(_, reference_type)| {
-                self.inter_mv_predictor_secondary(x, y, block_size, reference_type as u8)
-            });
+        let secondary_predictor =
+            reference_frame_secondary
+                .zip(reference_type_secondary)
+                .map(|(_, reference_type)| {
+                    self.inter_mv_predictor_secondary(x, y, block_size, reference_type as u8)
+                });
 
         let mut global_motion_index = None;
         let mut global_motion_index_secondary = None;
@@ -360,10 +354,7 @@ impl<'a> TileDecoder<'a> {
                 1
             } else {
                 self.reader
-                    .read_symbol(
-                        self.cdf
-                            .inter_compound_mode_cdf_mut(compound_mode_context),
-                    )?
+                    .read_symbol(self.cdf.inter_compound_mode_cdf_mut(compound_mode_context))?
             };
             let ref_mv_index = if skip_mode {
                 0
@@ -379,7 +370,14 @@ impl<'a> TileDecoder<'a> {
             has_new_mv = first_new || second_new;
             let first = if first_new {
                 let predictor = if matches!(mode, 5 | 7) {
-                    self.inter_mv_candidate(x, y, block_size, reference_type as u8, ref_mv_index, false)
+                    self.inter_mv_candidate(
+                        x,
+                        y,
+                        block_size,
+                        reference_type as u8,
+                        ref_mv_index,
+                        false,
+                    )
                 } else {
                     primary_predictor
                 };
@@ -451,7 +449,14 @@ impl<'a> TileDecoder<'a> {
             let motion_vector = if new_mv {
                 let ref_mv_index = self.read_drl_index(0, primary_candidate_count)?;
                 self.read_new_mv(
-                    self.inter_mv_candidate(x, y, block_size, reference_type as u8, ref_mv_index, false),
+                    self.inter_mv_candidate(
+                        x,
+                        y,
+                        block_size,
+                        reference_type as u8,
+                        ref_mv_index,
+                        false,
+                    ),
                     frame,
                 )?
             } else {
@@ -468,7 +473,14 @@ impl<'a> TileDecoder<'a> {
                     } else {
                         self.read_drl_index(1, primary_candidate_count)?
                     };
-                    self.inter_mv_candidate(x, y, block_size, reference_type as u8, ref_mv_index, false)
+                    self.inter_mv_candidate(
+                        x,
+                        y,
+                        block_size,
+                        reference_type as u8,
+                        ref_mv_index,
+                        false,
+                    )
                 } else {
                     global_motion_index = Some(reference_type);
                     frame.global_motion.motion_vector(
@@ -586,15 +598,16 @@ impl<'a> TileDecoder<'a> {
                     ));
                 }
             } else if comp_group_idx == 1 {
-                let compound_type = self
-                    .reader
-                    .read_symbol(self.cdf.compound_type_cdf_mut(block_size.filter_intra_cdf_index()))?;
+                let compound_type = self.reader.read_symbol(
+                    self.cdf
+                        .compound_type_cdf_mut(block_size.filter_intra_cdf_index()),
+                )?;
                 match compound_type {
                     0 => {
-                        let wedge_index = self
-                            .reader
-                            .read_symbol(self.cdf.wedge_idx_cdf_mut(block_size.filter_intra_cdf_index()))?
-                            as u8;
+                        let wedge_index = self.reader.read_symbol(
+                            self.cdf
+                                .wedge_idx_cdf_mut(block_size.filter_intra_cdf_index()),
+                        )? as u8;
                         let inverse = self.reader.read_bool()? != 0;
                         compound_mask = Some(CompoundMask::Wedge {
                             index: wedge_index,
@@ -645,15 +658,8 @@ impl<'a> TileDecoder<'a> {
         );
         self.set_smooth_context(x, y, block_size, false, false);
         self.set_skip_context(x, y, block_size, skip);
-        let (tx_size_context, tx_size_symbol, tx_size) = self.read_intra_tx_size(
-            frame,
-            block_size,
-            skip,
-            true,
-            false,
-            x,
-            y,
-        )?;
+        let (tx_size_context, tx_size_symbol, tx_size) =
+            self.read_intra_tx_size(frame, block_size, skip, true, false, x, y)?;
         let has_chroma = !sequence.color_config.monochrome && chroma_reference;
         let (uv_mode_symbol, uv_mode) = if has_chroma {
             (Some(0), Some(UvPredictionMode::Intra(PredictionMode::Dc)))

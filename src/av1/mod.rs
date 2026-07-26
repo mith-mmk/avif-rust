@@ -52,6 +52,7 @@ pub use syntax::UvPredictionMode;
 pub use syntax::{BlockSize, Partition, PredictionMode, TxSize, TxType};
 pub use tile::TileInfo;
 pub(crate) use tile_decode::BlockFilterState;
+pub(crate) use tile_decode::MotionField;
 pub(crate) use tile_decode::PostFilterState;
 #[cfg(test)]
 pub(crate) use tile_decode::RestorationUnit;
@@ -60,7 +61,6 @@ pub(crate) use tile_decode::decode_luma_root_block_prefix_with_post_filter_state
 #[cfg(test)]
 pub(crate) use tile_decode::decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options;
 pub(crate) use tile_decode::decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf_and_motion;
-pub(crate) use tile_decode::MotionField;
 #[cfg(test)]
 pub(crate) use tile_decode::wiener_filter_unit;
 pub use tile_decode::{
