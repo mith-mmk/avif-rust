@@ -2,7 +2,7 @@
 [![docs.rs](https://img.shields.io/docsrs/avif-rust)](https://docs.rs/avif-rust)
 [![license](https://img.shields.io/crates/l/avif-rust.svg)](https://opensource.org/license/mit)
 
-[English](./README.md)
+[English](https://github.com/mith-mmk/avif-rust/blob/main/README.md)
 
 # avif-rust
 
@@ -10,6 +10,9 @@
 デコーダです。RGBAへの直接デコード、デコード済みAV1ソースプレーンへの
 アクセス、[`wml2`](https://github.com/mith-mmk/wml2-on-rust)互換のcallback
 インターフェースを提供します。
+
+現在のreleaseは
+[`avif-rust 0.0.2`](https://crates.io/crates/avif-rust/0.0.2)です。
 
 実行時にFFmpeg、libaom、その他のネイティブcodecは呼び出しません。これらは
 テスト用oracleの生成と検証にのみ使用します。
@@ -114,16 +117,21 @@ itemと`GainMapMetadata`を取得できます。既定のbase画像デコード�
 
 ## 検証
 
-開発者向けの検証ファイルは公開crate archiveに含まれません。完全なrepository
-checkoutでは、crateは親`wml2` workspaceの`avif/` submoduleにあります。通常の
-gateは親workspace rootから実行します。
+開発者向けの検証ファイルは公開crate archiveに含まれません。独立した
+[`avif-rust` repository](https://github.com/mith-mmk/avif-rust)をcloneし、通常の
+crate gateはそのrootから実行します。
 
 ```powershell
 cargo fmt --all -- --check
-cargo check -p avif-rust --all-targets
-cargo clippy -p avif-rust --all-targets -- -D warnings
-cargo test -p avif-rust
-cargo check --manifest-path avif/fuzz/Cargo.toml --bins
+cargo check --all-targets
+cargo clippy --all-targets -- -D warnings
+cargo test
+cargo check --manifest-path fuzz/Cargo.toml --bins
+```
+
+任意の`wml2` adapter連携は、親`wml2` workspace rootから検証します。
+
+```powershell
 cargo test -p wml2 --test avif_decode --no-default-features --features avif
 cargo check -p wml2 --target wasm32-unknown-unknown --no-default-features --features avif
 ```
@@ -133,8 +141,8 @@ cargo check -p wml2 --target wasm32-unknown-unknown --no-default-features --feat
 
 ```powershell
 $env:AVIF_REQUIRE_ORACLES = '1'
-cargo test -p avif-rust --test oracle_fixtures
-pwsh -NoProfile -ExecutionPolicy Bypass -File avif/scripts/verify_oracle_sources.ps1
+cargo test --test oracle_fixtures
+pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/verify_oracle_sources.ps1
 ```
 
 現在のconformance状況、fixture workflow、未対応形式はrepositoryの
@@ -145,4 +153,4 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File avif/scripts/verify_oracle_sources
 
 ## ライセンス
 
-[MIT](./LICENSE)
+[MIT](https://github.com/mith-mmk/avif-rust/blob/main/LICENSE)

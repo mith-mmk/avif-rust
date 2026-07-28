@@ -2,13 +2,16 @@
 [![docs.rs](https://img.shields.io/docsrs/avif-rust)](https://docs.rs/avif-rust)
 [![license](https://img.shields.io/crates/l/avif-rust.svg)](https://opensource.org/license/mit)
 
-[日本語](./README.ja.md)
+[日本語](https://github.com/mith-mmk/avif-rust/blob/main/README.ja.md)
 
 # avif-rust
 
 `avif-rust` is an experimental, pure Rust AVIF container and AV1 image-sequence
 decoder. It provides direct RGBA helpers, access to decoded AV1 source planes,
 and a callback interface compatible with [`wml2`](https://github.com/mith-mmk/wml2-on-rust).
+
+The current release is
+[`avif-rust 0.0.2`](https://crates.io/crates/avif-rust/0.0.2).
 
 The crate does not call FFmpeg, libaom, or another native codec at runtime.
 Those implementations are used only to generate and verify test oracles.
@@ -121,16 +124,21 @@ scalar gain samples.
 ## Validation
 
 The contributor validation files are not included in the published crate
-archive. From a complete repository checkout, the crate lives in the `avif/`
-submodule of the parent `wml2` workspace. Run the normal gates from the parent
-workspace root:
+archive. Clone the independent
+[`avif-rust` repository](https://github.com/mith-mmk/avif-rust) and run the
+normal crate gates from its root:
 
 ```powershell
 cargo fmt --all -- --check
-cargo check -p avif-rust --all-targets
-cargo clippy -p avif-rust --all-targets -- -D warnings
-cargo test -p avif-rust
-cargo check --manifest-path avif/fuzz/Cargo.toml --bins
+cargo check --all-targets
+cargo clippy --all-targets -- -D warnings
+cargo test
+cargo check --manifest-path fuzz/Cargo.toml --bins
+```
+
+The optional `wml2` adapter is tested from the parent `wml2` workspace root:
+
+```powershell
 cargo test -p wml2 --test avif_decode --no-default-features --features avif
 cargo check -p wml2 --target wasm32-unknown-unknown --no-default-features --features avif
 ```
@@ -140,8 +148,8 @@ run the strict gate with:
 
 ```powershell
 $env:AVIF_REQUIRE_ORACLES = '1'
-cargo test -p avif-rust --test oracle_fixtures
-pwsh -NoProfile -ExecutionPolicy Bypass -File avif/scripts/verify_oracle_sources.ps1
+cargo test --test oracle_fixtures
+pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/verify_oracle_sources.ps1
 ```
 
 See the repository
@@ -154,4 +162,4 @@ runtime dependency.
 
 ## License
 
-[MIT](./LICENSE)
+[MIT](https://github.com/mith-mmk/avif-rust/blob/main/LICENSE)
