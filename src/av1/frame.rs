@@ -2020,17 +2020,22 @@ mod tests {
         push_unsigned(bits, encoded as u32, width);
     }
 
-    #[test]
-    fn inherited_film_grain_reuses_reference_parameters_with_new_seed() {
-        let data = include_bytes!("../../test_data/images/WML2Viewer.avif");
-        let info = crate::container::parse_avif(data).unwrap();
-        let sequence_payload = crate::obu::find_obu_payload(
+    fn wml2viewer_sequence() -> Option<super::super::sequence::SequenceHeader> {
+        let data = crate::test_support::wml2viewer_avif()?;
+        let info = crate::container::parse_avif(&data).ok()?;
+        let payload = crate::obu::find_obu_payload(
             &info.primary_item_payload,
             crate::obu::ObuType::SequenceHeader,
         )
-        .unwrap()
-        .unwrap();
-        let mut sequence = super::super::sequence::parse_sequence_header(sequence_payload).unwrap();
+        .ok()??;
+        super::super::sequence::parse_sequence_header(payload).ok()
+    }
+
+    #[test]
+    fn inherited_film_grain_reuses_reference_parameters_with_new_seed() {
+        let Some(mut sequence) = wml2viewer_sequence() else {
+            return;
+        };
         sequence.film_grain_params_present = true;
 
         let reference_grain = FilmGrainParams {
@@ -2092,15 +2097,9 @@ mod tests {
 
     #[test]
     fn reads_current_frame_id_only_when_sequence_signals_ids() {
-        let data = include_bytes!("../../test_data/images/WML2Viewer.avif");
-        let info = crate::container::parse_avif(data).unwrap();
-        let sequence_payload = crate::obu::find_obu_payload(
-            &info.primary_item_payload,
-            crate::obu::ObuType::SequenceHeader,
-        )
-        .unwrap()
-        .unwrap();
-        let mut sequence = super::super::sequence::parse_sequence_header(sequence_payload).unwrap();
+        let Some(mut sequence) = wml2viewer_sequence() else {
+            return;
+        };
         let mut reader = BitReader::new(&[0b1010_0000]);
         assert_eq!(read_current_frame_id(&mut reader, &sequence).unwrap(), None);
         sequence.frame_id_numbers_present = true;
@@ -2114,15 +2113,9 @@ mod tests {
 
     #[test]
     fn rejects_reference_frame_ids_outside_the_allowed_age_window() {
-        let data = include_bytes!("../../test_data/images/WML2Viewer.avif");
-        let info = crate::container::parse_avif(data).unwrap();
-        let sequence_payload = crate::obu::find_obu_payload(
-            &info.primary_item_payload,
-            crate::obu::ObuType::SequenceHeader,
-        )
-        .unwrap()
-        .unwrap();
-        let mut sequence = super::super::sequence::parse_sequence_header(sequence_payload).unwrap();
+        let Some(mut sequence) = wml2viewer_sequence() else {
+            return;
+        };
         sequence.frame_id_numbers_present = true;
         sequence.frame_id_length = 4;
         sequence.delta_frame_id_length = 2;

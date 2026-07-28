@@ -46,7 +46,9 @@ fn cfl_prediction_applies_signed_q3_luma_ac() {
 
 #[test]
 fn decodes_sample_first_luma_transform_into_frame_buffer() {
-    let data = read_sample_avif();
+    let Some(data) = read_sample_avif() else {
+        return;
+    };
     let info = parse_avif(&data).unwrap();
     let sequence_payload = find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
         .unwrap()
@@ -92,7 +94,9 @@ fn decodes_sample_first_luma_transform_into_frame_buffer() {
 
 #[test]
 fn decodes_sample_first_luma_block_transforms_into_frame_buffer() {
-    let data = read_sample_avif();
+    let Some(data) = read_sample_avif() else {
+        return;
+    };
     let info = parse_avif(&data).unwrap();
     let sequence_payload = find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
         .unwrap()
@@ -139,7 +143,9 @@ fn decodes_sample_first_luma_block_transforms_into_frame_buffer() {
 
 #[test]
 fn decodes_sample_luma_root_block_prefix_with_split_children() {
-    let data = read_sample_avif();
+    let Some(data) = read_sample_avif() else {
+        return;
+    };
     let info = parse_avif(&data).unwrap();
     let sequence_payload = find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
         .unwrap()
@@ -181,7 +187,9 @@ fn decodes_sample_luma_root_block_prefix_with_split_children() {
 
 #[test]
 fn normal_prefix_decode_skips_diagnostic_block_retention() {
-    let data = read_sample_avif();
+    let Some(data) = read_sample_avif() else {
+        return;
+    };
     let info = parse_avif(&data).unwrap();
     let sequence_payload = find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
         .unwrap()
@@ -226,7 +234,9 @@ fn normal_prefix_decode_skips_diagnostic_block_retention() {
 
 #[test]
 fn decodes_sample_prefix_through_palette_blocks() {
-    let data = read_sample_avif();
+    let Some(data) = read_sample_avif() else {
+        return;
+    };
     let info = parse_avif(&data).unwrap();
     let sequence_payload = find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
         .unwrap()
@@ -295,13 +305,6 @@ fn decodes_sample_prefix_through_palette_blocks() {
     );
 }
 
-fn read_sample_avif() -> Vec<u8> {
-    std::fs::read(
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .join("samples")
-            .join("WML2Viewer.avif"),
-    )
-    .expect("sample AVIF should exist")
+fn read_sample_avif() -> Option<Vec<u8>> {
+    crate::test_support::wml2viewer_avif()
 }

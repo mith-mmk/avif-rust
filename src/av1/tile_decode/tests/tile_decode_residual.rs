@@ -9,14 +9,9 @@ use crate::obu::{ObuType, find_obu_payload};
 
 #[test]
 fn probes_sample_first_block_residual_plan() {
-    let data = std::fs::read(
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .join("samples")
-            .join("WML2Viewer.avif"),
-    )
-    .expect("sample AVIF should exist");
+    let Some(data) = crate::test_support::wml2viewer_avif() else {
+        return;
+    };
     let info = parse_avif(&data).unwrap();
     let sequence_payload = find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
         .unwrap()

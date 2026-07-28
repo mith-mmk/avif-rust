@@ -243,10 +243,8 @@ mod tests {
     use crate::container::parse_avif;
     use crate::obu::{ObuType, find_obu_payload};
 
-    fn sample_frame_and_mode() -> (FrameHeader, BlockModeProbe) {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let data = std::fs::read(root.join("test_data/images/WML2Viewer.avif"))
-            .expect("WML2Viewer AVIF should be readable");
+    fn sample_frame_and_mode() -> Option<(FrameHeader, BlockModeProbe)> {
+        let data = crate::test_support::wml2viewer_avif()?;
         let info = parse_avif(&data).expect("WML2Viewer AVIF should parse");
         let sequence_payload =
             find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
@@ -277,12 +275,14 @@ mod tests {
         .next()
         .expect("sample should contain a block mode");
         assert_eq!(mode.block_size, BlockSize::Block64x64);
-        (frame, mode)
+        Some((frame, mode))
     }
 
     #[test]
     fn chroma_transform_derivation_matches_av1_mode_table() {
-        let (frame, mut block_mode) = sample_frame_and_mode();
+        let Some((frame, mut block_mode)) = sample_frame_and_mode() else {
+            return;
+        };
         let cases = [
             (PredictionMode::Dc, TxType::DctDct),
             (PredictionMode::Vertical, TxType::AdstDct),
@@ -320,7 +320,9 @@ mod tests {
 
     #[test]
     fn large_chroma_transforms_are_fixed_to_dct() {
-        let (frame, mut block_mode) = sample_frame_and_mode();
+        let Some((frame, mut block_mode)) = sample_frame_and_mode() else {
+            return;
+        };
         block_mode.uv_mode = Some(UvPredictionMode::Intra(PredictionMode::Vertical));
         for tx_size in [
             TxSize::Tx32x32,

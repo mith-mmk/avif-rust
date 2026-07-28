@@ -12,6 +12,8 @@ mod error;
 mod icc;
 mod image;
 pub mod obu;
+#[cfg(test)]
+mod test_support;
 
 pub use compat::{
     CallbackResponse, DataMap, DecodeOptions, DrawCallback, DrawOptions, ImageRect, InitOptions,
