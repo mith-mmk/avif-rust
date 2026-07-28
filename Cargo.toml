@@ -26,6 +26,9 @@ bin-rs = { version = "0.0.10", features = ["stream", "util"] }
 too_many_arguments = "allow"
 type_complexity = "allow"
 
+# Keep this nested repository independent when it is checked out inside WML2.
+[workspace]
+
 [[bench]]
 name = "decode"
 harness = false

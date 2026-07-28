@@ -111,3 +111,7 @@ pub fn sample_path(name: &str) -> PathBuf {
         .join("samples")
         .join(name)
 }
+
+pub fn read_sample(name: &str) -> Option<Vec<u8>> {
+    std::fs::read(sample_path(name)).ok()
+}

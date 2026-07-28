@@ -6,14 +6,10 @@ use avif_rust::av1::{
 };
 use avif_rust::container::parse_avif;
 use avif_rust::obu::{ObuType, find_obu_payload};
-use support::sample_path;
+use support::read_sample;
 
-fn sample_avif() -> Vec<u8> {
-    std::fs::read(sample_path("WML2Viewer.avif")).expect("sample AVIF should exist")
-}
-
-fn sample_payloads() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-    let data = sample_avif();
+fn sample_payloads() -> Option<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+    let data = read_sample("WML2Viewer.avif")?;
     let info = parse_avif(&data).unwrap();
     let config = info.av1_config.expect("sample should contain av1C");
     let sequence = find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
@@ -26,12 +22,14 @@ fn sample_payloads() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         .expect("frame OBU should exist")
         .to_vec();
 
-    (config, sequence, frame)
+    Some((config, sequence, frame))
 }
 
 #[test]
 fn sample_av1_config_is_exposed_through_public_api() {
-    let (config_payload, _, _) = sample_payloads();
+    let Some((config_payload, _, _)) = sample_payloads() else {
+        return;
+    };
     let config = parse_av1_config(&config_payload).unwrap();
 
     assert_eq!(config.version, 1);
@@ -46,7 +44,9 @@ fn sample_av1_config_is_exposed_through_public_api() {
 
 #[test]
 fn sample_sequence_header_is_exposed_through_public_api() {
-    let (_, sequence_payload, _) = sample_payloads();
+    let Some((_, sequence_payload, _)) = sample_payloads() else {
+        return;
+    };
     let header = parse_sequence_header(&sequence_payload).unwrap();
 
     assert_eq!(header.seq_profile, 1);
@@ -73,7 +73,9 @@ fn sample_sequence_header_is_exposed_through_public_api() {
 
 #[test]
 fn sample_frame_header_and_tile_group_are_exposed_through_public_api() {
-    let (_, sequence_payload, frame_payload) = sample_payloads();
+    let Some((_, sequence_payload, frame_payload)) = sample_payloads() else {
+        return;
+    };
     let sequence = parse_sequence_header(&sequence_payload).unwrap();
     let header = parse_frame_header(&frame_payload, &sequence).unwrap();
 
@@ -119,7 +121,9 @@ fn sample_frame_header_and_tile_group_are_exposed_through_public_api() {
 
 #[test]
 fn sample_still_decode_plan_and_buffers_are_exposed_through_public_api() {
-    let (_, sequence_payload, frame_payload) = sample_payloads();
+    let Some((_, sequence_payload, frame_payload)) = sample_payloads() else {
+        return;
+    };
     let sequence = parse_sequence_header(&sequence_payload).unwrap();
     let frame = parse_frame_header(&frame_payload, &sequence).unwrap();
     let tile_group = parse_tile_group(

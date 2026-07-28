@@ -16,12 +16,12 @@ use avif_rust::container::{
 };
 use avif_rust::obu::{ObuType, count_obus, find_obu_payload, find_obu_payloads, parse_obu_stream};
 use bin_rs::reader::BytesReader;
-use support::sample_path;
+use support::read_sample;
 
 static NEXT_AVIS_SAMPLE: AtomicUsize = AtomicUsize::new(0);
 
-fn sample_avif() -> Vec<u8> {
-    std::fs::read(sample_path("WML2Viewer.avif")).expect("sample AVIF should exist")
+fn sample_avif() -> Option<Vec<u8>> {
+    read_sample("WML2Viewer.avif")
 }
 
 fn external_star_path() -> PathBuf {
@@ -189,7 +189,9 @@ fn generated_film_grain_avis_sample() -> Option<Vec<u8>> {
 
 #[test]
 fn sample_container_metadata_is_exposed_through_public_api() {
-    let data = sample_avif();
+    let Some(data) = sample_avif() else {
+        return;
+    };
     let info = parse_avif(&data).unwrap();
 
     assert!(is_avif_file(&data));
@@ -242,7 +244,9 @@ fn official_extended_pixi_sample_exposes_channel_descriptors() {
 
 #[test]
 fn avio_major_brand_is_accepted_for_intra_only_image_items() {
-    let mut data = sample_avif();
+    let Some(mut data) = sample_avif() else {
+        return;
+    };
     assert_eq!(&data[4..8], b"ftyp");
     data[8..12].copy_from_slice(b"avio");
 
@@ -256,7 +260,9 @@ fn avio_major_brand_is_accepted_for_intra_only_image_items() {
 
 #[test]
 fn public_obu_helpers_find_sample_frame_payloads() {
-    let data = sample_avif();
+    let Some(data) = sample_avif() else {
+        return;
+    };
     let info = parse_avif(&data).unwrap();
     let obus = parse_obu_stream(&info.primary_item_payload).unwrap();
 

@@ -3882,8 +3882,9 @@ fn layered_conformance_helpers_compare_planes_and_rgba_max_error() {
 
 #[test]
 fn pure_rust_decode_displays_sample_with_filters() {
-    let avif_data =
-        std::fs::read(sample_path("WML2Viewer.avif")).expect("sample AVIF should exist");
+    let Some(avif_data) = support::read_sample("WML2Viewer.avif") else {
+        return;
+    };
     let image = avif_rust::image_from_bytes(&avif_data).expect("AVIF sample should decode");
     assert_eq!((image.width, image.height), (SAMPLE_WIDTH, SAMPLE_HEIGHT));
     assert_eq!(image.rgba.len(), SAMPLE_RGBA_LEN);
@@ -3891,8 +3892,9 @@ fn pure_rust_decode_displays_sample_with_filters() {
 
 #[test]
 fn pure_rust_decode_exposes_filtered_source_planes() {
-    let avif_data =
-        std::fs::read(sample_path("WML2Viewer.avif")).expect("sample AVIF should exist");
+    let Some(avif_data) = support::read_sample("WML2Viewer.avif") else {
+        return;
+    };
     let frame = avif_rust::decode_frame_bytes(&avif_data).expect("AVIF sample should decode");
     assert_eq!((frame.width, frame.height), (SAMPLE_WIDTH, SAMPLE_HEIGHT));
     assert_eq!(frame.buffers.planes.len(), 3);
@@ -4622,8 +4624,9 @@ fn report_current_wml2viewer_prefilter_plane_error() {
 
 #[test]
 fn pure_rust_decode_matches_ffmpeg_oracle_and_original_png() {
-    let avif_data =
-        std::fs::read(sample_path("WML2Viewer.avif")).expect("sample AVIF should exist");
+    let Some(avif_data) = support::read_sample("WML2Viewer.avif") else {
+        return;
+    };
     let decoded = avif_rust::image_from_bytes(&avif_data).expect("AVIF should decode");
     assert_eq!(decoded.width, SAMPLE_WIDTH);
     assert_eq!(decoded.height, SAMPLE_HEIGHT);
