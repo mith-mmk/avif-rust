@@ -534,6 +534,7 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
             initial_cdfs.and_then(|cdfs| cdfs.get(tile_index)).cloned(),
         )?;
         decoder.set_tile_bounds(tile_plan);
+        decoder.set_order_hint_bits(sequence.order_hint_bits);
         if frame.use_ref_frame_mvs {
             decoder.set_temporal_motion_field(temporal_motion_field.clone());
         }
@@ -544,7 +545,7 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
                     if collect_cdf {
                         final_cdfs.push(decoder.cdf_snapshot());
                     }
-                    let motion_field = decoder.motion_field();
+                    let motion_field = decoder.motion_field(frame, sequence.order_hint_bits);
                     post_filter_state.merge(decoder.take_post_filter_state());
                     return Ok((
                         DecodedBlockPrefix {
@@ -583,7 +584,7 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
                         if collect_cdf {
                             final_cdfs.push(decoder.cdf_snapshot());
                         }
-                        let motion_field = decoder.motion_field();
+                        let motion_field = decoder.motion_field(frame, sequence.order_hint_bits);
                         post_filter_state.merge(decoder.take_post_filter_state());
                         return Ok((
                             DecodedBlockPrefix {
@@ -613,7 +614,7 @@ pub(crate) fn decode_luma_root_block_prefix_with_post_filter_state_and_entropy_o
         if collect_cdf {
             final_cdfs.push(decoder.cdf_snapshot());
         }
-        let tile_motion_field = decoder.motion_field();
+        let tile_motion_field = decoder.motion_field(frame, sequence.order_hint_bits);
         let mut frame_motion_field = motion_field.take().unwrap_or_else(|| {
             MotionField::empty(tile_motion_field.mi_cols, tile_motion_field.mi_rows)
         });

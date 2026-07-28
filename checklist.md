@@ -2511,3 +2511,17 @@ The checklist implementation count remains `160/171` (`93.57%`), with the
 remaining 11 items still covering normative transform/filter exactness,
 display-profile completion, future-syntax malformed cases, and large-frame
 post-filter allocation auditing.
+
+On 2026-07-28, external AVIS animation support was completed for the five-frame
+`colors-animated-8bpc*.avif` and `star-8bpc.avif` samples. The decoder now
+extends short single-reference MV stacks from adjacent inter blocks, excludes
+inter-intra blocks from local-warp samples, uses decoded compound neighbour
+contexts and masks, and preserves AV1's 16-phase Q4 interpolation coordinates.
+Skipped intra blocks continue to consume their transform-size symbol, which
+also restores strict entropy termination for `alpha_noispe.avif`. The external
+`hq720.avif` YUV420 native/RGBA oracle, both 10-bit Seine HDR native/RGBA
+oracles, all animated color/alpha/depth/audio variants, and the full FFmpeg
+suite pass (`107 passed, 2 ignored`). The AVIF package passes `470` library
+tests with `5` ignored plus `17` container tests. WML2 retains all five frames,
+per-frame alpha and duration/callback ordering, and an APNG round trip preserves
+all five frames.

@@ -192,6 +192,11 @@ pub struct SegmentationParams {
     /// Segment-level `SEG_LVL_ALT_LF_*` deltas in Y-vertical, Y-horizontal,
     /// U and V order.
     pub segment_delta_lf: [[i8; 4]; 8],
+    /// Forced reference type for each segment. The stored value uses the
+    /// zero-based LAST..ALTREF index used by `FrameHeader`.
+    pub segment_reference_frame: [Option<u8>; 8],
+    /// Whether GLOBALMV is forced for each segment.
+    pub segment_global_mv: [bool; 8],
     pub segment_skip: [bool; 8],
     pub last_active_segment: u8,
 }
@@ -1583,6 +1588,8 @@ fn parse_segmentation_params(
             delta_q: 0,
             segment_delta_q: [0; 8],
             segment_delta_lf: [[0; 4]; 8],
+            segment_reference_frame: [None; 8],
+            segment_global_mv: [false; 8],
             segment_skip: [false; 8],
             last_active_segment: 0,
         });
@@ -1592,6 +1599,8 @@ fn parse_segmentation_params(
     const FEATURE_SIGNED: [bool; 8] = [true, true, true, true, true, false, false, false];
     let mut segment_delta_q = [0i16; 8];
     let mut segment_delta_lf = [[0i8; 4]; 8];
+    let mut segment_reference_frame = [None; 8];
+    let mut segment_global_mv = [false; 8];
     let mut segment_skip = [false; 8];
     let mut preskip = false;
     let mut last_active_segment = 0u8;
@@ -1611,6 +1620,11 @@ fn parse_segmentation_params(
                 match feature {
                     0 => segment_delta_q[segment] = value as i16,
                     1..=4 => segment_delta_lf[segment][feature - 1] = value as i8,
+                    5 => {
+                        segment_reference_frame[segment] = value
+                            .checked_sub(1)
+                            .and_then(|value| u8::try_from(value).ok());
+                    }
                     _ => {}
                 }
             }
@@ -1626,6 +1640,7 @@ fn parse_segmentation_params(
                     last_active_segment = segment as u8;
                 }
                 7 => {
+                    segment_global_mv[segment] = true;
                     preskip = true;
                     last_active_segment = segment as u8;
                 }
@@ -1641,6 +1656,8 @@ fn parse_segmentation_params(
         delta_q: segment_delta_q[0],
         segment_delta_q,
         segment_delta_lf,
+        segment_reference_frame,
+        segment_global_mv,
         segment_skip,
         last_active_segment,
     })
@@ -2175,6 +2192,8 @@ mod tests {
                 delta_q: 0,
                 segment_delta_q: [0; 8],
                 segment_delta_lf: [[0; 4]; 8],
+                segment_reference_frame: [None; 8],
+                segment_global_mv: [false; 8],
                 segment_skip: [false; 8],
                 last_active_segment: 0,
             }

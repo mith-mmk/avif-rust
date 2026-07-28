@@ -916,10 +916,13 @@ fn decode_sequence_samples_from_info(
                         unit.has_sequence_header,
                         av1_config,
                     )?;
-                    let initial_cdfs = (!unit.has_sequence_header
-                        && headers.frame.primary_ref_frame != 7)
-                        .then_some(cdf_states.as_deref())
-                        .flatten();
+                    let initial_cdfs = if headers.frame.primary_ref_frame != 7 {
+                        references
+                            .cdf_for_header(&headers.frame)
+                            .or(cdf_states.as_deref())
+                    } else {
+                        None
+                    };
                     let (decoded_state, next_cdf_states) =
                         decode_still_frame_with_filter_policy_and_state_and_references_and_cdf(
                             &headers,
@@ -932,13 +935,18 @@ fn decode_sequence_samples_from_info(
                         )?;
                     let (decoded, motion_field) =
                         finish_decoded_still_frame(&headers, decoded_state, true)?;
-                    let reference_cdfs = if headers.frame.disable_frame_end_update_cdf {
+                    let mut reference_cdfs = if headers.frame.disable_frame_end_update_cdf {
                         initial_cdfs.map(ToOwned::to_owned).unwrap_or_else(|| {
                             vec![CdfContext::new(headers.frame.base_q_idx); next_cdf_states.len()]
                         })
                     } else {
                         next_cdf_states.clone()
                     };
+                    if !headers.frame.disable_frame_end_update_cdf {
+                        for cdf in &mut reference_cdfs {
+                            cdf.reset_symbol_counters();
+                        }
+                    }
                     references.refresh_with_cdf_and_motion(
                         headers.frame.refresh_frame_flags,
                         &decoded,
@@ -972,7 +980,6 @@ fn decode_sequence_samples_from_info(
                         .then_some(info.av1_config.as_deref())
                         .flatten();
                     let reference_states = references.states();
-                    let temporal_motion_field = references.previous_motion_field();
                     let headers = parse_av1_sequence_sample_headers_with_references(
                         info,
                         &sequence_prefix,
@@ -981,14 +988,14 @@ fn decode_sequence_samples_from_info(
                         av1_config,
                         &reference_states,
                     )?;
-                    let initial_cdfs =
-                        if !unit.has_sequence_header && headers.frame.primary_ref_frame != 7 {
-                            references
-                                .cdf_for_header(&headers.frame)
-                                .or(cdf_states.as_deref())
-                        } else {
-                            None
-                        };
+                    let temporal_motion_field = references.temporal_motion_field(&headers.frame);
+                    let initial_cdfs = if headers.frame.primary_ref_frame != 7 {
+                        references
+                            .cdf_for_header(&headers.frame)
+                            .or(cdf_states.as_deref())
+                    } else {
+                        None
+                    };
                     let (decoded_state, next_cdf_states) =
                         match decode_still_frame_with_filter_policy_and_state_and_references_and_cdf_and_motion(
                             &headers,
@@ -1010,13 +1017,18 @@ fn decode_sequence_samples_from_info(
                         };
                     let (decoded, motion_field) =
                         finish_decoded_still_frame(&headers, decoded_state, true)?;
-                    let reference_cdfs = if headers.frame.disable_frame_end_update_cdf {
+                    let mut reference_cdfs = if headers.frame.disable_frame_end_update_cdf {
                         initial_cdfs.map(ToOwned::to_owned).unwrap_or_else(|| {
                             vec![CdfContext::new(headers.frame.base_q_idx); next_cdf_states.len()]
                         })
                     } else {
                         next_cdf_states.clone()
                     };
+                    if !headers.frame.disable_frame_end_update_cdf {
+                        for cdf in &mut reference_cdfs {
+                            cdf.reset_symbol_counters();
+                        }
+                    }
                     references.refresh_with_cdf_and_motion(
                         headers.frame.refresh_frame_flags,
                         &decoded,
@@ -1260,8 +1272,137 @@ impl FrameReferenceSlots {
         self.previous_motion_field = Some(Arc::new(motion_field));
     }
 
-    fn previous_motion_field(&self) -> Option<Arc<MotionField>> {
-        self.previous_motion_field.clone()
+    fn temporal_motion_field(&self, header: &FrameHeader) -> Option<Arc<MotionField>> {
+        if !header.use_ref_frame_mvs {
+            return None;
+        }
+        let mi_cols = (usize::try_from(header.frame_width).ok()? + 3) / 4;
+        let mi_rows = (usize::try_from(header.frame_height).ok()? + 3) / 4;
+        let mut field = MotionField::empty(mi_cols, mi_rows);
+        field.order_hint_bits = 8;
+        field.order_hint = header.order_hint;
+        field.reference_order_hints = header.reference_order_hints;
+        field.reference_frame_indices = header.reference_frame_indices;
+        field.projected = true;
+
+        let mut stamps = 3;
+        let mut project = |reference_type: usize, direction: i32, stamps: &mut i32| {
+            let Some(&slot) = header.reference_frame_indices.get(reference_type) else {
+                return;
+            };
+            let Ok(start) = self.get(slot) else {
+                return;
+            };
+            if matches!(start.frame_type, FrameType::Key | FrameType::IntraOnly) {
+                return;
+            }
+            let source = &start.motion_field;
+            if source.mi_cols != mi_cols || source.mi_rows != mi_rows {
+                return;
+            }
+            let start_to_current =
+                relative_order_hint_distance(8, start.order_hint, header.order_hint);
+            let start_to_current = if direction == 2 {
+                -start_to_current
+            } else {
+                start_to_current
+            };
+            for source_row in (0..mi_rows).step_by(2) {
+                for source_col in (0..mi_cols).step_by(2) {
+                    let source_index = source_row * mi_cols + source_col;
+                    let Some(motion_vector) = source.motion_vectors[source_index] else {
+                        continue;
+                    };
+                    let Some(source_reference_type) = source.reference_frames[source_index] else {
+                        continue;
+                    };
+                    let Some(source_reference_hint) = source
+                        .reference_order_hints
+                        .get(usize::from(source_reference_type))
+                        .copied()
+                        .flatten()
+                    else {
+                        continue;
+                    };
+                    let reference_offset =
+                        relative_order_hint_distance(8, start.order_hint, source_reference_hint);
+                    if reference_offset <= 0
+                        || reference_offset.abs() > 31
+                        || start_to_current.abs() > 31
+                    {
+                        continue;
+                    }
+                    let projected = project_temporal_motion_vector(
+                        motion_vector,
+                        start_to_current,
+                        reference_offset,
+                    );
+                    let source_row = source_row / 2;
+                    let source_col = source_col / 2;
+                    let row_offset = motion_offset(projected.0);
+                    let col_offset = motion_offset(projected.1);
+                    let target_row = if direction == 2 {
+                        source_row as i32 - row_offset
+                    } else {
+                        source_row as i32 + row_offset
+                    };
+                    let target_col = if direction == 2 {
+                        source_col as i32 - col_offset
+                    } else {
+                        source_col as i32 + col_offset
+                    };
+                    let base_row = (source_row >> 3) << 3;
+                    let base_col = (source_col >> 3) << 3;
+                    if target_row < base_row as i32
+                        || target_row >= (base_row + 8) as i32
+                        || target_col < (base_col as i32 - 8)
+                        || target_col >= (base_col + 16) as i32
+                        || target_row < 0
+                        || target_col < 0
+                        || target_row as usize >= mi_rows.div_ceil(2)
+                        || target_col as usize >= mi_cols.div_ceil(2)
+                    {
+                        continue;
+                    }
+                    let target_index = target_row as usize * 2 * mi_cols + target_col as usize * 2;
+                    field.motion_vectors[target_index] = Some(motion_vector);
+                    field.reference_offsets[target_index] = Some(reference_offset);
+                }
+            }
+            *stamps -= 1;
+        };
+
+        if header.reference_order_hints[0]
+            .is_some_and(|hint| relative_order_hint_distance(8, hint, header.order_hint) <= 0)
+        {
+            let is_last_overlay = header
+                .reference_frame_indices
+                .first()
+                .and_then(|slot| self.get(*slot).ok())
+                .and_then(|start| start.motion_field.reference_order_hints[6])
+                .zip(header.reference_order_hints[3])
+                .is_some_and(|(altref_hint, golden_hint)| altref_hint == golden_hint);
+            if !is_last_overlay {
+                project(0, 2, &mut stamps);
+            } else {
+                stamps -= 1;
+            }
+        }
+        for reference_type in [4usize, 5, 6] {
+            if stamps < 0 {
+                break;
+            }
+            if header.reference_order_hints[reference_type]
+                .map(|hint| relative_order_hint_distance(8, hint, header.order_hint) > 0)
+                .unwrap_or(false)
+            {
+                project(reference_type, 0, &mut stamps);
+            }
+        }
+        if stamps >= 0 {
+            project(1, 2, &mut stamps);
+        }
+        Some(Arc::new(field))
     }
 
     fn frame_to_show(&self, index: u8) -> Result<DecodedFrame, DecoderError> {
@@ -1285,6 +1426,50 @@ impl FrameReferenceSlots {
                 ))
             })
     }
+}
+
+fn relative_order_hint_distance(bits: u8, reference: u32, current: u32) -> i32 {
+    let modulo = 1i32 << bits;
+    let mask = modulo - 1;
+    let mut distance = ((reference as i32 - current as i32) & mask) as i32;
+    if distance & (modulo >> 1) != 0 {
+        distance -= modulo;
+    }
+    distance
+}
+
+fn motion_offset(value: i32) -> i32 {
+    if value >= 0 {
+        value >> 6
+    } else {
+        -((-value) >> 6)
+    }
+}
+
+fn project_temporal_motion_vector(
+    motion_vector: (i32, i32),
+    numerator: i32,
+    denominator: i32,
+) -> (i32, i32) {
+    const DIV_MULT: [i32; 32] = [
+        0, 16384, 8192, 5461, 4096, 3276, 2730, 2340, 2048, 1820, 1638, 1489, 1365, 1260, 1170,
+        1092, 1024, 963, 910, 862, 819, 780, 744, 712, 682, 655, 630, 606, 585, 564, 546, 528,
+    ];
+    fn scale(value: i32, numerator: i32, denominator: i32, div_mult: &[i32; 32]) -> i32 {
+        let product = i64::from(value)
+            * i64::from(numerator.clamp(-31, 31))
+            * i64::from(div_mult[denominator.clamp(0, 31) as usize]);
+        let rounded = if product < 0 {
+            -((-product + (1 << 13)) >> 14)
+        } else {
+            (product + (1 << 13)) >> 14
+        };
+        rounded.clamp(-32767, 32767) as i32
+    }
+    (
+        scale(motion_vector.0, numerator, denominator, &DIV_MULT),
+        scale(motion_vector.1, numerator, denominator, &DIV_MULT),
+    )
 }
 
 #[cfg(test)]

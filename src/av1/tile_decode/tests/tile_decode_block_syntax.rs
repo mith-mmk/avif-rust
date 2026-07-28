@@ -104,6 +104,8 @@ fn segmentation_alt_q_adjusts_initial_tile_qindex() {
         delta_q: 5,
         segment_delta_q: [5, 0, 0, 0, 0, 0, 0, 0],
         segment_delta_lf: [[0; 4]; 8],
+        segment_reference_frame: [None; 8],
+        segment_global_mv: [false; 8],
         segment_skip: [false; 8],
         last_active_segment: 0,
     };
@@ -164,6 +166,8 @@ fn segmentation_id_entropy_updates_qindex_for_selected_segment() {
         delta_q: 0,
         segment_delta_q: [0, 5, 0, 0, 0, 0, 0, 0],
         segment_delta_lf: [[0; 4]; 8],
+        segment_reference_frame: [None; 8],
+        segment_global_mv: [false; 8],
         segment_skip: [false; 8],
         last_active_segment: 1,
     };
@@ -200,6 +204,8 @@ fn segmentation_id_segment_zero_still_consumes_entropy_symbol() {
         delta_q: 0,
         segment_delta_q: [0; 8],
         segment_delta_lf: [[0; 4]; 8],
+        segment_reference_frame: [None; 8],
+        segment_global_mv: [false; 8],
         segment_skip: [false; 8],
         last_active_segment: 0,
     };
@@ -240,6 +246,8 @@ fn segmentation_skip_forces_skip_before_the_skip_symbol() {
         delta_q: 0,
         segment_delta_q: [0; 8],
         segment_delta_lf: [[0; 4]; 8],
+        segment_reference_frame: [None; 8],
+        segment_global_mv: [false; 8],
         segment_skip: [true, false, false, false, false, false, false, false],
         last_active_segment: 0,
     };

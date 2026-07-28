@@ -4,7 +4,7 @@ use super::residual_probe::{
     FirstNonZeroTransformScan, ResidualProbeContext, ResidualProbeFields, empty_residual_probe,
     scanned_residual_probe,
 };
-use super::{BlockModeProbe, DecodedTransform, TileDecoder};
+use super::{BlockModeProbe, DecodedTransform, TileDecoder, coefficient_entropy_context};
 use crate::DecoderError;
 use crate::av1::frame::FrameHeader;
 use crate::av1::quant::QuantState;
@@ -151,6 +151,7 @@ impl<'a> TileDecoder<'a> {
         let plane_type = usize::from(transform.plane > 0);
         let mut coefficient_read =
             self.read_coefficient_state(transform.tx_size, tx_type, plane_type, dc_sign_context)?;
+        let entropy_context = coefficient_entropy_context(&coefficient_read.base.base_levels);
         remap_coefficients_for_inverse_storage(
             transform.tx_size,
             tx_type,
@@ -161,6 +162,7 @@ impl<'a> TileDecoder<'a> {
             transform,
             tx_type,
             coefficients: coefficient_read.base.base_levels,
+            entropy_context,
         })
     }
 

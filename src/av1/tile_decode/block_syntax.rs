@@ -1,4 +1,6 @@
-use super::{BlockModeProbe, CflParams, CompoundMask, InterIntraMode, MotionMode, TileDecoder};
+use super::{
+    BlockModeProbe, CflParams, CompoundMask, InterIntraMode, MotionField, MotionMode, TileDecoder,
+};
 use crate::DecoderError;
 use crate::av1::decode::TileDecodePlan;
 use crate::av1::frame::{FrameHeader, FrameType, InterpolationFilter, TxMode};
@@ -13,7 +15,145 @@ fn compound_mode_context(mode_context: usize) -> usize {
         [[0, 1, 1, 1, 1], [1, 2, 3, 4, 4], [4, 4, 5, 6, 7]];
     let newmv_context = (mode_context & 7).min(4);
     let refmv_context = ((mode_context >> 4) & 7).min(5);
-    COMPOUND_MODE_CONTEXT_MAP[refmv_context >> 1][newmv_context].min(5)
+    COMPOUND_MODE_CONTEXT_MAP[refmv_context >> 1][newmv_context]
+}
+
+fn wedge_compound_supported(block_size: BlockSize) -> bool {
+    matches!(
+        block_size,
+        BlockSize::Block8x8
+            | BlockSize::Block8x16
+            | BlockSize::Block16x8
+            | BlockSize::Block16x16
+            | BlockSize::Block16x32
+            | BlockSize::Block32x16
+            | BlockSize::Block32x32
+            | BlockSize::Block8x32
+            | BlockSize::Block32x8
+    )
+}
+
+fn relative_order_hint_distance(bits: u8, reference: u32, current: u32) -> i32 {
+    if bits == 0 {
+        return 0;
+    }
+    let modulo = 1i32 << bits;
+    let mask = modulo - 1;
+    let mut distance = ((reference as i32 - current as i32) & mask) as i32;
+    if distance & (modulo >> 1) != 0 {
+        distance -= modulo;
+    }
+    distance
+}
+
+fn project_temporal_motion_vector(
+    motion_vector: (i32, i32),
+    numerator: i32,
+    denominator: i32,
+) -> (i32, i32) {
+    const DIV_MULT: [i32; 32] = [
+        0, 16384, 8192, 5461, 4096, 3276, 2730, 2340, 2048, 1820, 1638, 1489, 1365, 1260, 1170,
+        1092, 1024, 963, 910, 862, 819, 780, 744, 712, 682, 655, 630, 606, 585, 564, 546, 528,
+    ];
+    fn scale(value: i32, numerator: i32, denominator: i32, div_mult: &[i32; 32]) -> i32 {
+        let numerator = numerator.clamp(-31, 31);
+        let denominator = denominator.clamp(0, 31);
+        let product =
+            i64::from(value) * i64::from(numerator) * i64::from(div_mult[denominator as usize]);
+        let rounded = if product < 0 {
+            -((-product + (1 << 13)) >> 14)
+        } else {
+            (product + (1 << 13)) >> 14
+        };
+        rounded.clamp(-32767, 32767) as i32
+    }
+    (
+        scale(motion_vector.0, numerator, denominator, &DIV_MULT),
+        scale(motion_vector.1, numerator, denominator, &DIV_MULT),
+    )
+}
+
+fn temporal_global_motion_context(
+    field: &MotionField,
+    frame: &FrameHeader,
+    reference_type: usize,
+    sample_index: usize,
+    global_motion: (i32, i32),
+) -> Option<usize> {
+    let motion_vector = field.motion_vectors.get(sample_index).copied().flatten()?;
+    let motion_vector = if field.projected {
+        let reference_hint = frame
+            .reference_order_hints
+            .get(reference_type)
+            .copied()
+            .flatten()?;
+        let reference_offset = field
+            .reference_offsets
+            .get(sample_index)
+            .copied()
+            .flatten()?;
+        let current_offset =
+            relative_order_hint_distance(field.order_hint_bits, frame.order_hint, reference_hint);
+        if reference_offset <= 0 || current_offset.abs() > 31 {
+            return Some(1);
+        }
+        project_temporal_motion_vector(motion_vector, current_offset, reference_offset)
+    } else {
+        motion_vector
+    };
+    if field.projected {
+        return Some(usize::from(
+            motion_vector.0.abs_diff(global_motion.0) >= 16
+                || motion_vector.1.abs_diff(global_motion.1) >= 16,
+        ));
+    }
+    let previous_reference_type = usize::from(
+        field
+            .reference_frames
+            .get(sample_index)
+            .copied()
+            .flatten()?,
+    );
+    let previous_reference_hint = field
+        .reference_order_hints
+        .get(previous_reference_type)
+        .copied()
+        .flatten()?;
+    let current_reference_hint = frame
+        .reference_order_hints
+        .get(reference_type)
+        .copied()
+        .flatten()?;
+    if field
+        .reference_order_hints
+        .iter()
+        .all(|hint| *hint == Some(0))
+    {
+        return Some(1);
+    }
+    let previous_offset = relative_order_hint_distance(
+        field.order_hint_bits,
+        previous_reference_hint,
+        field.order_hint,
+    );
+    let current_offset = relative_order_hint_distance(
+        field.order_hint_bits,
+        current_reference_hint,
+        frame.order_hint,
+    );
+    // AOM only admits TPL candidates that can be projected from a valid
+    // forward reference.  A reference that is two or more order hints behind
+    // the current frame is unavailable to that path and selects GLOBALMV.
+    if current_reference_hint == 0 {
+        return Some(1);
+    }
+    if previous_offset == 0 {
+        return Some(1);
+    }
+    let projected = project_temporal_motion_vector(motion_vector, current_offset, previous_offset);
+    Some(usize::from(
+        projected.0.abs_diff(global_motion.0) >= 16 || projected.1.abs_diff(global_motion.1) >= 16,
+    ))
 }
 
 impl<'a> TileDecoder<'a> {
@@ -218,9 +358,11 @@ impl<'a> TileDecoder<'a> {
         self.set_skip_context(x, y, block_size, skip);
         let mut palette = palette;
         self.read_palette_tokens(sequence, block_size, x, y, &mut palette)?;
-        let (tx_size_context, tx_size_symbol, tx_size) =
+        let (tx_size_context, tx_size_symbol, tx_size, transform_blocks) =
             self.read_intra_tx_size(frame, block_size, skip, false, use_intrabc, x, y)?;
+        self.set_inter_context(x, y, block_size, false);
         self.clear_inter_mv(x, y, block_size);
+        self.set_motion_block_size(x, y, block_size);
 
         Ok(BlockModeProbe {
             tile_id: tile.tile_id,
@@ -265,6 +407,7 @@ impl<'a> TileDecoder<'a> {
             tx_size_context,
             tx_size_symbol,
             tx_size,
+            transform_blocks,
             bit_position_after: self.reader.bit_position(),
         })
     }
@@ -291,28 +434,59 @@ impl<'a> TileDecoder<'a> {
         skip_mode: bool,
         cdef_idx: Option<u32>,
     ) -> Result<BlockModeProbe, DecoderError> {
-        let ref_context = self.intra_inter_context(x, y).min(4);
-        let is_compound = skip_mode
-            || (frame.reference_select
-                && self
-                    .reader
-                    .read_symbol(self.cdf.comp_inter_cdf_mut(ref_context))?
-                    != 0);
-        let (reference_type, reference_type_secondary) = if is_compound {
-            if skip_mode {
-                (
-                    usize::from(frame.skip_mode_frame[0]),
-                    Some(usize::from(frame.skip_mode_frame[1])),
-                )
+        let forced_reference_type = frame
+            .segmentation
+            .segment_reference_frame
+            .get(usize::from(segment_id))
+            .copied()
+            .flatten()
+            .map(usize::from)
+            .or_else(|| {
+                let segment = usize::from(segment_id);
+                (frame
+                    .segmentation
+                    .segment_skip
+                    .get(segment)
+                    .copied()
+                    .unwrap_or(false)
+                    || frame
+                        .segmentation
+                        .segment_global_mv
+                        .get(segment)
+                        .copied()
+                        .unwrap_or(false))
+                .then_some(0)
+            });
+        let ref_context = self.reference_mode_context(x, y).min(4);
+        let is_compound = forced_reference_type.is_none()
+            && (skip_mode
+                || (block_size.width().min(block_size.height()) >= 8
+                    && frame.reference_select
+                    && self
+                        .reader
+                        .read_symbol(self.cdf.comp_inter_cdf_mut(ref_context))?
+                        != 0));
+        self.set_current_inter_compound(is_compound);
+        let (reference_type, reference_type_secondary) =
+            if let Some(reference_type) = forced_reference_type {
+                (reference_type, None)
+            } else if is_compound {
+                if skip_mode {
+                    (
+                        usize::from(frame.skip_mode_frame[0]),
+                        Some(usize::from(frame.skip_mode_frame[1])),
+                    )
+                } else {
+                    self.read_compound_reference_types(
+                        self.compound_reference_type_context(x, y),
+                        self.compound_reference_contexts(x, y),
+                    )?
+                }
             } else {
-                self.read_compound_reference_types(ref_context, frame)?
-            }
-        } else {
-            (
-                self.read_single_reference_type([self.intra_inter_context(x, y).min(4); 6])?,
-                None,
-            )
-        };
+                let parsed_reference_type =
+                    self.read_single_reference_type(self.single_reference_contexts(x, y))?;
+                (parsed_reference_type, None)
+            };
         let reference_frame = *frame
             .reference_frame_indices
             .get(reference_type)
@@ -331,25 +505,141 @@ impl<'a> TileDecoder<'a> {
         // Keeping the predictor in the MI grid is required for ordinary
         // NEWMV/NEARMV inter blocks and avoids treating every delta as an
         // absolute vector.
-        let mode_context = self.inter_mode_context(x, y, block_size, reference_type as u8);
-        let newmv_context = mode_context & 7;
-        let zeromv_context = (mode_context >> 3) & 1;
+        let mut mode_context = self.inter_mode_context(x, y, block_size, reference_type as u8);
+        if let Some(reference_type_secondary) = reference_type_secondary {
+            mode_context = self.compound_inter_mode_context(
+                x,
+                y,
+                block_size,
+                reference_type as u8,
+                reference_type_secondary as u8,
+            );
+        }
+        if frame.use_ref_frame_mvs {
+            let mi_col = x / 4;
+            let mi_row = y / 4;
+            let temporal_field = self.temporal_motion_field.as_deref();
+            let temporal_sample = temporal_field.and_then(|field| {
+                field.projected_motion(
+                    mi_col,
+                    mi_row,
+                    0,
+                    0,
+                    reference_type,
+                    self.order_hint,
+                    &self.reference_order_hints,
+                )
+            });
+            let global_motion = frame.global_motion.motion_vector(
+                reference_type,
+                block_size,
+                x,
+                y,
+                frame.allow_high_precision_mv,
+                frame.force_integer_mv == 1,
+            )?;
+            let global_motion_context = if let Some((sample_index, _)) = temporal_sample {
+                temporal_field
+                    .and_then(|field| {
+                        temporal_global_motion_context(
+                            field,
+                            frame,
+                            reference_type,
+                            sample_index,
+                            global_motion,
+                        )
+                    })
+                    .unwrap_or(1)
+            } else {
+                // AOM sets GLOBALMV_OFFSET when the selected TPL sample is
+                // unavailable.  The field may contain other valid samples,
+                // so checking only whether the field is globally populated
+                // is insufficient.
+                1
+            };
+            mode_context |= global_motion_context << 3;
+        }
+        let newmv_context = (mode_context & 7).min(5);
+        let zeromv_context = ((mode_context >> 3) & 1).min(1);
         let refmv_context = ((mode_context >> 4) & 7).min(5);
-        let primary_predictor = self.inter_mv_predictor(x, y, block_size, reference_type as u8);
-        let primary_candidate_count =
-            self.inter_mv_candidate_count(x, y, block_size, reference_type as u8, false);
-        let secondary_predictor =
-            reference_frame_secondary
-                .zip(reference_type_secondary)
-                .map(|(_, reference_type)| {
-                    self.inter_mv_predictor_secondary(x, y, block_size, reference_type as u8)
-                });
+        let compound_candidates = if let Some(secondary_type) = reference_type_secondary {
+            let global_motion = frame.global_motion.motion_vector(
+                reference_type,
+                block_size,
+                x,
+                y,
+                frame.allow_high_precision_mv,
+                frame.force_integer_mv == 1,
+            )?;
+            let global_motion_secondary = frame.global_motion.motion_vector(
+                secondary_type,
+                block_size,
+                x,
+                y,
+                frame.allow_high_precision_mv,
+                frame.force_integer_mv == 1,
+            )?;
+            Some(self.compound_mv_candidates(
+                x,
+                y,
+                block_size,
+                reference_type as u8,
+                secondary_type as u8,
+                [global_motion, global_motion_secondary],
+            ))
+        } else {
+            None
+        };
+        let primary_predictor = compound_candidates
+            .as_ref()
+            .and_then(|(primary, _, _, _)| primary[0])
+            .unwrap_or_else(|| self.inter_mv_predictor(x, y, block_size, reference_type as u8));
+        let primary_candidate_count = compound_candidates
+            .as_ref()
+            .map(|(_, _, _, len)| *len)
+            .unwrap_or_else(|| {
+                self.inter_mv_candidate_count(x, y, block_size, reference_type as u8, false)
+            });
+        let primary_candidate_weights = compound_candidates
+            .as_ref()
+            .map(|(_, _, weights, _)| *weights)
+            .unwrap_or_else(|| {
+                self.inter_mv_candidate_weights(x, y, block_size, reference_type as u8, false)
+            });
+        let secondary_predictor = reference_type_secondary.map(|secondary_type| {
+            compound_candidates
+                .as_ref()
+                .and_then(|(_, secondary, _, _)| secondary[0])
+                .unwrap_or_else(|| {
+                    self.inter_mv_predictor_secondary(x, y, block_size, secondary_type as u8)
+                })
+        });
 
         let mut global_motion_index = None;
         let mut global_motion_index_secondary = None;
         let has_new_mv;
-        let (motion_vector, motion_vector_secondary) = if is_compound {
-            let compound_mode_context = compound_mode_context(mode_context);
+        let force_global_mv = frame
+            .segmentation
+            .segment_global_mv
+            .get(usize::from(segment_id))
+            .copied()
+            .unwrap_or(false);
+        let (motion_vector, motion_vector_secondary) = if force_global_mv {
+            has_new_mv = false;
+            global_motion_index = Some(reference_type);
+            (
+                frame.global_motion.motion_vector(
+                    reference_type,
+                    block_size,
+                    x,
+                    y,
+                    frame.allow_high_precision_mv,
+                    frame.force_integer_mv == 1,
+                )?,
+                None,
+            )
+        } else if is_compound {
+            let compound_mode_context = compound_mode_context(mode_context).min(7);
             let mode = if skip_mode {
                 1
             } else {
@@ -359,9 +649,9 @@ impl<'a> TileDecoder<'a> {
             let ref_mv_index = if skip_mode {
                 0
             } else if matches!(mode, 1 | 4 | 5) {
-                self.read_drl_index(1, primary_candidate_count)?
+                self.read_drl_index(1, primary_candidate_count, &primary_candidate_weights)?
             } else if mode == 7 {
-                self.read_drl_index(0, primary_candidate_count)?
+                self.read_drl_index(0, primary_candidate_count, &primary_candidate_weights)?
             } else {
                 0
             };
@@ -370,31 +660,56 @@ impl<'a> TileDecoder<'a> {
             has_new_mv = first_new || second_new;
             let first = if first_new {
                 let predictor = if matches!(mode, 5 | 7) {
-                    self.inter_mv_candidate(
-                        x,
-                        y,
-                        block_size,
-                        reference_type as u8,
-                        ref_mv_index,
-                        false,
-                    )
+                    compound_candidates
+                        .as_ref()
+                        .and_then(|(primary, _, _, _)| primary.get(ref_mv_index).copied())
+                        .flatten()
+                        .unwrap_or_else(|| {
+                            self.inter_mv_candidate(
+                                x,
+                                y,
+                                block_size,
+                                reference_type as u8,
+                                ref_mv_index,
+                                false,
+                            )
+                        })
                 } else {
                     primary_predictor
                 };
                 self.read_new_mv(predictor, frame)?
             } else {
-                self.inter_mv_candidate(x, y, block_size, reference_type as u8, ref_mv_index, false)
+                compound_candidates
+                    .as_ref()
+                    .and_then(|(primary, _, _, _)| primary.get(ref_mv_index).copied())
+                    .flatten()
+                    .unwrap_or_else(|| {
+                        self.inter_mv_candidate(
+                            x,
+                            y,
+                            block_size,
+                            reference_type as u8,
+                            ref_mv_index,
+                            false,
+                        )
+                    })
             };
             let second = if second_new {
                 let predictor = if matches!(mode, 4 | 7) {
-                    self.inter_mv_candidate(
-                        x,
-                        y,
-                        block_size,
-                        reference_type_secondary.unwrap_or(reference_type) as u8,
-                        ref_mv_index,
-                        true,
-                    )
+                    compound_candidates
+                        .as_ref()
+                        .and_then(|(_, secondary, _, _)| secondary.get(ref_mv_index).copied())
+                        .flatten()
+                        .unwrap_or_else(|| {
+                            self.inter_mv_candidate(
+                                x,
+                                y,
+                                block_size,
+                                reference_type_secondary.unwrap_or(reference_type) as u8,
+                                ref_mv_index,
+                                true,
+                            )
+                        })
                 } else {
                     secondary_predictor.unwrap_or((0, 0))
                 };
@@ -410,16 +725,21 @@ impl<'a> TileDecoder<'a> {
                         frame.force_integer_mv == 1,
                     )?
                 } else {
-                    secondary_predictor
-                        .map(|_| {
-                            self.inter_mv_candidate(
-                                x,
-                                y,
-                                block_size,
-                                reference_type_secondary.unwrap_or(reference_type) as u8,
-                                ref_mv_index,
-                                true,
-                            )
+                    compound_candidates
+                        .as_ref()
+                        .and_then(|(_, secondary, _, _)| secondary.get(ref_mv_index).copied())
+                        .flatten()
+                        .or_else(|| {
+                            secondary_predictor.map(|_| {
+                                self.inter_mv_candidate(
+                                    x,
+                                    y,
+                                    block_size,
+                                    reference_type_secondary.unwrap_or(reference_type) as u8,
+                                    ref_mv_index,
+                                    true,
+                                )
+                            })
                         })
                         .unwrap_or((0, 0))
                 }
@@ -441,24 +761,23 @@ impl<'a> TileDecoder<'a> {
             };
             (first, Some(second))
         } else {
-            let new_mv = self
+            let newmv_symbol = self
                 .reader
-                .read_symbol(self.cdf.newmv_cdf_mut(newmv_context))?
-                == 0;
+                .read_symbol(self.cdf.newmv_cdf_mut(newmv_context))?;
+            let new_mv = newmv_symbol == 0;
             has_new_mv = new_mv;
             let motion_vector = if new_mv {
-                let ref_mv_index = self.read_drl_index(0, primary_candidate_count)?;
-                self.read_new_mv(
-                    self.inter_mv_candidate(
-                        x,
-                        y,
-                        block_size,
-                        reference_type as u8,
-                        ref_mv_index,
-                        false,
-                    ),
-                    frame,
-                )?
+                let ref_mv_index =
+                    self.read_drl_index(0, primary_candidate_count, &primary_candidate_weights)?;
+                let predictor = self.inter_mv_candidate(
+                    x,
+                    y,
+                    block_size,
+                    reference_type as u8,
+                    ref_mv_index,
+                    false,
+                );
+                self.read_new_mv(predictor, frame)?
             } else {
                 let zero_mv = self
                     .reader
@@ -471,7 +790,7 @@ impl<'a> TileDecoder<'a> {
                     let ref_mv_index = if nearest_or_near == 0 {
                         0
                     } else {
-                        self.read_drl_index(1, primary_candidate_count)?
+                        self.read_drl_index(1, primary_candidate_count, &primary_candidate_weights)?
                     };
                     self.inter_mv_candidate(
                         x,
@@ -498,11 +817,16 @@ impl<'a> TileDecoder<'a> {
         let (interintra_mode, interintra_wedge_index) = if sequence.enable_interintra_compound
             && !is_compound
             && !skip_mode
-            && block_size.width() >= 8
-            && block_size.height() >= 8
-            && block_size.width() <= 32
-            && block_size.height() <= 32
-        {
+            && matches!(
+                block_size,
+                BlockSize::Block8x8
+                    | BlockSize::Block8x16
+                    | BlockSize::Block16x8
+                    | BlockSize::Block16x16
+                    | BlockSize::Block16x32
+                    | BlockSize::Block32x16
+                    | BlockSize::Block32x32
+            ) {
             let interintra = self
                 .reader
                 .read_symbol(self.cdf.interintra_cdf_mut(block_size.size_group()))?;
@@ -539,25 +863,51 @@ impl<'a> TileDecoder<'a> {
         } else {
             (None, None)
         };
+        let has_overlappable_neighbor = self.has_overlappable_neighbor(x, y, block_size);
+        let local_warp_candidates = if frame.allow_warped_motion && frame.force_integer_mv != 1 {
+            self.local_warp_sample_candidates(x, y, block_size, reference_type as u8, motion_vector)
+        } else {
+            [None; 8]
+        };
+        let has_local_warp_sample = local_warp_candidates.iter().any(Option::is_some);
         let motion_mode = if interintra_mode.is_some() {
             MotionMode::Simple
         } else if !skip_mode
+            && !is_compound
             && frame.is_motion_mode_switchable
             && block_size.width() >= 8
             && block_size.height() >= 8
+            && has_overlappable_neighbor
         {
-            let symbol = self.reader.read_symbol(
-                self.cdf
-                    .motion_mode_cdf_mut(block_size.motion_mode_cdf_index()),
-            )?;
-            match symbol {
-                0 => MotionMode::Simple,
-                1 => MotionMode::Obmc,
-                2 => MotionMode::LocalWarp,
-                symbol => {
-                    return Err(DecoderError::Bitstream(format!(
-                        "AV1 motion mode symbol {symbol} is invalid"
-                    )));
+            let context = block_size.motion_mode_cdf_index();
+            // AOM selects the motion-mode CDF per block: warped motion is
+            // available only when the block has at least one valid projected
+            // sample.  The sequence/frame flag alone is not sufficient;
+            // blocks without projection samples still use the OBMC CDF.
+            if frame.allow_warped_motion && has_local_warp_sample {
+                let symbol = self
+                    .reader
+                    .read_symbol(self.cdf.motion_mode_cdf_mut(context))?;
+                match symbol {
+                    0 => MotionMode::Simple,
+                    1 => MotionMode::Obmc,
+                    2 => MotionMode::LocalWarp,
+                    symbol => {
+                        return Err(DecoderError::Bitstream(format!(
+                            "AV1 motion mode symbol {symbol} is invalid"
+                        )));
+                    }
+                }
+            } else {
+                let symbol = self.reader.read_symbol(self.cdf.obmc_cdf_mut(context))?;
+                match symbol {
+                    0 => MotionMode::Simple,
+                    1 => MotionMode::Obmc,
+                    symbol => {
+                        return Err(DecoderError::Bitstream(format!(
+                            "AV1 OBMC motion mode symbol {symbol} is invalid"
+                        )));
+                    }
                 }
             }
         } else {
@@ -571,24 +921,37 @@ impl<'a> TileDecoder<'a> {
             [None; 4]
         };
         let local_warp_samples = if motion_mode == MotionMode::LocalWarp {
-            self.local_warp_sample_candidates(x, y, block_size, reference_type as u8, motion_vector)
+            local_warp_candidates
         } else {
             [None; 8]
         };
         let mut compound_weight = None;
         let mut compound_mask = None;
+        let mut compound_group_idx = None;
+        let mut decoded_compound_idx = None;
         if is_compound && !skip_mode {
             let masked_compound_used = sequence.enable_masked_compound
                 && block_size.width() >= 8
                 && block_size.height() >= 8;
             let comp_group_idx = if masked_compound_used {
+                let context = self.compound_group_idx_context(x, y);
                 self.reader
-                    .read_symbol(self.cdf.comp_group_idx_cdf_mut(0))?
+                    .read_symbol(self.cdf.comp_group_idx_cdf_mut(context))?
             } else {
                 0
             };
+            compound_group_idx = Some(comp_group_idx as u8);
             if comp_group_idx == 0 && sequence.enable_dist_wtd_comp {
-                let compound_idx = self.reader.read_symbol(self.cdf.compound_idx_cdf_mut(0))?;
+                let context = self.compound_idx_context(
+                    x,
+                    y,
+                    reference_type,
+                    reference_type_secondary.unwrap_or(reference_type),
+                );
+                let compound_idx = self
+                    .reader
+                    .read_symbol(self.cdf.compound_idx_cdf_mut(context))?;
+                decoded_compound_idx = Some(compound_idx as u8);
                 if compound_idx == 0 {
                     compound_weight = Some(distance_weighted_compound_weight(
                         sequence,
@@ -598,10 +961,14 @@ impl<'a> TileDecoder<'a> {
                     ));
                 }
             } else if comp_group_idx == 1 {
-                let compound_type = self.reader.read_symbol(
-                    self.cdf
-                        .compound_type_cdf_mut(block_size.filter_intra_cdf_index()),
-                )?;
+                let compound_type = if wedge_compound_supported(block_size) {
+                    self.reader.read_symbol(
+                        self.cdf
+                            .compound_type_cdf_mut(block_size.filter_intra_cdf_index()),
+                    )?
+                } else {
+                    1
+                };
                 match compound_type {
                     0 => {
                         let wedge_index = self.reader.read_symbol(
@@ -622,13 +989,27 @@ impl<'a> TileDecoder<'a> {
                 }
             }
         }
-        let interpolation_filter = if frame.is_filter_switchable {
-            let filter_context = mode_context.min(15);
+        // AOM skips switchable-filter syntax for skip-mode and WARPED/LOCALWARP
+        // blocks (`av1_is_interp_needed`).  Consuming those symbols here would
+        // move the arithmetic reader before the next block.
+        let interpolation_filter = if frame.is_filter_switchable
+            && !skip_mode
+            && motion_mode != MotionMode::LocalWarp
+        {
+            let filter_context =
+                self.switchable_interpolation_context(x, y, reference_type as u8, is_compound, 0);
             let vertical = InterpolationFilter::from_switchable_symbol(
                 self.reader
                     .read_symbol(self.cdf.switchable_interp_cdf_mut(filter_context))?,
             )?;
             let horizontal = if sequence.enable_dual_filter {
+                let filter_context = self.switchable_interpolation_context(
+                    x,
+                    y,
+                    reference_type as u8,
+                    is_compound,
+                    1,
+                );
                 InterpolationFilter::from_switchable_symbol(
                     self.reader
                         .read_symbol(self.cdf.switchable_interp_cdf_mut(filter_context))?,
@@ -638,10 +1019,13 @@ impl<'a> TileDecoder<'a> {
             };
             // Keep the pair in (horizontal, vertical) order for sampling.
             Some((horizontal, vertical))
+        } else if frame.is_filter_switchable {
+            Some((InterpolationFilter::Regular, InterpolationFilter::Regular))
         } else {
             Some((frame.interpolation_filter, frame.interpolation_filter))
         };
         self.set_inter_context(x, y, block_size, true);
+        self.set_compound_context(x, y, block_size, compound_group_idx, decoded_compound_idx);
         self.set_inter_mv(
             x,
             y,
@@ -650,6 +1034,7 @@ impl<'a> TileDecoder<'a> {
             reference_type as u8,
             motion_vector,
             has_new_mv,
+            interintra_mode.is_some(),
             reference_frame_secondary,
             reference_type_secondary.map(|reference_type| reference_type as u8),
             motion_vector_secondary,
@@ -658,7 +1043,7 @@ impl<'a> TileDecoder<'a> {
         );
         self.set_smooth_context(x, y, block_size, false, false);
         self.set_skip_context(x, y, block_size, skip);
-        let (tx_size_context, tx_size_symbol, tx_size) =
+        let (tx_size_context, tx_size_symbol, tx_size, transform_blocks) =
             self.read_intra_tx_size(frame, block_size, skip, true, false, x, y)?;
         let has_chroma = !sequence.color_config.monochrome && chroma_reference;
         let (uv_mode_symbol, uv_mode) = if has_chroma {
@@ -709,107 +1094,98 @@ impl<'a> TileDecoder<'a> {
             tx_size_context,
             tx_size_symbol,
             tx_size,
+            transform_blocks,
             bit_position_after: self.reader.bit_position(),
         })
     }
 
     fn read_single_reference_type(&mut self, contexts: [usize; 6]) -> Result<usize, DecoderError> {
-        Ok(
-            if self
+        let p1 = self
+            .reader
+            .read_symbol(self.cdf.single_ref_cdf_mut(contexts[0], 0))?;
+        let value = if p1 != 0 {
+            let p2 = self
                 .reader
-                .read_symbol(self.cdf.single_ref_cdf_mut(contexts[0], 0))?
-                != 0
-            {
-                if self
+                .read_symbol(self.cdf.single_ref_cdf_mut(contexts[1], 1))?;
+            if p2 == 0 {
+                let p6 = self
                     .reader
-                    .read_symbol(self.cdf.single_ref_cdf_mut(contexts[1], 1))?
-                    == 0
-                {
-                    if self
-                        .reader
-                        .read_symbol(self.cdf.single_ref_cdf_mut(contexts[5], 5))?
-                        != 0
-                    {
-                        5
-                    } else {
-                        4
-                    }
-                } else {
-                    6
-                }
-            } else if self
-                .reader
-                .read_symbol(self.cdf.single_ref_cdf_mut(contexts[2], 2))?
-                != 0
-            {
-                if self
-                    .reader
-                    .read_symbol(self.cdf.single_ref_cdf_mut(contexts[4], 4))?
-                    != 0
-                {
-                    3
-                } else {
-                    2
-                }
-            } else if self
-                .reader
-                .read_symbol(self.cdf.single_ref_cdf_mut(contexts[3], 3))?
-                != 0
-            {
-                1
+                    .read_symbol(self.cdf.single_ref_cdf_mut(contexts[5], 5))?;
+                if p6 != 0 { 5 } else { 4 }
             } else {
-                0
-            },
-        )
+                6
+            }
+        } else {
+            let p3 = self
+                .reader
+                .read_symbol(self.cdf.single_ref_cdf_mut(contexts[2], 2))?;
+            if p3 != 0 {
+                let p5 = self
+                    .reader
+                    .read_symbol(self.cdf.single_ref_cdf_mut(contexts[4], 4))?;
+                if p5 != 0 { 3 } else { 2 }
+            } else {
+                let p4 = self
+                    .reader
+                    .read_symbol(self.cdf.single_ref_cdf_mut(contexts[3], 3))?;
+                if p4 != 0 { 1 } else { 0 }
+            }
+        };
+        Ok(value)
     }
 
     fn read_compound_reference_types(
         &mut self,
-        context: usize,
-        _frame: &FrameHeader,
+        type_context: usize,
+        contexts: [usize; 8],
     ) -> Result<(usize, Option<usize>), DecoderError> {
-        let comp_context = context.min(4);
         let reference_type = self
             .reader
-            .read_symbol(self.cdf.comp_ref_type_cdf_mut(comp_context))?;
+            .read_symbol(self.cdf.comp_ref_type_cdf_mut(type_context.min(4)))?;
         let (first, second) = if reference_type == 0 {
             let bit = self
                 .reader
-                .read_symbol(self.cdf.uni_comp_ref_cdf_mut(0, 0))?;
+                .read_symbol(self.cdf.uni_comp_ref_cdf_mut(contexts[5], 0))?;
             if bit != 0 {
-                (4, 5)
+                (4, 6)
             } else {
                 let bit1 = self
                     .reader
-                    .read_symbol(self.cdf.uni_comp_ref_cdf_mut(0, 1))?;
+                    .read_symbol(self.cdf.uni_comp_ref_cdf_mut(contexts[6], 1))?;
                 if bit1 != 0 {
                     let bit2 = self
                         .reader
-                        .read_symbol(self.cdf.uni_comp_ref_cdf_mut(0, 2))?;
+                        .read_symbol(self.cdf.uni_comp_ref_cdf_mut(contexts[7], 2))?;
                     if bit2 != 0 { (0, 3) } else { (0, 2) }
                 } else {
                     (0, 1)
                 }
             }
         } else {
-            let bit = self.reader.read_symbol(self.cdf.comp_ref_cdf_mut(0, 0))?;
+            let bit = self
+                .reader
+                .read_symbol(self.cdf.comp_ref_cdf_mut(contexts[0], 0))?;
             let first = if bit == 0 {
-                let bit1 = self.reader.read_symbol(self.cdf.comp_ref_cdf_mut(0, 1))?;
+                let bit1 = self
+                    .reader
+                    .read_symbol(self.cdf.comp_ref_cdf_mut(contexts[1], 1))?;
                 if bit1 != 0 { 1 } else { 0 }
             } else {
-                let bit2 = self.reader.read_symbol(self.cdf.comp_ref_cdf_mut(0, 2))?;
+                let bit2 = self
+                    .reader
+                    .read_symbol(self.cdf.comp_ref_cdf_mut(contexts[2], 2))?;
                 if bit2 != 0 { 3 } else { 2 }
             };
             let bit_bwd = self
                 .reader
-                .read_symbol(self.cdf.comp_bwdref_cdf_mut(0, 0))?;
+                .read_symbol(self.cdf.comp_bwdref_cdf_mut(contexts[3], 0))?;
             let second = if bit_bwd == 0 {
                 let bit1_bwd = self
                     .reader
-                    .read_symbol(self.cdf.comp_bwdref_cdf_mut(0, 1))?;
-                if bit1_bwd != 0 { 6 } else { 4 }
+                    .read_symbol(self.cdf.comp_bwdref_cdf_mut(contexts[4], 1))?;
+                if bit1_bwd != 0 { 5 } else { 4 }
             } else {
-                5
+                6
             };
             (first, second)
         };
@@ -844,14 +1220,25 @@ impl<'a> TileDecoder<'a> {
         &mut self,
         start: usize,
         candidate_count: usize,
+        weights: &[u16; 8],
     ) -> Result<usize, DecoderError> {
         let mut index = start;
-        for context in 0..2 {
-            if start + context >= candidate_count {
+        let end = if start == 1 { 3 } else { 2 };
+        for context in start..end {
+            if candidate_count <= context + 1 {
                 break;
             }
-            let symbol = self.reader.read_symbol(self.cdf.drl_cdf_mut(context))?;
-            index += symbol;
+            let drl_context = if weights[context] >= 640 && weights[context + 1] >= 640 {
+                0
+            } else if weights[context] >= 640 {
+                1
+            } else if weights[context + 1] < 640 {
+                2
+            } else {
+                0
+            };
+            let symbol = self.reader.read_symbol(self.cdf.drl_cdf_mut(drl_context))?;
+            index = context + symbol;
             if symbol == 0 {
                 break;
             }
@@ -882,6 +1269,9 @@ impl<'a> TileDecoder<'a> {
             };
             ((class0_bit << 3) | (fractional << 1) | high_precision) + 1
         } else {
+            // AV1's non-class-0 magnitude carries mv_class binary offset
+            // symbols. The base magnitude is CLASS0_SIZE << (mv_class + 2),
+            // with CLASS0_SIZE == 2.
             let mut offset = 0usize;
             for bit in 0..mv_class {
                 offset |= self.reader.read_symbol(&mut cdf.bits[bit])? << bit;
@@ -896,7 +1286,7 @@ impl<'a> TileDecoder<'a> {
             } else {
                 self.reader.read_symbol(&mut cdf.hp)?
             };
-            (1usize << (mv_class + 2))
+            (2usize << (mv_class + 2))
                 .saturating_add((offset << 3) | (fractional << 1) | high_precision)
                 .saturating_add(1)
         };
@@ -1055,7 +1445,15 @@ impl<'a> TileDecoder<'a> {
         use_intrabc: bool,
         x: usize,
         y: usize,
-    ) -> Result<(Option<usize>, Option<usize>, TxSize), DecoderError> {
+    ) -> Result<
+        (
+            Option<usize>,
+            Option<usize>,
+            TxSize,
+            Vec<crate::av1::transform::TransformBlock>,
+        ),
+        DecoderError,
+    > {
         let tx_size = match frame.tx_mode {
             TxMode::Only4x4 => TxSize::Tx4x4,
             // Largest transforms retain the block's rectangular geometry.
@@ -1066,6 +1464,11 @@ impl<'a> TileDecoder<'a> {
             // skip_txfm suppresses coefficient payloads. IntrABC is parsed as
             // an inter block by the AV1 syntax, so skipped IntrABC blocks do
             // not carry this transform-size symbol.
+            TxMode::Select if is_inter && !skip && !use_intrabc => {
+                return self.read_inter_tx_size(block_size, x, y);
+            }
+            // Intra blocks still signal their transform size when skip_txfm is
+            // set.  Only skipped inter/IntrABC blocks suppress this symbol.
             TxMode::Select
                 if block_size.signals_tx_size()
                     && !(is_inter && skip)
@@ -1083,7 +1486,16 @@ impl<'a> TileDecoder<'a> {
                 }
                 let tx_size = block_size.tx_size_from_depth(symbol);
                 self.set_txfm_context(x, y, block_size, tx_size);
-                return Ok((Some(context), Some(symbol), tx_size));
+                return Ok((
+                    Some(context),
+                    Some(symbol),
+                    tx_size,
+                    if is_inter {
+                        uniform_transform_blocks(x, y, block_size, tx_size)
+                    } else {
+                        Vec::new()
+                    },
+                ));
             }
             TxMode::Select => TxSize::Tx4x4,
         };
@@ -1093,7 +1505,158 @@ impl<'a> TileDecoder<'a> {
         } else {
             self.set_txfm_context(x, y, block_size, tx_size);
         }
-        Ok((None, None, tx_size))
+        Ok((
+            None,
+            None,
+            tx_size,
+            if is_inter {
+                uniform_transform_blocks(x, y, block_size, tx_size)
+            } else {
+                Vec::new()
+            },
+        ))
+    }
+
+    fn read_inter_tx_size(
+        &mut self,
+        block_size: BlockSize,
+        x: usize,
+        y: usize,
+    ) -> Result<
+        (
+            Option<usize>,
+            Option<usize>,
+            TxSize,
+            Vec<crate::av1::transform::TransformBlock>,
+        ),
+        DecoderError,
+    > {
+        let tx_size = block_size.largest_supported_rect_tx_size();
+        let mut transform_blocks = Vec::new();
+        let mut first_context = None;
+        let mut first_split = None;
+        for offset_y in (0..block_size.height()).step_by(tx_size.height()) {
+            for offset_x in (0..block_size.width()).step_by(tx_size.width()) {
+                let root_x = x + offset_x;
+                let root_y = y + offset_y;
+                let (context, split) = if tx_size == TxSize::Tx4x4 {
+                    (None, None)
+                } else {
+                    let context = self.txfm_partition_context(root_x, root_y, block_size, tx_size);
+                    let split = self
+                        .reader
+                        .read_symbol(self.cdf.txfm_partition_cdf_mut(context))?;
+                    (Some(context), Some(split))
+                };
+                if first_context.is_none() {
+                    first_context = context;
+                    first_split = split;
+                }
+                self.read_inter_tx_partition(
+                    block_size,
+                    root_x,
+                    root_y,
+                    tx_size,
+                    0,
+                    split,
+                    &mut transform_blocks,
+                )?;
+            }
+        }
+        Ok((first_context, first_split, tx_size, transform_blocks))
+    }
+
+    fn read_inter_tx_partition(
+        &mut self,
+        block_size: BlockSize,
+        x: usize,
+        y: usize,
+        tx_size: TxSize,
+        depth: usize,
+        first_split: Option<usize>,
+        transform_blocks: &mut Vec<crate::av1::transform::TransformBlock>,
+    ) -> Result<(), DecoderError> {
+        const MAX_VARTX_DEPTH: usize = 2;
+
+        let split = match first_split {
+            Some(split) => split,
+            None if depth >= MAX_VARTX_DEPTH || tx_size == TxSize::Tx4x4 => 0,
+            None => {
+                let context = self.txfm_partition_context(x, y, block_size, tx_size);
+                self.reader
+                    .read_symbol(self.cdf.txfm_partition_cdf_mut(context))?
+            }
+        };
+        if split == 0 || depth >= MAX_VARTX_DEPTH || tx_size == TxSize::Tx4x4 {
+            transform_blocks.push(crate::av1::transform::TransformBlock {
+                plane: 0,
+                x,
+                y,
+                tx_size,
+            });
+            self.set_txfm_context_leaf(x, y, tx_size, tx_size);
+            return Ok(());
+        }
+
+        let sub_size = tx_size.sub_size();
+        if sub_size == TxSize::Tx4x4 {
+            for offset_y in (0..tx_size.height()).step_by(sub_size.height()) {
+                for offset_x in (0..tx_size.width()).step_by(sub_size.width()) {
+                    transform_blocks.push(crate::av1::transform::TransformBlock {
+                        plane: 0,
+                        x: x + offset_x,
+                        y: y + offset_y,
+                        tx_size: sub_size,
+                    });
+                }
+            }
+            self.set_txfm_context_leaf(x, y, sub_size, tx_size);
+            return Ok(());
+        }
+
+        for offset_y in (0..tx_size.height()).step_by(sub_size.height()) {
+            for offset_x in (0..tx_size.width()).step_by(sub_size.width()) {
+                self.read_inter_tx_partition(
+                    block_size,
+                    x + offset_x,
+                    y + offset_y,
+                    sub_size,
+                    depth + 1,
+                    None,
+                    transform_blocks,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn txfm_partition_context(
+        &self,
+        x: usize,
+        y: usize,
+        block_size: BlockSize,
+        tx_size: TxSize,
+    ) -> usize {
+        let has_above = y / 4 > self.tile_mi_row_start;
+        let has_left = x / 4 > self.tile_mi_col_start;
+        let above = usize::from(
+            has_above && self.above_txfm_context.get(x / 4).copied().unwrap_or(0) < tx_size.width(),
+        );
+        let left = usize::from(
+            has_left && self.left_txfm_context.get(y / 4).copied().unwrap_or(0) < tx_size.height(),
+        );
+        let max_dimension = block_size.width().max(block_size.height()).min(64);
+        let max_tx_index = match max_dimension {
+            4 => 0,
+            8 => 1,
+            16 => 2,
+            32 => 3,
+            _ => 4,
+        };
+        let tx_is_below_max = tx_size.width().max(tx_size.height()) < max_dimension;
+        let category = usize::from(tx_is_below_max && max_tx_index > 1)
+            + (4usize.saturating_sub(max_tx_index)) * 2;
+        category * 3 + above + left
     }
 
     fn read_cdef_index(
@@ -1207,6 +1770,59 @@ impl<'a> TileDecoder<'a> {
         self.is_inter_grid[mi_row * self.mi_cols + mi_col]
     }
 
+    fn has_overlappable_neighbor(&self, x: usize, y: usize, block_size: BlockSize) -> bool {
+        if block_size.width().min(block_size.height()) < 8 {
+            return false;
+        }
+        let mi_col = x / 4;
+        let mi_row = y / 4;
+        let width_mi = block_size.width() / 4;
+        let height_mi = block_size.height() / 4;
+        if mi_row > self.tile_mi_row_start {
+            let end_col = (mi_col + width_mi).min(self.mi_cols);
+            let mut neighbor_col = mi_col;
+            while neighbor_col < end_col {
+                let index = (mi_row - 1) * self.mi_cols + neighbor_col;
+                let source_width_mi = self.motion_block_size_grid[index]
+                    .map(|size| (size.width().min(64) / 4).max(1))
+                    .unwrap_or(1);
+                let (test_col, step) = if source_width_mi == 1 {
+                    ((neighbor_col & !1).saturating_add(1), 2)
+                } else {
+                    (neighbor_col, source_width_mi)
+                };
+                if test_col < self.mi_cols
+                    && self.is_inter_at_mi(test_col, mi_row - 1) == Some(true)
+                {
+                    return true;
+                }
+                neighbor_col = neighbor_col.saturating_add(step);
+            }
+        }
+        if mi_col > self.tile_mi_col_start {
+            let end_row = (mi_row + height_mi).min(self.mi_rows);
+            let mut neighbor_row = mi_row;
+            while neighbor_row < end_row {
+                let index = neighbor_row * self.mi_cols + (mi_col - 1);
+                let source_height_mi = self.motion_block_size_grid[index]
+                    .map(|size| (size.height().min(64) / 4).max(1))
+                    .unwrap_or(1);
+                let (test_row, step) = if source_height_mi == 1 {
+                    ((neighbor_row & !1).saturating_add(1), 2)
+                } else {
+                    (neighbor_row, source_height_mi)
+                };
+                if test_row < self.mi_rows
+                    && self.is_inter_at_mi(mi_col - 1, test_row) == Some(true)
+                {
+                    return true;
+                }
+                neighbor_row = neighbor_row.saturating_add(step);
+            }
+        }
+        false
+    }
+
     fn intra_inter_context(&self, x: usize, y: usize) -> usize {
         let mi_col = x >> 2;
         let mi_row = y >> 2;
@@ -1287,6 +1903,26 @@ impl<'a> TileDecoder<'a> {
         };
         has_smooth_neighbour(grid, self.mi_cols, self.mi_rows, x, y)
     }
+}
+
+fn uniform_transform_blocks(
+    x: usize,
+    y: usize,
+    block_size: BlockSize,
+    tx_size: TxSize,
+) -> Vec<crate::av1::transform::TransformBlock> {
+    let mut blocks = Vec::new();
+    for offset_y in (0..block_size.height()).step_by(tx_size.height()) {
+        for offset_x in (0..block_size.width()).step_by(tx_size.width()) {
+            blocks.push(crate::av1::transform::TransformBlock {
+                plane: 0,
+                x: x + offset_x,
+                y: y + offset_y,
+                tx_size,
+            });
+        }
+    }
+    blocks
 }
 
 pub(super) fn cfl_is_allowed(

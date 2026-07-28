@@ -1,7 +1,7 @@
 use super::diagnostic::ObmcNeighbors;
 use super::{
     BlockModeProbe, CompoundMask, DecodedTransform, InterIntraMode, LocalWarpSample, MotionMode,
-    PalettePlaneInfo, TileDecoder, coefficient_entropy_context,
+    PalettePlaneInfo, TileDecoder,
 };
 use crate::DecoderError;
 use crate::av1::decode::{FrameBuffers, FrameDecodePlan, PlaneBuffer};
@@ -16,8 +16,8 @@ use crate::av1::syntax::{PredictionMode, TxSize, TxType};
 use crate::av1::tile_decode::palette::PALETTE_MAX_SIZE;
 use crate::av1::tile_decode::warped_filter::AV1_WARPED_FILTERS;
 use crate::av1::transform::{
-    iter_transform_blocks_with_tx_size, reconstruct_lossless_transform_block_parts_into,
-    reconstruct_transform_block_parts_into,
+    TransformBlock, iter_transform_blocks_with_tx_size,
+    reconstruct_lossless_transform_block_parts_into, reconstruct_transform_block_parts_into,
 };
 
 #[derive(Clone, Copy)]
@@ -116,26 +116,6 @@ pub(super) fn decode_plane_block_unit(
         })?;
         (Some(luma), plane)
     };
-    let tx_size = if plane_index > 0 && !frame.coded_lossless() {
-        // Chroma uses the largest rectangular transform for its scaled plane
-        // block. Scaling the luma transform independently would turn, for
-        // example, a 16x8 luma block into a 4x4 chroma transform, while AV1
-        // requires the 8x4 plane transform for 4:2:0.
-        match plane_block_size.largest_supported_rect_tx_size() {
-            // AOM limits chroma transforms with a 64-pixel dimension to the
-            // corresponding 32-pixel form, while preserving other rectangles.
-            TxSize::Tx64x64 | TxSize::Tx64x32 | TxSize::Tx32x64 => TxSize::Tx32x32,
-            TxSize::Tx64x16 => TxSize::Tx32x16,
-            TxSize::Tx16x64 => TxSize::Tx16x32,
-            tx_size => tx_size,
-        }
-    } else {
-        if plane_index == 0 {
-            block_mode.tx_size
-        } else {
-            scale_tx_size(block_mode.tx_size, subsampling_x, subsampling_y)
-        }
-    };
     let reference_buffer = block_mode
         .reference_frame
         .map(|slot| decoder.reference_buffer(slot))
@@ -158,30 +138,88 @@ pub(super) fn decode_plane_block_unit(
     let obmc_neighbors = if let (MotionMode::Obmc, Some(reference_frame)) =
         (block_mode.motion_mode, block_mode.reference_frame)
     {
-        decoder.obmc_neighbors(x, y, block_mode.block_size, reference_frame)
+        let neighbors = decoder.obmc_neighbors(x, y, block_mode.block_size, reference_frame);
+        neighbors
     } else {
         ObmcNeighbors::default()
     };
-    let transforms = if subsampling_x == 0 && subsampling_y == 0 {
-        iter_transform_blocks_with_tx_size(
-            plane_index,
-            x,
-            y,
-            block_mode.block_size,
-            tx_size,
-            decoder.mi_cols << 2,
-            decoder.mi_rows << 2,
-        )
+    let transforms = if block_mode.transform_blocks.is_empty() {
+        let tx_size = if plane_index > 0 && !frame.coded_lossless() {
+            match plane_block_size.largest_supported_rect_tx_size() {
+                TxSize::Tx64x64 | TxSize::Tx64x32 | TxSize::Tx32x64 => TxSize::Tx32x32,
+                TxSize::Tx64x16 => TxSize::Tx32x16,
+                TxSize::Tx16x64 => TxSize::Tx16x32,
+                tx_size => tx_size,
+            }
+        } else if plane_index == 0 {
+            block_mode.tx_size
+        } else {
+            scale_tx_size(block_mode.tx_size, subsampling_x, subsampling_y)
+        };
+        if subsampling_x == 0 && subsampling_y == 0 {
+            iter_transform_blocks_with_tx_size(
+                plane_index,
+                x,
+                y,
+                block_mode.block_size,
+                tx_size,
+                decoder.mi_cols << 2,
+                decoder.mi_rows << 2,
+            )
+            .collect()
+        } else {
+            iter_transform_blocks_with_tx_size(
+                plane_index,
+                block_x,
+                block_y,
+                plane_block_size,
+                tx_size,
+                plane_width,
+                plane_height,
+            )
+            .collect()
+        }
     } else {
-        iter_transform_blocks_with_tx_size(
-            plane_index,
-            block_x,
-            block_y,
-            plane_block_size,
-            tx_size,
-            plane_width,
-            plane_height,
-        )
+        let mut mapped = Vec::with_capacity(block_mode.transform_blocks.len());
+        for transform in &block_mode.transform_blocks {
+            let local_x = transform.x.saturating_sub(x);
+            let local_y = transform.y.saturating_sub(y);
+            let chroma_tx_size = if plane_index == 0 {
+                transform.tx_size
+            } else {
+                scale_tx_size(transform.tx_size, subsampling_x, subsampling_y)
+            };
+            let mapped_transform = TransformBlock {
+                plane: plane_index,
+                x: if plane_index == 0 {
+                    transform.x
+                } else {
+                    block_x
+                        + ((local_x >> subsampling_x) / chroma_tx_size.width())
+                            * chroma_tx_size.width()
+                },
+                y: if plane_index == 0 {
+                    transform.y
+                } else {
+                    block_y
+                        + ((local_y >> subsampling_y) / chroma_tx_size.height())
+                            * chroma_tx_size.height()
+                },
+                tx_size: chroma_tx_size,
+            };
+            if mapped_transform.x >= plane.layout.width || mapped_transform.y >= plane.layout.height
+            {
+                continue;
+            }
+            if !mapped.iter().any(|existing: &TransformBlock| {
+                existing.x == mapped_transform.x
+                    && existing.y == mapped_transform.y
+                    && existing.tx_size == mapped_transform.tx_size
+            }) {
+                mapped.push(mapped_transform);
+            }
+        }
+        mapped
     };
     let unit_x = plane_block_origin(unit_x, block_mode.block_size.width(), subsampling_x);
     let unit_y = plane_block_origin(unit_y, block_mode.block_size.height(), subsampling_y);
@@ -197,7 +235,10 @@ pub(super) fn decode_plane_block_unit(
             && transform.y < unit_y.saturating_add(unit_height)
     };
     if block_mode.skip {
-        for transform in transforms.filter(|transform| transform_in_unit(transform)) {
+        for transform in transforms
+            .into_iter()
+            .filter(|transform| transform_in_unit(transform))
+        {
             decoder.record_transform_boundary(
                 transform,
                 TxType::DctDct,
@@ -261,7 +302,10 @@ pub(super) fn decode_plane_block_unit(
         return Ok(());
     }
 
-    for transform in transforms.filter(|transform| transform_in_unit(transform)) {
+    for transform in transforms
+        .into_iter()
+        .filter(|transform| transform_in_unit(transform))
+    {
         let txb_context = decoder.txb_context(plane_block_size, transform);
         let skip_cdf = decoder
             .cdf
@@ -336,10 +380,7 @@ pub(super) fn decode_plane_block_unit(
         let retain_coefficients = plane_index == 0 && decoded_luma.is_some();
         let decoded_transform =
             decoder.read_decoded_transform(frame, block_mode, transform, txb_context.dc_sign)?;
-        decoder.set_txb_entropy_context(
-            transform,
-            coefficient_entropy_context(&decoded_transform.coefficients),
-        );
+        decoder.set_txb_entropy_context(transform, decoded_transform.entropy_context);
         let (top_right_available, bottom_left_available) =
             decoder.reconstructed_extension_availability(plane, transform)?;
         let prediction_len = transform.tx_size.width() * transform.tx_size.height();
@@ -1854,22 +1895,23 @@ fn predict_inter_block_into(
             "AV1 inter prediction buffer has an invalid size".to_string(),
         ));
     }
-    let mv_x = i64::from(mv.1) / (1_i64 << subsampling_x);
-    let mv_y = i64::from(mv.0) / (1_i64 << subsampling_y);
+    let mv_x = motion_component_q4(mv.1, subsampling_x);
+    let mv_y = motion_component_q4(mv.0, subsampling_y);
     let secondary_mv = secondary_mv.unwrap_or(mv);
-    let secondary_mv_x = i64::from(secondary_mv.1) / (1_i64 << subsampling_x);
-    let secondary_mv_y = i64::from(secondary_mv.0) / (1_i64 << subsampling_y);
-    let integer_mv = mv_x % 8 == 0
-        && mv_y % 8 == 0
-        && (secondary_reference.is_none() || (secondary_mv_x % 8 == 0 && secondary_mv_y % 8 == 0));
+    let secondary_mv_x = motion_component_q4(secondary_mv.1, subsampling_x);
+    let secondary_mv_y = motion_component_q4(secondary_mv.0, subsampling_y);
+    let integer_mv = mv_x % 16 == 0
+        && mv_y % 16 == 0
+        && (secondary_reference.is_none()
+            || (secondary_mv_x % 16 == 0 && secondary_mv_y % 16 == 0));
     if integer_mv {
         let source_x = i64::try_from(x)
             .ok()
-            .and_then(|value| value.checked_add(mv_x / 8))
+            .and_then(|value| value.checked_add(mv_x / 16))
             .ok_or_else(|| DecoderError::Bitstream("AV1 inter source x overflows".to_string()))?;
         let source_y = i64::try_from(y)
             .ok()
-            .and_then(|value| value.checked_add(mv_y / 8))
+            .and_then(|value| value.checked_add(mv_y / 16))
             .ok_or_else(|| DecoderError::Bitstream("AV1 inter source y overflows".to_string()))?;
         let source_in_bounds = source_x >= 0
             && source_y >= 0
@@ -1900,13 +1942,13 @@ fn predict_inter_block_into(
         if let Some(secondary) = secondary_reference {
             let secondary_source_x = i64::try_from(x)
                 .ok()
-                .and_then(|value| value.checked_add(secondary_mv_x / 8))
+                .and_then(|value| value.checked_add(secondary_mv_x / 16))
                 .ok_or_else(|| {
                     DecoderError::Bitstream("AV1 secondary source x overflows".to_string())
                 })?;
             let secondary_source_y = i64::try_from(y)
                 .ok()
-                .and_then(|value| value.checked_add(secondary_mv_y / 8))
+                .and_then(|value| value.checked_add(secondary_mv_y / 16))
                 .ok_or_else(|| {
                     DecoderError::Bitstream("AV1 secondary source y overflows".to_string())
                 })?;
@@ -1988,37 +2030,35 @@ fn predict_inter_block_into(
             "AV1 inter prediction block exceeds the supported dimension".to_string(),
         ));
     }
-    let secondary_mv_x = i64::from(secondary_mv.1) / (1_i64 << subsampling_x);
-    let secondary_mv_y = i64::from(secondary_mv.0) / (1_i64 << subsampling_y);
-    let base_x = (i64::try_from(x).unwrap_or(i64::MAX) << 3)
+    let base_x = (i64::try_from(x).unwrap_or(i64::MAX) << 4)
         .checked_add(mv_x)
         .ok_or_else(|| DecoderError::Bitstream("AV1 inter source x overflows".to_string()))?;
-    let base_y = (i64::try_from(y).unwrap_or(i64::MAX) << 3)
+    let base_y = (i64::try_from(y).unwrap_or(i64::MAX) << 4)
         .checked_add(mv_y)
         .ok_or_else(|| DecoderError::Bitstream("AV1 inter source y overflows".to_string()))?;
     let mut x0 = [0i64; MAX_INTER_BLOCK_DIMENSION];
     let mut fx = [0i64; MAX_INTER_BLOCK_DIMENSION];
     for col in 0..width {
-        let fixed = base_x + col as i64 * 8;
-        let source = floor_div_eight(fixed);
+        let fixed = base_x + col as i64 * 16;
+        let source = floor_div_sixteen(fixed);
         x0[col] = source;
-        fx[col] = fixed - source * 8;
+        fx[col] = fixed - source * 16;
     }
     let mut y0 = [0i64; MAX_INTER_BLOCK_DIMENSION];
     let mut fy = [0i64; MAX_INTER_BLOCK_DIMENSION];
     for row in 0..height {
-        let fixed = base_y + row as i64 * 8;
-        let source = floor_div_eight(fixed);
+        let fixed = base_y + row as i64 * 16;
+        let source = floor_div_sixteen(fixed);
         y0[row] = source;
-        fy[row] = fixed - source * 8;
+        fy[row] = fixed - source * 16;
     }
     if let Some(secondary) = secondary_reference {
-        let secondary_base_x = (i64::try_from(x).unwrap_or(i64::MAX) << 3)
+        let secondary_base_x = (i64::try_from(x).unwrap_or(i64::MAX) << 4)
             .checked_add(secondary_mv_x)
             .ok_or_else(|| {
                 DecoderError::Bitstream("AV1 secondary inter source x overflows".to_string())
             })?;
-        let secondary_base_y = (i64::try_from(y).unwrap_or(i64::MAX) << 3)
+        let secondary_base_y = (i64::try_from(y).unwrap_or(i64::MAX) << 4)
             .checked_add(secondary_mv_y)
             .ok_or_else(|| {
                 DecoderError::Bitstream("AV1 secondary inter source y overflows".to_string())
@@ -2026,18 +2066,18 @@ fn predict_inter_block_into(
         let mut secondary_x0 = [0i64; MAX_INTER_BLOCK_DIMENSION];
         let mut secondary_fx = [0i64; MAX_INTER_BLOCK_DIMENSION];
         for col in 0..width {
-            let fixed = secondary_base_x + col as i64 * 8;
-            let source = floor_div_eight(fixed);
+            let fixed = secondary_base_x + col as i64 * 16;
+            let source = floor_div_sixteen(fixed);
             secondary_x0[col] = source;
-            secondary_fx[col] = fixed - source * 8;
+            secondary_fx[col] = fixed - source * 16;
         }
         let mut secondary_y0 = [0i64; MAX_INTER_BLOCK_DIMENSION];
         let mut secondary_fy = [0i64; MAX_INTER_BLOCK_DIMENSION];
         for row in 0..height {
-            let fixed = secondary_base_y + row as i64 * 8;
-            let source = floor_div_eight(fixed);
+            let fixed = secondary_base_y + row as i64 * 16;
+            let source = floor_div_sixteen(fixed);
             secondary_y0[row] = source;
-            secondary_fy[row] = fixed - source * 8;
+            secondary_fy[row] = fixed - source * 16;
         }
         for row in 0..height {
             for col in 0..width {
@@ -2490,43 +2530,43 @@ fn predict_inter_block_into_fractional(
     mask_geometry: MaskGeometry,
     output: &mut [u16],
 ) -> Result<(), DecoderError> {
-    let mv_x = i64::from(mv.1) / (1_i64 << subsampling_x);
-    let mv_y = i64::from(mv.0) / (1_i64 << subsampling_y);
+    let mv_x = motion_component_q4(mv.1, subsampling_x);
+    let mv_y = motion_component_q4(mv.0, subsampling_y);
     let secondary_mv = secondary_mv.unwrap_or(mv);
-    let secondary_mv_x = i64::from(secondary_mv.1) / (1_i64 << subsampling_x);
-    let secondary_mv_y = i64::from(secondary_mv.0) / (1_i64 << subsampling_y);
+    let secondary_mv_x = motion_component_q4(secondary_mv.1, subsampling_x);
+    let secondary_mv_y = motion_component_q4(secondary_mv.0, subsampling_y);
     for row in 0..height {
-        let y_fixed = (i64::try_from(y).unwrap_or(i64::MAX) << 3)
+        let y_fixed = (i64::try_from(y).unwrap_or(i64::MAX) << 4)
             .checked_add(mv_y)
             .ok_or_else(|| DecoderError::Bitstream("AV1 inter source y overflows".to_string()))?
-            + (row as i64 * 8);
-        let secondary_y_fixed = (i64::try_from(y).unwrap_or(i64::MAX) << 3)
+            + (row as i64 * 16);
+        let secondary_y_fixed = (i64::try_from(y).unwrap_or(i64::MAX) << 4)
             .checked_add(secondary_mv_y)
             .ok_or_else(|| {
                 DecoderError::Bitstream("AV1 secondary inter source y overflows".to_string())
             })?
-            + (row as i64 * 8);
-        let y0 = floor_div_eight(y_fixed);
-        let fy = y_fixed - y0 * 8;
-        let secondary_y0 = floor_div_eight(secondary_y_fixed);
-        let secondary_fy = secondary_y_fixed - secondary_y0 * 8;
+            + (row as i64 * 16);
+        let y0 = floor_div_sixteen(y_fixed);
+        let fy = y_fixed - y0 * 16;
+        let secondary_y0 = floor_div_sixteen(secondary_y_fixed);
+        let secondary_fy = secondary_y_fixed - secondary_y0 * 16;
         for col in 0..width {
-            let x_fixed = (i64::try_from(x).unwrap_or(i64::MAX) << 3)
+            let x_fixed = (i64::try_from(x).unwrap_or(i64::MAX) << 4)
                 .checked_add(mv_x)
                 .ok_or_else(|| {
                     DecoderError::Bitstream("AV1 inter source x overflows".to_string())
                 })?
-                + (col as i64 * 8);
-            let secondary_x_fixed = (i64::try_from(x).unwrap_or(i64::MAX) << 3)
+                + (col as i64 * 16);
+            let secondary_x_fixed = (i64::try_from(x).unwrap_or(i64::MAX) << 4)
                 .checked_add(secondary_mv_x)
                 .ok_or_else(|| {
                     DecoderError::Bitstream("AV1 secondary inter source x overflows".to_string())
                 })?
-                + (col as i64 * 8);
-            let x0 = floor_div_eight(x_fixed);
-            let fx = x_fixed - x0 * 8;
-            let secondary_x0 = floor_div_eight(secondary_x_fixed);
-            let secondary_fx = secondary_x_fixed - secondary_x0 * 8;
+                + (col as i64 * 16);
+            let x0 = floor_div_sixteen(x_fixed);
+            let fx = x_fixed - x0 * 16;
+            let secondary_x0 = floor_div_sixteen(secondary_x_fixed);
+            let secondary_fx = secondary_x_fixed - secondary_x0 * 16;
             let first =
                 predict_inter_sample(reference, x0, y0, fx, fy, interpolation_filters, bit_depth);
             output[row * width + col] = secondary_reference
@@ -2706,18 +2746,27 @@ fn predict_inter_sample_bilinear(
         i64::from(plane.samples[y * plane.layout.width + x])
     };
     let top =
-        sample(source_x, source_y) * (8 - subpel_x) + sample(source_x + 1, source_y) * subpel_x;
-    let bottom = sample(source_x, source_y + 1) * (8 - subpel_x)
+        sample(source_x, source_y) * (16 - subpel_x) + sample(source_x + 1, source_y) * subpel_x;
+    let bottom = sample(source_x, source_y + 1) * (16 - subpel_x)
         + sample(source_x + 1, source_y + 1) * subpel_x;
-    ((top * (8 - subpel_y) + bottom * subpel_y + 32) >> 6)
+    ((top * (16 - subpel_y) + bottom * subpel_y + 128) >> 8)
         .clamp(0, (1_i64 << bit_depth.min(16)) - 1) as u16
 }
 
-fn floor_div_eight(value: i64) -> i64 {
-    if value >= 0 {
-        value / 8
+#[inline]
+fn motion_component_q4(value: i32, subsampling: usize) -> i64 {
+    if subsampling == 0 {
+        i64::from(value) * 2
     } else {
-        -((-value + 7) / 8)
+        i64::from(value) / (1_i64 << (subsampling - 1))
+    }
+}
+
+fn floor_div_sixteen(value: i64) -> i64 {
+    if value >= 0 {
+        value / 16
+    } else {
+        -((-value + 15) / 16)
     }
 }
 
@@ -3654,7 +3703,7 @@ mod tests {
             &mut output,
         )
         .unwrap();
-        assert_eq!(output, [1, 2, 5, 6]);
+        assert_eq!(output, [2, 4, 6, 8]);
     }
 
     #[test]

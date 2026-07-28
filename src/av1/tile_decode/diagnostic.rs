@@ -99,6 +99,10 @@ pub struct BlockModeProbe {
     pub tx_size_context: Option<usize>,
     pub tx_size_symbol: Option<usize>,
     pub tx_size: TxSize,
+    /// Luma transform leaves decoded by variable transform partitioning.
+    /// The list is empty only for legacy callers that construct probes by
+    /// hand; normal block decoding always records the complete layout.
+    pub transform_blocks: Vec<TransformBlock>,
     pub bit_position_after: usize,
 }
 
@@ -195,6 +199,7 @@ pub struct DecodedTransform {
     pub transform: TransformBlock,
     pub tx_type: TxType,
     pub coefficients: Vec<i32>,
+    pub(super) entropy_context: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

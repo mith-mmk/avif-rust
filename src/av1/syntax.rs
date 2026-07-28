@@ -120,18 +120,33 @@ impl BlockSize {
 
     pub fn motion_mode_cdf_index(self) -> usize {
         match self {
-            Self::Block128x32 | Self::Block128x64 | Self::Block128x128 => 21,
-            _ => self as usize,
+            Self::Block4x4 => 0,
+            Self::Block4x8 => 1,
+            Self::Block8x4 => 2,
+            Self::Block8x8 => 3,
+            Self::Block8x16 => 4,
+            Self::Block16x8 => 5,
+            Self::Block16x16 => 6,
+            Self::Block16x32 => 7,
+            Self::Block32x16 => 8,
+            Self::Block32x32 => 9,
+            Self::Block32x64 => 10,
+            Self::Block64x32 => 11,
+            Self::Block64x64 => 12,
+            Self::Block64x128 => 13,
+            Self::Block128x64 => 14,
+            Self::Block128x128 => 15,
+            Self::Block4x16 => 16,
+            Self::Block16x4 => 17,
+            Self::Block8x32 => 18,
+            Self::Block32x8 => 19,
+            Self::Block16x64 => 20,
+            Self::Block64x16 | Self::Block32x128 | Self::Block128x32 => 21,
         }
     }
 
     pub fn size_group(self) -> usize {
-        match self.width().max(self.height()) {
-            0..=8 => 0,
-            9..=16 => 1,
-            17..=32 => 2,
-            _ => 3,
-        }
+        usize::from(self.width_mi_log2().min(self.height_mi_log2()).min(3))
     }
 
     pub fn filter_intra_cdf_index(self) -> usize {

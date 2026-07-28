@@ -2202,7 +2202,7 @@ fn parse_avif_sequence_with_brands(
                     if alpha.is_none() {
                         alpha = Some(track);
                     }
-                } else if color.is_none() {
+                } else if track.is_color && color.is_none() {
                     color = Some(track);
                 }
             }
@@ -2224,6 +2224,7 @@ struct SequenceTrack {
     samples: Vec<Vec<u8>>,
     durations_ms: Vec<u64>,
     is_alpha: bool,
+    is_color: bool,
 }
 
 fn parse_sequence_tracks(
@@ -2284,6 +2285,7 @@ fn parse_sequence_tracks(
             .find_map(|description| parse_auxiliary_type_from_sample_description(description));
         let is_alpha =
             !auxl_track_ids.is_empty() && auxiliary_type.as_deref() == Some(ALPHA_AUX_TYPE);
+        let is_color = auxl_track_ids.is_empty() && auxiliary_type.is_none();
         let Some(stsc) = child_box(stbl_payload, b"stsc")? else {
             continue;
         };
@@ -2358,6 +2360,7 @@ fn parse_sequence_tracks(
             samples,
             durations_ms,
             is_alpha,
+            is_color,
         });
     }
     Ok(tracks)

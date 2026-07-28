@@ -19,27 +19,20 @@ outside the repository under `test/images/external/avif`.
   dimensions are checked before the callback is entered.
 - WML2 callback ordering and animation storage: `init -> next -> draw` is
   covered, durations are forwarded, and the alpha track is synchronized per
-  color frame. The external five-frame cases are recognized and retained as
-  five full-canvas layers.
+  color frame. The external five-frame cases are recognized, retained as five
+  full-canvas layers, and survive a WML2 APNG encode/decode round trip.
+- AVIS Inter reconstruction: single-reference MV stacks now receive the
+  normative adjacent fallback candidates, inter-intra neighbours are excluded
+  from local-warp projection samples, compound contexts/masks follow the
+  decoded neighbour state, and inter prediction keeps AV1's 16-phase Q4 sample
+  coordinates. `colors-animated-8bpc*.avif` and `star-8bpc.avif` now pass the
+  five-frame FFmpeg RGBA oracle, including per-frame alpha.
+- Skipped intra blocks retain transform-size signalling. This also restores
+  strict entropy termination and FFmpeg parity for `alpha_noispe.avif`.
 
 ## Open
 
-### AV1 Inter reconstruction for external color AVIS
-
-`colors-animated-8bpc.avif` and `star-8bpc.avif` still fail the strict FFmpeg
-RGBA oracle on Inter frames. For `star-8bpc.avif`, frame 1 is currently about
-40.8 average RGB error (maximum 240); the decoded image remains close to the
-key-frame prediction instead of the rotated star. The mismatch is present
-before RGBA conversion and is not caused by alpha composition or duration
-handling.
-
-The frame headers show a valid hidden-reference sequence followed by a
-`show_frame` Inter frame. `PRIMARY_REF_NONE` was checked against the AV1
-specification and must use the default CDF context with the current frame's
-quantizer context; changing it to a previous CDF or a q=0 context does not
-fix the stream and can fail entropy validation. The remaining work is to
-compare the Inter block syntax/residual reconstruction against a normative
-decoder and then add a targeted regression for the first failing block.
-
-The same strict suite must still be run for the alpha, depth, audio, and
-`star-8bpc.avif` variants after this Inter reconstruction issue is fixed.
+No open issue remains for the external images covered by this work item. The
+full AVIF package suite passes with `470` library tests, `17` container tests,
+and `107` FFmpeg conformance tests; five diagnostics and two conformance probes
+remain intentionally ignored.

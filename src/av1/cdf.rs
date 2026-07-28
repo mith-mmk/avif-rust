@@ -18,6 +18,7 @@ pub const FILTER_INTRA_MODES: usize = 5;
 pub const COEFF_CDF_Q_CONTEXTS: usize = 4;
 pub const TX_SIZE_CONTEXTS: usize = 5;
 pub const TX_SIZE_SIGNAL_CONTEXTS: usize = 3;
+pub const TXFM_PARTITION_CONTEXTS: usize = 21;
 pub const TXB_SKIP_CONTEXTS: usize = 13;
 pub const PLANE_TYPES: usize = 2;
 pub const COEFF_BR_CONTEXTS: usize = 21;
@@ -60,47 +61,38 @@ pub const DEFAULT_REFMV_CDF: [[u16; 3]; 6] = [
     [24312, 32768, 0],
     [19923, 32768, 0],
 ];
-pub const DEFAULT_SINGLE_REF_CDF: [[[u16; 3]; 6]; 5] = [
+pub const DEFAULT_SINGLE_REF_CDF: [[[u16; 3]; 6]; 3] = [
     [
-        [4623, 32768, 0],
-        [2110, 32768, 0],
-        [4132, 32768, 0],
-        [7309, 32768, 0],
-        [1392, 32768, 0],
-        [1781, 32768, 0],
+        [4897, 32768, 0],
+        [1555, 32768, 0],
+        [4236, 32768, 0],
+        [8650, 32768, 0],
+        [904, 32768, 0],
+        [1444, 32768, 0],
     ],
     [
-        [8659, 32768, 0],
-        [16372, 32768, 0],
-        [9371, 32768, 0],
-        [16322, 32768, 0],
-        [6216, 32768, 0],
-        [15834, 32768, 0],
+        [16973, 32768, 0],
+        [16751, 32768, 0],
+        [19647, 32768, 0],
+        [24773, 32768, 0],
+        [11014, 32768, 0],
+        [15087, 32768, 0],
     ],
     [
-        [17353, 32768, 0],
-        [30182, 32768, 0],
-        [16300, 32768, 0],
-        [21702, 32768, 0],
-        [10365, 32768, 0],
-        [30486, 32768, 0],
-    ],
-    [[16384, 32768, 0]; 6],
-    [
-        [28672, 32768, 0],
-        [16384, 32768, 0],
-        [29440, 32768, 0],
-        [30976, 32768, 0],
-        [26624, 32768, 0],
-        [16384, 32768, 0],
+        [29744, 32768, 0],
+        [30279, 32768, 0],
+        [31194, 32768, 0],
+        [31895, 32768, 0],
+        [26875, 32768, 0],
+        [30304, 32768, 0],
     ],
 ];
 pub const DEFAULT_COMP_INTER_CDF: [[u16; 3]; 5] = [
-    [24290, 32768, 0],
-    [19956, 32768, 0],
-    [11641, 32768, 0],
-    [9804, 32768, 0],
-    [2842, 32768, 0],
+    [26828, 32768, 0],
+    [24035, 32768, 0],
+    [12031, 32768, 0],
+    [10640, 32768, 0],
+    [2901, 32768, 0],
 ];
 pub const DEFAULT_COMP_REF_TYPE_CDF: [[u16; 3]; 5] = [
     [1198, 32768, 0],
@@ -124,13 +116,15 @@ pub const DEFAULT_COMP_BWDREF_CDF: [[[u16; 3]; 2]; 3] = [
     [[17182, 32768, 0], [15175, 32768, 0]],
     [[30606, 32768, 0], [30489, 32768, 0]],
 ];
-pub const DEFAULT_INTER_COMPOUND_MODE_CDF: [[u16; 9]; 6] = [
-    [19712, 28229, 30892, 31437, 31712, 32135, 32360, 32768, 0],
-    [9600, 24804, 29268, 30323, 30802, 31726, 32177, 32768, 0],
-    [896, 22434, 27015, 29026, 29753, 31114, 31597, 32768, 0],
-    [1024, 15904, 22127, 25421, 26864, 28996, 30001, 32768, 0],
-    [512, 11222, 17217, 21445, 23473, 26133, 27550, 32768, 0],
-    [512, 11222, 17217, 21445, 23473, 26133, 27550, 32768, 0],
+pub const DEFAULT_INTER_COMPOUND_MODE_CDF: [[u16; 9]; 8] = [
+    [7760, 13823, 15808, 17641, 19156, 20666, 26891, 32768, 0],
+    [10730, 19452, 21145, 22749, 24039, 25131, 28724, 32768, 0],
+    [10664, 20221, 21588, 22906, 24295, 25387, 28436, 32768, 0],
+    [13298, 16984, 20471, 24182, 25067, 25736, 26422, 32768, 0],
+    [18904, 23325, 25242, 27432, 27898, 28258, 30758, 32768, 0],
+    [10725, 17454, 20124, 22820, 24195, 25168, 26046, 32768, 0],
+    [17125, 24273, 25814, 27492, 28214, 28704, 30592, 32768, 0],
+    [13046, 23214, 24505, 25942, 27435, 28442, 29330, 32768, 0],
 ];
 pub const DEFAULT_SWITCHABLE_INTERP_CDF: [[u16; 4]; 16] = [
     [31935, 32720, 32768, 0],
@@ -342,12 +336,35 @@ pub const DEFAULT_MOTION_MODE_CDF: [[u16; 4]; 22] = [
     [29742, 31203, 32768, 0],
 ];
 
-pub const DEFAULT_DRL_CDF: [[u16; 3]; 5] = [
-    [15_232, 32_768, 0],
-    [16_384, 32_768, 0],
-    [24_192, 32_768, 0],
-    [17_152, 32_768, 0],
-    [16_384, 32_768, 0],
+pub const DEFAULT_OBMC_CDF: [[u16; 3]; 22] = [
+    [16384, 32768, 0],
+    [16384, 32768, 0],
+    [16384, 32768, 0],
+    [10437, 32768, 0],
+    [9371, 32768, 0],
+    [9301, 32768, 0],
+    [17432, 32768, 0],
+    [14423, 32768, 0],
+    [15142, 32768, 0],
+    [25817, 32768, 0],
+    [22823, 32768, 0],
+    [22083, 32768, 0],
+    [30128, 32768, 0],
+    [31014, 32768, 0],
+    [31560, 32768, 0],
+    [32638, 32768, 0],
+    [16384, 32768, 0],
+    [16384, 32768, 0],
+    [23664, 32768, 0],
+    [20901, 32768, 0],
+    [24008, 32768, 0],
+    [26879, 32768, 0],
+];
+
+pub const DEFAULT_DRL_CDF: [[u16; 3]; 3] = [
+    [13_104, 32_768, 0],
+    [24_560, 32_768, 0],
+    [18_945, 32_768, 0],
 ];
 
 // AV1 motion-vector CDFs.  These are kept in the frame CDF context because
@@ -402,6 +419,21 @@ impl MotionVectorComponentCdf {
         class0_hp: DEFAULT_MV_CLASS0_HP_CDF,
         hp: DEFAULT_MV_HP_CDF,
     };
+
+    fn reset_symbol_counters(&mut self) {
+        reset_cdf_counter(&mut self.sign);
+        reset_cdf_counter(&mut self.classes);
+        reset_cdf_counter(&mut self.class0);
+        for cdf in &mut self.bits {
+            reset_cdf_counter(cdf);
+        }
+        for cdf in &mut self.class0_fp {
+            reset_cdf_counter(cdf);
+        }
+        reset_cdf_counter(&mut self.fp);
+        reset_cdf_counter(&mut self.class0_hp);
+        reset_cdf_counter(&mut self.hp);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -415,6 +447,13 @@ impl MotionVectorCdf {
         joint: DEFAULT_MV_JOINT_CDF,
         components: [MotionVectorComponentCdf::DEFAULT; 2],
     };
+
+    fn reset_symbol_counters(&mut self) {
+        reset_cdf_counter(&mut self.joint);
+        for component in &mut self.components {
+            component.reset_symbol_counters();
+        }
+    }
 }
 
 const DEFAULT_SEG_ID_CDF: [[u16; SEGMENT_IDS + 1]; SEGMENT_ID_CONTEXTS] = [
@@ -452,6 +491,18 @@ const DEFAULT_INTRABC_MV_CDF: IntrabcMvCdf = IntrabcMvCdf {
         [30720, 32768, 0],
     ],
 };
+
+impl IntrabcMvCdf {
+    fn reset_symbol_counters(&mut self) {
+        reset_cdf_counter(&mut self.joint);
+        reset_cdf_counter(&mut self.class);
+        reset_cdf_counter(&mut self.class0);
+        reset_cdf_counter(&mut self.sign);
+        for cdf in &mut self.bits {
+            reset_cdf_counter(cdf);
+        }
+    }
+}
 
 pub const DEFAULT_INTRA_EXT_TX_SET1_CDF: [[[u16; INTRA_EXT_TX_TYPES_SET1 + 1]; INTRA_MODES]; 2] = [
     [
@@ -2161,6 +2212,29 @@ pub const DEFAULT_CFL_ALPHA_CDF: [[u16; 17]; 6] = [
 
 pub const DEFAULT_SKIP_MODE_CDF: [[u16; 3]; 3] =
     [[32621, 32768, 0], [20708, 32768, 0], [8127, 32768, 0]];
+pub const DEFAULT_TXFM_PARTITION_CDF: [[u16; 3]; TXFM_PARTITION_CONTEXTS] = [
+    [28581, 32768, 0],
+    [23846, 32768, 0],
+    [20847, 32768, 0],
+    [24315, 32768, 0],
+    [18196, 32768, 0],
+    [12133, 32768, 0],
+    [18791, 32768, 0],
+    [10887, 32768, 0],
+    [11005, 32768, 0],
+    [27179, 32768, 0],
+    [20004, 32768, 0],
+    [11281, 32768, 0],
+    [26549, 32768, 0],
+    [19308, 32768, 0],
+    [14224, 32768, 0],
+    [28015, 32768, 0],
+    [21546, 32768, 0],
+    [14400, 32768, 0],
+    [28165, 32768, 0],
+    [22401, 32768, 0],
+    [16088, 32768, 0],
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CdfContext {
@@ -2171,18 +2245,19 @@ pub struct CdfContext {
     pub partition_w128: [[u16; 9]; PARTITION_CONTEXTS],
     pub skip: [[u16; 3]; SKIP_CONTEXTS],
     pub skip_mode: [[u16; 3]; 3],
+    pub txfm_partition: [[u16; 3]; TXFM_PARTITION_CONTEXTS],
     pub intra_inter: [[u16; 3]; 4],
     pub newmv: [[u16; 3]; 6],
     pub zeromv: [[u16; 3]; 2],
     pub refmv: [[u16; 3]; 6],
-    pub drl: [[u16; 3]; 5],
-    pub single_ref: [[[u16; 3]; 6]; 5],
+    pub drl: [[u16; 3]; 3],
+    pub single_ref: [[[u16; 3]; 6]; 3],
     pub comp_inter: [[u16; 3]; 5],
     pub comp_ref_type: [[u16; 3]; 5],
     pub uni_comp_ref: [[[u16; 3]; 3]; 3],
     pub comp_ref: [[[u16; 3]; 3]; 3],
     pub comp_bwdref: [[[u16; 3]; 2]; 3],
-    pub inter_compound_mode: [[u16; 9]; 6],
+    pub inter_compound_mode: [[u16; 9]; 8],
     pub switchable_interp: [[u16; 4]; 16],
     pub comp_group_idx: [[u16; 3]; 7],
     pub compound_idx: [[u16; 3]; 6],
@@ -2192,6 +2267,7 @@ pub struct CdfContext {
     pub wedge_interintra: [[u16; 3]; 22],
     pub wedge_idx: [[u16; 17]; 22],
     pub motion_mode: [[u16; 4]; 22],
+    pub obmc: [[u16; 3]; 22],
     pub motion: MotionVectorCdf,
     pub seg_id: [[u16; SEGMENT_IDS + 1]; SEGMENT_ID_CONTEXTS],
     pub delta_q: [u16; 5],
@@ -2244,6 +2320,133 @@ pub struct CdfContext {
     pub inter_ext_tx_set3: [[u16; INTER_EXT_TX_TYPES_SET3 + 1]; INTER_EXT_TX_SET3_SIZES],
 }
 
+fn reset_cdf_counter(cdf: &mut [u16]) {
+    if cdf.len() >= 2 && cdf[cdf.len() - 2] == 1 << 15 {
+        *cdf.last_mut().expect("CDF has a counter slot") = 0;
+    }
+}
+
+macro_rules! reset_cdfs_1d {
+    ($field:expr) => {
+        reset_cdf_counter(&mut $field);
+    };
+}
+
+macro_rules! reset_cdfs_2d {
+    ($field:expr) => {
+        for cdf in &mut $field {
+            reset_cdf_counter(cdf);
+        }
+    };
+}
+
+macro_rules! reset_cdfs_3d {
+    ($field:expr) => {
+        for cdfs in &mut $field {
+            for cdf in cdfs {
+                reset_cdf_counter(cdf);
+            }
+        }
+    };
+}
+
+macro_rules! reset_cdfs_4d {
+    ($field:expr) => {
+        for cdf_groups in &mut $field {
+            for cdfs in cdf_groups {
+                for cdf in cdfs {
+                    reset_cdf_counter(cdf);
+                }
+            }
+        }
+    };
+}
+
+impl CdfContext {
+    pub fn reset_symbol_counters(&mut self) {
+        reset_cdfs_2d!(self.partition_w8);
+        reset_cdfs_2d!(self.partition_w16);
+        reset_cdfs_2d!(self.partition_w32);
+        reset_cdfs_2d!(self.partition_w64);
+        reset_cdfs_2d!(self.partition_w128);
+        reset_cdfs_2d!(self.skip);
+        reset_cdfs_2d!(self.skip_mode);
+        reset_cdfs_2d!(self.txfm_partition);
+        reset_cdfs_2d!(self.intra_inter);
+        reset_cdfs_2d!(self.newmv);
+        reset_cdfs_2d!(self.zeromv);
+        reset_cdfs_2d!(self.refmv);
+        reset_cdfs_2d!(self.drl);
+        reset_cdfs_3d!(self.single_ref);
+        reset_cdfs_2d!(self.comp_inter);
+        reset_cdfs_2d!(self.comp_ref_type);
+        reset_cdfs_3d!(self.uni_comp_ref);
+        reset_cdfs_3d!(self.comp_ref);
+        reset_cdfs_3d!(self.comp_bwdref);
+        reset_cdfs_2d!(self.inter_compound_mode);
+        reset_cdfs_2d!(self.switchable_interp);
+        reset_cdfs_2d!(self.comp_group_idx);
+        reset_cdfs_2d!(self.compound_idx);
+        reset_cdfs_2d!(self.compound_type);
+        reset_cdfs_2d!(self.interintra);
+        reset_cdfs_2d!(self.interintra_mode);
+        reset_cdfs_2d!(self.wedge_interintra);
+        reset_cdfs_2d!(self.wedge_idx);
+        reset_cdfs_2d!(self.motion_mode);
+        reset_cdfs_2d!(self.obmc);
+        self.motion.reset_symbol_counters();
+        reset_cdfs_2d!(self.seg_id);
+        reset_cdfs_1d!(self.delta_q);
+        reset_cdfs_1d!(self.delta_lf);
+        reset_cdfs_2d!(self.delta_lf_multi);
+        reset_cdfs_1d!(self.switchable_restore);
+        reset_cdfs_1d!(self.wiener_restore);
+        reset_cdfs_1d!(self.sgrproj_restore);
+        reset_cdfs_3d!(self.palette_y_mode);
+        reset_cdfs_2d!(self.palette_uv_mode);
+        reset_cdfs_2d!(self.palette_y_size);
+        reset_cdfs_2d!(self.palette_uv_size);
+        reset_cdfs_3d!(self.palette_y_color_index);
+        reset_cdfs_3d!(self.palette_uv_color_index);
+        reset_cdfs_3d!(self.intra_frame_y_mode);
+        reset_cdfs_2d!(self.y_mode);
+        reset_cdfs_2d!(self.uv_mode_cfl_not_allowed);
+        reset_cdfs_2d!(self.uv_mode_cfl_allowed);
+        reset_cdfs_1d!(self.cfl_sign);
+        reset_cdfs_2d!(self.cfl_alpha);
+        reset_cdfs_1d!(self.intrabc);
+        for cdf in &mut self.intrabc_mv {
+            cdf.reset_symbol_counters();
+        }
+        reset_cdfs_2d!(self.use_filter_intra);
+        reset_cdfs_1d!(self.filter_intra_mode);
+        reset_cdfs_2d!(self.angle_delta);
+        reset_cdfs_2d!(self.tx_size_cat0);
+        reset_cdfs_2d!(self.tx_size_cat1);
+        reset_cdfs_2d!(self.tx_size_cat2);
+        reset_cdfs_2d!(self.tx_size_cat3);
+        reset_cdfs_3d!(self.txb_skip);
+        reset_cdfs_3d!(self.eob_pt_16);
+        reset_cdfs_3d!(self.eob_pt_32);
+        reset_cdfs_3d!(self.eob_pt_64);
+        reset_cdfs_3d!(self.eob_pt_128);
+        reset_cdfs_3d!(self.eob_pt_256);
+        reset_cdfs_3d!(self.eob_pt_512);
+        reset_cdfs_3d!(self.eob_pt_1024);
+        reset_cdfs_4d!(self.eob_extra);
+        reset_cdfs_4d!(self.coeff_base_eob);
+        reset_cdfs_4d!(self.coeff_base);
+        reset_cdfs_4d!(self.coeff_br);
+        reset_cdfs_3d!(self.dc_sign);
+        reset_cdfs_3d!(self.intra_ext_tx_set1);
+        reset_cdfs_2d!(self.intra_ext_tx_set1_staging);
+        reset_cdfs_3d!(self.intra_ext_tx_set2);
+        reset_cdfs_2d!(self.inter_ext_tx_set1);
+        reset_cdfs_1d!(self.inter_ext_tx_set2);
+        reset_cdfs_2d!(self.inter_ext_tx_set3);
+    }
+}
+
 impl Default for CdfContext {
     fn default() -> Self {
         Self::new(0)
@@ -2261,6 +2464,7 @@ impl CdfContext {
             partition_w128: DEFAULT_PARTITION_W128_CDF,
             skip: DEFAULT_SKIP_CDF,
             skip_mode: DEFAULT_SKIP_MODE_CDF,
+            txfm_partition: DEFAULT_TXFM_PARTITION_CDF,
             intra_inter: DEFAULT_INTRA_INTER_CDF,
             newmv: DEFAULT_NEWMV_CDF,
             zeromv: DEFAULT_ZEROMV_CDF,
@@ -2282,6 +2486,7 @@ impl CdfContext {
             wedge_interintra: DEFAULT_WEDGE_INTERINTRA_CDF,
             wedge_idx: DEFAULT_WEDGE_IDX_CDF,
             motion_mode: DEFAULT_MOTION_MODE_CDF,
+            obmc: DEFAULT_OBMC_CDF,
             motion: MotionVectorCdf::DEFAULT,
             seg_id: DEFAULT_SEG_ID_CDF,
             delta_q: DEFAULT_DELTA_Q_CDF,
@@ -2363,6 +2568,10 @@ impl CdfContext {
 
     pub fn skip_mode_cdf_mut(&mut self, context: usize) -> &mut [u16] {
         &mut self.skip_mode[context]
+    }
+
+    pub fn txfm_partition_cdf_mut(&mut self, context: usize) -> &mut [u16] {
+        &mut self.txfm_partition[context]
     }
 
     pub fn intra_inter_cdf_mut(&mut self, context: usize) -> &mut [u16] {
@@ -2447,6 +2656,10 @@ impl CdfContext {
 
     pub fn motion_mode_cdf_mut(&mut self, context: usize) -> &mut [u16] {
         &mut self.motion_mode[context]
+    }
+
+    pub fn obmc_cdf_mut(&mut self, context: usize) -> &mut [u16] {
+        &mut self.obmc[context]
     }
 
     pub fn motion_joint_cdf_mut(&mut self) -> &mut [u16] {

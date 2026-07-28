@@ -48,10 +48,10 @@ impl<'a> TileDecoder<'a> {
         let (symbol, partition) = if !has_rows && !has_cols {
             (3, Partition::Split)
         } else if has_rows && has_cols {
-            let symbol = self.reader.read_symbol(
-                self.cdf
-                    .partition_cdf_mut(block_size.width_mi_log2(), context),
-            )?;
+            let cdf = self
+                .cdf
+                .partition_cdf_mut(block_size.width_mi_log2(), context);
+            let symbol = self.reader.read_symbol(cdf)?;
             let partition = Partition::from_symbol(block_size, symbol).ok_or_else(|| {
                 DecoderError::Bitstream(format!(
                     "AV1 partition symbol {symbol} is invalid for {block_size:?}"

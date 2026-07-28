@@ -105,8 +105,14 @@ pub struct PaletteBlockInfo {
 pub(crate) struct MotionField {
     pub(crate) mi_cols: usize,
     pub(crate) mi_rows: usize,
+    pub(crate) order_hint_bits: u8,
+    pub(crate) order_hint: u32,
+    pub(crate) reference_order_hints: [Option<u32>; 7],
+    pub(crate) reference_frame_indices: [u8; 7],
+    pub(crate) projected: bool,
     pub(crate) reference_frames: Vec<Option<u8>>,
     pub(crate) motion_vectors: Vec<Option<(i32, i32)>>,
+    pub(crate) reference_offsets: Vec<Option<i32>>,
 }
 
 impl MotionField {
@@ -115,8 +121,14 @@ impl MotionField {
         Self {
             mi_cols,
             mi_rows,
+            order_hint_bits: 0,
+            order_hint: 0,
+            reference_order_hints: [None; 7],
+            reference_frame_indices: [0; 7],
+            projected: false,
             reference_frames: vec![None; count],
             motion_vectors: vec![None; count],
+            reference_offsets: vec![None; count],
         }
     }
 
@@ -124,6 +136,11 @@ impl MotionField {
         if self.mi_cols != tile.mi_cols || self.mi_rows != tile.mi_rows {
             return;
         }
+        self.order_hint_bits = tile.order_hint_bits;
+        self.order_hint = tile.order_hint;
+        self.reference_order_hints = tile.reference_order_hints;
+        self.reference_frame_indices = tile.reference_frame_indices;
+        self.projected = tile.projected;
         for (destination, source) in self.reference_frames.iter_mut().zip(tile.reference_frames) {
             if source.is_some() {
                 *destination = source;
@@ -134,7 +151,134 @@ impl MotionField {
                 *destination = source;
             }
         }
+        for (destination, source) in self
+            .reference_offsets
+            .iter_mut()
+            .zip(tile.reference_offsets)
+        {
+            if source.is_some() {
+                *destination = source;
+            }
+        }
     }
+
+    pub(crate) fn projected_motion(
+        &self,
+        mi_col: usize,
+        mi_row: usize,
+        blk_col: isize,
+        blk_row: isize,
+        reference_type: usize,
+        current_order_hint: u32,
+        current_reference_order_hints: &[Option<u32>; 7],
+    ) -> Option<(usize, (i32, i32))> {
+        let sample_row = if mi_row & 1 == 1 {
+            blk_row
+        } else {
+            blk_row + 1
+        };
+        let sample_col = if mi_col & 1 == 1 {
+            blk_col
+        } else {
+            blk_col + 1
+        };
+        let source_row = mi_row.checked_add_signed(sample_row)? >> 1;
+        let source_col = mi_col.checked_add_signed(sample_col)? >> 1;
+        let source_row = source_row.checked_mul(2)?;
+        let source_col = source_col.checked_mul(2)?;
+        if source_row >= self.mi_rows || source_col >= self.mi_cols {
+            return None;
+        }
+        let index = source_row * self.mi_cols + source_col;
+        let motion_vector = self.motion_vectors.get(index).copied().flatten()?;
+        if self.projected {
+            let reference_hint = current_reference_order_hints
+                .get(reference_type)
+                .copied()
+                .flatten()?;
+            let reference_offset = self.reference_offsets.get(index).copied().flatten()?;
+            let current_offset = relative_order_hint_distance(
+                self.order_hint_bits,
+                current_order_hint,
+                reference_hint,
+            );
+            if reference_offset <= 0 || current_offset.abs() > 31 {
+                return None;
+            }
+            return Some((
+                index,
+                project_temporal_motion_vector(motion_vector, current_offset, reference_offset),
+            ));
+        }
+        let previous_reference_type =
+            usize::from(self.reference_frames.get(index).copied().flatten()?);
+        let previous_reference_hint = self
+            .reference_order_hints
+            .get(previous_reference_type)
+            .copied()
+            .flatten()?;
+        let current_reference_hint = current_reference_order_hints
+            .get(reference_type)
+            .copied()
+            .flatten()?;
+        let previous_offset = relative_order_hint_distance(
+            self.order_hint_bits,
+            previous_reference_hint,
+            self.order_hint,
+        );
+        let current_offset = relative_order_hint_distance(
+            self.order_hint_bits,
+            current_reference_hint,
+            current_order_hint,
+        );
+        if previous_offset == 0 {
+            return None;
+        }
+        Some((
+            index,
+            project_temporal_motion_vector(motion_vector, current_offset, previous_offset),
+        ))
+    }
+}
+
+fn relative_order_hint_distance(bits: u8, reference: u32, current: u32) -> i32 {
+    if bits == 0 {
+        return 0;
+    }
+    let modulo = 1i32 << bits;
+    let mask = modulo - 1;
+    let mut distance = ((reference as i32 - current as i32) & mask) as i32;
+    if distance & (modulo >> 1) != 0 {
+        distance -= modulo;
+    }
+    distance
+}
+
+fn project_temporal_motion_vector(
+    motion_vector: (i32, i32),
+    numerator: i32,
+    denominator: i32,
+) -> (i32, i32) {
+    const DIV_MULT: [i32; 32] = [
+        0, 16384, 8192, 5461, 4096, 3276, 2730, 2340, 2048, 1820, 1638, 1489, 1365, 1260, 1170,
+        1092, 1024, 963, 910, 862, 819, 780, 744, 712, 682, 655, 630, 606, 585, 564, 546, 528,
+    ];
+    fn scale(value: i32, numerator: i32, denominator: i32, div_mult: &[i32; 32]) -> i32 {
+        let numerator = numerator.clamp(-31, 31);
+        let denominator = denominator.clamp(0, 31);
+        let product =
+            i64::from(value) * i64::from(numerator) * i64::from(div_mult[denominator as usize]);
+        let rounded = if product < 0 {
+            -((-product + (1 << 13)) >> 14)
+        } else {
+            (product + (1 << 13)) >> 14
+        };
+        rounded.clamp(-32767, 32767) as i32
+    }
+    (
+        scale(motion_vector.0, numerator, denominator, &DIV_MULT),
+        scale(motion_vector.1, numerator, denominator, &DIV_MULT),
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,6 +326,7 @@ pub struct TileDecoder<'a> {
     motion_vector_grid: Vec<Option<(i32, i32)>>,
     interpolation_filter_grid: Vec<Option<(InterpolationFilter, InterpolationFilter)>>,
     motion_block_size_grid: Vec<Option<BlockSize>>,
+    interintra_grid: Vec<Option<bool>>,
     reference_frame_secondary_grid: Vec<Option<u8>>,
     reference_frame_secondary_type_grid: Vec<Option<u8>>,
     motion_vector_secondary_grid: Vec<Option<(i32, i32)>>,
@@ -194,6 +339,8 @@ pub struct TileDecoder<'a> {
     uv_smooth_grid: Vec<Option<bool>>,
     skip_grid: Vec<Option<bool>>,
     skip_mode_grid: Vec<Option<bool>>,
+    compound_group_idx_grid: Vec<Option<u8>>,
+    compound_idx_grid: Vec<Option<u8>>,
     segmentation_map: Vec<u8>,
     above_partition_context: Vec<u8>,
     left_partition_context: Vec<u8>,
@@ -225,6 +372,11 @@ pub struct TileDecoder<'a> {
     current_delta_lf: [i8; 4],
     reference_buffers: [Option<Arc<FrameBuffers>>; 8],
     temporal_motion_field: Option<Arc<MotionField>>,
+    reference_frame_indices: [u8; 7],
+    reference_order_hints: [Option<u32>; 7],
+    order_hint: u32,
+    order_hint_bits: u8,
+    current_inter_compound: bool,
 }
 
 pub(super) fn is_chroma_reference(
@@ -295,6 +447,7 @@ impl<'a> TileDecoder<'a> {
             motion_vector_grid: vec![None; mi_count],
             interpolation_filter_grid: vec![None; mi_count],
             motion_block_size_grid: vec![None; mi_count],
+            interintra_grid: vec![None; mi_count],
             reference_frame_secondary_grid: vec![None; mi_count],
             reference_frame_secondary_type_grid: vec![None; mi_count],
             motion_vector_secondary_grid: vec![None; mi_count],
@@ -307,6 +460,8 @@ impl<'a> TileDecoder<'a> {
             uv_smooth_grid: vec![None; mi_count],
             skip_grid: vec![None; mi_count],
             skip_mode_grid: vec![None; mi_count],
+            compound_group_idx_grid: vec![None; mi_count],
+            compound_idx_grid: vec![None; mi_count],
             segmentation_map: vec![0; mi_count],
             above_partition_context: vec![0; mi_cols],
             left_partition_context: vec![0; mi_rows],
@@ -343,6 +498,11 @@ impl<'a> TileDecoder<'a> {
             current_delta_lf: [0; 4],
             reference_buffers,
             temporal_motion_field: None,
+            reference_frame_indices: frame.reference_frame_indices,
+            reference_order_hints: frame.reference_order_hints,
+            order_hint: frame.order_hint,
+            order_hint_bits: 8,
+            current_inter_compound: false,
         })
     }
 
@@ -369,12 +529,78 @@ impl<'a> TileDecoder<'a> {
         self.temporal_motion_field = field;
     }
 
-    pub(super) fn motion_field(&self) -> MotionField {
+    pub(super) fn set_order_hint_bits(&mut self, order_hint_bits: u8) {
+        self.order_hint_bits = order_hint_bits;
+    }
+
+    pub(super) fn set_current_inter_compound(&mut self, compound: bool) {
+        self.current_inter_compound = compound;
+    }
+
+    pub(super) fn motion_field(&self, frame: &FrameHeader, order_hint_bits: u8) -> MotionField {
+        // AOM stores the frame-MV map at 8x8-MI granularity.  Keep the
+        // public dimensions unchanged for tile merging, but populate only
+        // the corresponding even 4x4-MI coordinates so temporal samples can
+        // distinguish an unavailable source block from a propagated MV.
+        let mut reference_frames = vec![None; self.mi_cols * self.mi_rows];
+        let mut motion_vectors = vec![None; self.mi_cols * self.mi_rows];
+        for row in (0..self.mi_rows).step_by(2) {
+            for col in (0..self.mi_cols).step_by(2) {
+                // `av1_copy_frame_mvs` writes every decoded 4x4 block into
+                // the containing 8x8 frame-MV cell.  In raster order the
+                // bottom-right 4x4 block is therefore the value retained for
+                // a complete 8x8 cell (with edge clamping for odd dimensions).
+                let source_row = (row + 1).min(self.mi_rows.saturating_sub(1));
+                let source_col = (col + 1).min(self.mi_cols.saturating_sub(1));
+                let source_index = source_row * self.mi_cols + source_col;
+                let destination_index = row * self.mi_cols + col;
+                let mut selected = None;
+                for (reference_type, motion_vector) in [
+                    (
+                        self.reference_frame_type_grid[source_index],
+                        self.motion_vector_grid[source_index],
+                    ),
+                    (
+                        self.reference_frame_secondary_type_grid[source_index],
+                        self.motion_vector_secondary_grid[source_index],
+                    ),
+                ] {
+                    let (Some(reference_type), Some(motion_vector)) =
+                        (reference_type, motion_vector)
+                    else {
+                        continue;
+                    };
+                    let is_usable = frame
+                        .reference_order_hints
+                        .get(usize::from(reference_type))
+                        .copied()
+                        .flatten()
+                        .map(|hint| {
+                            relative_order_hint_distance(order_hint_bits, hint, frame.order_hint)
+                                <= 0
+                        })
+                        .unwrap_or(true);
+                    if is_usable {
+                        selected = Some((reference_type, motion_vector));
+                    }
+                }
+                if let Some((reference_type, motion_vector)) = selected {
+                    reference_frames[destination_index] = Some(reference_type);
+                    motion_vectors[destination_index] = Some(motion_vector);
+                }
+            }
+        }
         MotionField {
             mi_cols: self.mi_cols,
             mi_rows: self.mi_rows,
-            reference_frames: self.reference_frame_grid.clone(),
-            motion_vectors: self.motion_vector_grid.clone(),
+            order_hint_bits,
+            order_hint: frame.order_hint,
+            reference_order_hints: frame.reference_order_hints,
+            reference_frame_indices: frame.reference_frame_indices,
+            projected: false,
+            reference_frames,
+            motion_vectors,
+            reference_offsets: vec![None; self.mi_cols * self.mi_rows],
         }
     }
 
