@@ -247,7 +247,7 @@ fn relative_order_hint_distance(bits: u8, reference: u32, current: u32) -> i32 {
     }
     let modulo = 1i32 << bits;
     let mask = modulo - 1;
-    let mut distance = ((reference as i32 - current as i32) & mask) as i32;
+    let mut distance = (reference as i32 - current as i32) & mask;
     if distance & (modulo >> 1) != 0 {
         distance -= modulo;
     }
@@ -767,7 +767,7 @@ fn neg_deinterleave(diff: u8, predicted: u8, max: u8) -> u8 {
     } else if 2 * predicted < max {
         if diff <= 2 * predicted {
             if diff & 1 != 0 {
-                predicted + (diff + 1) / 2
+                predicted + diff.div_ceil(2)
             } else {
                 predicted - diff / 2
             }
@@ -776,7 +776,7 @@ fn neg_deinterleave(diff: u8, predicted: u8, max: u8) -> u8 {
         }
     } else if diff <= 2 * (max - predicted - 1) {
         if diff & 1 != 0 {
-            predicted + (diff + 1) / 2
+            predicted + diff.div_ceil(2)
         } else {
             predicted - diff / 2
         }

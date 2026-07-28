@@ -138,8 +138,7 @@ pub(super) fn decode_plane_block_unit(
     let obmc_neighbors = if let (MotionMode::Obmc, Some(reference_frame)) =
         (block_mode.motion_mode, block_mode.reference_frame)
     {
-        let neighbors = decoder.obmc_neighbors(x, y, block_mode.block_size, reference_frame);
-        neighbors
+        decoder.obmc_neighbors(x, y, block_mode.block_size, reference_frame)
     } else {
         ObmcNeighbors::default()
     };
@@ -295,7 +294,7 @@ pub(super) fn decode_plane_block_unit(
                 transform.y,
                 transform.tx_size.width(),
                 transform.tx_size.height(),
-                &prediction,
+                prediction,
             )?;
             decoder.mark_reconstructed_transform(transform)?;
         }
@@ -371,7 +370,7 @@ pub(super) fn decode_plane_block_unit(
                 transform.y,
                 transform.tx_size.width(),
                 transform.tx_size.height(),
-                &prediction,
+                prediction,
             )?;
             decoder.mark_reconstructed_transform(transform)?;
             continue;
@@ -431,7 +430,7 @@ pub(super) fn decode_plane_block_unit(
                 tx_type,
                 &decoded_transform.coefficients,
                 quant_state.plane(transform.plane),
-                &prediction,
+                prediction,
                 sequence.color_config.bit_depth,
                 dequant,
                 reconstructed,
@@ -449,7 +448,7 @@ pub(super) fn decode_plane_block_unit(
                 tx_type,
                 &decoded_transform.coefficients,
                 quant_state.plane(transform.plane),
-                &prediction,
+                prediction,
                 sequence.color_config.bit_depth,
                 qmatrix,
                 dequant,
@@ -2130,7 +2129,7 @@ fn predict_inter_block_into(
 
 #[inline]
 fn average_prediction(first: u16, second: u16) -> u16 {
-    ((u32::from(first) + u32::from(second) + 1) / 2) as u16
+    (u32::from(first) + u32::from(second)).div_ceil(2) as u16
 }
 
 const WEDGE_MASTER_EVEN: [u8; 64] = [
@@ -2427,7 +2426,7 @@ fn wedge_code(width: usize, height: usize, index: usize) -> Option<(WedgeCode, b
 
 #[inline]
 fn wedge_oblique63(row: usize, column: usize) -> u8 {
-    let shift = 16_i32 - i32::try_from((row + 1) / 2).unwrap_or(i32::MAX);
+    let shift = 16_i32 - i32::try_from(row.div_ceil(2)).unwrap_or(i32::MAX);
     let source = if row & 1 == 0 {
         &WEDGE_MASTER_EVEN
     } else {

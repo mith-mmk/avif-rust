@@ -262,10 +262,10 @@ impl<'a> TileDecoder<'a> {
             if let Some(count) = counts.get_mut(usize::from(primary)) {
                 *count += 1;
             }
-            if let Some(secondary) = secondary {
-                if let Some(count) = counts.get_mut(usize::from(secondary)) {
-                    *count += 1;
-                }
+            if let Some(secondary) = secondary
+                && let Some(count) = counts.get_mut(usize::from(secondary))
+            {
+                *count += 1;
             }
         }
         counts
@@ -450,12 +450,16 @@ impl<'a> TileDecoder<'a> {
 
         let mi_col = x / 4;
         let mi_row = y / 4;
-        let left = (mi_col > self.tile_mi_col_start)
-            .then(|| neighbor_filter(mi_col - 1, mi_row))
-            .unwrap_or(3);
-        let above = (mi_row > self.tile_mi_row_start)
-            .then(|| neighbor_filter(mi_col, mi_row - 1))
-            .unwrap_or(3);
+        let left = if mi_col > self.tile_mi_col_start {
+            neighbor_filter(mi_col - 1, mi_row)
+        } else {
+            3
+        };
+        let above = if mi_row > self.tile_mi_row_start {
+            neighbor_filter(mi_col, mi_row - 1)
+        } else {
+            3
+        };
         let offset = usize::from(compound) * 4 + direction * 8;
         offset
             + if left == above {
@@ -542,24 +546,19 @@ impl<'a> TileDecoder<'a> {
             let origin_index = origin_row * self.mi_cols + origin_col;
             let same_reference = self.reference_frame_grid[origin_index] == Some(reference_frame)
                 && self.reference_frame_secondary_grid[origin_index].is_none();
-            if same_reference {
-                if let Some(motion_vector) = self.motion_vector_grid[origin_index] {
-                    let neighbor = ObmcNeighbor {
-                        origin_x: origin_col * 4,
-                        origin_y: origin_row * 4,
-                        width: source_w4 * 4,
-                        height: source_h4 * 4,
-                        motion_vector,
-                        interpolation_filters: self.interpolation_filter_grid[origin_index]
-                            .unwrap_or((
-                                InterpolationFilter::Regular,
-                                InterpolationFilter::Regular,
-                            )),
-                    };
-                    if !result[..result_len].contains(&Some(neighbor)) {
-                        result[result_len] = Some(neighbor);
-                        result_len += 1;
-                    }
+            if same_reference && let Some(motion_vector) = self.motion_vector_grid[origin_index] {
+                let neighbor = ObmcNeighbor {
+                    origin_x: origin_col * 4,
+                    origin_y: origin_row * 4,
+                    width: source_w4 * 4,
+                    height: source_h4 * 4,
+                    motion_vector,
+                    interpolation_filters: self.interpolation_filter_grid[origin_index]
+                        .unwrap_or((InterpolationFilter::Regular, InterpolationFilter::Regular)),
+                };
+                if !result[..result_len].contains(&Some(neighbor)) {
+                    result[result_len] = Some(neighbor);
+                    result_len += 1;
                 }
             }
             candidate_col = candidate_col
@@ -605,24 +604,19 @@ impl<'a> TileDecoder<'a> {
             let origin_index = origin_row * self.mi_cols + origin_col;
             let same_reference = self.reference_frame_grid[origin_index] == Some(reference_frame)
                 && self.reference_frame_secondary_grid[origin_index].is_none();
-            if same_reference {
-                if let Some(motion_vector) = self.motion_vector_grid[origin_index] {
-                    let neighbor = ObmcNeighbor {
-                        origin_x: origin_col * 4,
-                        origin_y: origin_row * 4,
-                        width: source_w4 * 4,
-                        height: source_h4 * 4,
-                        motion_vector,
-                        interpolation_filters: self.interpolation_filter_grid[origin_index]
-                            .unwrap_or((
-                                InterpolationFilter::Regular,
-                                InterpolationFilter::Regular,
-                            )),
-                    };
-                    if !result[..result_len].contains(&Some(neighbor)) {
-                        result[result_len] = Some(neighbor);
-                        result_len += 1;
-                    }
+            if same_reference && let Some(motion_vector) = self.motion_vector_grid[origin_index] {
+                let neighbor = ObmcNeighbor {
+                    origin_x: origin_col * 4,
+                    origin_y: origin_row * 4,
+                    width: source_w4 * 4,
+                    height: source_h4 * 4,
+                    motion_vector,
+                    interpolation_filters: self.interpolation_filter_grid[origin_index]
+                        .unwrap_or((InterpolationFilter::Regular, InterpolationFilter::Regular)),
+                };
+                if !result[..result_len].contains(&Some(neighbor)) {
+                    result[result_len] = Some(neighbor);
+                    result_len += 1;
                 }
             }
             candidate_row = candidate_row
@@ -673,7 +667,7 @@ impl<'a> TileDecoder<'a> {
             let Some(hint) = hint else {
                 return false;
             };
-            let bits = self.order_hint_bits.max(1).min(31);
+            let bits = self.order_hint_bits.clamp(1, 31);
             let half = 1i32 << (bits - 1);
             let mask = half - 1;
             let mut distance = hint as i32 - self.order_hint as i32;
@@ -874,12 +868,11 @@ impl<'a> TileDecoder<'a> {
         }
         if mi_row > self.tile_mi_row_start {
             let top_right = mi_col.saturating_add(block_w4);
-            if top_right < self.mi_cols {
-                if let Some((mv, new_mv)) =
+            if top_right < self.mi_cols
+                && let Some((mv, new_mv)) =
                     candidate(top_right, mi_row - 1, reference_frame, secondary)
-                {
-                    stack.add(mv, 4, new_mv, true, true);
-                }
+            {
+                stack.add(mv, 4, new_mv, true, true);
             }
         }
         stack.nearest_len = stack.len;
@@ -911,7 +904,7 @@ impl<'a> TileDecoder<'a> {
                     add_temporal(blk_row as isize, blk_col as isize);
                 }
             }
-            if block_h4 >= 2 && block_h4 < 16 && block_w4 >= 2 && block_w4 < 16 {
+            if (2..16).contains(&block_h4) && (2..16).contains(&block_w4) {
                 let vertical_offset = block_h4.max(2) as isize;
                 let horizontal_offset = block_w4.max(2) as isize;
                 for (blk_row, blk_col) in [
@@ -928,12 +921,12 @@ impl<'a> TileDecoder<'a> {
             }
         }
 
-        if mi_row > self.tile_mi_row_start && mi_col > self.tile_mi_col_start {
-            if let Some((mv, _new_mv)) =
+        if mi_row > self.tile_mi_row_start
+            && mi_col > self.tile_mi_col_start
+            && let Some((mv, _new_mv)) =
                 candidate(mi_col - 1, mi_row - 1, reference_frame, secondary)
-            {
-                stack.add(mv, 4, false, true, false);
-            }
+        {
+            stack.add(mv, 4, false, true, false);
         }
         for idx in 2..=3 {
             let row_offset = -(idx as isize * 2) + 1 + row_adj;
@@ -1016,56 +1009,54 @@ impl<'a> TileDecoder<'a> {
         let mut do_top_left = true;
         let mut do_top_right = true;
 
-        if mi_row > self.tile_mi_row_start {
-            if let Some(source_size) = self.motion_block_size_at(mi_col, mi_row - 1) {
-                let source_w4 = (source_size.width() / 4).max(1);
-                if w4 <= source_w4 {
-                    let col_offset = -((mi_col & (source_w4 - 1)) as isize);
-                    if col_offset < 0 {
-                        do_top_left = false;
-                    }
-                    if col_offset + source_w4 as isize > w4 as isize {
-                        do_top_right = false;
-                    }
-                    push_local_warp_offset(&mut offsets, &mut offset_len, -1, 0);
-                } else {
-                    let mut i = 0usize;
-                    while i < w4.min(self.mi_cols.saturating_sub(mi_col))
-                        && offset_len < offsets.len()
-                    {
-                        let source_w4 = self
-                            .motion_block_size_at(mi_col + i, mi_row - 1)
-                            .map(|size| (size.width() / 4).max(1))
-                            .unwrap_or(1);
-                        let mi_step = w4.min(source_w4).max(1);
-                        push_local_warp_offset(&mut offsets, &mut offset_len, -1, i as isize);
-                        i = i.saturating_add(mi_step);
-                    }
+        if mi_row > self.tile_mi_row_start
+            && let Some(source_size) = self.motion_block_size_at(mi_col, mi_row - 1)
+        {
+            let source_w4 = (source_size.width() / 4).max(1);
+            if w4 <= source_w4 {
+                let col_offset = -((mi_col & (source_w4 - 1)) as isize);
+                if col_offset < 0 {
+                    do_top_left = false;
+                }
+                if col_offset + source_w4 as isize > w4 as isize {
+                    do_top_right = false;
+                }
+                push_local_warp_offset(&mut offsets, &mut offset_len, -1, 0);
+            } else {
+                let mut i = 0usize;
+                while i < w4.min(self.mi_cols.saturating_sub(mi_col)) && offset_len < offsets.len()
+                {
+                    let source_w4 = self
+                        .motion_block_size_at(mi_col + i, mi_row - 1)
+                        .map(|size| (size.width() / 4).max(1))
+                        .unwrap_or(1);
+                    let mi_step = w4.min(source_w4).max(1);
+                    push_local_warp_offset(&mut offsets, &mut offset_len, -1, i as isize);
+                    i = i.saturating_add(mi_step);
                 }
             }
         }
-        if mi_col > self.tile_mi_col_start {
-            if let Some(source_size) = self.motion_block_size_at(mi_col - 1, mi_row) {
-                let source_h4 = (source_size.height() / 4).max(1);
-                if h4 <= source_h4 {
-                    let row_offset = -((mi_row & (source_h4 - 1)) as isize);
-                    if row_offset < 0 {
-                        do_top_left = false;
-                    }
-                    push_local_warp_offset(&mut offsets, &mut offset_len, 0, -1);
-                } else {
-                    let mut i = 0usize;
-                    while i < h4.min(self.mi_rows.saturating_sub(mi_row))
-                        && offset_len < offsets.len()
-                    {
-                        let source_h4 = self
-                            .motion_block_size_at(mi_col - 1, mi_row + i)
-                            .map(|size| (size.height() / 4).max(1))
-                            .unwrap_or(1);
-                        let mi_step = h4.min(source_h4).max(1);
-                        push_local_warp_offset(&mut offsets, &mut offset_len, i as isize, -1);
-                        i = i.saturating_add(mi_step);
-                    }
+        if mi_col > self.tile_mi_col_start
+            && let Some(source_size) = self.motion_block_size_at(mi_col - 1, mi_row)
+        {
+            let source_h4 = (source_size.height() / 4).max(1);
+            if h4 <= source_h4 {
+                let row_offset = -((mi_row & (source_h4 - 1)) as isize);
+                if row_offset < 0 {
+                    do_top_left = false;
+                }
+                push_local_warp_offset(&mut offsets, &mut offset_len, 0, -1);
+            } else {
+                let mut i = 0usize;
+                while i < h4.min(self.mi_rows.saturating_sub(mi_row)) && offset_len < offsets.len()
+                {
+                    let source_h4 = self
+                        .motion_block_size_at(mi_col - 1, mi_row + i)
+                        .map(|size| (size.height() / 4).max(1))
+                        .unwrap_or(1);
+                    let mi_step = h4.min(source_h4).max(1);
+                    push_local_warp_offset(&mut offsets, &mut offset_len, i as isize, -1);
+                    i = i.saturating_add(mi_step);
                 }
             }
         }
@@ -1592,9 +1583,8 @@ impl<'a> TileDecoder<'a> {
         if mi_row > self.tile_mi_row_start {
             visit_pair(mi_col.saturating_add(block_w4), mi_row - 1, 4);
         }
-        drop(visit_pair);
-        for index in 0..len {
-            weights[index] = weights[index].saturating_add(640);
+        for weight in weights.iter_mut().take(len) {
+            *weight = weight.saturating_add(640);
         }
         for end in (1..len).rev() {
             for index in 0..end {
@@ -1634,7 +1624,7 @@ impl<'a> TileDecoder<'a> {
                     );
                 }
             }
-            if block_h4 >= 2 && block_h4 < 16 && block_w4 >= 2 && block_w4 < 16 {
+            if (2..16).contains(&block_h4) && (2..16).contains(&block_w4) {
                 let vertical_offset = block_h4.max(2) as isize;
                 let horizontal_offset = block_w4.max(2) as isize;
                 for (blk_row, blk_col) in [
@@ -1758,7 +1748,7 @@ impl<'a> TileDecoder<'a> {
             let Some(hint) = hint else {
                 return false;
             };
-            let bits = self.order_hint_bits.max(1).min(31);
+            let bits = self.order_hint_bits.clamp(1, 31);
             let half = 1i32 << (bits - 1);
             let mask = half - 1;
             let mut distance = hint as i32 - self.order_hint as i32;
@@ -1805,15 +1795,15 @@ impl<'a> TileDecoder<'a> {
             let origin_col = column & !((size.width() / 4).max(1) - 1);
             let origin_row = row & !((size.height() / 4).max(1) - 1);
             let origin = origin_row * self.mi_cols + origin_col;
-            if let Some(motion) = self.motion_vector_grid[origin] {
-                if let Some(reference) = self.reference_frame_grid[origin] {
-                    add(reference, motion);
-                }
+            if let Some(motion) = self.motion_vector_grid[origin]
+                && let Some(reference) = self.reference_frame_grid[origin]
+            {
+                add(reference, motion);
             }
-            if let Some(motion) = self.motion_vector_secondary_grid[origin] {
-                if let Some(reference) = self.reference_frame_secondary_grid[origin] {
-                    add(reference, motion);
-                }
+            if let Some(motion) = self.motion_vector_secondary_grid[origin]
+                && let Some(reference) = self.reference_frame_secondary_grid[origin]
+            {
+                add(reference, motion);
             }
         };
         let mi_size = block_w4
@@ -1866,9 +1856,11 @@ impl<'a> TileDecoder<'a> {
             weights[len] = 2;
             len += 1;
         } else if len == 0 {
-            for candidate in 0..2 {
-                primary[len] = Some(compound_list[0][candidate]);
-                secondary[len] = Some(compound_list[1][candidate]);
+            for (&primary_candidate, &secondary_candidate) in
+                compound_list[0].iter().zip(&compound_list[1])
+            {
+                primary[len] = Some(primary_candidate);
+                secondary[len] = Some(secondary_candidate);
                 weights[len] = 2;
                 len += 1;
             }
@@ -2236,7 +2228,7 @@ impl<'a> TileDecoder<'a> {
             .map(|column| neighbor_context(column, mi_row))
             .unwrap_or(0);
         let relative_distance = |reference: u32| {
-            let bits = self.order_hint_bits.max(1).min(31);
+            let bits = self.order_hint_bits.clamp(1, 31);
             let half = 1i32 << (bits - 1);
             let mask = half - 1;
             let distance = reference as i32 - self.order_hint as i32;

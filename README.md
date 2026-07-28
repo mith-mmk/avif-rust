@@ -6,7 +6,7 @@
 
 # avif-rust
 
-`avif-rust` is an experimental, pure Rust AVIF container and AV1 still-image
+`avif-rust` is an experimental, pure Rust AVIF container and AV1 image-sequence
 decoder. It provides direct RGBA helpers, access to decoded AV1 source planes,
 and a callback interface compatible with [`wml2`](https://github.com/mith-mmk/wml2-on-rust).
 
@@ -39,7 +39,8 @@ passes the FFmpeg RGB oracle (average absolute error about 0.075, maximum 6).
 | Layered-image selectors (`a1op=0`, `lsel=0`/`0xffff`) | Parsed and accepted; specific non-default layer/operating-point selection remains fail-closed |
 | `tmap` primary item base-image fallback | Supported (base `av01` decode); ISO 21496 gain-map metadata and the referenced AV1 gain-map item can be inspected/decoded; explicit base-colour-space HDR application supports CICP, matrix-shaper, and linear-affine ICC LUT/mAB alternates (non-linear/reverse profiles fail closed) |
 | PQ/HLG transfer to bounded SDR RGBA16 | Supported (BT.709 luminance-axis gamut compression and bounded tone mapping) |
-| Display-specific HDR gamut calibration and non-matrix ICC display conversion | Supported (bounded BT.709 display policy and B2A0/B2A1/B2A2 `mBA` device-RGB conversion) |
+| B2A ICC display conversion | Supported for B2A0/B2A1/B2A2 `mBA` device-RGB profiles |
+| Display-specific HDR calibration | Not supported; RGBA output uses the documented bounded BT.709 display policy |
 
 Unsupported composition or AV1 tools return `DecoderError::Unsupported`. The
 decoder intentionally fails closed instead of returning a partially decoded
@@ -104,8 +105,9 @@ are needed in one pass.
 
 The lower-level `parse_info` and `decode` functions accept a
 `bin-rs::reader::BinaryReader`. `decode` preserves the `wml2` callback order:
-`init -> draw -> terminate`; supported multi-frame AVIS sequences emit one
-`draw` call per frame with `InitOptions { animation: true, .. }`.
+`init -> next -> draw -> ... -> terminate`; supported multi-frame AVIS
+sequences emit one full-canvas `next`/`draw` pair per frame with
+`InitOptions { animation: true, .. }`.
 
 For a `tmap` image, `decode_gain_map_frame_bytes` returns the referenced AV1
 gain-map item and its `GainMapMetadata` without changing the default base-image

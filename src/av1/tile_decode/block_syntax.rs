@@ -39,7 +39,7 @@ fn relative_order_hint_distance(bits: u8, reference: u32, current: u32) -> i32 {
     }
     let modulo = 1i32 << bits;
     let mask = modulo - 1;
-    let mut distance = ((reference as i32 - current as i32) & mask) as i32;
+    let mut distance = (reference as i32 - current as i32) & mask;
     if distance & (modulo >> 1) != 0 {
         distance -= modulo;
     }
@@ -492,8 +492,7 @@ impl<'a> TileDecoder<'a> {
             .get(reference_type)
             .ok_or_else(|| DecoderError::Bitstream("AV1 reference type is invalid".to_string()))?;
         let reference_frame_secondary = reference_type_secondary
-            .map(|reference_type| frame.reference_frame_indices.get(reference_type).copied())
-            .flatten();
+            .and_then(|reference_type| frame.reference_frame_indices.get(reference_type).copied());
         if is_compound && reference_frame_secondary.is_none() {
             return Err(DecoderError::Bitstream(
                 "AV1 compound reference type is invalid".to_string(),
@@ -2048,7 +2047,7 @@ fn relative_order_distance(bits: u8, reference: u32, current: u32) -> i32 {
     }
     let modulo = 1i32 << bits;
     let mask = modulo - 1;
-    let mut distance = ((reference as i32 - current as i32) & mask) as i32;
+    let mut distance = (reference as i32 - current as i32) & mask;
     if distance & (modulo >> 1) != 0 {
         distance -= modulo;
     }

@@ -2100,7 +2100,7 @@ impl<'a> PixiBitReader<'a> {
     }
 
     fn skip_utf8_string(&mut self, channel: usize) -> Result<(), DecoderError> {
-        if self.bit_position % 8 != 0 {
+        if !self.bit_position.is_multiple_of(8) {
             return Err(DecoderError::Bitstream(format!(
                 "pixi channel {channel} label is not byte aligned"
             )));
@@ -2347,7 +2347,7 @@ fn parse_sequence_tracks(
         let timescale = child_box(mdia_payload, b"mdhd")?
             .map(|mdhd| box_payload(mdia_payload, mdhd))
             .transpose()?
-            .map(|payload| parse_mdhd_timescale(payload))
+            .map(parse_mdhd_timescale)
             .transpose()?
             .unwrap_or(1);
         let durations_ms = child_box(stbl_payload, b"stts")?
@@ -2367,7 +2367,7 @@ fn parse_sequence_tracks(
 }
 
 fn parse_track_reference_ids(payload: &[u8]) -> Result<Vec<u32>, DecoderError> {
-    if payload.is_empty() || payload.len() % 4 != 0 {
+    if payload.is_empty() || !payload.len().is_multiple_of(4) {
         return Err(DecoderError::NotEnoughData(
             "track reference payload is too short".to_string(),
         ));

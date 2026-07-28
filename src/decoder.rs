@@ -763,11 +763,9 @@ fn split_av1_sequence_sample(sample: &[u8]) -> Result<Vec<Av1SequenceSampleUnit>
     for obu in obus {
         match obu.obu_type {
             ObuType::SequenceHeader => {}
-            ObuType::TemporalDelimiter => {
-                if current_active {
-                    finish_current(&mut units, &mut current);
-                    current_active = false;
-                }
+            ObuType::TemporalDelimiter if current_active => {
+                finish_current(&mut units, &mut current);
+                current_active = false;
             }
             ObuType::Frame => {
                 if current_active {
@@ -1276,8 +1274,8 @@ impl FrameReferenceSlots {
         if !header.use_ref_frame_mvs {
             return None;
         }
-        let mi_cols = (usize::try_from(header.frame_width).ok()? + 3) / 4;
-        let mi_rows = (usize::try_from(header.frame_height).ok()? + 3) / 4;
+        let mi_cols = usize::try_from(header.frame_width).ok()?.div_ceil(4);
+        let mi_rows = usize::try_from(header.frame_height).ok()?.div_ceil(4);
         let mut field = MotionField::empty(mi_cols, mi_rows);
         field.order_hint_bits = 8;
         field.order_hint = header.order_hint;
@@ -1431,7 +1429,7 @@ impl FrameReferenceSlots {
 fn relative_order_hint_distance(bits: u8, reference: u32, current: u32) -> i32 {
     let modulo = 1i32 << bits;
     let mask = modulo - 1;
-    let mut distance = ((reference as i32 - current as i32) & mask) as i32;
+    let mut distance = (reference as i32 - current as i32) & mask;
     if distance & (modulo >> 1) != 0 {
         distance -= modulo;
     }
@@ -2247,7 +2245,7 @@ fn decode_grid_frame(info: &AvifInfo) -> Result<DecodedFrame, DecoderError> {
                 }
                 let scale_x = 1usize << source.layout.subsampling_x;
                 let scale_y = 1usize << source.layout.subsampling_y;
-                if x_offset % scale_x != 0 || y_offset % scale_y != 0 {
+                if !x_offset.is_multiple_of(scale_x) || !y_offset.is_multiple_of(scale_y) {
                     return Err(DecoderError::Unsupported(
                         "grid cell boundary is not aligned to chroma samples".to_string(),
                     ));
@@ -2350,12 +2348,7 @@ where
                 let handles = cells
                     .chunks(chunk_size)
                     .map(|chunk| {
-                        scope.spawn(|| {
-                            chunk
-                                .iter()
-                                .map(|cell| decode(cell))
-                                .collect::<Result<Vec<_>, _>>()
-                        })
+                        scope.spawn(|| chunk.iter().map(&decode).collect::<Result<Vec<_>, _>>())
                     })
                     .collect::<Vec<_>>();
                 let mut decoded = Vec::with_capacity(cells.len());
@@ -3216,7 +3209,7 @@ fn decode_alpha_grid_plane(
             let source = cell.buffers.planes.first().ok_or_else(|| {
                 DecoderError::Bitstream("alpha grid cell has no plane".to_string())
             })?;
-            if x_offset % scale_x != 0 || y_offset % scale_y != 0 {
+            if !x_offset.is_multiple_of(scale_x) || !y_offset.is_multiple_of(scale_y) {
                 return Err(DecoderError::Unsupported(
                     "alpha grid cell boundary is not aligned to chroma samples".to_string(),
                 ));
@@ -4413,6 +4406,20 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
             ));
         }
     }
+    #[cfg(target_family = "wasm")]
+    for (x, y, index) in cdef_block_origins {
+        cdef_blocks.push(cdef_direction_block(
+            &frame.buffers.planes[0].samples,
+            luma_width,
+            luma_height,
+            luma_width,
+            luma_height,
+            cdef_coeff_shift,
+            x,
+            y,
+            index,
+        ));
+    }
     let subsampling_x = frame.color_config.subsampling_x;
     let subsampling_y = frame.color_config.subsampling_y;
     let cdef_blocks = cdef_blocks.as_slice();
@@ -4433,7 +4440,7 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
                         cdef,
                         ceil_shift(visible_luma_width, usize::from(subsampling_x)),
                         ceil_shift(visible_luma_height, usize::from(subsampling_y)),
-                        &cdef_blocks,
+                        cdef_blocks,
                     );
                 });
             }
@@ -4450,7 +4457,7 @@ fn apply_cdef_stage(frame: &mut DecodedFrame, frame_header: &FrameHeader, state:
             cdef,
             ceil_shift(visible_luma_width, usize::from(subsampling_x)),
             ceil_shift(visible_luma_height, usize::from(subsampling_y)),
-            &cdef_blocks,
+            cdef_blocks,
         );
     }
 }
@@ -4764,11 +4771,6 @@ fn post_filter_parallel_work_is_large_enough(frame: &DecodedFrame) -> bool {
             .map(|plane| plane.samples.len())
             .sum::<usize>()
             >= PARALLEL_POST_FILTER_MIN_SAMPLES
-}
-
-#[cfg(target_family = "wasm")]
-fn post_filter_parallel_work_is_large_enough(_frame: &DecodedFrame) -> bool {
-    false
 }
 
 #[derive(Debug, Clone, Default)]
@@ -5150,16 +5152,16 @@ fn validate_public_container_preflight(
         .as_deref()
         .map(parse_av1_config)
         .transpose()?;
-    if let Some(config) = config {
-        if !matches!(config.bit_depth(), 8 | 10 | 12) {
-            return Err(DecoderError::Unsupported(format!(
-                "AV1 {}-bit quantization is not supported by public decode yet",
-                config.bit_depth()
-            )));
-        }
-        // Monochrome and sub-sampled YUV layouts are decoded by the AV1
-        // plane/reconstruction path.
+    if let Some(config) = config
+        && !matches!(config.bit_depth(), 8 | 10 | 12)
+    {
+        return Err(DecoderError::Unsupported(format!(
+            "AV1 {}-bit quantization is not supported by public decode yet",
+            config.bit_depth()
+        )));
     }
+    // Monochrome and sub-sampled YUV layouts are decoded by the AV1
+    // plane/reconstruction path.
     Ok(())
 }
 
@@ -5208,13 +5210,13 @@ fn validate_av1_config(
             "av1C chroma subsampling does not match sequence header".to_string(),
         ));
     }
-    if let Some(sequence_position) = sequence.color_config.chroma_sample_position {
-        if config.chroma_sample_position != sequence_position {
-            return Err(DecoderError::Bitstream(format!(
-                "av1C chroma sample position {:?} does not match sequence header {:?}",
-                config.chroma_sample_position, sequence_position
-            )));
-        }
+    if let Some(sequence_position) = sequence.color_config.chroma_sample_position
+        && config.chroma_sample_position != sequence_position
+    {
+        return Err(DecoderError::Bitstream(format!(
+            "av1C chroma sample position {:?} does not match sequence header {:?}",
+            config.chroma_sample_position, sequence_position
+        )));
     }
     Ok(())
 }
@@ -7096,14 +7098,16 @@ mod tile_group_merge_tests {
             }
             let mut payload_len = 0usize;
             let mut shift = 0;
-            while header & 0x02 != 0 {
-                let byte = info.primary_item_payload[cursor];
-                cursor += 1;
-                payload_len |= usize::from(byte & 0x7f) << shift;
-                if byte & 0x80 == 0 {
-                    break;
+            if header & 0x02 != 0 {
+                loop {
+                    let byte = info.primary_item_payload[cursor];
+                    cursor += 1;
+                    payload_len |= usize::from(byte & 0x7f) << shift;
+                    if byte & 0x80 == 0 {
+                        break;
+                    }
+                    shift += 7;
                 }
-                shift += 7;
             }
             let payload_start = cursor;
             let payload_end = payload_start + payload_len;

@@ -23,6 +23,12 @@ until its final filtered planes match the reference oracle.
 - [x] Restrict the published archive to the library sources, English and
       Japanese READMEs, and the license, in addition to Cargo-generated
       metadata and lockfile files.
+- [x] Add a 0.0.2 changelog and synchronize the English/Japanese support
+      matrices with AVIS callback, ICC and HDR behavior.
+- [x] Keep `cargo clippy --all-targets -- -D warnings`, Rust 1.88, Rustdoc,
+      Wasm, package verification and fuzz-target compilation green.
+- [x] Add standalone Linux/Windows/macOS CI plus one-minute Linux sanitizer
+      smoke runs for all four fuzz targets.
 
 The integration tests, this checklist, fuzz targets, oracle scripts, and local
 fixtures remain available in the repository but are intentionally excluded

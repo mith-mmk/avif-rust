@@ -191,8 +191,8 @@ pub(crate) fn read_intra_edges_into_with_bounds(
     let above_available = y > tile_top && tile_right > tile_left;
     let left_available = x > tile_left && tile_bottom > tile_top;
 
-    for dx in 0..directional_edge_len {
-        above[dx] = if !above_available {
+    for (dx, sample) in above.iter_mut().enumerate().take(directional_edge_len) {
+        *sample = if !above_available {
             mid - 1
         } else {
             let extension_end = width.saturating_add(top_right_available);
@@ -206,8 +206,8 @@ pub(crate) fn read_intra_edges_into_with_bounds(
         };
     }
 
-    for dy in 0..directional_edge_len {
-        left[dy] = if !left_available {
+    for (dy, sample) in left.iter_mut().enumerate().take(directional_edge_len) {
+        *sample = if !left_available {
             mid + 1
         } else {
             let extension_end = height.saturating_add(bottom_left_available);
@@ -339,10 +339,11 @@ pub fn frame_buffers_to_rgba_8(
     buffers: &FrameBuffers,
     color_config: &ColorConfig,
 ) -> Result<ImageBuffer, DecoderError> {
-    if color_config.bit_depth > 8 && transfer_characteristics(color_config)?.is_none() {
-        if let Some(image) = frame_buffers_to_rgba_8_high_bit_sdr(buffers, color_config)? {
-            return Ok(image);
-        }
+    if color_config.bit_depth > 8
+        && transfer_characteristics(color_config)?.is_none()
+        && let Some(image) = frame_buffers_to_rgba_8_high_bit_sdr(buffers, color_config)?
+    {
+        return Ok(image);
     }
     if color_config.bit_depth == 8 && transfer_characteristics(color_config)?.is_none() {
         if color_config.monochrome {
@@ -1754,11 +1755,10 @@ fn map_hdr_linear_to_bt709_display(rgb: [f64; 3]) -> [f64; 3] {
         .max(0.0);
     let compression = rgb
         .into_iter()
-        .filter_map(|value| {
-            (value < 0.0).then(|| {
-                let delta = value - luminance;
-                if delta < 0.0 { luminance / -delta } else { 0.0 }
-            })
+        .filter(|&value| value < 0.0)
+        .map(|value| {
+            let delta = value - luminance;
+            if delta < 0.0 { luminance / -delta } else { 0.0 }
         })
         .fold(1.0, f64::min)
         .clamp(0.0, 1.0);
@@ -2679,10 +2679,9 @@ mod tests {
                     plane.samples[source_y * 2 + source_x]
                 } else {
                     let next_y = (source_y + 1).min(1);
-                    ((u32::from(plane.samples[source_y * 2 + source_x])
-                        + u32::from(plane.samples[next_y * 2 + source_x])
-                        + 1)
-                        / 2) as u16
+                    (u32::from(plane.samples[source_y * 2 + source_x])
+                        + u32::from(plane.samples[next_y * 2 + source_x]))
+                    .div_ceil(2) as u16
                 };
                 assert_eq!(
                     sample_chroma_plane(&plane, x, y, Some(ChromaSamplePosition::Vertical)),
@@ -3290,9 +3289,9 @@ mod tests {
                     range,
                     matrix,
                 );
-                for channel in 0..3 {
+                for (channel, expected_channel) in expected.iter().enumerate() {
                     assert!(
-                        actual.rgba[index + channel].abs_diff(u16_to_u8(expected[channel])) <= 1,
+                        actual.rgba[index + channel].abs_diff(u16_to_u8(*expected_channel)) <= 1,
                         "pixel ({x},{y}) channel {channel} differs from scalar path"
                     );
                 }
@@ -3575,7 +3574,6 @@ mod tests {
         let image = frame_buffers_to_rgba_16(&buffers, &color_config).unwrap();
 
         assert!(image.rgba[0] > 0);
-        assert!(image.rgba[0] <= u16::MAX);
         assert_eq!(image.rgba[3], u16::MAX);
     }
 
@@ -3602,7 +3600,8 @@ mod tests {
         let mut rgba = [u16::MAX, u16::MAX / 2, 0, 1234];
         apply_transfer_function(&mut rgba, TransferFunction::Pq);
         assert_eq!(rgba[3], 1234);
-        assert!(rgba[..3].iter().all(|sample| *sample <= u16::MAX));
+        assert!(rgba[0] >= rgba[1]);
+        assert_eq!(rgba[2], 0);
     }
 
     #[test]

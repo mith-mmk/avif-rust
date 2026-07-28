@@ -1544,18 +1544,19 @@ mod tests {
             bytes.extend_from_slice(&256_u16.to_be_bytes());
             bytes
         };
-        let mut writer = TagWriter {
-            profile: &mut profile,
-            next: 0,
-        };
-        writer.push(b"wtpt", &xyz([0.9505, 1.0, 1.0890]));
-        writer.push(b"rXYZ", &xyz([0.4124, 0.2126, 0.0193]));
-        writer.push(b"gXYZ", &xyz([0.3576, 0.7152, 0.1192]));
-        writer.push(b"bXYZ", &xyz([0.1805, 0.0722, 0.9505]));
-        writer.push(b"rTRC", &curve());
-        writer.push(b"gTRC", &curve());
-        writer.push(b"bTRC", &curve());
-        drop(writer);
+        {
+            let mut writer = TagWriter {
+                profile: &mut profile,
+                next: 0,
+            };
+            writer.push(b"wtpt", &xyz([0.9505, 1.0, 1.0890]));
+            writer.push(b"rXYZ", &xyz([0.4124, 0.2126, 0.0193]));
+            writer.push(b"gXYZ", &xyz([0.3576, 0.7152, 0.1192]));
+            writer.push(b"bXYZ", &xyz([0.1805, 0.0722, 0.9505]));
+            writer.push(b"rTRC", &curve());
+            writer.push(b"gTRC", &curve());
+            writer.push(b"bTRC", &curve());
+        }
         let profile_size = profile.len() as u32;
         profile[0..4].copy_from_slice(&profile_size.to_be_bytes());
         profile
@@ -1846,7 +1847,7 @@ mod tests {
 
     fn append_mab_curve_set(data: &mut Vec<u8>) -> usize {
         let mut offset = data.len();
-        while offset % 4 != 0 {
+        while !offset.is_multiple_of(4) {
             data.push(0);
             offset += 1;
         }
@@ -1863,7 +1864,7 @@ mod tests {
 
     fn append_mab_clut(data: &mut Vec<u8>, pcs_lab: bool) -> usize {
         let mut offset = data.len();
-        while offset % 4 != 0 {
+        while !offset.is_multiple_of(4) {
             data.push(0);
             offset += 1;
         }
@@ -1910,7 +1911,7 @@ mod tests {
 
     fn append_mab_matrix(data: &mut Vec<u8>) -> usize {
         let mut offset = data.len();
-        while offset % 4 != 0 {
+        while !offset.is_multiple_of(4) {
             data.push(0);
             offset += 1;
         }

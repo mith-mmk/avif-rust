@@ -1479,7 +1479,8 @@ fn generated_global_motion_sample_matches_ffmpeg_when_encoder_present() {
         avif_rust::classify_av1_sequence_sample(&info.sequence_sample_payloads[1]).unwrap(),
         Some(avif_rust::AvifSequenceSampleKind::Inter)
     );
-    for frame_index in [1] {
+    {
+        let frame_index = 1;
         let decoded = avif_rust::decode_sequence_frame_bytes(&data, frame_index)
             .expect("generated global-motion inter sample should decode");
         assert_eq!((decoded.width, decoded.height), (128, 128));
@@ -3771,16 +3772,15 @@ fn generated_matrix_sample_matches_ffmpeg(colorspace: &str, label: &str, primari
     } else if !matches!(
         colorspace,
         "smpte2085" | "chroma-derived-nc" | "chroma-derived-c"
-    ) {
-        if let Some(expected) = ffmpeg_decode_rgba(&output_path) {
-            let metrics = diff_rgb(&actual.rgba, &expected);
-            assert!(
-                metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 32,
-                "{label} FFmpeg RGB error average={} max={}",
-                metrics.average_rgb_abs,
-                metrics.max_rgb_abs
-            );
-        }
+    ) && let Some(expected) = ffmpeg_decode_rgba(&output_path)
+    {
+        let metrics = diff_rgb(&actual.rgba, &expected);
+        assert!(
+            metrics.average_rgb_abs <= 2.0 && metrics.max_rgb_abs <= 32,
+            "{label} FFmpeg RGB error average={} max={}",
+            metrics.average_rgb_abs,
+            metrics.max_rgb_abs
+        );
     }
     let _ = std::fs::remove_dir_all(&root);
 }

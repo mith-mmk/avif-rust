@@ -6,7 +6,7 @@
 
 # avif-rust
 
-`avif-rust`は、Pure Rustで実装された実験的なAVIFコンテナ／AV1静止画
+`avif-rust`は、Pure Rustで実装された実験的なAVIFコンテナ／AV1画像シーケンス
 デコーダです。RGBAへの直接デコード、デコード済みAV1ソースプレーンへの
 アクセス、[`wml2`](https://github.com/mith-mmk/wml2-on-rust)互換のcallback
 インターフェースを提供します。
@@ -38,9 +38,10 @@ frame AVIF profileに対応します。1 frameの`avis` primary itemも静止画
 | AVISのKey／IntraOnly／Inter／Switch／show-existing frameをindex指定・一括でデコード | 対応（動き補償付きInter／Switchの検証サンプルを含む） |
 | animated AVIFの複数frame callback出力 | Key／IntraOnly／Inter／Switch／show-existingに対応（`animation: true`） |
 | layered image selector（`a1op=0`、`lsel=0`） | 解析・受理（既定外の層／operating point選択はfail-closed） |
-| `tmap`主画像のbase画像フォールバック | 対応（base `av01`、ISO 21496 Gain Map、CICPおよびmatrix-shaper ICC alternateの明示的HDR合成に対応。LUT alternateはfail-closed） |
+| `tmap`主画像のbase画像フォールバック | 対応（base `av01`、ISO 21496 Gain Map、CICP、matrix-shaperおよびlinear-affine ICC LUT/mAB alternateの明示的HDR合成に対応。非線形／逆方向profileはfail-closed） |
 | PQ／HLG transferからbounded SDR RGBA16への変換 | 対応（bounded tone mapping、display固有のcalibrationは未適用） |
-| display固有HDR gamut calibration、matrix-shaper以外のICC表示変換 | 未対応 |
+| B2A ICC表示変換 | B2A0／B2A1／B2A2 `mBA` device-RGB profileに対応 |
+| display固有HDR calibration | 未対応（RGBA出力は明記したbounded BT.709 display policyを使用） |
 
 未対応のcompositionやAV1 toolは`DecoderError::Unsupported`を返します。不完全な
 画像を正常な出力として返さない、fail-closedの方針です。
@@ -101,9 +102,9 @@ Inter／Switchまたは`show_existing_frame`のサンプルをindex指定、
 `decode_sequence_frames_bytes`で対応サンプルを一括デコードできます。
 
 低水準の`parse_info`と`decode`は`bin-rs::reader::BinaryReader`を受け取ります。
-`decode`は`wml2`互換の`init -> draw -> terminate` callback順序を維持し、
-対応する複数frame AVISでは`InitOptions { animation: true, .. }`と各frameの
-`draw`を出力します。
+`decode`は`wml2`互換の`init -> next -> draw -> ... -> terminate` callback順序を
+維持し、対応する複数frame AVISでは`InitOptions { animation: true, .. }`と各frameの
+全画面`next`／`draw` pairを出力します。
 
 `tmap`画像では、`decode_gain_map_frame_bytes`によって参照されたAV1 gain-map
 itemと`GainMapMetadata`を取得できます。既定のbase画像デコードは変更せず、

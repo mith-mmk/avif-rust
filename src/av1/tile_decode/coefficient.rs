@@ -301,7 +301,7 @@ fn read_regular_coeff_bases<S: CoefficientTokenSource>(
     let remaining_count = eob - 1;
     scratch.resize(tx_size.sample_count(), 0);
     scratch.fill(0);
-    let mut quant = scratch.as_mut_slice();
+    let quant = scratch.as_mut_slice();
     let mut base_range_count = 0;
     let mut coeff_br_symbol_count = 0;
     let mut first_coeff_br = None;
@@ -314,7 +314,7 @@ fn read_regular_coeff_bases<S: CoefficientTokenSource>(
         eob - 1,
         eob_position,
         eob_level,
-        &quant,
+        quant,
         &mut base_range_count,
         &mut coeff_br_symbol_count,
         &mut first_coeff_br,
@@ -326,8 +326,8 @@ fn read_regular_coeff_bases<S: CoefficientTokenSource>(
     for scan_index in (0..eob - 1).rev() {
         let position = scan[scan_index];
         let (context, reference_magnitude) = match is_directional_tx_type(tx_type) {
-            true => coeff_base_context_1d(tx_size, tx_type, position, &quant)?,
-            false => coeff_base_context_2d(tx_size, position, &quant)?,
+            true => coeff_base_context_1d(tx_size, tx_type, position, quant)?,
+            false => coeff_base_context_2d(tx_size, position, quant)?,
         };
         let symbol = source.read_symbol(CoefficientSymbol::Base {
             tx_size_context: tx_size.coeff_cdf_index(),
@@ -342,7 +342,7 @@ fn read_regular_coeff_bases<S: CoefficientTokenSource>(
             scan_index,
             position,
             symbol,
-            &quant,
+            quant,
             &mut base_range_count,
             &mut coeff_br_symbol_count,
             &mut first_coeff_br,
@@ -376,11 +376,10 @@ fn read_regular_coeff_bases<S: CoefficientTokenSource>(
             level: Some(symbol),
         },
     );
-    let non_zero_count = coeff_base_non_zero_count(&quant);
-    let signs =
-        read_coeff_signs_and_golomb(source, plane_type, dc_sign_context, eob, &scan, &mut quant)?;
-    let signed_non_zero_count = coeff_base_non_zero_count(&quant);
-    let first_signed_coeff = first_signed_coeff(eob, &scan, &quant)?;
+    let non_zero_count = coeff_base_non_zero_count(quant);
+    let signs = read_coeff_signs_and_golomb(source, plane_type, dc_sign_context, eob, scan, quant)?;
+    let signed_non_zero_count = coeff_base_non_zero_count(quant);
+    let first_signed_coeff = first_signed_coeff(eob, scan, quant)?;
     let base_levels = std::mem::take(scratch);
     Ok(CoeffBaseRead {
         probe,

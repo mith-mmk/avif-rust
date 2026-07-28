@@ -3,15 +3,28 @@ name = "avif-rust"
 version = "0.0.2"
 edition = "2024"
 rust-version = "1.88"
-description = "Experimental pure Rust AVIF container and AV1 still-image decoder"
+description = "Experimental pure Rust AVIF container and AV1 image-sequence decoder"
 keywords = ["avif", "av1", "image", "decoder", "codec"]
 categories = ["multimedia::images", "encoding"]
 license = "MIT"
 repository = "https://github.com/mith-mmk/avif-rust.git"
-include = ["/src/**", "/README.md", "/README.ja.md", "/LICENSE"]
+include = [
+    "/src/**",
+    "/CHANGELOG.md",
+    "/README.md",
+    "/README.ja.md",
+    "/LICENSE",
+]
 
 [dependencies]
 bin-rs = { version = "0.0.10", features = ["stream", "util"] }
+
+[lints.clippy]
+# AV1 syntax and reconstruction functions intentionally mirror normative
+# parameter groups. Keeping those values explicit is easier to audit against
+# the specification than hiding them behind decoder-specific argument bags.
+too_many_arguments = "allow"
+type_complexity = "allow"
 
 [[bench]]
 name = "decode"

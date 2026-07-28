@@ -565,9 +565,7 @@ fn apply_plane(
             let current_height = block_height.min(height - row_num * block_height);
             let row_count = 1 + usize::from(params.overlap_flag && row_num > 0);
             if params.overlap_flag && bx != 0 {
-                for index in 0..row_count {
-                    offsets[1][index] = offsets[0][index];
-                }
+                offsets[1] = offsets[0];
             }
             for (index, seed) in seeds.iter_mut().enumerate().take(row_count) {
                 offsets[0][index] = random_number(8, seed);

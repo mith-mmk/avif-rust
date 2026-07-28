@@ -676,9 +676,9 @@ fn read_global_motion_params(
                     )
                 };
             let trans_n = (1usize << trans_bits) + 1;
-            for index in 0..2 {
-                let trans_ref = matrix[index] >> trans_prec_diff;
-                matrix[index] = read_signed_primitive_refsubexpfin(
+            for value in matrix.iter_mut().take(2) {
+                let trans_ref = *value >> trans_prec_diff;
+                *value = read_signed_primitive_refsubexpfin(
                     reader,
                     trans_n,
                     SUBEXP_K,
@@ -1159,7 +1159,7 @@ fn parse_inter_frame_size(
     reference_frame_indices: &[u8; 7],
     references: &[Option<ReferenceFrameState>; 8],
 ) -> Result<(FrameSize, RenderSize), DecoderError> {
-    if !(frame_size_override_flag && !error_resilient_mode) {
+    if !frame_size_override_flag || error_resilient_mode {
         let frame_size = parse_frame_size(reader, sequence, frame_size_override_flag)?;
         let render_size = parse_render_size(reader, frame_size.width, frame_size.height)?;
         return Ok((frame_size, render_size));
@@ -1290,9 +1290,11 @@ fn parse_frame_header_trailing_params(
     } else {
         false
     };
-    let skip_mode_frame = skip_mode_present
-        .then(|| derive_skip_mode_frame(sequence, order_hint, &reference_frame_indices, references))
-        .unwrap_or([0; 2]);
+    let skip_mode_frame = if skip_mode_present {
+        derive_skip_mode_frame(sequence, order_hint, &reference_frame_indices, references)
+    } else {
+        [0; 2]
+    };
     let allow_warped_motion =
         if frame_is_intra || error_resilient_mode || !sequence.enable_warped_motion {
             false
@@ -1403,7 +1405,7 @@ fn relative_order_hint_distance(bits: u8, reference: u32, current: u32) -> i32 {
     }
     let modulo = 1i32 << bits;
     let mask = modulo - 1;
-    let mut distance = ((reference as i32 - current as i32) & mask) as i32;
+    let mut distance = (reference as i32 - current as i32) & mask;
     if distance & (modulo >> 1) != 0 {
         distance -= modulo;
     }
@@ -2238,9 +2240,9 @@ mod tests {
                 if enabled {
                     let value = [0, 5, 3, 7, 9][feature];
                     let signed = if matches!(feature, 2 | 4) {
-                        -(value as i32)
+                        -value
                     } else {
-                        value as i32
+                        value
                     };
                     push_inv_signed(&mut bits, signed, 6);
                 }

@@ -2,6 +2,7 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
 /// Errors returned by AVIF parsing and decoding.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DecoderError {
     InvalidParam(String),
