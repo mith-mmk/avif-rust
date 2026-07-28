@@ -761,10 +761,15 @@ fn diff_rgb(left: &[u8], right: &[u8]) -> DiffMetrics {
 
 #[test]
 fn ffmpeg_avif_decode_is_close_to_original_png() {
-    let Some(avif_rgba) = ffmpeg_decode_rgba(&sample_path("WML2Viewer.avif")) else {
+    let avif_path = sample_path("WML2Viewer.avif");
+    let png_path = sample_path("WML2Viewer.png");
+    if !avif_path.is_file() || !png_path.is_file() {
+        return;
+    }
+    let Some(avif_rgba) = ffmpeg_decode_rgba(&avif_path) else {
         return;
     };
-    let Some(png_rgba) = ffmpeg_decode_rgba(&sample_path("WML2Viewer.png")) else {
+    let Some(png_rgba) = ffmpeg_decode_rgba(&png_path) else {
         return;
     };
     let metrics = diff_rgb(&avif_rgba, &png_rgba);
