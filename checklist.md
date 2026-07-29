@@ -2531,3 +2531,29 @@ suite pass (`107 passed, 2 ignored`). The AVIF package passes `470` library
 tests with `5` ignored plus `17` container tests. WML2 retains all five frames,
 per-frame alpha and duration/callback ordering, and an APNG round trip preserves
 all five frames.
+
+## avif-rust 0.0.3 strict entropy release checklist
+
+This release checklist is tracked separately from the completed decoder
+baseline above. It does not reopen or renumber the existing completion items.
+
+- [x] Fast-forward local `main` to `origin/main` before creating `v0.0.3`.
+- [x] Remove the Inter/Switch entropy-validation bypass without weakening
+      trailing-one, zero-padding, truncation, or overread checks.
+- [x] Match AOM header consumption for decoder-model timing, Inter frame-size,
+      Switch reference selection, and skip-mode signalling.
+- [x] Match normative Inter transform-size/type and chroma coefficient geometry.
+- [x] Match normative global-motion inheritance and compound-mode contexts.
+- [x] Match compound MV ranking after all scans and single-reference fallback
+      candidate type/sign-bias handling, including exact DRL candidate counts.
+- [x] Decode generated 8/10/12-bit Inter, Switch, show-existing, affine/global
+      motion, compound/wedge, warped-motion, and OBMC fixtures with strict
+      entropy validation enabled.
+- [x] Decode retained external `colors-animated-8bpc*`, `star-8bpc`, and 12-bit
+      animation fixtures across all frames with FFmpeg-backed plane/RGBA checks.
+- [ ] Pass the complete library, container, strict-oracle/hash, fuzz, Wasm,
+      Clippy, Rustfmt, Rustdoc, MSRV 1.88, and parent-WML2 gates.
+- [ ] Record same-host repeated no-regression benchmarks for WML2Viewer and an
+      animated sample.
+- [ ] Verify `cargo publish --dry-run --locked` and the unpacked standalone
+      crate archive; actual publication and tags require explicit approval.

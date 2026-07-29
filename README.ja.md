@@ -12,7 +12,7 @@
 インターフェースを提供します。
 
 現在のreleaseは
-[`avif-rust 0.0.2`](https://crates.io/crates/avif-rust/0.0.2)です。
+[`avif-rust 0.0.3`](https://crates.io/crates/avif-rust/0.0.3)です。
 
 実行時にFFmpeg、libaom、その他のネイティブcodecは呼び出しません。これらは
 テスト用oracleの生成と検証にのみ使用します。
@@ -49,6 +49,10 @@ frame AVIF profileに対応します。1 frameの`avis` primary itemも静止画
 未対応のcompositionやAV1 toolは`DecoderError::Unsupported`を返します。不完全な
 画像を正常な出力として返さない、fail-closedの方針です。
 
+Inter／Switch frameにもKey／IntraOnlyと同じ厳格なentropy終端検証を適用します。
+trailing-one欠落、非ゼロpadding、切り詰め、算術readerの過剰readはbitstream error
+として拒否します。
+
 ## インストール
 
 ```console
@@ -59,7 +63,7 @@ cargo add avif-rust
 
 ```toml
 [dependencies]
-avif-rust = "0.0.2"
+avif-rust = "0.0.3"
 ```
 
 最小サポートRustバージョン（MSRV）はRust 1.88です。

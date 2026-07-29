@@ -11,7 +11,7 @@ decoder. It provides direct RGBA helpers, access to decoded AV1 source planes,
 and a callback interface compatible with [`wml2`](https://github.com/mith-mmk/wml2-on-rust).
 
 The current release is
-[`avif-rust 0.0.2`](https://crates.io/crates/avif-rust/0.0.2).
+[`avif-rust 0.0.3`](https://crates.io/crates/avif-rust/0.0.3).
 
 The crate does not call FFmpeg, libaom, or another native codec at runtime.
 Those implementations are used only to generate and verify test oracles.
@@ -49,6 +49,10 @@ Unsupported composition or AV1 tools return `DecoderError::Unsupported`. The
 decoder intentionally fails closed instead of returning a partially decoded
 image as valid output.
 
+Inter and Switch frames use the same strict entropy termination checks as Key
+and IntraOnly frames. Missing trailing-one bits, non-zero padding, truncation,
+and arithmetic-reader overread are rejected as bitstream errors.
+
 ## Installation
 
 ```console
@@ -59,7 +63,7 @@ Or add the dependency manually:
 
 ```toml
 [dependencies]
-avif-rust = "0.0.2"
+avif-rust = "0.0.3"
 ```
 
 The minimum supported Rust version (MSRV) is Rust 1.88.
