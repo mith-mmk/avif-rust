@@ -331,6 +331,20 @@ mod tests {
     }
 
     #[test]
+    fn exit_rejects_entropy_overread_past_the_padding_budget() {
+        let mut decoder = EntropyDecoder::new(&[0x80, 0x00], false).unwrap();
+
+        for _ in 0..32 {
+            decoder.read_raw_bit().unwrap();
+        }
+        let err = decoder.exit().unwrap_err();
+
+        assert!(
+            matches!(err, DecoderError::Bitstream(message) if message.contains("too many padding bits"))
+        );
+    }
+
+    #[test]
     fn uniform_power_of_two_matches_literal_bits() {
         let data = [0x5a, 0xc3, 0x7e, 0x19];
         for n in [2usize, 4, 8, 16] {

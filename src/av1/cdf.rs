@@ -2321,8 +2321,10 @@ pub struct CdfContext {
 }
 
 fn reset_cdf_counter(cdf: &mut [u16]) {
-    if cdf.len() >= 2 && cdf[cdf.len() - 2] == 1 << 15 {
-        *cdf.last_mut().expect("CDF has a counter slot") = 0;
+    if let Some(terminal) = cdf.iter().position(|&value| value == 1 << 15)
+        && let Some(counter) = cdf.get_mut(terminal + 1)
+    {
+        *counter = 0;
     }
 }
 
@@ -2946,6 +2948,17 @@ mod tests {
         let mut context = CdfContext::default();
         assert_eq!(context.inter_ext_tx_set3, DEFAULT_INTER_EXT_TX_SET3_CDF);
         assert_eq!(context.inter_ext_tx_set3_cdf_mut(2), &[1998, 32768, 0]);
+    }
+
+    #[test]
+    fn reset_cdf_counter_handles_variable_length_storage() {
+        let mut compact = [12_000, 32_768, 31];
+        reset_cdf_counter(&mut compact);
+        assert_eq!(compact, [12_000, 32_768, 0]);
+
+        let mut padded = [12_000, 32_768, 32, 0, 0, 0, 0, 0, 0];
+        reset_cdf_counter(&mut padded);
+        assert_eq!(padded, [12_000, 32_768, 0, 0, 0, 0, 0, 0, 0]);
     }
 
     #[test]

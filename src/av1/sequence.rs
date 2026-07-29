@@ -83,6 +83,12 @@ pub struct SequenceHeader {
 }
 
 pub fn parse_sequence_header(data: &[u8]) -> Result<SequenceHeader, DecoderError> {
+    parse_sequence_header_with_metadata(data).map(|(header, _)| header)
+}
+
+pub(crate) fn parse_sequence_header_with_metadata(
+    data: &[u8],
+) -> Result<(SequenceHeader, SequenceHeaderMetadata), DecoderError> {
     let mut reader = BitReader::new(data);
     let seq_profile = reader.read_bits(3, "seq_profile")? as u8;
     if seq_profile > 2 {
@@ -93,8 +99,12 @@ pub fn parse_sequence_header(data: &[u8]) -> Result<SequenceHeader, DecoderError
 
     let still_picture = reader.read_bool("still_picture")?;
     let reduced_still_picture_header = reader.read_bool("reduced_still_picture_header")?;
-    let seq_level_idx_0 = if reduced_still_picture_header {
-        reader.read_bits(5, "seq_level_idx[0]")? as u8
+    let operating_points = if reduced_still_picture_header {
+        SequenceHeaderMetadata {
+            seq_level_idx_0: reader.read_bits(5, "seq_level_idx[0]")? as u8,
+            operating_points_count: 1,
+            ..SequenceHeaderMetadata::default()
+        }
     } else {
         parse_operating_points(&mut reader)?
     };
@@ -139,11 +149,11 @@ pub fn parse_sequence_header(data: &[u8]) -> Result<SequenceHeader, DecoderError
     let color_config = parse_color_config(&mut reader, seq_profile)?;
     let film_grain_params_present = reader.read_bool("film_grain_params_present")?;
 
-    Ok(SequenceHeader {
+    let header = SequenceHeader {
         seq_profile,
         still_picture,
         reduced_still_picture_header,
-        seq_level_idx_0,
+        seq_level_idx_0: operating_points.seq_level_idx_0,
         frame_width_bits,
         frame_height_bits,
         max_frame_width,
@@ -169,12 +179,26 @@ pub fn parse_sequence_header(data: &[u8]) -> Result<SequenceHeader, DecoderError
         enable_restoration,
         color_config,
         film_grain_params_present,
-    })
+    };
+    Ok((header, operating_points))
 }
 
-fn parse_operating_points(reader: &mut BitReader<'_>) -> Result<u8, DecoderError> {
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct SequenceHeaderMetadata {
+    seq_level_idx_0: u8,
+    pub(crate) decoder_model_info_present: bool,
+    pub(crate) buffer_removal_time_length: u8,
+    pub(crate) operating_points_count: u8,
+    pub(crate) operating_point_idc: [u16; 32],
+    pub(crate) decoder_model_present_for_this_op: [bool; 32],
+}
+
+fn parse_operating_points(
+    reader: &mut BitReader<'_>,
+) -> Result<SequenceHeaderMetadata, DecoderError> {
     let timing_info_present_flag = reader.read_bool("timing_info_present_flag")?;
     let mut buffer_delay_length = 0usize;
+    let mut buffer_removal_time_length = 0u8;
     let decoder_model_info_present_flag = if timing_info_present_flag {
         let _num_units_in_display_tick = reader.read_bits(32, "num_units_in_display_tick")?;
         let _time_scale = reader.read_bits(32, "time_scale")?;
@@ -189,8 +213,9 @@ fn parse_operating_points(reader: &mut BitReader<'_>) -> Result<u8, DecoderError
                 reader.read_bits(5, "buffer_delay_length_minus_1")?;
             buffer_delay_length = _buffer_delay_length_minus_1 as usize + 1;
             let _num_units_in_decoding_tick = reader.read_bits(32, "num_units_in_decoding_tick")?;
-            let _buffer_removal_time_length_minus_1 =
+            let buffer_removal_time_length_minus_1 =
                 reader.read_bits(5, "buffer_removal_time_length_minus_1")?;
+            buffer_removal_time_length = buffer_removal_time_length_minus_1 as u8 + 1;
             let _frame_presentation_time_length_minus_1 =
                 reader.read_bits(5, "frame_presentation_time_length_minus_1")?;
         }
@@ -202,8 +227,11 @@ fn parse_operating_points(reader: &mut BitReader<'_>) -> Result<u8, DecoderError
         reader.read_bool("initial_display_delay_present_flag")?;
     let operating_points_cnt_minus_1 = reader.read_bits(5, "operating_points_cnt_minus_1")?;
     let mut seq_level_idx_0 = 0u8;
+    let mut operating_point_idc = [0u16; 32];
+    let mut decoder_model_present_for_this_op = [false; 32];
     for index in 0..=operating_points_cnt_minus_1 {
-        let _operating_point_idc = reader.read_bits(12, "operating_point_idc")?;
+        let operating_point = reader.read_bits(12, "operating_point_idc")? as u16;
+        operating_point_idc[index as usize] = operating_point;
         let seq_level_idx = reader.read_bits(5, "seq_level_idx")? as u8;
         if index == 0 {
             seq_level_idx_0 = seq_level_idx;
@@ -211,9 +239,10 @@ fn parse_operating_points(reader: &mut BitReader<'_>) -> Result<u8, DecoderError
         if seq_level_idx > 7 {
             let _seq_tier = reader.read_bool("seq_tier")?;
         }
-        if decoder_model_info_present_flag
-            && reader.read_bool("decoder_model_present_for_this_op")?
-        {
+        let decoder_model_present = decoder_model_info_present_flag
+            && reader.read_bool("decoder_model_present_for_this_op")?;
+        decoder_model_present_for_this_op[index as usize] = decoder_model_present;
+        if decoder_model_present {
             let _decoder_buffer_delay =
                 reader.read_bits(buffer_delay_length, "decoder_buffer_delay")?;
             let _encoder_buffer_delay =
@@ -227,7 +256,14 @@ fn parse_operating_points(reader: &mut BitReader<'_>) -> Result<u8, DecoderError
                 reader.read_bits(4, "initial_display_delay_minus_1")?;
         }
     }
-    Ok(seq_level_idx_0)
+    Ok(SequenceHeaderMetadata {
+        seq_level_idx_0,
+        decoder_model_info_present: decoder_model_info_present_flag,
+        buffer_removal_time_length,
+        operating_points_count: (operating_points_cnt_minus_1 + 1) as u8,
+        operating_point_idc,
+        decoder_model_present_for_this_op,
+    })
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

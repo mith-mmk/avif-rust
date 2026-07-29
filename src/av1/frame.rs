@@ -1,5 +1,5 @@
 use super::bitstream::BitReader;
-use super::sequence::SequenceHeader;
+use super::sequence::{SequenceHeader, SequenceHeaderMetadata};
 use super::syntax::BlockSize;
 use super::tile::{TileInfo, parse_tile_info};
 use crate::DecoderError;
@@ -228,6 +228,20 @@ pub(crate) fn parse_frame_header_with_references(
     sequence: &SequenceHeader,
     references: &[Option<ReferenceFrameState>; 8],
 ) -> Result<FrameHeader, DecoderError> {
+    parse_frame_header_with_references_and_metadata(
+        data,
+        sequence,
+        &SequenceHeaderMetadata::default(),
+        references,
+    )
+}
+
+pub(crate) fn parse_frame_header_with_references_and_metadata(
+    data: &[u8],
+    sequence: &SequenceHeader,
+    sequence_metadata: &SequenceHeaderMetadata,
+    references: &[Option<ReferenceFrameState>; 8],
+) -> Result<FrameHeader, DecoderError> {
     let mut reader = BitReader::new(data);
 
     if sequence.reduced_still_picture_header {
@@ -354,6 +368,21 @@ pub(crate) fn parse_frame_header_with_references(
     } else {
         reader.read_bits(3, "primary_ref_frame")? as u8
     };
+    #[cfg(test)]
+    if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && order_hint == 5 {
+        eprintln!(
+            "entropy-trace header-step step=primary position={}",
+            reader.bit_position()
+        );
+    }
+    consume_buffer_removal_time(&mut reader, sequence_metadata, 0, 0)?;
+    #[cfg(test)]
+    if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && order_hint == 5 {
+        eprintln!(
+            "entropy-trace header-step step=buffer-removal position={}",
+            reader.bit_position()
+        );
+    }
     let refresh_frame_flags =
         if (frame_type == FrameType::Key && show_frame) || frame_type == FrameType::Switch {
             0xff
@@ -361,6 +390,13 @@ pub(crate) fn parse_frame_header_with_references(
             reader.read_bits(8, "refresh_frame_flags")? as u8
         };
     let frame_id = read_current_frame_id(&mut reader, sequence)?;
+    #[cfg(test)]
+    if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && order_hint == 5 {
+        eprintln!(
+            "entropy-trace header-step step=refresh-frame-id position={}",
+            reader.bit_position()
+        );
+    }
 
     let frame_is_intra = frame_type_is_intra(frame_type);
     let mut reference_frame_indices = [0; 7];
@@ -439,8 +475,22 @@ pub(crate) fn parse_frame_header_with_references(
         };
         (frame_size, render_size, false)
     };
+    #[cfg(test)]
+    if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && order_hint == 5 {
+        eprintln!(
+            "entropy-trace header-step step=frame-size-inter-tools position={}",
+            reader.bit_position()
+        );
+    }
     let disable_frame_end_update_cdf = reader.read_bool("disable_frame_end_update_cdf")?;
     let tile_info = parse_tile_info(&mut reader, sequence, frame_size.width, frame_size.height)?;
+    #[cfg(test)]
+    if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && order_hint == 5 {
+        eprintln!(
+            "entropy-trace header-step step=tile-info position={}",
+            reader.bit_position()
+        );
+    }
     let trailing = parse_frame_header_trailing_params(
         &mut reader,
         sequence,
@@ -452,12 +502,20 @@ pub(crate) fn parse_frame_header_with_references(
         references,
         primary_ref_frame,
     )?;
+    #[cfg(test)]
+    if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && order_hint == 5 {
+        eprintln!(
+            "entropy-trace header-step step=trailing position={}",
+            reader.bit_position()
+        );
+    }
     let global_motion = if !frame_is_intra {
         read_global_motion_params(
             &mut reader,
             allow_high_precision_mv,
             &reference_frame_indices,
             references,
+            primary_ref_frame,
         )?
     } else {
         GlobalMotionParams::default()
@@ -521,6 +579,39 @@ pub(crate) fn parse_frame_header_with_references(
     })
 }
 
+fn consume_buffer_removal_time(
+    reader: &mut BitReader<'_>,
+    metadata: &SequenceHeaderMetadata,
+    temporal_id: u8,
+    spatial_id: u8,
+) -> Result<(), DecoderError> {
+    if !metadata.decoder_model_info_present
+        || !reader.read_bool("buffer_removal_time_present_flag")?
+    {
+        return Ok(());
+    }
+    if metadata.buffer_removal_time_length == 0 {
+        return Err(DecoderError::Bitstream(
+            "AV1 decoder model has no buffer removal time length".to_string(),
+        ));
+    }
+    for index in 0..usize::from(metadata.operating_points_count) {
+        if !metadata.decoder_model_present_for_this_op[index] {
+            continue;
+        }
+        let idc = metadata.operating_point_idc[index];
+        let temporal_matches = idc & (1u16 << temporal_id) != 0;
+        let spatial_matches = idc & (1u16 << (spatial_id + 8)) != 0;
+        if idc == 0 || (temporal_matches && spatial_matches) {
+            let _ = reader.read_bits(
+                usize::from(metadata.buffer_removal_time_length),
+                "buffer_removal_time",
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn read_current_frame_id(
     reader: &mut BitReader<'_>,
     sequence: &SequenceHeader,
@@ -571,6 +662,7 @@ fn read_global_motion_params(
     allow_high_precision_mv: bool,
     reference_frame_indices: &[u8; 7],
     references: &[Option<ReferenceFrameState>; 8],
+    primary_ref_frame: u8,
 ) -> Result<GlobalMotionParams, DecoderError> {
     const WARPEDMODEL_PREC_BITS: i32 = 16;
     const GM_ALPHA_MAX: i32 = 1 << 12;
@@ -586,10 +678,29 @@ fn read_global_motion_params(
     const SUBEXP_K: usize = 3;
 
     let mut result = GlobalMotionParams::default();
+    let previous_global_motion = (primary_ref_frame != 7)
+        .then(|| {
+            reference_frame_indices
+                .get(usize::from(primary_ref_frame))
+                .and_then(|slot| references.get(usize::from(*slot)))
+                .and_then(Option::as_ref)
+                .map(|state| state.global_motion)
+        })
+        .flatten();
     for reference in 0..7 {
+        #[cfg(test)]
+        let trace_before = reader.bit_position();
         // The first bit is the identity/non-identity discriminator.  AOM's
         // decoder names this `type` rather than `is_global`.
         if !reader.read_bool("global_motion_type")? {
+            #[cfg(test)]
+            if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+                eprintln!(
+                    "entropy-trace global-motion reference={reference} type=Identity bits={trace_before}..{} matrix={:?}",
+                    reader.bit_position(),
+                    result.matrices[reference]
+                );
+            }
             continue;
         }
         let motion_type = if reader.read_bool("global_motion_is_rot_zoom")? {
@@ -599,16 +710,8 @@ fn read_global_motion_params(
         } else {
             GlobalMotionType::Affine
         };
-        let mut matrix = references
-            .get(usize::from(
-                *reference_frame_indices.get(reference).ok_or_else(|| {
-                    DecoderError::Bitstream(
-                        "AV1 global motion reference index is invalid".to_string(),
-                    )
-                })?,
-            ))
-            .and_then(Option::as_ref)
-            .map(|state| state.global_motion.matrices[reference])
+        let mut matrix = previous_global_motion
+            .map(|global_motion| global_motion.matrices[reference])
             .unwrap_or(result.matrices[reference]);
         match motion_type {
             GlobalMotionType::Identity => {}
@@ -689,6 +792,13 @@ fn read_global_motion_params(
         }
         result.types[reference] = motion_type;
         result.matrices[reference] = matrix;
+        #[cfg(test)]
+        if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+            eprintln!(
+                "entropy-trace global-motion reference={reference} type={motion_type:?} bits={trace_before}..{} matrix={matrix:?}",
+                reader.bit_position()
+            );
+        }
     }
     Ok(result)
 }
@@ -1172,13 +1282,6 @@ fn parse_inter_frame_size(
             break;
         }
     }
-    // The syntax still carries the remaining found_ref flags even after the
-    // first set bit; consume them before resolving the inferred dimensions.
-    if let Some(index) = found_reference {
-        for _ in 0..(6 - index) {
-            let _ = reader.read_bool("found_ref")?;
-        }
-    }
     let Some(reference) = found_reference else {
         let frame_size = parse_frame_size(reader, sequence, true)?;
         let render_size = parse_render_size(reader, frame_size.width, frame_size.height)?;
@@ -1260,27 +1363,68 @@ fn parse_frame_header_trailing_params(
     primary_ref_frame: u8,
 ) -> Result<FrameHeaderTrailingParams, DecoderError> {
     let quantization = parse_quantization_params(reader, sequence)?;
+    #[cfg(test)]
+    if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && order_hint == 5 {
+        eprintln!(
+            "entropy-trace trailing-step step=quantization position={}",
+            reader.bit_position()
+        );
+    }
     let segmentation = parse_segmentation_params(reader, primary_ref_frame)?;
     let delta_q = parse_delta_q_params(reader, quantization.base_q_idx)?;
     let delta_lf = parse_delta_lf_params(reader, delta_q.present, allow_intrabc)?;
+    #[cfg(test)]
+    if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && order_hint == 5 {
+        eprintln!(
+            "entropy-trace trailing-step step=segmentation-delta position={}",
+            reader.bit_position()
+        );
+    }
     let coded_lossless = quantization.coded_lossless()
         && (!segmentation.enabled
             || (segmentation.delta_q == 0
                 && segmentation.segment_delta_q.iter().all(|delta| *delta == 0)));
     let loop_filter = parse_loop_filter_params(reader, sequence, coded_lossless, allow_intrabc)?;
+    #[cfg(test)]
+    if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && order_hint == 5 {
+        eprintln!(
+            "entropy-trace trailing-step step=loop-filter position={}",
+            reader.bit_position()
+        );
+    }
     let cdef = parse_cdef_params(reader, sequence, coded_lossless, allow_intrabc)?;
+    #[cfg(test)]
+    if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && order_hint == 5 {
+        eprintln!(
+            "entropy-trace trailing-step step=cdef position={}",
+            reader.bit_position()
+        );
+    }
     let restoration = parse_lr_params(reader, sequence, coded_lossless, allow_intrabc)?;
+    #[cfg(test)]
+    if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && order_hint == 5 {
+        eprintln!(
+            "entropy-trace trailing-step step=restoration position={}",
+            reader.bit_position()
+        );
+    }
     let tx_mode = parse_tx_mode(reader, coded_lossless)?;
     let frame_is_intra = frame_type_is_intra(frame_type);
-    let reference_select = if frame_is_intra || error_resilient_mode {
+    let reference_select = if frame_is_intra {
         false
     } else {
         reader.read_bool("reference_select")?
     };
+    #[cfg(test)]
+    if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && order_hint == 5 {
+        eprintln!(
+            "entropy-trace trailing-step step=tx-reference position={}",
+            reader.bit_position()
+        );
+    }
     let skip_mode_present = if skip_mode_allowed(
         sequence,
         frame_type,
-        error_resilient_mode,
         order_hint,
         reference_select,
         &reference_frame_indices,
@@ -1292,16 +1436,50 @@ fn parse_frame_header_trailing_params(
     };
     let skip_mode_frame = if skip_mode_present {
         derive_skip_mode_frame(sequence, order_hint, &reference_frame_indices, references)
+            .ok_or_else(|| {
+                DecoderError::Bitstream(
+                    "AV1 skip mode is present without two eligible references".to_string(),
+                )
+            })?
     } else {
         [0; 2]
     };
+    #[cfg(test)]
+    if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && order_hint == 5 {
+        eprintln!(
+            "entropy-trace trailing-step step=skip position={} allowed={} present={skip_mode_present}",
+            reader.bit_position(),
+            skip_mode_allowed(
+                sequence,
+                frame_type,
+                order_hint,
+                reference_select,
+                &reference_frame_indices,
+                references
+            )
+        );
+    }
     let allow_warped_motion =
         if frame_is_intra || error_resilient_mode || !sequence.enable_warped_motion {
             false
         } else {
             reader.read_bool("allow_warped_motion")?
         };
+    #[cfg(test)]
+    if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && order_hint == 5 {
+        eprintln!(
+            "entropy-trace trailing-step step=warped position={} allowed={allow_warped_motion}",
+            reader.bit_position()
+        );
+    }
     let reduced_tx_set = reader.read_bool("reduced_tx_set")?;
+    #[cfg(test)]
+    if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && order_hint == 5 {
+        eprintln!(
+            "entropy-trace trailing-step step=skip-warped-reduced position={}",
+            reader.bit_position()
+        );
+    }
     // Global-motion parameters are intentionally left for the prediction
     // decoder.  AVIF frame OBUs in the supported sequence path place the
     // tile-group boundary immediately after this header subset; consuming
@@ -1327,36 +1505,15 @@ fn parse_frame_header_trailing_params(
 fn skip_mode_allowed(
     sequence: &SequenceHeader,
     frame_type: FrameType,
-    error_resilient_mode: bool,
     order_hint: u32,
     reference_select: bool,
     reference_frame_indices: &[u8; 7],
     references: &[Option<ReferenceFrameState>; 8],
 ) -> bool {
-    if frame_type_is_intra(frame_type)
-        || error_resilient_mode
-        || !reference_select
-        || !sequence.enable_order_hint
-    {
+    if frame_type_is_intra(frame_type) || !reference_select || !sequence.enable_order_hint {
         return false;
     }
-    let mut forward = 0usize;
-    let mut backward = 0usize;
-    for &slot in reference_frame_indices {
-        let Some(reference) = references.get(usize::from(slot)).and_then(Option::as_ref) else {
-            continue;
-        };
-        match relative_order_hint_distance(
-            sequence.order_hint_bits,
-            reference.order_hint,
-            order_hint,
-        ) {
-            distance if distance < 0 => forward += 1,
-            distance if distance > 0 => backward += 1,
-            _ => {}
-        }
-    }
-    forward > 0 && (backward > 0 || forward > 1)
+    derive_skip_mode_frame(sequence, order_hint, reference_frame_indices, references).is_some()
 }
 
 fn derive_skip_mode_frame(
@@ -1364,9 +1521,8 @@ fn derive_skip_mode_frame(
     order_hint: u32,
     reference_frame_indices: &[u8; 7],
     references: &[Option<ReferenceFrameState>; 8],
-) -> [u8; 2] {
+) -> Option<[u8; 2]> {
     let mut closest_forward = None::<(usize, i32)>;
-    let mut second_forward = None::<(usize, i32)>;
     let mut closest_backward = None::<(usize, i32)>;
     for (reference_type, &slot) in reference_frame_indices.iter().enumerate() {
         let Some(reference) = references.get(usize::from(slot)).and_then(Option::as_ref) else {
@@ -1377,26 +1533,38 @@ fn derive_skip_mode_frame(
             reference.order_hint,
             order_hint,
         );
-        if distance < 0 {
-            if closest_forward.is_none_or(|(_, current)| distance > current) {
-                second_forward = closest_forward;
-                closest_forward = Some((reference_type, distance));
-            } else if second_forward.is_none_or(|(_, current)| distance > current) {
-                second_forward = Some((reference_type, distance));
-            }
+        if distance < 0 && closest_forward.is_none_or(|(_, current)| distance > current) {
+            closest_forward = Some((reference_type, distance));
         } else if distance > 0 && closest_backward.is_none_or(|(_, current)| distance < current) {
             closest_backward = Some((reference_type, distance));
         }
     }
-    match (closest_forward, closest_backward, second_forward) {
-        (Some((forward, _)), Some((backward, _)), _) => {
-            [forward.min(backward) as u8, forward.max(backward) as u8]
+    let closest_forward = closest_forward?;
+    let second = if let Some(backward) = closest_backward {
+        backward
+    } else {
+        let mut second_forward = None::<(usize, i32)>;
+        for (reference_type, &slot) in reference_frame_indices.iter().enumerate() {
+            let Some(reference) = references.get(usize::from(slot)).and_then(Option::as_ref) else {
+                continue;
+            };
+            let distance = relative_order_hint_distance(
+                sequence.order_hint_bits,
+                reference.order_hint,
+                order_hint,
+            );
+            if distance < closest_forward.1
+                && second_forward.is_none_or(|(_, current)| distance > current)
+            {
+                second_forward = Some((reference_type, distance));
+            }
         }
-        (Some((forward, _)), None, Some((second, _))) => {
-            [forward.min(second) as u8, forward.max(second) as u8]
-        }
-        _ => [0; 2],
-    }
+        second_forward?
+    };
+    Some([
+        closest_forward.0.min(second.0) as u8,
+        closest_forward.0.max(second.0) as u8,
+    ])
 }
 
 fn relative_order_hint_distance(bits: u8, reference: u32, current: u32) -> i32 {
@@ -2347,7 +2515,7 @@ mod tests {
     #[test]
     fn global_motion_identity_vector_consumes_all_reference_types() {
         let mut reader = BitReader::new(&[0; 1]);
-        let params = read_global_motion_params(&mut reader, false, &[0; 7], &[None; 8]).unwrap();
+        let params = read_global_motion_params(&mut reader, false, &[0; 7], &[None; 8], 7).unwrap();
         assert_eq!(params, GlobalMotionParams::default());
         assert_eq!(reader.bit_position(), 7);
     }
@@ -2355,7 +2523,8 @@ mod tests {
     #[test]
     fn global_motion_parser_rejects_truncated_non_identity_model() {
         let mut reader = BitReader::new(&[0b1000_0000]);
-        let error = read_global_motion_params(&mut reader, false, &[0; 7], &[None; 8]).unwrap_err();
+        let error =
+            read_global_motion_params(&mut reader, false, &[0; 7], &[None; 8], 7).unwrap_err();
         assert!(matches!(error, DecoderError::NotEnoughData(_)));
     }
 
@@ -2389,7 +2558,7 @@ mod tests {
         bits.extend([false; 6]);
         let data = bits_to_bytes(&bits);
         let mut reader = BitReader::new(&data);
-        let params = read_global_motion_params(&mut reader, false, &[0; 7], &[None; 8]).unwrap();
+        let params = read_global_motion_params(&mut reader, false, &[0; 7], &[None; 8], 7).unwrap();
         assert_eq!(params.types[0], GlobalMotionType::Translation);
         assert_eq!(params.matrices[0], [0, 0, 1 << 16, 0, 0, 1 << 16]);
         assert_eq!(reader.bit_position(), 17);

@@ -35,7 +35,7 @@ pub use frame::{
     CdefStrength, FilmGrainParams, FrameHeader, FrameType, GlobalMotionParams, GlobalMotionType,
     SegmentationParams, TxMode, parse_frame_header,
 };
-pub(crate) use frame::{ReferenceFrameState, parse_frame_header_with_references};
+pub(crate) use frame::{ReferenceFrameState, parse_frame_header_with_references_and_metadata};
 pub use predict::{IntraEdges, predict_intra};
 pub use quant::{PlaneQuant, QuantState, dequantize_coefficients};
 pub(crate) use reconstruct::convert_linear_rgb_primaries;
@@ -44,6 +44,7 @@ pub use reconstruct::{
     frame_buffers_to_rgba_16, read_intra_edges, read_intra_edges_with_extension_availability,
     write_plane_block,
 };
+pub(crate) use sequence::parse_sequence_header_with_metadata;
 pub use sequence::{
     ChromaSamplePosition, ColorConfig, ColorDescription, ColorRange, SequenceHeader,
     parse_sequence_header,

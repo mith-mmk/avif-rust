@@ -3,7 +3,9 @@ use super::{
 };
 use crate::DecoderError;
 use crate::av1::decode::TileDecodePlan;
-use crate::av1::frame::{FrameHeader, FrameType, InterpolationFilter, TxMode};
+use crate::av1::frame::{
+    FrameHeader, FrameType, GlobalMotionParams, GlobalMotionType, InterpolationFilter, TxMode,
+};
 use crate::av1::sequence::SequenceHeader;
 use crate::av1::syntax::{BlockSize, PredictionMode, TxSize, UvPredictionMode};
 use crate::av1::tile_decode::context_grid::{
@@ -94,10 +96,16 @@ fn temporal_global_motion_context(
             .flatten()?;
         let current_offset =
             relative_order_hint_distance(field.order_hint_bits, frame.order_hint, reference_hint);
-        if reference_offset <= 0 || current_offset.abs() > 31 {
+        if reference_offset <= 0 {
             return Some(1);
         }
-        project_temporal_motion_vector(motion_vector, current_offset, reference_offset)
+        let projected =
+            project_temporal_motion_vector(motion_vector, current_offset, reference_offset);
+        super::lower_motion_vector_precision(
+            projected,
+            frame.allow_high_precision_mv,
+            frame.force_integer_mv == 1,
+        )
     } else {
         motion_vector
     };
@@ -151,6 +159,11 @@ fn temporal_global_motion_context(
         return Some(1);
     }
     let projected = project_temporal_motion_vector(motion_vector, current_offset, previous_offset);
+    let projected = super::lower_motion_vector_precision(
+        projected,
+        frame.allow_high_precision_mv,
+        frame.force_integer_mv == 1,
+    );
     Some(usize::from(
         projected.0.abs_diff(global_motion.0) >= 16 || projected.1.abs_diff(global_motion.1) >= 16,
     ))
@@ -189,30 +202,67 @@ impl<'a> TileDecoder<'a> {
         self.current_cfl = None;
 
         let skip_context = self.skip_context(x, y);
+        #[cfg(test)]
+        if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && x == 0 && y == 0 {
+            let state = self.reader.state_snapshot();
+            let cdf = self.cdf.skip_cdf_mut(skip_context).to_vec();
+            eprintln!(
+                "entropy-trace block-step step=skip-before context={skip_context} cdf={cdf:?} range={} dif={} count={} tell={}",
+                state.range, state.dif, state.count, state.tell
+            );
+        }
         let (skip_symbol, segment_id, skip_mode) = if frame.segmentation.preskip {
             let segment_id = self.read_segmentation_id(frame, block_size, x, y, false)?;
             let skip_mode = self.read_skip_mode(frame, block_size, x, y, segment_id)?;
-            let skip_symbol = if frame.segmentation.segment_skip[usize::from(segment_id)] {
+            let skip_symbol =
+                if skip_mode || frame.segmentation.segment_skip[usize::from(segment_id)] {
+                    1usize
+                } else {
+                    self.reader
+                        .read_symbol(self.cdf.skip_cdf_mut(skip_context))?
+                };
+            (skip_symbol, segment_id, skip_mode)
+        } else {
+            // `skip_mode` precedes `skip_txfm` in the inter block syntax.  A
+            // selected skip mode also infers skip_txfm=1, so no skip CDF is
+            // consumed in that case.  The post-skip segment id is not yet
+            // available here; AV1 uses segment 0 for this eligibility check.
+            let skip_mode = self.read_skip_mode(frame, block_size, x, y, 0)?;
+            let skip_symbol = if skip_mode {
                 1usize
             } else {
                 self.reader
                     .read_symbol(self.cdf.skip_cdf_mut(skip_context))?
             };
-            (skip_symbol, segment_id, skip_mode)
-        } else {
-            let skip_symbol = self
-                .reader
-                .read_symbol(self.cdf.skip_cdf_mut(skip_context))?;
             let skip = skip_symbol != 0;
             let segment_id = self.read_segmentation_id(frame, block_size, x, y, skip)?;
-            let skip_mode = self.read_skip_mode(frame, block_size, x, y, segment_id)?;
             (skip_symbol, segment_id, skip_mode)
         };
         let skip = skip_mode || skip_symbol != 0;
+        #[cfg(test)]
+        if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && x == 0 && y == 0 {
+            let state = self.reader.state_snapshot();
+            eprintln!(
+                "entropy-trace block-step step=skip skip={skip} skip_mode={skip_mode} segment={segment_id} range={} dif={} count={} tell={}",
+                state.range, state.dif, state.count, state.tell
+            );
+        }
         let cdef_idx = self.read_cdef_index(sequence, frame, skip, x, y)?;
         let qindex = self.read_delta_qindex(sequence, frame, block_size, skip, x, y)?;
         let delta_lf = self.read_delta_lf(sequence, frame, block_size, skip, x, y)?;
-        let is_inter = if matches!(frame.frame_type, FrameType::Inter | FrameType::Switch) {
+        #[cfg(test)]
+        if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && x == 0 && y == 0 {
+            let state = self.reader.state_snapshot();
+            eprintln!(
+                "entropy-trace block-step step=cdef-delta cdef={cdef_idx:?} range={} dif={} count={} tell={}",
+                state.range, state.dif, state.count, state.tell
+            );
+        }
+        let segment_forces_inter = frame.segmentation.segment_global_mv[usize::from(segment_id)]
+            || frame.segmentation.segment_reference_frame[usize::from(segment_id)].is_some();
+        let is_inter = if skip_mode || segment_forces_inter {
+            true
+        } else if matches!(frame.frame_type, FrameType::Inter | FrameType::Switch) {
             let context = self.intra_inter_context(x, y);
             let symbol = self
                 .reader
@@ -221,6 +271,14 @@ impl<'a> TileDecoder<'a> {
         } else {
             false
         };
+        #[cfg(test)]
+        if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && x == 0 && y == 0 {
+            let state = self.reader.state_snapshot();
+            eprintln!(
+                "entropy-trace block-step step=intra-inter is_inter={is_inter} range={} dif={} count={} tell={}",
+                state.range, state.dif, state.count, state.tell
+            );
+        }
         if is_inter {
             return self.read_inter_frame_block_mode(
                 sequence,
@@ -357,7 +415,23 @@ impl<'a> TileDecoder<'a> {
         );
         self.set_skip_context(x, y, block_size, skip);
         let mut palette = palette;
+        #[cfg(test)]
+        if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+            let state = self.reader.state_snapshot();
+            eprintln!(
+                "entropy-trace intra-mode-end x={x} y={y} y={y_mode:?} uv={uv_mode:?} filter={filter_intra_mode:?} palette={palette:?} range={} dif={} count={} tell={}",
+                state.range, state.dif, state.count, state.tell
+            );
+        }
         self.read_palette_tokens(sequence, block_size, x, y, &mut palette)?;
+        #[cfg(test)]
+        if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+            let state = self.reader.state_snapshot();
+            eprintln!(
+                "entropy-trace palette-end x={x} y={y} range={} dif={} count={} tell={}",
+                state.range, state.dif, state.count, state.tell
+            );
+        }
         let (tx_size_context, tx_size_symbol, tx_size, transform_blocks) =
             self.read_intra_tx_size(frame, block_size, skip, false, use_intrabc, x, y)?;
         self.set_inter_context(x, y, block_size, false);
@@ -458,6 +532,15 @@ impl<'a> TileDecoder<'a> {
                 .then_some(0)
             });
         let ref_context = self.reference_mode_context(x, y).min(4);
+        #[cfg(test)]
+        if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && x == 0 && y == 0 {
+            let state = self.reader.state_snapshot();
+            let cdf = self.cdf.comp_inter_cdf_mut(ref_context).to_vec();
+            eprintln!(
+                "entropy-trace block-step step=reference-mode-before context={ref_context} cdf={cdf:?} range={} dif={} count={} tell={}",
+                state.range, state.dif, state.count, state.tell
+            );
+        }
         let is_compound = forced_reference_type.is_none()
             && (skip_mode
                 || (block_size.width().min(block_size.height()) >= 8
@@ -466,6 +549,14 @@ impl<'a> TileDecoder<'a> {
                         .reader
                         .read_symbol(self.cdf.comp_inter_cdf_mut(ref_context))?
                         != 0));
+        #[cfg(test)]
+        if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && x == 0 && y == 0 {
+            let state = self.reader.state_snapshot();
+            eprintln!(
+                "entropy-trace block-step step=reference-mode-after compound={is_compound} range={} dif={} count={} tell={}",
+                state.range, state.dif, state.count, state.tell
+            );
+        }
         self.set_current_inter_compound(is_compound);
         let (reference_type, reference_type_secondary) =
             if let Some(reference_type) = forced_reference_type {
@@ -484,7 +575,7 @@ impl<'a> TileDecoder<'a> {
                 }
             } else {
                 let parsed_reference_type =
-                    self.read_single_reference_type(self.single_reference_contexts(x, y))?;
+                    self.read_single_reference_type(x, y, self.single_reference_contexts(x, y))?;
                 (parsed_reference_type, None)
             };
         let reference_frame = *frame
@@ -613,6 +704,26 @@ impl<'a> TileDecoder<'a> {
                     self.inter_mv_predictor_secondary(x, y, block_size, secondary_type as u8)
                 })
         });
+        #[cfg(test)]
+        if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && compound_candidates.is_none() {
+            let state = self.reader.state_snapshot();
+            let candidates =
+                self.inter_mv_neighbor_candidates(x, y, block_size, reference_type as u8, false);
+            eprintln!(
+                "entropy-trace single-mv-stack x={x} y={y} ref={reference_type} predictor={primary_predictor:?} count={primary_candidate_count} weights={primary_candidate_weights:?} candidates={candidates:?} mode-context={mode_context} range={} dif={} countbits={} tell={}",
+                state.range, state.dif, state.count, state.tell
+            );
+        }
+        #[cfg(test)]
+        if std::env::var_os("AVIF_ENTROPY_TRACE").is_some()
+            && let Some((primary, secondary, weights, len)) = &compound_candidates
+        {
+            let state = self.reader.state_snapshot();
+            eprintln!(
+                "entropy-trace mv-stack x={x} y={y} refs={reference_type}/{:?} count={len} weights={weights:?} primary={primary:?} secondary={secondary:?} range={} dif={} countbits={} tell={}",
+                reference_type_secondary, state.range, state.dif, state.count, state.tell
+            );
+        }
 
         let mut global_motion_index = None;
         let mut global_motion_index_secondary = None;
@@ -645,6 +756,14 @@ impl<'a> TileDecoder<'a> {
                 self.reader
                     .read_symbol(self.cdf.inter_compound_mode_cdf_mut(compound_mode_context))?
             };
+            #[cfg(test)]
+            if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+                let state = self.reader.state_snapshot();
+                eprintln!(
+                    "entropy-trace mv-mode x={x} y={y} mode={mode} packed_context={mode_context} context={compound_mode_context} range={} dif={} count={} tell={}",
+                    state.range, state.dif, state.count, state.tell
+                );
+            }
             let ref_mv_index = if skip_mode {
                 0
             } else if matches!(mode, 1 | 4 | 5) {
@@ -654,6 +773,14 @@ impl<'a> TileDecoder<'a> {
             } else {
                 0
             };
+            #[cfg(test)]
+            if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+                let state = self.reader.state_snapshot();
+                eprintln!(
+                    "entropy-trace mv-drl x={x} y={y} index={ref_mv_index} candidate_count={primary_candidate_count} weights={primary_candidate_weights:?} range={} dif={} count={} tell={}",
+                    state.range, state.dif, state.count, state.tell
+                );
+            }
             let first_new = matches!(mode, 3 | 5 | 7);
             let second_new = matches!(mode, 2 | 4 | 7);
             has_new_mv = first_new || second_new;
@@ -811,8 +938,24 @@ impl<'a> TileDecoder<'a> {
                     )?
                 }
             };
+            #[cfg(test)]
+            if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+                let state = self.reader.state_snapshot();
+                eprintln!(
+                    "entropy-trace single-mv-mode x={x} y={y} newmv-symbol={newmv_symbol} mode-context={mode_context} range={} dif={} count={} tell={}",
+                    state.range, state.dif, state.count, state.tell
+                );
+            }
             (motion_vector, None)
         };
+        #[cfg(test)]
+        if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+            let state = self.reader.state_snapshot();
+            eprintln!(
+                "entropy-trace mv-after x={x} y={y} first={motion_vector:?} second={motion_vector_secondary:?} range={} dif={} count={} tell={}",
+                state.range, state.dif, state.count, state.tell
+            );
+        }
         let (interintra_mode, interintra_wedge_index) = if sequence.enable_interintra_compound
             && !is_compound
             && !skip_mode
@@ -934,11 +1077,26 @@ impl<'a> TileDecoder<'a> {
                 && block_size.height() >= 8;
             let comp_group_idx = if masked_compound_used {
                 let context = self.compound_group_idx_context(x, y);
+                #[cfg(test)]
+                if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+                    let cdf = self.cdf.comp_group_idx_cdf_mut(context).to_vec();
+                    eprintln!(
+                        "entropy-trace comp-group-before x={x} y={y} context={context} cdf={cdf:?}"
+                    );
+                }
                 self.reader
                     .read_symbol(self.cdf.comp_group_idx_cdf_mut(context))?
             } else {
                 0
             };
+            #[cfg(test)]
+            if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+                let state = self.reader.state_snapshot();
+                eprintln!(
+                    "entropy-trace comp-group-after x={x} y={y} symbol={comp_group_idx} range={} dif={} count={} tell={}",
+                    state.range, state.dif, state.count, state.tell
+                );
+            }
             compound_group_idx = Some(comp_group_idx as u8);
             if comp_group_idx == 0 && sequence.enable_dist_wtd_comp {
                 let context = self.compound_idx_context(
@@ -947,9 +1105,24 @@ impl<'a> TileDecoder<'a> {
                     reference_type,
                     reference_type_secondary.unwrap_or(reference_type),
                 );
+                #[cfg(test)]
+                if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+                    let cdf = self.cdf.compound_idx_cdf_mut(context).to_vec();
+                    eprintln!(
+                        "entropy-trace compound-idx-before x={x} y={y} context={context} cdf={cdf:?}"
+                    );
+                }
                 let compound_idx = self
                     .reader
                     .read_symbol(self.cdf.compound_idx_cdf_mut(context))?;
+                #[cfg(test)]
+                if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+                    let state = self.reader.state_snapshot();
+                    eprintln!(
+                        "entropy-trace compound-idx-after x={x} y={y} symbol={compound_idx} range={} dif={} count={} tell={}",
+                        state.range, state.dif, state.count, state.tell
+                    );
+                }
                 decoded_compound_idx = Some(compound_idx as u8);
                 if compound_idx == 0 {
                     compound_weight = Some(distance_weighted_compound_weight(
@@ -991,10 +1164,15 @@ impl<'a> TileDecoder<'a> {
         // AOM skips switchable-filter syntax for skip-mode and WARPED/LOCALWARP
         // blocks (`av1_is_interp_needed`).  Consuming those symbols here would
         // move the arithmetic reader before the next block.
-        let interpolation_filter = if frame.is_filter_switchable
-            && !skip_mode
+        let interpolation_needed = !skip_mode
             && motion_mode != MotionMode::LocalWarp
-        {
+            && !is_nontrans_global_motion(
+                &frame.global_motion,
+                block_size,
+                global_motion_index,
+                global_motion_index_secondary,
+            );
+        let interpolation_filter = if frame.is_filter_switchable && interpolation_needed {
             let filter_context =
                 self.switchable_interpolation_context(x, y, reference_type as u8, is_compound, 0);
             let vertical = InterpolationFilter::from_switchable_symbol(
@@ -1098,7 +1276,25 @@ impl<'a> TileDecoder<'a> {
         })
     }
 
-    fn read_single_reference_type(&mut self, contexts: [usize; 6]) -> Result<usize, DecoderError> {
+    fn read_single_reference_type(
+        &mut self,
+        x: usize,
+        y: usize,
+        contexts: [usize; 6],
+    ) -> Result<usize, DecoderError> {
+        #[cfg(not(test))]
+        let _ = (x, y);
+        #[cfg(test)]
+        if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+            let cdfs = std::array::from_fn::<_, 6, _>(|index| {
+                self.cdf.single_ref_cdf_mut(contexts[index], index).to_vec()
+            });
+            let state = self.reader.state_snapshot();
+            eprintln!(
+                "entropy-trace single-ref-before x={x} y={y} contexts={contexts:?} cdfs={cdfs:?} range={} dif={} count={} tell={}",
+                state.range, state.dif, state.count, state.tell
+            );
+        }
         let p1 = self
             .reader
             .read_symbol(self.cdf.single_ref_cdf_mut(contexts[0], 0))?;
@@ -1130,6 +1326,14 @@ impl<'a> TileDecoder<'a> {
                 if p4 != 0 { 1 } else { 0 }
             }
         };
+        #[cfg(test)]
+        if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+            let state = self.reader.state_snapshot();
+            eprintln!(
+                "entropy-trace single-ref-after x={x} y={y} value={value} range={} dif={} count={} tell={}",
+                state.range, state.dif, state.count, state.tell
+            );
+        }
         Ok(value)
     }
 
@@ -1475,9 +1679,29 @@ impl<'a> TileDecoder<'a> {
             {
                 let context = self.tx_size_context(x, y, block_size);
                 let category = block_size.tx_size_category();
+                #[cfg(test)]
+                if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+                    let state = self.reader.state_snapshot();
+                    eprintln!(
+                        "entropy-trace tx-size-before x={x} y={y} size={block_size:?} category={category} context={context} cdf={:?} range={} dif={} count={} tell={}",
+                        self.cdf.tx_size_cdf_mut(category, context),
+                        state.range,
+                        state.dif,
+                        state.count,
+                        state.tell
+                    );
+                }
                 let symbol = self
                     .reader
                     .read_symbol(self.cdf.tx_size_cdf_mut(category, context))?;
+                #[cfg(test)]
+                if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+                    let state = self.reader.state_snapshot();
+                    eprintln!(
+                        "entropy-trace tx-size-after x={x} y={y} symbol={symbol} range={} dif={} count={} tell={}",
+                        state.range, state.dif, state.count, state.tell
+                    );
+                }
                 if symbol > block_size.max_tx_size_depth() {
                     return Err(DecoderError::Bitstream(format!(
                         "AV1 tx_size symbol {symbol} exceeds max depth for {block_size:?}"
@@ -1703,7 +1927,29 @@ impl<'a> TileDecoder<'a> {
     }
 
     fn read_cfl_params(&mut self) -> Result<CflParams, DecoderError> {
+        #[cfg(test)]
+        let trace_cfl = std::env::var_os("AVIF_ENTROPY_TRACE_CFL").is_some();
+        #[cfg(test)]
+        if trace_cfl {
+            let state = self.reader.state_snapshot();
+            eprintln!(
+                "entropy-trace cfl-sign-before cdf={:?} range={} dif={} count={} tell={}",
+                self.cdf.cfl_sign_cdf_mut(),
+                state.range,
+                state.dif,
+                state.count,
+                state.tell
+            );
+        }
         let joint_sign = self.reader.read_symbol(self.cdf.cfl_sign_cdf_mut())?;
+        #[cfg(test)]
+        if trace_cfl {
+            let state = self.reader.state_snapshot();
+            eprintln!(
+                "entropy-trace cfl-sign-after symbol={joint_sign} range={} dif={} count={} tell={}",
+                state.range, state.dif, state.count, state.tell
+            );
+        }
         let (sign_u, sign_v) = cfl_signs(joint_sign)?;
         let alpha_u_q3 = self.read_cfl_alpha(joint_sign, sign_u, true)?;
         let alpha_v_q3 = self.read_cfl_alpha(joint_sign, sign_v, false)?;
@@ -1728,10 +1974,38 @@ impl<'a> TileDecoder<'a> {
             let (sign_u, sign_v) = cfl_signs(joint_sign)?;
             sign_v * 3 + sign_u - 3
         };
+        #[cfg(test)]
+        let trace_cfl = std::env::var_os("AVIF_ENTROPY_TRACE_CFL").is_some();
+        #[cfg(test)]
+        if trace_cfl {
+            let state = self.reader.state_snapshot();
+            eprintln!(
+                "entropy-trace cfl-alpha-before plane={} context={context} cdf={:?} range={} dif={} count={} tell={}",
+                if is_u { 'U' } else { 'V' },
+                self.cdf.cfl_alpha_cdf_mut(context),
+                state.range,
+                state.dif,
+                state.count,
+                state.tell
+            );
+        }
         let magnitude = self
             .reader
             .read_symbol(self.cdf.cfl_alpha_cdf_mut(context))?
             + 1;
+        #[cfg(test)]
+        if trace_cfl {
+            let state = self.reader.state_snapshot();
+            eprintln!(
+                "entropy-trace cfl-alpha-after plane={} context={context} symbol={} range={} dif={} count={} tell={}",
+                if is_u { 'U' } else { 'V' },
+                magnitude - 1,
+                state.range,
+                state.dif,
+                state.count,
+                state.tell
+            );
+        }
         Ok(if sign == 1 {
             -(magnitude as i8)
         } else {
@@ -1762,7 +2036,7 @@ impl<'a> TileDecoder<'a> {
         self.y_mode_grid[mi_row * self.mi_cols + mi_col]
     }
 
-    fn is_inter_at_mi(&self, mi_col: usize, mi_row: usize) -> Option<bool> {
+    pub(super) fn is_inter_at_mi(&self, mi_col: usize, mi_row: usize) -> Option<bool> {
         if mi_col >= self.mi_cols || mi_row >= self.mi_rows {
             return None;
         }
@@ -1902,6 +2176,26 @@ impl<'a> TileDecoder<'a> {
         };
         has_smooth_neighbour(grid, self.mi_cols, self.mi_rows, x, y)
     }
+}
+
+pub(super) fn is_nontrans_global_motion(
+    global_motion: &GlobalMotionParams,
+    block_size: BlockSize,
+    primary: Option<usize>,
+    secondary: Option<usize>,
+) -> bool {
+    if block_size.width().min(block_size.height()) < 8 || primary.is_none() {
+        return false;
+    }
+    [primary, secondary]
+        .into_iter()
+        .flatten()
+        .all(|reference_type| {
+            global_motion
+                .types
+                .get(reference_type)
+                .is_some_and(|motion_type| *motion_type != GlobalMotionType::Translation)
+        })
 }
 
 fn uniform_transform_blocks(

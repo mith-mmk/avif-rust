@@ -144,13 +144,37 @@ impl<'a> TileDecoder<'a> {
         block_mode: &BlockModeProbe,
         transform: TransformBlock,
         dc_sign_context: usize,
+        tx_type_override: Option<TxType>,
     ) -> Result<DecodedTransform, DecoderError> {
-        let tx_type = self
-            .read_intra_tx_type(frame, block_mode, transform)?
-            .tx_type;
+        let tx_type = match tx_type_override {
+            Some(tx_type) => tx_type,
+            None => {
+                self.read_intra_tx_type(frame, block_mode, transform)?
+                    .tx_type
+            }
+        };
         let plane_type = usize::from(transform.plane > 0);
         let mut coefficient_read =
             self.read_coefficient_state(transform.tx_size, tx_type, plane_type, dc_sign_context)?;
+        #[cfg(test)]
+        if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+            let state = self.reader.state_snapshot();
+            eprintln!(
+                "entropy-trace coeff-end plane={} x={} y={} tx={:?} type={tx_type:?} eob_pt={} eob={} eob_symbol={} nonzero={} range={} dif={} count={} tell={}",
+                transform.plane,
+                transform.x,
+                transform.y,
+                transform.tx_size,
+                coefficient_read.eob_pt,
+                coefficient_read.eob,
+                coefficient_read.eob_pt_symbol,
+                coefficient_read.base.non_zero_count,
+                state.range,
+                state.dif,
+                state.count,
+                state.tell,
+            );
+        }
         let entropy_context = coefficient_entropy_context(&coefficient_read.base.base_levels);
         remap_coefficients_for_inverse_storage(
             transform.tx_size,

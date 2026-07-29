@@ -74,6 +74,33 @@ pub(super) fn decode_luma_leaf_block(
         y,
         chroma_reference,
     )?;
+    #[cfg(test)]
+    if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+        let state = decoder.reader.state_snapshot();
+        eprintln!(
+            "entropy-trace mode x={x} y={y} size={:?} skip={} skip_mode={} inter={} y_mode={:?} uv_mode={:?} angle_y={:?} angle_uv={:?} cfl={:?} refs={:?}/{:?} mv={:?}/{:?} motion={:?} tx={:?} tx_count={} range={} dif={} count={} tell={}",
+            block_mode.block_size,
+            block_mode.skip,
+            block_mode.skip_mode,
+            block_mode.is_inter,
+            block_mode.y_mode,
+            block_mode.uv_mode,
+            block_mode.angle_delta_y,
+            block_mode.angle_delta_uv,
+            decoder.current_cfl,
+            block_mode.reference_frame,
+            block_mode.reference_frame_secondary,
+            block_mode.motion_vector,
+            block_mode.motion_vector_secondary,
+            block_mode.motion_mode,
+            block_mode.tx_size,
+            block_mode.transform_blocks.len(),
+            state.range,
+            state.dif,
+            state.count,
+            state.tell,
+        );
+    }
     decoder.record_block_filter_state(
         x,
         y,
@@ -177,6 +204,22 @@ pub(super) fn decode_luma_leaf_block(
             quant_state,
             decoded.as_mut(),
         )?;
+        #[cfg(test)]
+        if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+            let state = decoder.reader.state_snapshot();
+            eprintln!(
+                "entropy-trace plane-end x={x} y={y} plane={} range={} dif={} count={} tell={}",
+                unit.plane_index, state.range, state.dif, state.count, state.tell
+            );
+        }
+    }
+    #[cfg(test)]
+    if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+        let state = decoder.reader.state_snapshot();
+        eprintln!(
+            "entropy-trace residual x={x} y={y} range={} dif={} count={} tell={}",
+            state.range, state.dif, state.count, state.tell
+        );
     }
 
     Ok(decoded.map(|transforms| DecodedLumaBlock {

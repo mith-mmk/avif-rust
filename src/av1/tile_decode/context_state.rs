@@ -68,6 +68,8 @@ fn add_compound_temporal_candidate(
     secondary_reference: usize,
     order_hint: u32,
     reference_order_hints: &[Option<u32>; 7],
+    allow_high_precision_mv: bool,
+    force_integer_mv: bool,
     primary: &mut [Option<(i32, i32)>; MAX_INTER_MV_CANDIDATES],
     secondary: &mut [Option<(i32, i32)>; MAX_INTER_MV_CANDIDATES],
     weights: &mut [u16; MAX_INTER_MV_CANDIDATES],
@@ -84,6 +86,11 @@ fn add_compound_temporal_candidate(
     ) else {
         return;
     };
+    let primary_motion = super::lower_motion_vector_precision(
+        primary_motion,
+        allow_high_precision_mv,
+        force_integer_mv,
+    );
     let Some((secondary_index, secondary_motion)) = field.projected_motion(
         mi_col,
         mi_row,
@@ -95,6 +102,11 @@ fn add_compound_temporal_candidate(
     ) else {
         return;
     };
+    let secondary_motion = super::lower_motion_vector_precision(
+        secondary_motion,
+        allow_high_precision_mv,
+        force_integer_mv,
+    );
     if primary_index == secondary_index {
         push_compound_mv_candidate(
             primary,
@@ -113,6 +125,7 @@ struct InterMvStack {
     values: [Option<(i32, i32)>; MAX_INTER_MV_CANDIDATES],
     weights: [u16; MAX_INTER_MV_CANDIDATES],
     len: usize,
+    syntax_len: usize,
     nearest_len: usize,
     row_matches: usize,
     col_matches: usize,
@@ -127,6 +140,7 @@ impl Default for InterMvStack {
             values: [None; MAX_INTER_MV_CANDIDATES],
             weights: [0; MAX_INTER_MV_CANDIDATES],
             len: 0,
+            syntax_len: 0,
             nearest_len: 0,
             row_matches: 0,
             col_matches: 0,
@@ -653,17 +667,12 @@ impl<'a> TileDecoder<'a> {
         let block_w4 = (block_size.width() / 4).max(1);
         let block_h4 = (block_size.height() / 4).max(1);
         let mut stack = InterMvStack::default();
-        let target_reference = self
-            .reference_frame_indices
-            .get(usize::from(reference_frame))
-            .copied()
-            .unwrap_or(reference_frame);
         let sign_bias = |reference: u8| {
             let hint = self
-                .reference_frame_indices
-                .iter()
-                .position(|candidate| *candidate == reference)
-                .and_then(|index| self.reference_order_hints[index]);
+                .reference_order_hints
+                .get(usize::from(reference))
+                .copied()
+                .flatten();
             let Some(hint) = hint else {
                 return false;
             };
@@ -675,7 +684,7 @@ impl<'a> TileDecoder<'a> {
             distance > 0
         };
         let normalize_motion = |motion: (i32, i32), candidate_reference: u8| {
-            if sign_bias(candidate_reference) == sign_bias(target_reference) {
+            if sign_bias(candidate_reference) == sign_bias(reference_frame) {
                 motion
             } else {
                 (-motion.0, -motion.1)
@@ -697,22 +706,17 @@ impl<'a> TileDecoder<'a> {
             let index = candidate_row * self.mi_cols + candidate_col;
             let _source_size = self.motion_block_size_grid[index]?;
             let origin_index = index;
-            let candidate_reference = self
-                .reference_frame_indices
-                .get(usize::from(reference_frame))
-                .copied()
-                .unwrap_or(reference_frame);
-            let primary =
-                self.reference_frame_grid[origin_index].zip(self.motion_vector_grid[origin_index]);
-            let secondary_motion = self.reference_frame_secondary_grid[origin_index]
+            let primary = self.reference_frame_type_grid[origin_index]
+                .zip(self.motion_vector_grid[origin_index]);
+            let secondary_motion = self.reference_frame_secondary_type_grid[origin_index]
                 .zip(self.motion_vector_secondary_grid[origin_index]);
             let motion = if secondary {
-                secondary_motion.filter(|(reference, _)| *reference == candidate_reference)
+                secondary_motion.filter(|(reference, _)| *reference == reference_frame)
             } else {
                 primary
-                    .filter(|(reference, _)| *reference == candidate_reference)
+                    .filter(|(reference, _)| *reference == reference_frame)
                     .or_else(|| {
-                        secondary_motion.filter(|(reference, _)| *reference == candidate_reference)
+                        secondary_motion.filter(|(reference, _)| *reference == reference_frame)
                     })
             };
             Some((
@@ -887,7 +891,7 @@ impl<'a> TileDecoder<'a> {
             let step_col = if block_w4 >= 16 { 4 } else { 2 };
             let reference_type = usize::from(reference_frame);
             let mut add_temporal = |blk_row: isize, blk_col: isize| {
-                if let Some((_, motion_vector)) = field.projected_motion(
+                let projected = field.projected_motion(
                     mi_col,
                     mi_row,
                     blk_col,
@@ -895,7 +899,13 @@ impl<'a> TileDecoder<'a> {
                     reference_type,
                     self.order_hint,
                     &self.reference_order_hints,
-                ) {
+                );
+                if let Some((_, motion_vector)) = projected {
+                    let motion_vector = super::lower_motion_vector_precision(
+                        motion_vector,
+                        self.allow_high_precision_mv,
+                        self.force_integer_mv,
+                    );
                     stack.add_temporal(motion_vector, 2);
                 }
             };
@@ -947,17 +957,14 @@ impl<'a> TileDecoder<'a> {
                 |candidate_col: usize, candidate_row: usize, stack: &mut InterMvStack| {
                     let index = candidate_row * self.mi_cols + candidate_col;
                     for candidate in [
-                        self.reference_frame_grid[index].zip(self.motion_vector_grid[index]),
-                        self.reference_frame_secondary_grid[index]
+                        self.reference_frame_type_grid[index].zip(self.motion_vector_grid[index]),
+                        self.reference_frame_secondary_type_grid[index]
                             .zip(self.motion_vector_secondary_grid[index]),
                     ]
                     .into_iter()
                     .flatten()
                     {
                         stack.add_temporal(normalize_motion(candidate.1, candidate.0), 2);
-                        if stack.len >= 2 {
-                            break;
-                        }
                     }
                 };
 
@@ -988,6 +995,7 @@ impl<'a> TileDecoder<'a> {
                 }
             }
         }
+        stack.syntax_len = stack.len;
         stack
     }
 
@@ -1245,16 +1253,6 @@ impl<'a> TileDecoder<'a> {
         let mi_row = y / 4;
         let block_w4 = (block_size.width() / 4).max(1);
         let block_h4 = (block_size.height() / 4).max(1);
-        let target_primary = self
-            .reference_frame_indices
-            .get(usize::from(primary_reference))
-            .copied()
-            .unwrap_or(primary_reference);
-        let target_secondary = self
-            .reference_frame_indices
-            .get(usize::from(secondary_reference))
-            .copied()
-            .unwrap_or(secondary_reference);
         let matches = |column: usize, row: usize| {
             if column < self.tile_mi_col_start
                 || row < self.tile_mi_row_start
@@ -1267,14 +1265,11 @@ impl<'a> TileDecoder<'a> {
             let size = self.motion_block_size_grid[index]?;
             let width = (size.width() / 4).max(1);
             let height = (size.height() / 4).max(1);
-            if self.reference_frame_grid[index] != Some(target_primary)
-                || self.reference_frame_secondary_grid[index] != Some(target_secondary)
-            {
-                return None;
-            }
             Some((
                 width,
                 height,
+                self.reference_frame_type_grid[index] == Some(primary_reference)
+                    && self.reference_frame_secondary_type_grid[index] == Some(secondary_reference),
                 self.inter_new_mv_grid[index].unwrap_or(false),
             ))
         };
@@ -1323,7 +1318,8 @@ impl<'a> TileDecoder<'a> {
                 else {
                     break;
                 };
-                let Some((source_w4, source_h4, has_new_mv)) = matches(column, row) else {
+                let Some((source_w4, source_h4, ref_matches, has_new_mv)) = matches(column, row)
+                else {
                     i += 1;
                     continue;
                 };
@@ -1340,11 +1336,13 @@ impl<'a> TileDecoder<'a> {
                     processed_rows.set(inc - row_offset - 1);
                 }
                 let _ = weight;
-                row_matches.set(row_matches.get() + 1);
-                if nearest {
-                    nearest_row_matches.set(nearest_row_matches.get() + 1);
-                    if has_new_mv {
-                        new_mv_count.set(new_mv_count.get() + 1);
+                if ref_matches {
+                    row_matches.set(row_matches.get() + 1);
+                    if nearest {
+                        nearest_row_matches.set(nearest_row_matches.get() + 1);
+                        if has_new_mv {
+                            new_mv_count.set(new_mv_count.get() + 1);
+                        }
                     }
                 }
                 i = i.saturating_add(len.max(1));
@@ -1371,7 +1369,8 @@ impl<'a> TileDecoder<'a> {
                 else {
                     break;
                 };
-                let Some((source_w4, source_h4, has_new_mv)) = matches(column, row) else {
+                let Some((source_w4, source_h4, ref_matches, has_new_mv)) = matches(column, row)
+                else {
                     i += 1;
                     continue;
                 };
@@ -1388,11 +1387,13 @@ impl<'a> TileDecoder<'a> {
                     processed_cols.set(inc - col_offset - 1);
                 }
                 let _ = weight;
-                col_matches.set(col_matches.get() + 1);
-                if nearest {
-                    nearest_col_matches.set(nearest_col_matches.get() + 1);
-                    if has_new_mv {
-                        new_mv_count.set(new_mv_count.get() + 1);
+                if ref_matches {
+                    col_matches.set(col_matches.get() + 1);
+                    if nearest {
+                        nearest_col_matches.set(nearest_col_matches.get() + 1);
+                        if has_new_mv {
+                            new_mv_count.set(new_mv_count.get() + 1);
+                        }
                     }
                 }
                 i = i.saturating_add(len.max(1));
@@ -1407,16 +1408,18 @@ impl<'a> TileDecoder<'a> {
         }
         if mi_row > self.tile_mi_row_start {
             let top_right = mi_col.saturating_add(block_w4);
-            if matches(top_right, mi_row - 1).is_some() {
+            if let Some((_, _, true, has_new_mv)) = matches(top_right, mi_row - 1) {
                 row_matches.set(row_matches.get() + 1);
                 nearest_row_matches.set(nearest_row_matches.get() + 1);
+                if has_new_mv {
+                    new_mv_count.set(new_mv_count.get() + 1);
+                }
             }
         }
         if mi_row > self.tile_mi_row_start && mi_col > self.tile_mi_col_start {
-            let _ = matches(mi_col - 1, mi_row - 1).is_some().then(|| {
-                row_matches.set(row_matches.get() + 1);
-                col_matches.set(col_matches.get() + 1);
-            });
+            let _ = matches(mi_col - 1, mi_row - 1)
+                .is_some_and(|(_, _, ref_matches, _)| ref_matches)
+                .then(|| row_matches.set(row_matches.get() + 1));
         }
         for idx in 2..=3 {
             let row_offset = -(idx as isize * 2) + 1 + row_adj;
@@ -1586,15 +1589,6 @@ impl<'a> TileDecoder<'a> {
         for weight in weights.iter_mut().take(len) {
             *weight = weight.saturating_add(640);
         }
-        for end in (1..len).rev() {
-            for index in 0..end {
-                if weights[index] < weights[index + 1] {
-                    primary.swap(index, index + 1);
-                    secondary.swap(index, index + 1);
-                    weights.swap(index, index + 1);
-                }
-            }
-        }
         let nearest_len = len;
 
         // A compound temporal candidate must keep both projections from the
@@ -1617,6 +1611,8 @@ impl<'a> TileDecoder<'a> {
                         usize::from(secondary_reference),
                         self.order_hint,
                         &self.reference_order_hints,
+                        self.allow_high_precision_mv,
+                        self.force_integer_mv,
                         &mut primary,
                         &mut secondary,
                         &mut weights,
@@ -1645,6 +1641,8 @@ impl<'a> TileDecoder<'a> {
                             usize::from(secondary_reference),
                             self.order_hint,
                             &self.reference_order_hints,
+                            self.allow_high_precision_mv,
+                            self.force_integer_mv,
                             &mut primary,
                             &mut secondary,
                             &mut weights,
@@ -1726,6 +1724,18 @@ impl<'a> TileDecoder<'a> {
                         visit_pair(column, row, step.saturating_mul(2) as u16);
                         offset = offset.saturating_add(step);
                     }
+                }
+            }
+        }
+        // Candidates found by the later temporal and outer spatial scans can
+        // duplicate a nearest candidate and increase its weight. Rank only
+        // after all scans have completed, as required by setup_ref_mv_list.
+        for end in (1..nearest_len).rev() {
+            for index in 0..end {
+                if weights[index] < weights[index + 1] {
+                    primary.swap(index, index + 1);
+                    secondary.swap(index, index + 1);
+                    weights.swap(index, index + 1);
                 }
             }
         }
@@ -1907,16 +1917,8 @@ impl<'a> TileDecoder<'a> {
         reference_frame: u8,
         secondary: bool,
     ) -> usize {
-        let mut seen = [(0, 0); MAX_INTER_MV_CANDIDATES];
-        let mut seen_len = 0;
         let stack = self.inter_mv_stack(x, y, block_size, reference_frame, secondary);
-        for mv in stack.values.into_iter().take(stack.len).flatten() {
-            if !seen[..seen_len].contains(&mv) {
-                seen[seen_len] = mv;
-                seen_len += 1;
-            }
-        }
-        seen_len.max(1)
+        stack.syntax_len.max(1)
     }
 
     pub(super) fn inter_mv_candidate_weights(
@@ -2361,12 +2363,28 @@ impl<'a> TileDecoder<'a> {
 
     pub(super) fn tx_size_context(&self, x: usize, y: usize, block_size: BlockSize) -> usize {
         let (max_tx_width, max_tx_height) = block_size.largest_supported_tx_dimensions();
-        let has_above = (y >> 2) > self.tile_mi_row_start;
-        let has_left = (x >> 2) > self.tile_mi_col_start;
-        let above =
-            has_above && self.above_txfm_context.get(x >> 2).copied().unwrap_or(0) >= max_tx_width;
-        let left =
-            has_left && self.left_txfm_context.get(y >> 2).copied().unwrap_or(0) >= max_tx_height;
+        let mi_col = x >> 2;
+        let mi_row = y >> 2;
+        let has_above = mi_row > self.tile_mi_row_start;
+        let has_left = mi_col > self.tile_mi_col_start;
+        let mut above =
+            has_above && self.above_txfm_context.get(mi_col).copied().unwrap_or(0) >= max_tx_width;
+        let mut left =
+            has_left && self.left_txfm_context.get(mi_row).copied().unwrap_or(0) >= max_tx_height;
+        // AV1 replaces the transform-edge comparison with the neighbouring
+        // prediction block dimension when that neighbour is inter coded.
+        if has_above
+            && self.is_inter_at_mi(mi_col, mi_row - 1) == Some(true)
+            && let Some(above_size) = self.motion_block_size_at(mi_col, mi_row - 1)
+        {
+            above = above_size.width() >= max_tx_width;
+        }
+        if has_left
+            && self.is_inter_at_mi(mi_col - 1, mi_row) == Some(true)
+            && let Some(left_size) = self.motion_block_size_at(mi_col - 1, mi_row)
+        {
+            left = left_size.height() >= max_tx_height;
+        }
         match (has_above, has_left) {
             (true, true) => usize::from(above) + usize::from(left),
             (true, false) => usize::from(above),

@@ -132,7 +132,34 @@ impl CoefficientTokenSource for EntropyCoefficientSource<'_, '_> {
                 context,
             } => self.cdf.dc_sign_cdf_mut(plane_type, context),
         };
-        self.reader.read_symbol(cdf)
+        #[cfg(test)]
+        if std::env::var_os("AVIF_COEFF_TRACE").is_some()
+            && matches!(
+                symbol,
+                CoefficientSymbol::EobPoint { .. } | CoefficientSymbol::EobExtra { .. }
+            )
+        {
+            let state = self.reader.state_snapshot();
+            eprintln!(
+                "entropy-trace coeff-symbol-before symbol={symbol:?} cdf={cdf:?} range={} dif={} count={} tell={}",
+                state.range, state.dif, state.count, state.tell
+            );
+        }
+        let value = self.reader.read_symbol(cdf)?;
+        #[cfg(test)]
+        if std::env::var_os("AVIF_COEFF_TRACE").is_some()
+            && matches!(
+                symbol,
+                CoefficientSymbol::EobPoint { .. } | CoefficientSymbol::EobExtra { .. }
+            )
+        {
+            let state = self.reader.state_snapshot();
+            eprintln!(
+                "entropy-trace coeff-symbol-after symbol={symbol:?} value={value} range={} dif={} count={} tell={}",
+                state.range, state.dif, state.count, state.tell
+            );
+        }
+        Ok(value)
     }
 
     fn read_literal(&mut self, literal: CoefficientLiteral) -> Result<usize, DecoderError> {

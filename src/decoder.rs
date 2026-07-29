@@ -16,9 +16,10 @@ use crate::av1::{
     crop_frame_buffers_to_plan, deblock_filter_edge_with_visible_bounds,
     decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf_and_motion,
     frame_buffers_to_rgba_16, parse_av1_config, parse_frame_header,
-    parse_frame_header_with_references, parse_sequence_header, parse_show_existing_frame_index,
-    parse_tile_group, plan_transform_blocks_with_tx_size, prepare_tile_entropy,
-    probe_first_block_residuals, probe_tile_block_modes, probe_tile_partitions,
+    parse_frame_header_with_references_and_metadata, parse_sequence_header,
+    parse_sequence_header_with_metadata, parse_show_existing_frame_index, parse_tile_group,
+    plan_transform_blocks_with_tx_size, prepare_tile_entropy, probe_first_block_residuals,
+    probe_tile_block_modes, probe_tile_partitions,
     sgrproj_filter_unit_into_with_scratch_bit_depth_visible,
     wiener_filter_unit_into_with_scratch_bit_depth_visible,
 };
@@ -986,7 +987,34 @@ fn decode_sequence_samples_from_info(
                         av1_config,
                         &reference_states,
                     )?;
-                    let temporal_motion_field = references.temporal_motion_field(&headers.frame);
+                    #[cfg(test)]
+                    if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+                        let start = headers.tile_group.group.data_start_offset;
+                        let end = start
+                            .saturating_add(8)
+                            .min(headers.tile_group.tile_data.len());
+                        eprintln!(
+                            "entropy-trace headers sample={index} unit={unit_index} kind={kind:?} show={} order_hint={} primary_ref={} refresh={:#04x} disable_cdf={} disable_frame_end_cdf={} refs={:?} reference_select={} skip_mode={}/{:?} base_q={} delta_q={} segmentation={:?} global={:?} header_bits={} tile_start={start} tile_bytes={:02x?}",
+                            headers.frame.show_frame,
+                            headers.frame.order_hint,
+                            headers.frame.primary_ref_frame,
+                            headers.frame.refresh_frame_flags,
+                            headers.frame.disable_cdf_update,
+                            headers.frame.disable_frame_end_update_cdf,
+                            headers.frame.reference_frame_indices,
+                            headers.frame.reference_select,
+                            headers.frame.skip_mode_present,
+                            headers.frame.skip_mode_frame,
+                            headers.frame.base_q_idx,
+                            headers.frame.delta_q.present,
+                            headers.frame.segmentation,
+                            headers.frame.global_motion.types,
+                            headers.frame.uncompressed_header_bits,
+                            &headers.tile_group.tile_data[start..end]
+                        );
+                    }
+                    let temporal_motion_field = references
+                        .temporal_motion_field(&headers.frame, headers.sequence.order_hint_bits);
                     let initial_cdfs = if headers.frame.primary_ref_frame != 7 {
                         references
                             .cdf_for_header(&headers.frame)
@@ -1002,13 +1030,18 @@ fn decode_sequence_samples_from_info(
                             references.buffers(),
                             initial_cdfs,
                             temporal_motion_field,
-                            false,
+                            true,
                             true,
                         ) {
                             Ok(decoded) => decoded,
-                            Err(DecoderError::Bitstream(_) | DecoderError::Unsupported(_)) => {
+                            Err(DecoderError::Unsupported(message)) => {
                                 return Err(DecoderError::Unsupported(format!(
-                                    "AVIS sample {index} unit {unit_index} uses {kind:?} frame prediction"
+                                    "AVIS sample {index} unit {unit_index} uses unsupported {kind:?} frame prediction: {message}"
+                                )));
+                            }
+                            Err(DecoderError::Bitstream(message)) => {
+                                return Err(DecoderError::Bitstream(format!(
+                                    "AVIS sample {index} unit {unit_index} {kind:?} frame: {message}"
                                 )));
                             }
                             Err(err) => return Err(err),
@@ -1270,36 +1303,39 @@ impl FrameReferenceSlots {
         self.previous_motion_field = Some(Arc::new(motion_field));
     }
 
-    fn temporal_motion_field(&self, header: &FrameHeader) -> Option<Arc<MotionField>> {
+    fn temporal_motion_field(
+        &self,
+        header: &FrameHeader,
+        order_hint_bits: u8,
+    ) -> Option<Arc<MotionField>> {
         if !header.use_ref_frame_mvs {
             return None;
         }
         let mi_cols = usize::try_from(header.frame_width).ok()?.div_ceil(4);
         let mi_rows = usize::try_from(header.frame_height).ok()?.div_ceil(4);
         let mut field = MotionField::empty(mi_cols, mi_rows);
-        field.order_hint_bits = 8;
+        field.order_hint_bits = order_hint_bits;
         field.order_hint = header.order_hint;
         field.reference_order_hints = header.reference_order_hints;
         field.reference_frame_indices = header.reference_frame_indices;
         field.projected = true;
 
-        let mut stamps = 3;
-        let mut project = |reference_type: usize, direction: i32, stamps: &mut i32| {
+        let mut project = |reference_type: usize, direction: i32| -> bool {
             let Some(&slot) = header.reference_frame_indices.get(reference_type) else {
-                return;
+                return false;
             };
             let Ok(start) = self.get(slot) else {
-                return;
+                return false;
             };
             if matches!(start.frame_type, FrameType::Key | FrameType::IntraOnly) {
-                return;
+                return false;
             }
             let source = &start.motion_field;
             if source.mi_cols != mi_cols || source.mi_rows != mi_rows {
-                return;
+                return false;
             }
             let start_to_current =
-                relative_order_hint_distance(8, start.order_hint, header.order_hint);
+                relative_order_hint_distance(order_hint_bits, start.order_hint, header.order_hint);
             let start_to_current = if direction == 2 {
                 -start_to_current
             } else {
@@ -1322,8 +1358,11 @@ impl FrameReferenceSlots {
                     else {
                         continue;
                     };
-                    let reference_offset =
-                        relative_order_hint_distance(8, start.order_hint, source_reference_hint);
+                    let reference_offset = relative_order_hint_distance(
+                        order_hint_bits,
+                        start.order_hint,
+                        source_reference_hint,
+                    );
                     if reference_offset <= 0
                         || reference_offset.abs() > 31
                         || start_to_current.abs() > 31
@@ -1367,11 +1406,16 @@ impl FrameReferenceSlots {
                     field.reference_offsets[target_index] = Some(reference_offset);
                 }
             }
-            *stamps -= 1;
+            true
         };
 
-        if header.reference_order_hints[0]
-            .is_some_and(|hint| relative_order_hint_distance(8, hint, header.order_hint) <= 0)
+        // `av1_setup_motion_field` spends the LAST stamp whenever the slot
+        // exists, even if projection fails because LAST is a key frame.
+        let mut ref_stamp = 2;
+        if header
+            .reference_frame_indices
+            .first()
+            .is_some_and(|slot| self.get(*slot).is_ok())
         {
             let is_last_overlay = header
                 .reference_frame_indices
@@ -1381,24 +1425,33 @@ impl FrameReferenceSlots {
                 .zip(header.reference_order_hints[3])
                 .is_some_and(|(altref_hint, golden_hint)| altref_hint == golden_hint);
             if !is_last_overlay {
-                project(0, 2, &mut stamps);
-            } else {
-                stamps -= 1;
+                let _ = project(0, 2);
             }
+            ref_stamp -= 1;
         }
-        for reference_type in [4usize, 5, 6] {
-            if stamps < 0 {
-                break;
-            }
+        for reference_type in [4usize, 5] {
             if header.reference_order_hints[reference_type]
-                .map(|hint| relative_order_hint_distance(8, hint, header.order_hint) > 0)
+                .map(|hint| {
+                    relative_order_hint_distance(order_hint_bits, hint, header.order_hint) > 0
+                })
                 .unwrap_or(false)
+                && project(reference_type, 0)
             {
-                project(reference_type, 0, &mut stamps);
+                ref_stamp -= 1;
             }
         }
-        if stamps >= 0 {
-            project(1, 2, &mut stamps);
+        if ref_stamp >= 0
+            && header.reference_order_hints[6]
+                .map(|hint| {
+                    relative_order_hint_distance(order_hint_bits, hint, header.order_hint) > 0
+                })
+                .unwrap_or(false)
+            && project(6, 0)
+        {
+            ref_stamp -= 1;
+        }
+        if ref_stamp >= 0 {
+            let _ = project(1, 2);
         }
         Some(Arc::new(field))
     }
@@ -1708,6 +1761,81 @@ mod reference_frame_tests {
     }
 
     #[test]
+    #[ignore = "requires AVIF_ENTROPY_TRACE_FIXTURE for test-only AOM accounting comparison"]
+    fn trace_avis_entropy_fixture() {
+        let path = std::env::var_os("AVIF_ENTROPY_TRACE_FIXTURE")
+            .expect("AVIF_ENTROPY_TRACE_FIXTURE must point to an AVIS fixture");
+        let index = std::env::var("AVIF_ENTROPY_TRACE_INDEX")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(1);
+        let data = std::fs::read(path).expect("trace AVIS fixture should be readable");
+        let info = parse_avif(&data).expect("trace AVIS fixture should parse");
+        if let Some(output) = std::env::var_os("AVIF_ENTROPY_TRACE_DUMP_OBU") {
+            let stream = info
+                .sequence_sample_payloads
+                .iter()
+                .flatten()
+                .copied()
+                .collect::<Vec<_>>();
+            std::fs::write(output, stream).expect("trace AV1 stream should be writable");
+        }
+        if let Some(output) = std::env::var_os("AVIF_ENTROPY_TRACE_DUMP_IVF") {
+            let width = u16::try_from(info.width.expect("trace AVIS width is required"))
+                .expect("trace AVIS width must fit IVF");
+            let height = u16::try_from(info.height.expect("trace AVIS height is required"))
+                .expect("trace AVIS height must fit IVF");
+            let frame_count = u32::try_from(info.sequence_sample_payloads.len())
+                .expect("trace AVIS frame count must fit IVF");
+            let mut ivf = Vec::new();
+            ivf.extend_from_slice(b"DKIF");
+            ivf.extend_from_slice(&0_u16.to_le_bytes());
+            ivf.extend_from_slice(&32_u16.to_le_bytes());
+            ivf.extend_from_slice(b"AV01");
+            ivf.extend_from_slice(&width.to_le_bytes());
+            ivf.extend_from_slice(&height.to_le_bytes());
+            ivf.extend_from_slice(&1_u32.to_le_bytes());
+            ivf.extend_from_slice(&1_u32.to_le_bytes());
+            ivf.extend_from_slice(&frame_count.to_le_bytes());
+            ivf.extend_from_slice(&0_u32.to_le_bytes());
+            for (timestamp, sample) in info.sequence_sample_payloads.iter().enumerate() {
+                let size = u32::try_from(sample.len()).expect("trace sample size must fit IVF");
+                ivf.extend_from_slice(&size.to_le_bytes());
+                ivf.extend_from_slice(&(timestamp as u64).to_le_bytes());
+                ivf.extend_from_slice(sample);
+            }
+            std::fs::write(output, ivf).expect("trace IVF stream should be writable");
+        }
+        eprintln!(
+            "entropy-trace samples={} selected={index}",
+            info.sequence_sample_payloads.len()
+        );
+        for (sample_index, sample) in info
+            .sequence_sample_payloads
+            .iter()
+            .take(index + 1)
+            .enumerate()
+        {
+            let units = split_av1_sequence_sample(sample).expect("trace sample should split");
+            for (unit_index, unit) in units.iter().enumerate() {
+                let inspected = crate::container::inspect_av1_sequence_sample(&unit.payload)
+                    .expect("trace unit should inspect");
+                eprintln!(
+                    "entropy-trace sample={sample_index} unit={unit_index} len={} kind={:?}",
+                    unit.payload.len(),
+                    inspected.kind
+                );
+            }
+        }
+        let frame = decode_sequence_frame_bytes(&data, index)
+            .expect("diagnostic fixture must pass strict entropy validation");
+        eprintln!(
+            "entropy-trace result=ok dimensions={}x{} bit_depth={}",
+            frame.width, frame.height, frame.bit_depth
+        );
+    }
+
+    #[test]
     fn evaluates_64_bit_sato_expression_with_saturation() {
         let tokens = [
             SampleTransformToken::Constant(i64::MAX),
@@ -1897,7 +2025,7 @@ fn parse_av1_headers_from_parts_with_references(
     )?;
     let sequence_payload = sequence_payload
         .ok_or_else(|| DecoderError::Bitstream("AV1 sequence header OBU is missing".to_string()))?;
-    let sequence = parse_sequence_header(sequence_payload)?;
+    let (sequence, sequence_metadata) = parse_sequence_header_with_metadata(sequence_payload)?;
     validate_extended_pixi(info.pixel_information.as_ref(), &sequence.color_config)?;
     validate_color_metadata(info.color_information.as_ref(), &sequence.color_config)?;
     let config = av1_config.map(parse_av1_config).transpose()?;
@@ -1905,7 +2033,12 @@ fn parse_av1_headers_from_parts_with_references(
         validate_av1_config(&config, &sequence)?;
     }
     let (frame, tile_group_payload) = if let Some(frame_payload) = frame_payload {
-        let frame = parse_frame_header_with_references(frame_payload, &sequence, references)?;
+        let frame = parse_frame_header_with_references_and_metadata(
+            frame_payload,
+            &sequence,
+            &sequence_metadata,
+            references,
+        )?;
         if frame.payload_after_header_offset > frame_payload.len() {
             return Err(DecoderError::Bitstream(
                 "AV1 frame payload offset points outside OBU_FRAME".to_string(),
@@ -1942,8 +2075,12 @@ fn parse_av1_headers_from_parts_with_references(
         let frame_header_payload = frame_header_payload.ok_or_else(|| {
             DecoderError::Bitstream("AV1 frame header OBU is missing".to_string())
         })?;
-        let frame =
-            parse_frame_header_with_references(frame_header_payload, &sequence, references)?;
+        let frame = parse_frame_header_with_references_and_metadata(
+            frame_header_payload,
+            &sequence,
+            &sequence_metadata,
+            references,
+        )?;
         // A primary item may carry an AV1 sequence. The still-image API
         // exposes the first frame, so stop collecting tiles at the next
         // frame boundary instead of mixing subsequent frames into it.

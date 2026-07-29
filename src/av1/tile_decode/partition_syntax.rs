@@ -51,6 +51,14 @@ impl<'a> TileDecoder<'a> {
             let cdf = self
                 .cdf
                 .partition_cdf_mut(block_size.width_mi_log2(), context);
+            #[cfg(test)]
+            if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+                let state = self.reader.state_snapshot();
+                eprintln!(
+                    "entropy-trace partition-cdf x={x} y={y} size={block_size:?} context={context} cdf={:?} range={} dif={} count={} tell={}",
+                    cdf, state.range, state.dif, state.count, state.tell,
+                );
+            }
             let symbol = self.reader.read_symbol(cdf)?;
             let partition = Partition::from_symbol(block_size, symbol).ok_or_else(|| {
                 DecoderError::Bitstream(format!(
@@ -80,14 +88,22 @@ impl<'a> TileDecoder<'a> {
             };
             (partition_symbol(partition), partition)
         };
-        Ok(PartitionProbe {
+        let probe = PartitionProbe {
             tile_id: tile.tile_id,
             block_size,
             context,
             symbol,
             partition,
             bit_position_after: self.reader.bit_position(),
-        })
+        };
+        #[cfg(test)]
+        if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+            eprintln!(
+                "entropy-trace partition x={x} y={y} size={block_size:?} context={context} symbol={symbol} partition={partition:?} tell={}",
+                probe.bit_position_after
+            );
+        }
+        Ok(probe)
     }
 }
 

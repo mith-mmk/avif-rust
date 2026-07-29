@@ -1,4 +1,5 @@
 use super::diagnostic::ObmcNeighbors;
+use super::tx_type_syntax::inter_chroma_tx_type;
 use super::{
     BlockModeProbe, CompoundMask, DecodedTransform, InterIntraMode, LocalWarpSample, MotionMode,
     PalettePlaneInfo, TileDecoder,
@@ -142,15 +143,33 @@ pub(super) fn decode_plane_block_unit(
     } else {
         ObmcNeighbors::default()
     };
-    let transforms = if block_mode.transform_blocks.is_empty() {
-        let tx_size = if plane_index > 0 && !frame.coded_lossless() {
+    let chroma_tx_size = || {
+        if frame.coded_lossless() {
+            TxSize::Tx4x4
+        } else {
             match plane_block_size.largest_supported_rect_tx_size() {
                 TxSize::Tx64x64 | TxSize::Tx64x32 | TxSize::Tx32x64 => TxSize::Tx32x32,
                 TxSize::Tx64x16 => TxSize::Tx32x16,
                 TxSize::Tx16x64 => TxSize::Tx16x32,
                 tx_size => tx_size,
             }
-        } else if plane_index == 0 {
+        }
+    };
+    let transforms = if plane_index > 0 {
+        // Chroma uses max_uv_txsize for the prediction block. Variable luma
+        // transform partitions do not subdivide the U/V coefficient blocks.
+        iter_transform_blocks_with_tx_size(
+            plane_index,
+            block_x,
+            block_y,
+            plane_block_size,
+            chroma_tx_size(),
+            plane_width,
+            plane_height,
+        )
+        .collect()
+    } else if block_mode.transform_blocks.is_empty() {
+        let tx_size = if plane_index == 0 {
             block_mode.tx_size
         } else {
             scale_tx_size(block_mode.tx_size, subsampling_x, subsampling_y)
@@ -238,6 +257,9 @@ pub(super) fn decode_plane_block_unit(
             .into_iter()
             .filter(|transform| transform_in_unit(transform))
         {
+            if plane_index == 0 {
+                decoder.set_luma_tx_type(transform, TxType::DctDct);
+            }
             decoder.record_transform_boundary(
                 transform,
                 TxType::DctDct,
@@ -309,11 +331,37 @@ pub(super) fn decode_plane_block_unit(
         let skip_cdf = decoder
             .cdf
             .txb_skip_cdf_mut(transform.tx_size.coeff_cdf_index(), txb_context.skip);
+        #[cfg(test)]
+        if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+            let state = decoder.reader.state_snapshot();
+            eprintln!(
+                "entropy-trace txb-skip-before x={x} y={y} plane={plane_index} tx={:?} txb_skip={} dc_sign={} cdf={:?} range={} dif={} count={} tell={}",
+                transform.tx_size,
+                txb_context.skip,
+                txb_context.dc_sign,
+                skip_cdf,
+                state.range,
+                state.dif,
+                state.count,
+                state.tell,
+            );
+        }
         let all_zero_symbol = decoder.reader.read_symbol(skip_cdf)?;
+        #[cfg(test)]
+        if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+            let state = decoder.reader.state_snapshot();
+            eprintln!(
+                "entropy-trace txb-skip-after x={x} y={y} plane={plane_index} symbol={all_zero_symbol} range={} dif={} count={} tell={}",
+                state.range, state.dif, state.count, state.tell
+            );
+        }
         if all_zero_symbol != 0 {
             // Deblocking depends on transform boundaries even when the
             // coefficient block is entirely zero; retain the transform
             // geometry for the post-filter stage.
+            if plane_index == 0 {
+                decoder.set_luma_tx_type(transform, TxType::DctDct);
+            }
             decoder.record_transform_boundary(
                 transform,
                 TxType::DctDct,
@@ -377,8 +425,25 @@ pub(super) fn decode_plane_block_unit(
         }
 
         let retain_coefficients = plane_index == 0 && decoded_luma.is_some();
-        let decoded_transform =
-            decoder.read_decoded_transform(frame, block_mode, transform, txb_context.dc_sign)?;
+        let tx_type_override = (plane_index > 0 && block_mode.is_inter).then(|| {
+            let luma_x = x + ((transform.x.saturating_sub(block_x)) << subsampling_x);
+            let luma_y = y + ((transform.y.saturating_sub(block_y)) << subsampling_y);
+            inter_chroma_tx_type(
+                frame,
+                transform.tx_size,
+                decoder.luma_tx_type_at(luma_x, luma_y),
+            )
+        });
+        let decoded_transform = decoder.read_decoded_transform(
+            frame,
+            block_mode,
+            transform,
+            txb_context.dc_sign,
+            tx_type_override,
+        )?;
+        if plane_index == 0 {
+            decoder.set_luma_tx_type(transform, decoded_transform.tx_type);
+        }
         decoder.set_txb_entropy_context(transform, decoded_transform.entropy_context);
         let (top_right_available, bottom_left_available) =
             decoder.reconstructed_extension_availability(plane, transform)?;

@@ -202,7 +202,7 @@ impl MotionField {
                 current_order_hint,
                 reference_hint,
             );
-            if reference_offset <= 0 || current_offset.abs() > 31 {
+            if reference_offset <= 0 {
                 return None;
             }
             return Some((
@@ -281,6 +281,28 @@ fn project_temporal_motion_vector(
     )
 }
 
+fn lower_motion_vector_precision(
+    motion_vector: (i32, i32),
+    allow_high_precision_mv: bool,
+    force_integer_mv: bool,
+) -> (i32, i32) {
+    let lower = |value: i32| {
+        if force_integer_mv {
+            let remainder = value % 8;
+            let mut rounded = value - remainder;
+            if remainder.abs() > 4 {
+                rounded += if remainder > 0 { 8 } else { -8 };
+            }
+            rounded
+        } else if !allow_high_precision_mv && value & 1 != 0 {
+            value + if value > 0 { -1 } else { 1 }
+        } else {
+            value
+        }
+    };
+    (lower(motion_vector.0), lower(motion_vector.1))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CflParams {
     alpha_u_q3: i8,
@@ -348,6 +370,7 @@ pub struct TileDecoder<'a> {
     above_txfm_context: Vec<usize>,
     left_txfm_context: Vec<usize>,
     reconstructed_mi_grid: [Vec<bool>; 3],
+    luma_tx_type_grid: Vec<TxType>,
     current_cfl: Option<CflParams>,
     plane_entropy_contexts: [PlaneEntropyContexts; 3],
     plane_entropy_contexts_configured: bool,
@@ -377,6 +400,8 @@ pub struct TileDecoder<'a> {
     order_hint: u32,
     order_hint_bits: u8,
     current_inter_compound: bool,
+    allow_high_precision_mv: bool,
+    force_integer_mv: bool,
 }
 
 pub(super) fn is_chroma_reference(
@@ -469,6 +494,7 @@ impl<'a> TileDecoder<'a> {
             above_txfm_context: vec![0; mi_cols],
             left_txfm_context: vec![64; mi_rows],
             reconstructed_mi_grid: std::array::from_fn(|_| vec![false; mi_count]),
+            luma_tx_type_grid: vec![TxType::DctDct; mi_count],
             current_cfl: None,
             plane_entropy_contexts: std::array::from_fn(|_| PlaneEntropyContexts {
                 above: vec![0; mi_cols],
@@ -503,6 +529,8 @@ impl<'a> TileDecoder<'a> {
             order_hint: frame.order_hint,
             order_hint_bits: 8,
             current_inter_compound: false,
+            allow_high_precision_mv: frame.allow_high_precision_mv,
+            force_integer_mv: frame.force_integer_mv == 1,
         })
     }
 
@@ -576,8 +604,13 @@ impl<'a> TileDecoder<'a> {
                         .copied()
                         .flatten()
                         .map(|hint| {
+                            // `av1_copy_frame_mvs` excludes both future and
+                            // same-order references (`ref_frame_side != 0`).
+                            // Retaining a same-order MV creates temporal stack
+                            // candidates that are not present in the coded
+                            // frame's entropy contexts.
                             relative_order_hint_distance(order_hint_bits, hint, frame.order_hint)
-                                <= 0
+                                < 0
                         })
                         .unwrap_or(true);
                     if is_usable {
@@ -673,7 +706,9 @@ impl<'a> TileDecoder<'a> {
         let allowed = frame.skip_mode_present
             && block_size.width() >= 8
             && block_size.height() >= 8
-            && !frame.segmentation.segment_skip[usize::from(segment_id)];
+            && !frame.segmentation.segment_skip[usize::from(segment_id)]
+            && frame.segmentation.segment_reference_frame[usize::from(segment_id)].is_none()
+            && !frame.segmentation.segment_global_mv[usize::from(segment_id)];
         let skip_mode = if allowed {
             let context = self.skip_mode_context(x, y);
             self.reader
@@ -730,6 +765,24 @@ impl<'a> TileDecoder<'a> {
     ) -> TxbContext {
         let contexts = &self.plane_entropy_contexts[transform.plane];
         txb_context(block_size, transform, &contexts.above, &contexts.left)
+    }
+
+    pub(super) fn set_luma_tx_type(&mut self, transform: TransformBlock, tx_type: TxType) {
+        let start_col = transform.x >> 2;
+        let start_row = transform.y >> 2;
+        let end_col = (start_col + (transform.tx_size.width() >> 2)).min(self.mi_cols);
+        let end_row = (start_row + (transform.tx_size.height() >> 2)).min(self.mi_rows);
+        for row in start_row..end_row {
+            self.luma_tx_type_grid[row * self.mi_cols + start_col..row * self.mi_cols + end_col]
+                .fill(tx_type);
+        }
+    }
+
+    pub(super) fn luma_tx_type_at(&self, x: usize, y: usize) -> TxType {
+        self.luma_tx_type_grid
+            .get((y >> 2) * self.mi_cols + (x >> 2))
+            .copied()
+            .unwrap_or(TxType::DctDct)
     }
 
     pub(super) fn configure_plane_entropy_contexts(&mut self, sequence: &SequenceHeader) {

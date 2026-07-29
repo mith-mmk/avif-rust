@@ -1,7 +1,7 @@
 use super::TileDecoder;
 use super::diagnostic::{BlockModeProbe, TxTypeProbe};
 use crate::DecoderError;
-use crate::av1::frame::{FrameHeader, FrameType};
+use crate::av1::frame::FrameHeader;
 use crate::av1::syntax::{PredictionMode, TxSize, TxType, UvPredictionMode};
 use crate::av1::transform::TransformBlock;
 
@@ -13,7 +13,7 @@ impl<'a> TileDecoder<'a> {
         transform: TransformBlock,
     ) -> Result<TxTypeProbe, DecoderError> {
         if transform.plane == 0
-            && matches!(frame.frame_type, FrameType::Inter | FrameType::Switch)
+            && block_mode.is_inter
             && let Some(probe) = self.read_inter_tx_type(frame, transform)?
         {
             return Ok(probe);
@@ -156,6 +156,53 @@ impl<'a> TileDecoder<'a> {
             symbol: Some(symbol),
             tx_type,
         }))
+    }
+}
+
+pub(super) fn inter_chroma_tx_type(
+    frame: &FrameHeader,
+    tx_size: TxSize,
+    luma_tx_type: TxType,
+) -> TxType {
+    if frame.coded_lossless() {
+        return TxType::DctDct;
+    }
+    let tx_size_sqr = usize::from(tx_size.width_log2().min(tx_size.height_log2()) - 2);
+    let tx_size_sqr_up = tx_size.width_log2().max(tx_size.height_log2()) - 2;
+    if tx_size_sqr_up > 3 {
+        return TxType::DctDct;
+    }
+    let set = if frame.reduced_tx_set || tx_size_sqr_up == 3 {
+        3
+    } else if tx_size_sqr == 2 {
+        2
+    } else {
+        1
+    };
+    let allowed = match set {
+        1 => true,
+        2 => matches!(
+            luma_tx_type,
+            TxType::Identity
+                | TxType::VerticalAdst
+                | TxType::HorizontalAdst
+                | TxType::DctDct
+                | TxType::AdstDct
+                | TxType::DctAdst
+                | TxType::FlipAdstDct
+                | TxType::DctFlipAdst
+                | TxType::AdstAdst
+                | TxType::FlipAdstFlipAdst
+                | TxType::AdstFlipAdst
+                | TxType::FlipAdstAdst
+        ),
+        3 => matches!(luma_tx_type, TxType::DctDct | TxType::Identity),
+        _ => unreachable!("inter transform set is bounded to 1..=3"),
+    };
+    if allowed {
+        luma_tx_type
+    } else {
+        TxType::DctDct
     }
 }
 

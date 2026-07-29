@@ -1,6 +1,8 @@
 use super::*;
-use crate::av1::frame::SegmentationParams;
-use crate::av1::tile_decode::block_syntax::{cfl_is_allowed, cfl_signs, use_angle_delta};
+use crate::av1::frame::{GlobalMotionParams, GlobalMotionType, SegmentationParams};
+use crate::av1::tile_decode::block_syntax::{
+    cfl_is_allowed, cfl_signs, is_nontrans_global_motion, use_angle_delta,
+};
 use crate::av1::transform::plan_transform_blocks_with_tx_size;
 use crate::av1::{
     BlockSize, Partition, PredictionMode, TxSize, UvPredictionMode, build_still_decode_plan,
@@ -41,6 +43,34 @@ fn cfl_joint_signs_match_av1_symbol_order() {
 }
 
 #[test]
+fn projected_motion_clamps_long_current_reference_distance() {
+    let mut field = MotionField::empty(2, 2);
+    field.order_hint_bits = 7;
+    field.projected = true;
+    field.motion_vectors[0] = Some((8, 0));
+    field.reference_offsets[0] = Some(2);
+    let mut reference_order_hints = [None; 7];
+    reference_order_hints[6] = Some(0);
+
+    let projected = field
+        .projected_motion(1, 0, 0, 0, 6, 36, &reference_order_hints)
+        .expect("AOM clamps the projection numerator instead of rejecting it");
+    assert_eq!(projected.0, 0);
+    assert_eq!(projected.1, project_temporal_motion_vector((8, 0), 36, 2));
+}
+
+#[test]
+fn projected_motion_is_lowered_to_frame_mv_precision() {
+    assert_eq!(lower_motion_vector_precision((3, -3), true, false), (3, -3));
+    assert_eq!(
+        lower_motion_vector_precision((3, -3), false, false),
+        (2, -2)
+    );
+    assert_eq!(lower_motion_vector_precision((4, -4), false, true), (0, 0));
+    assert_eq!(lower_motion_vector_precision((5, -5), false, true), (8, -8));
+}
+
+#[test]
 fn angle_delta_availability_matches_av1_block_size_order() {
     assert!(!use_angle_delta(BlockSize::Block4x4));
     assert!(!use_angle_delta(BlockSize::Block4x8));
@@ -48,6 +78,45 @@ fn angle_delta_availability_matches_av1_block_size_order() {
     assert!(use_angle_delta(BlockSize::Block8x8));
     assert!(use_angle_delta(BlockSize::Block4x16));
     assert!(use_angle_delta(BlockSize::Block16x4));
+}
+
+#[test]
+fn nontrans_global_motion_suppresses_interpolation_syntax() {
+    let mut global_motion = GlobalMotionParams::default();
+    assert!(is_nontrans_global_motion(
+        &global_motion,
+        BlockSize::Block8x8,
+        Some(0),
+        None,
+    ));
+    assert!(!is_nontrans_global_motion(
+        &global_motion,
+        BlockSize::Block4x8,
+        Some(0),
+        None,
+    ));
+    assert!(!is_nontrans_global_motion(
+        &global_motion,
+        BlockSize::Block8x8,
+        None,
+        None,
+    ));
+
+    global_motion.types[0] = GlobalMotionType::Translation;
+    assert!(!is_nontrans_global_motion(
+        &global_motion,
+        BlockSize::Block8x8,
+        Some(0),
+        None,
+    ));
+    global_motion.types[0] = GlobalMotionType::Affine;
+    global_motion.types[1] = GlobalMotionType::Translation;
+    assert!(!is_nontrans_global_motion(
+        &global_motion,
+        BlockSize::Block8x8,
+        Some(0),
+        Some(1),
+    ));
 }
 
 #[test]
