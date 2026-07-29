@@ -2551,9 +2551,31 @@ baseline above. It does not reopen or renumber the existing completion items.
       entropy validation enabled.
 - [x] Decode retained external `colors-animated-8bpc*`, `star-8bpc`, and 12-bit
       animation fixtures across all frames with FFmpeg-backed plane/RGBA checks.
-- [ ] Pass the complete library, container, strict-oracle/hash, fuzz, Wasm,
+- [x] Pass the complete library, container, strict-oracle/hash, fuzz, Wasm,
       Clippy, Rustfmt, Rustdoc, MSRV 1.88, and parent-WML2 gates.
-- [ ] Record same-host repeated no-regression benchmarks for WML2Viewer and an
+- [x] Record same-host repeated no-regression benchmarks for WML2Viewer and an
       animated sample.
-- [ ] Verify `cargo publish --dry-run --locked` and the unpacked standalone
+- [x] Verify `cargo publish --dry-run --locked` and the unpacked standalone
       crate archive; actual publication and tags require explicit approval.
+
+On 2026-07-29, the 0.0.3 gate passed `475` library tests with `6` ignored,
+all `17` container tests, `107` FFmpeg conformance tests with `2` ignored, and
+all `12` strict oracle tests with all `7` retained source hashes verified. The
+fuzz binaries compile, standalone Wasm builds, and Clippy, Rustfmt, Rustdoc,
+and Rust 1.88 all pass. Parent WML2 passes without AVIF, passes its Wasm AVIF
+check, and passes all `7` AVIF integration tests with the `avif,png` features;
+the PNG feature is needed only by the APNG round-trip integration test.
+
+Three seven-iteration same-host runs showed no clear regression. Baseline
+`WML2Viewer.avif` native/RGBA medians were `94.5993/107.9772`,
+`91.1303/89.9178`, and `86.7255/88.0219` ms; 0.0.3 medians were
+`91.1308/97.3484`, `86.0470/87.3017`, and `87.0285/86.9539` ms. Baseline
+`colors-animated-8bpc.avif` native/RGBA medians were `0.3002/0.5245`,
+`0.2683/0.4679`, and `0.2812/0.4814` ms; 0.0.3 medians were
+`0.2895/0.5038`, `0.2752/0.4632`, and `0.2833/0.4942` ms.
+
+`cargo publish --dry-run --locked` packaged `69` files and verified the crate.
+The unpacked 0.0.3 archive passes Rust 1.88 all-target checks and the same
+`475` library tests with `6` ignored. The runtime dependency remains only
+`bin-rs`; publication, tagging, and GitHub Release creation remain explicitly
+approval-gated.
