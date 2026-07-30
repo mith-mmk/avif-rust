@@ -23,9 +23,9 @@ use crate::av1::{
     sgrproj_filter_unit_into_with_scratch_bit_depth_visible,
     wiener_filter_unit_into_with_scratch_bit_depth_visible,
 };
-use crate::compat::{DataMap, DecodeOptions, InitOptions, NextOptions};
+use crate::compat::{DataMap, DecodeOptions};
 use crate::container::{
-    AvifInfo, AvifSequence, CleanAperture, ColorInformation, GridCell, ImageMirror, ImageRotation,
+    AvifInfo, AvifSequence, ColorInformation, GridCell, ImageMirror, ImageRotation,
     PixelInformation, SampleTransformInput, SampleTransformToken, grid_cell_alpha_item_id,
     grid_has_cell_alpha, parse_avif, parse_avif_sequence, parse_gain_map_image,
     parse_sample_transform,
@@ -37,6 +37,10 @@ use std::io::SeekFrom;
 use std::sync::Arc;
 
 type Error = Box<dyn std::error::Error>;
+
+mod callback;
+mod composition;
+mod sequence;
 
 /// Parses AVIF container metadata from a `bin-rs` reader.
 pub fn parse_info<B: BinaryReader>(reader: &mut B) -> Result<AvifInfo, DecoderError> {
@@ -55,39 +59,20 @@ pub fn decode<B: BinaryReader>(
     validate_public_container_preflight(&info, true)?;
     if let Some(frame) = decode_sample_transform_frame(&data, &info)? {
         let mut image = frame.to_rgba8()?;
-        apply_clean_aperture(&mut image, info.clean_aperture)?;
-        apply_mirror(&mut image, info.mirror)?;
-        apply_rotation(&mut image, info.rotation)?;
-        emit_metadata(&info, None, option)?;
-        option.drawer.init(
-            image.width,
-            image.height,
-            Some(InitOptions {
-                loop_count: 1,
-                animation: false,
-            }),
+        composition::apply_image_transforms(
+            &mut image,
+            info.clean_aperture,
+            info.mirror,
+            info.rotation,
         )?;
-        option
-            .drawer
-            .draw(0, 0, image.width, image.height, &image.rgba, None)?;
-        option.drawer.terminate(None)?;
+        emit_metadata(&info, None, option)?;
+        callback::emit_single(option.drawer, &image)?;
         return Ok(());
     }
     if info.primary_grid.is_some() {
         let image = decode_grid_image(&info)?;
         emit_metadata(&info, None, option)?;
-        option.drawer.init(
-            image.width,
-            image.height,
-            Some(InitOptions {
-                loop_count: 1,
-                animation: false,
-            }),
-        )?;
-        option
-            .drawer
-            .draw(0, 0, image.width, image.height, &image.rgba, None)?;
-        option.drawer.terminate(None)?;
+        callback::emit_single(option.drawer, &image)?;
         return Ok(());
     }
     if info.sequence_sample_payloads.len() > 1 {
@@ -104,48 +89,8 @@ pub fn decode<B: BinaryReader>(
         // Decode the complete supported sequence before initializing the
         // callback. Unsupported prediction syntax therefore fails closed
         // without exposing a partial animation to the caller.
-        let mut frames = decode_sequence_frames_from_info(&info)?;
-        append_sequence_alpha_frames(&info, &sequence, &mut frames)?;
-        let mut images = Vec::with_capacity(frames.len());
-        for frame in frames {
-            let mut image = frame.to_rgba8()?;
-            apply_clean_aperture(&mut image, info.clean_aperture)?;
-            apply_mirror(&mut image, info.mirror)?;
-            apply_rotation(&mut image, info.rotation)?;
-            images.push(image);
-        }
-        let first = images.first().ok_or_else(|| {
-            DecoderError::Bitstream("AVIS sequence has no decodable samples".to_string())
-        })?;
-        if images
-            .iter()
-            .any(|image| image.width != first.width || image.height != first.height)
-        {
-            return Err(DecoderError::Unsupported(
-                "AVIS sequence samples have different output dimensions".to_string(),
-            )
-            .into());
-        }
-        option.drawer.init(
-            first.width,
-            first.height,
-            Some(InitOptions {
-                loop_count: 1,
-                animation: true,
-            }),
-        )?;
-        for (index, image) in images.into_iter().enumerate() {
-            let duration = sequence.color_durations_ms.get(index).copied().unwrap_or(0);
-            option.drawer.next(Some(NextOptions::full_canvas(
-                image.width,
-                image.height,
-                duration,
-            )))?;
-            option
-                .drawer
-                .draw(0, 0, image.width, image.height, &image.rgba, None)?;
-        }
-        option.drawer.terminate(None)?;
+        let images = sequence::decode_animation_images(&info, &sequence)?;
+        callback::emit_animation(option.drawer, &images, &sequence.color_durations_ms)?;
         return Ok(());
     }
     let mut headers = parse_av1_headers(&info)?;
@@ -158,18 +103,7 @@ pub fn decode<B: BinaryReader>(
     emit_metadata(&info, Some(&headers), option)?;
     let image = decode_still_image(&headers, Some(&info))?;
 
-    option.drawer.init(
-        image.width,
-        image.height,
-        Some(InitOptions {
-            loop_count: 1,
-            animation: false,
-        }),
-    )?;
-    option
-        .drawer
-        .draw(0, 0, image.width, image.height, &image.rgba, None)?;
-    option.drawer.terminate(None)?;
+    callback::emit_single(option.drawer, &image)?;
     Ok(())
 }
 
@@ -178,9 +112,12 @@ pub fn decode_bytes(data: &[u8]) -> Result<ImageBuffer, DecoderError> {
     validate_public_container_preflight(&info, true)?;
     if let Some(frame) = decode_sample_transform_frame(data, &info)? {
         let mut image = frame.to_rgba8()?;
-        apply_clean_aperture(&mut image, info.clean_aperture)?;
-        apply_mirror(&mut image, info.mirror)?;
-        apply_rotation(&mut image, info.rotation)?;
+        composition::apply_image_transforms(
+            &mut image,
+            info.clean_aperture,
+            info.mirror,
+            info.rotation,
+        )?;
         return Ok(image);
     }
     if info.primary_grid.is_some() {
@@ -188,9 +125,12 @@ pub fn decode_bytes(data: &[u8]) -> Result<ImageBuffer, DecoderError> {
     }
     if let Some(frame) = decode_hidden_key_frame_show_existing(&info)? {
         let mut image = frame.to_rgba8()?;
-        apply_clean_aperture(&mut image, info.clean_aperture)?;
-        apply_mirror(&mut image, info.mirror)?;
-        apply_rotation(&mut image, info.rotation)?;
+        composition::apply_image_transforms(
+            &mut image,
+            info.clean_aperture,
+            info.mirror,
+            info.rotation,
+        )?;
         return Ok(image);
     }
     let headers = parse_av1_headers(&info)?;
@@ -2264,9 +2204,12 @@ fn decode_still_image(
         if !info.alpha_auxiliary_items.is_empty() {
             apply_alpha_auxiliary(&mut image, info)?;
         }
-        apply_clean_aperture(&mut image, info.clean_aperture)?;
-        apply_mirror(&mut image, info.mirror)?;
-        apply_rotation(&mut image, info.rotation)?;
+        composition::apply_image_transforms(
+            &mut image,
+            info.clean_aperture,
+            info.mirror,
+            info.rotation,
+        )?;
     }
     Ok(image)
 }
@@ -2529,7 +2472,7 @@ fn apply_native_grid_geometry(
 ) -> Result<(), DecoderError> {
     if let Some(aperture) = info.clean_aperture {
         let (start_x, start_y, width, height) =
-            clean_aperture_rect(frame.width, frame.height, aperture)?;
+            composition::clean_aperture_rect(frame.width, frame.height, aperture)?;
         for plane in &mut frame.buffers.planes {
             let scale_x = 1usize << plane.layout.subsampling_x;
             let scale_y = 1usize << plane.layout.subsampling_y;
@@ -2575,44 +2518,6 @@ fn apply_native_grid_geometry(
         apply_native_rotation(frame, rotation)?;
     }
     Ok(())
-}
-
-fn clean_aperture_rect(
-    image_width: usize,
-    image_height: usize,
-    aperture: CleanAperture,
-) -> Result<(usize, usize, usize, usize), DecoderError> {
-    if aperture.width_d == 0
-        || aperture.height_d == 0
-        || aperture.horizontal_offset_d == 0
-        || aperture.vertical_offset_d == 0
-    {
-        return Err(DecoderError::Bitstream(
-            "AVIF clean aperture has a zero denominator".to_string(),
-        ));
-    }
-    let width = (u64::from(aperture.width_n) / u64::from(aperture.width_d)) as usize;
-    let height = (u64::from(aperture.height_n) / u64::from(aperture.height_d)) as usize;
-    let center_x = image_width as i64 / 2;
-    let center_y = image_height as i64 / 2;
-    let offset_x_n = i32::from_be_bytes(aperture.horizontal_offset_n.to_be_bytes());
-    let offset_y_n = i32::from_be_bytes(aperture.vertical_offset_n.to_be_bytes());
-    let offset_x = i64::from(offset_x_n) / i64::from(aperture.horizontal_offset_d);
-    let offset_y = i64::from(offset_y_n) / i64::from(aperture.vertical_offset_d);
-    let start_x = center_x + offset_x - width as i64 / 2;
-    let start_y = center_y + offset_y - height as i64 / 2;
-    if width == 0
-        || height == 0
-        || start_x < 0
-        || start_y < 0
-        || start_x as usize + width > image_width
-        || start_y as usize + height > image_height
-    {
-        return Err(DecoderError::Bitstream(
-            "AVIF clean aperture is outside the decoded image".to_string(),
-        ));
-    }
-    Ok((start_x as usize, start_y as usize, width, height))
 }
 
 fn apply_native_mirror(
@@ -2763,9 +2668,12 @@ fn decode_grid_image(info: &AvifInfo) -> Result<ImageBuffer, DecoderError> {
     {
         apply_alpha_auxiliary(&mut image, info)?;
     }
-    apply_clean_aperture(&mut image, info.clean_aperture)?;
-    apply_mirror(&mut image, info.mirror)?;
-    apply_rotation(&mut image, info.rotation)?;
+    composition::apply_image_transforms(
+        &mut image,
+        info.clean_aperture,
+        info.mirror,
+        info.rotation,
+    )?;
     Ok(image)
 }
 
@@ -2979,7 +2887,13 @@ mod grid_composition_tests {
             height: 1,
             rgba: vec![10, 0, 0, 255, 20, 0, 0, 255],
         };
-        apply_rotation(&mut image, Some(ImageRotation { angle: 1 })).unwrap();
+        composition::apply_image_transforms(
+            &mut image,
+            None,
+            None,
+            Some(ImageRotation { angle: 1 }),
+        )
+        .unwrap();
         assert_eq!((image.width, image.height), (1, 2));
         assert_eq!(image.rgba, vec![20, 0, 0, 255, 10, 0, 0, 255]);
     }
@@ -3619,92 +3533,6 @@ fn apply_alpha_rows(
 fn scale_sample_to_u8(sample: u16, bit_depth: u8) -> u8 {
     let maximum = (1u32 << bit_depth) - 1;
     ((u32::from(sample) * 255 + maximum / 2) / maximum) as u8
-}
-
-fn apply_clean_aperture(
-    image: &mut ImageBuffer,
-    aperture: Option<CleanAperture>,
-) -> Result<(), DecoderError> {
-    let Some(aperture) = aperture else {
-        return Ok(());
-    };
-    let (start_x, start_y, width, height) =
-        clean_aperture_rect(image.width, image.height, aperture)?;
-    let mut cropped = vec![0; width * height * 4];
-    for row in 0..height {
-        let src = ((start_y + row) * image.width + start_x) * 4;
-        let dst = row * width * 4;
-        cropped[dst..dst + width * 4].copy_from_slice(&image.rgba[src..src + width * 4]);
-    }
-    image.width = width;
-    image.height = height;
-    image.rgba = cropped;
-    Ok(())
-}
-
-fn apply_mirror(image: &mut ImageBuffer, mirror: Option<ImageMirror>) -> Result<(), DecoderError> {
-    let Some(mirror) = mirror else {
-        return Ok(());
-    };
-    if mirror.axis > 1 {
-        return Err(DecoderError::Bitstream(format!(
-            "AVIF mirror axis {} is invalid",
-            mirror.axis
-        )));
-    }
-    let horizontal = mirror.axis == 0;
-    let mut transformed = vec![0; image.rgba.len()];
-    for y in 0..image.height {
-        for x in 0..image.width {
-            let (source_x, source_y) = if horizontal {
-                (image.width - 1 - x, y)
-            } else {
-                (x, image.height - 1 - y)
-            };
-            let source = (source_y * image.width + source_x) * 4;
-            let destination = (y * image.width + x) * 4;
-            transformed[destination..destination + 4]
-                .copy_from_slice(&image.rgba[source..source + 4]);
-        }
-    }
-    image.rgba = transformed;
-    Ok(())
-}
-
-fn apply_rotation(
-    image: &mut ImageBuffer,
-    rotation: Option<ImageRotation>,
-) -> Result<(), DecoderError> {
-    let Some(rotation) = rotation else {
-        return Ok(());
-    };
-    if rotation.angle > 3 {
-        return Err(DecoderError::Bitstream(format!(
-            "AVIF rotation angle {} is invalid",
-            rotation.angle
-        )));
-    }
-    for _ in 0..rotation.angle {
-        let mut transformed = vec![0; image.rgba.len()];
-        let new_width = image.height;
-        let new_height = image.width;
-        for y in 0..image.height {
-            for x in 0..image.width {
-                // The AVIF `irot` angle is a counter-clockwise quarter-turn.
-                // The output width/height are swapped for each turn.
-                let destination_x = y;
-                let destination_y = image.width - 1 - x;
-                let source = (y * image.width + x) * 4;
-                let destination = (destination_y * new_width + destination_x) * 4;
-                transformed[destination..destination + 4]
-                    .copy_from_slice(&image.rgba[source..source + 4]);
-            }
-        }
-        image.width = new_width;
-        image.height = new_height;
-        image.rgba = transformed;
-    }
-    Ok(())
 }
 
 fn decode_still_frame(
