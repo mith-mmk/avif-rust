@@ -2579,3 +2579,26 @@ The unpacked 0.0.3 archive passes Rust 1.88 all-target checks and the same
 `475` library tests with `6` ignored. The runtime dependency remains only
 `bin-rs`; publication, tagging, and GitHub Release creation remain explicitly
 approval-gated.
+
+## 0.0.4 internal decoder refactor checkpoint (2026-07-31)
+
+- [x] Move public decoded-frame/gain-map types and byte entry points into the
+      private `decoder/frame.rs` implementation module while preserving the
+      `decoder` re-exports and public signatures.
+- [x] Move AVIS sample splitting, reference-slot orchestration, sequence-frame
+      decode, and hidden-key handling into `decoder/sequence.rs`.
+- [x] Move still, grid, native grid geometry, alpha auxiliary/grid composition,
+      and related unit tests into `decoder/still.rs`.
+- [x] Keep AV1 syntax, entropy, reconstruction, and post-filter code behavior
+      unchanged; no parent WML2 source/API or database/config changes.
+- [x] Re-run library/container/FFmpeg/oracle suites: `475` library tests,
+      `17` container tests, `107` FFmpeg tests, and `12` strict oracle tests
+      passed; all `7` retained oracle hashes verified.
+- [x] Re-run Clippy, Rustfmt, Rustdoc, fuzz-bin, standalone Wasm, Rust 1.88,
+      package, parent WML2 feature-on/off, APNG, and Wasm gates.
+- [x] Three 7-iteration same-host runs after refactor measured
+      `WML2Viewer.avif` at `91.0533/89.8378`, `89.6109/94.0197`, and
+      `90.8197/84.6492` ms (native/RGBA), and the animated sample at
+      `0.4731/0.7902`, `0.3103/0.4888`, and `0.2967/0.4786` ms; no clear
+      regression against the 0.0.3 checkpoint.
+- [x] Do not publish, tag, or create a GitHub Release without explicit approval.
