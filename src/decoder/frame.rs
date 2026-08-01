@@ -5,7 +5,10 @@ use super::sequence::{
 use super::*;
 use crate::Rgba16ImageBuffer;
 use crate::av1::{convert_linear_rgb_primaries, frame_buffers_to_rgba_16};
-use crate::container::{AvifSequence, parse_gain_map_image};
+use crate::container::{
+    AvifAnimation, AvifFrameTiming, AvifSequence, parse_avif_animation, parse_avif_sequence,
+    parse_gain_map_image,
+};
 
 /// Decoded still-frame planes before colour conversion.
 ///
@@ -38,6 +41,74 @@ pub struct DecodedFrame {
 pub struct DecodedGainMapFrame {
     pub metadata: crate::container::GainMapMetadata,
     pub frame: DecodedFrame,
+}
+
+/// One source-plane frame and the timing assigned to its color-track sample.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedSequenceFrame {
+    pub frame: DecodedFrame,
+    pub timing: AvifFrameTiming,
+}
+
+/// Incremental AVIS decoder.
+///
+/// The decoder exposes one color frame at a time and never retains decoded
+/// RGBA output for later frames. The current reference-state implementation
+/// delegates the source-plane step to the existing sequence decoder, while
+/// keeping the public cursor and alpha track synchronized at every call.
+pub struct AvifSequenceDecoder {
+    info: AvifInfo,
+    animation: AvifAnimation,
+    next_index: usize,
+}
+
+impl AvifSequenceDecoder {
+    pub fn new(data: &[u8]) -> Result<Self, DecoderError> {
+        let info = parse_avif(data)?;
+        validate_public_container_preflight(&info, false)?;
+        let animation = parse_avif_animation(data)?;
+        if animation.sequence.color_samples.is_empty() {
+            return Err(DecoderError::Bitstream(
+                "AVIS color track has no samples".to_string(),
+            ));
+        }
+        if animation.sequence.color_samples.len() != animation.color_timing.len() {
+            return Err(DecoderError::Bitstream(
+                "AVIS color timing does not match the sample count".to_string(),
+            ));
+        }
+        Ok(Self {
+            info,
+            animation,
+            next_index: 0,
+        })
+    }
+
+    pub fn animation(&self) -> &AvifAnimation {
+        &self.animation
+    }
+
+    pub fn next_frame(&mut self) -> Result<Option<DecodedSequenceFrame>, DecoderError> {
+        let Some(timing) = self.animation.color_timing.get(self.next_index).copied() else {
+            return Ok(None);
+        };
+        let index = self.next_index;
+        let mut frame = decode_sequence_frame_from_info(&self.info, index)?;
+        if !self.animation.sequence.alpha_samples.is_empty() {
+            let mut alpha_info = self.info.clone();
+            alpha_info.primary_item_payload = self.animation.sequence.alpha_samples[0].clone();
+            alpha_info.sequence_sample_payloads = self.animation.sequence.alpha_samples.clone();
+            alpha_info.alpha_auxiliary_items.clear();
+            alpha_info.av1_config = None;
+            let alpha_frame = decode_sequence_frame_from_info(&alpha_info, index)?;
+            append_alpha_plane(&mut frame, &alpha_frame)?;
+        } else if !self.info.alpha_auxiliary_items.is_empty() {
+            let alpha_frame = decode_alpha_auxiliary_frame(&self.info)?;
+            append_alpha_plane(&mut frame, &alpha_frame)?;
+        }
+        self.next_index += 1;
+        Ok(Some(DecodedSequenceFrame { frame, timing }))
+    }
 }
 
 impl DecodedFrame {

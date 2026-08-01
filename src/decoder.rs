@@ -26,9 +26,9 @@ use crate::av1::{
 };
 use crate::compat::{DataMap, DecodeOptions};
 use crate::container::{
-    AvifInfo, ColorInformation, GridCell, ImageMirror, ImageRotation, PixelInformation,
-    SampleTransformInput, SampleTransformToken, grid_cell_alpha_item_id, grid_has_cell_alpha,
-    parse_avif, parse_avif_sequence, parse_sample_transform,
+    AvifAnimation, AvifInfo, ColorInformation, GridCell, ImageMirror, ImageRotation,
+    PixelInformation, SampleTransformInput, SampleTransformToken, grid_cell_alpha_item_id,
+    grid_has_cell_alpha, parse_avif, parse_sample_transform,
 };
 use crate::obu::{ObuType, find_obu_payloads_in_parts, parse_obu_stream};
 use crate::{DecoderError, ImageBuffer};
@@ -46,10 +46,10 @@ mod sequence;
 #[allow(clippy::items_after_test_module)]
 mod still;
 
-use frame::append_sequence_alpha_frames;
 pub use frame::{
-    DecodedFrame, DecodedGainMapFrame, decode_frame_bytes, decode_gain_map_frame_bytes,
-    decode_sequence_frame_bytes, decode_sequence_frames_bytes,
+    AvifSequenceDecoder, DecodedFrame, DecodedGainMapFrame, DecodedSequenceFrame,
+    decode_frame_bytes, decode_gain_map_frame_bytes, decode_sequence_frame_bytes,
+    decode_sequence_frames_bytes,
 };
 #[cfg(test)]
 use frame::{resample_gain_map, unpremultiply_rgba8, unpremultiply_rgba16};
@@ -84,18 +84,18 @@ pub fn decode<B: BinaryReader>(
             info.mirror,
             info.rotation,
         )?;
-        emit_metadata(&info, None, option)?;
+        emit_metadata(&info, None, None, option)?;
         callback::emit_single(option.drawer, &image)?;
         return Ok(());
     }
     if info.primary_grid.is_some() {
         let image = decode_grid_image(&info)?;
-        emit_metadata(&info, None, option)?;
+        emit_metadata(&info, None, None, option)?;
         callback::emit_single(option.drawer, &image)?;
         return Ok(());
     }
     if info.sequence_sample_payloads.len() > 1 {
-        let sequence = parse_avif_sequence(&data)?;
+        let mut sequence_decoder = AvifSequenceDecoder::new(&data)?;
         let mut headers = parse_av1_headers(&info)?;
         // The probes replay entropy traversal and are only consumed by the
         // diagnostic metadata below. Keep the normal draw path to one decode;
@@ -103,13 +103,19 @@ pub fn decode<B: BinaryReader>(
         if option.debug_flag > 0 {
             populate_diagnostic_probes(&mut headers);
         }
-        emit_metadata(&info, Some(&headers), option)?;
-
-        // Decode the complete supported sequence before initializing the
-        // callback. Unsupported prediction syntax therefore fails closed
-        // without exposing a partial animation to the caller.
-        let images = sequence::decode_animation_images(&info, &sequence)?;
-        callback::emit_animation(option.drawer, &images, &sequence.color_durations_ms)?;
+        emit_metadata(
+            &info,
+            Some(&headers),
+            Some(sequence_decoder.animation()),
+            option,
+        )?;
+        callback::emit_animation(
+            option.drawer,
+            &mut sequence_decoder,
+            info.clean_aperture,
+            info.mirror,
+            info.rotation,
+        )?;
         return Ok(());
     }
     let mut headers = parse_av1_headers(&info)?;
@@ -119,7 +125,7 @@ pub fn decode<B: BinaryReader>(
     if option.debug_flag > 0 {
         populate_diagnostic_probes(&mut headers);
     }
-    emit_metadata(&info, Some(&headers), option)?;
+    emit_metadata(&info, Some(&headers), None, option)?;
     let image = decode_still_image(&headers, Some(&info))?;
 
     callback::emit_single(option.drawer, &image)?;
@@ -2215,6 +2221,7 @@ mod post_filter_tests;
 fn emit_metadata(
     info: &AvifInfo,
     headers: Option<&Av1Headers>,
+    animation: Option<&AvifAnimation>,
     option: &mut DecodeOptions<'_>,
 ) -> Result<(), Error> {
     option
@@ -2256,6 +2263,63 @@ fn emit_metadata(
         option
             .drawer
             .set_metadata("AV1 config", DataMap::Raw(av1_config.clone()))?;
+    }
+    if let Some(animation) = animation {
+        let loop_count = match animation.repetition_count {
+            crate::container::AvifRepetitionCount::Finite(value) => value,
+            crate::container::AvifRepetitionCount::Infinite => 0,
+            crate::container::AvifRepetitionCount::Unknown => 1,
+        };
+        let duration_ms = animation
+            .color_timing
+            .iter()
+            .map(|timing| timing.duration_ms)
+            .try_fold(0_u64, u64::checked_add)
+            .ok_or_else(|| "AVIS millisecond duration overflows u64".to_string())?;
+        option.drawer.set_metadata(
+            "Animation frames",
+            DataMap::UInt(animation.color_timing.len() as u64),
+        )?;
+        option
+            .drawer
+            .set_metadata("Animation loop count", DataMap::UInt(loop_count as u64))?;
+        option.drawer.set_metadata(
+            "Animation timescale",
+            DataMap::UInt(animation.color_timescale),
+        )?;
+        option
+            .drawer
+            .set_metadata("Animation duration", DataMap::UInt(duration_ms))?;
+        option.drawer.set_metadata(
+            "Animation frame PTS",
+            DataMap::UIntAllay(
+                animation
+                    .color_timing
+                    .iter()
+                    .map(|timing| timing.pts_in_timescales)
+                    .collect(),
+            ),
+        )?;
+        option.drawer.set_metadata(
+            "Animation frame durations",
+            DataMap::UIntAllay(
+                animation
+                    .color_timing
+                    .iter()
+                    .map(|timing| timing.duration_in_timescales)
+                    .collect(),
+            ),
+        )?;
+        option.drawer.set_metadata(
+            "Animation frame durations ms",
+            DataMap::UIntAllay(
+                animation
+                    .color_timing
+                    .iter()
+                    .map(|timing| timing.duration_ms)
+                    .collect(),
+            ),
+        )?;
     }
     if let Some(headers) = headers {
         if let Some(config) = headers.config {

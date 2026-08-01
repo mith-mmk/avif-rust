@@ -12,7 +12,8 @@ use avif_rust::compat::{
     TerminateOptions, VerboseOptions,
 };
 use avif_rust::container::{
-    AvifSequenceSampleKind, classify_av1_sequence_sample, is_avif_file, parse_avif,
+    AvifRepetitionCount, AvifSequenceSampleKind, classify_av1_sequence_sample, is_avif_file,
+    parse_avif,
 };
 use avif_rust::obu::{ObuType, count_obus, find_obu_payload, find_obu_payloads, parse_obu_stream};
 use bin_rs::reader::BytesReader;
@@ -47,6 +48,7 @@ struct RecordingDrawer {
     init: Option<(usize, usize, InitOptions)>,
     draw_buffers: Vec<Vec<u8>>,
     terminated: bool,
+    abort_on_next: bool,
 }
 
 impl DrawCallback for RecordingDrawer {
@@ -75,6 +77,17 @@ impl DrawCallback for RecordingDrawer {
     ) -> Result<Option<CallbackResponse>, Box<dyn std::error::Error>> {
         self.draw_buffers.push(data.to_vec());
         Ok(Some(CallbackResponse::cont()))
+    }
+
+    fn next(
+        &mut self,
+        _option: Option<avif_rust::NextOptions>,
+    ) -> Result<Option<CallbackResponse>, Box<dyn std::error::Error>> {
+        if self.abort_on_next {
+            Ok(Some(CallbackResponse::abort()))
+        } else {
+            Ok(Some(CallbackResponse::cont()))
+        }
     }
 
     fn terminate(
@@ -491,7 +504,9 @@ fn generated_all_key_avis_samples_emit_animation_callback_frames() {
 
     let (width, height, init) = drawer.init.expect("callback should be initialized");
     assert_eq!((width, height), (64, 64));
-    assert_eq!(init.loop_count, 1);
+    // AVIF's finite repetition count is the number of repeats after the
+    // first presentation; FFmpeg's one-entry edit list therefore maps to 0.
+    assert_eq!(init.loop_count, 0);
     assert!(init.animation);
     assert_eq!(drawer.draw_buffers.len(), 4);
     assert!(
@@ -501,6 +516,44 @@ fn generated_all_key_avis_samples_emit_animation_callback_frames() {
             .all(|pair| pair[0] == pair[1])
     );
     assert!(drawer.terminated);
+}
+
+#[test]
+fn generated_avis_exposes_exact_animation_timing_and_incremental_frames() {
+    let Some(data) = generated_all_key_avis_sample() else {
+        return;
+    };
+    let animation = avif_rust::parse_avif_animation(&data).unwrap();
+    assert_eq!(animation.color_timing.len(), 4);
+    assert_eq!(animation.color_timescale, 16_384);
+    assert_eq!(animation.color_timing[0].pts_in_timescales, 0);
+    assert_eq!(animation.color_timing[1].pts_in_timescales, 16_384);
+    assert_eq!(animation.color_timing[0].duration_ms, 1000);
+    assert_eq!(animation.repetition_count, AvifRepetitionCount::Finite(0));
+
+    let mut decoder = avif_rust::AvifSequenceDecoder::new(&data).unwrap();
+    let mut count = 0;
+    while decoder.next_frame().unwrap().is_some() {
+        count += 1;
+    }
+    assert_eq!(count, 4);
+}
+
+#[test]
+fn animation_abort_stops_without_terminate() {
+    let Some(data) = generated_all_key_avis_sample() else {
+        return;
+    };
+    let mut drawer = RecordingDrawer {
+        abort_on_next: true,
+        ..RecordingDrawer::default()
+    };
+    let mut options = DecodeOptions::new(&mut drawer);
+    avif_rust::decode(&mut BytesReader::new(&data), &mut options)
+        .expect("callback abort should be normal completion");
+    assert!(drawer.init.is_some());
+    assert!(drawer.draw_buffers.is_empty());
+    assert!(!drawer.terminated);
 }
 
 #[test]

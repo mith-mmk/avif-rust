@@ -130,6 +130,36 @@ pub struct AvifSequence {
     pub alpha_durations_ms: Vec<u64>,
 }
 
+/// Presentation timing for one AVIS track sample.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AvifFrameTiming {
+    pub timescale: u64,
+    pub pts_in_timescales: u64,
+    pub duration_in_timescales: u64,
+    pub pts_ms: u64,
+    pub duration_ms: u64,
+}
+
+/// The repetition count declared by an AVIS edit list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AvifRepetitionCount {
+    Finite(u32),
+    Infinite,
+    #[default]
+    Unknown,
+}
+
+/// AVIS samples together with their exact track timing and repetition policy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AvifAnimation {
+    pub sequence: AvifSequence,
+    pub color_timing: Vec<AvifFrameTiming>,
+    pub alpha_timing: Vec<AvifFrameTiming>,
+    pub color_timescale: u64,
+    pub duration_in_timescales: u64,
+    pub repetition_count: AvifRepetitionCount,
+}
+
 impl AvifInfo {
     pub fn is_avif_brand(&self) -> bool {
         brand_is_avif(&self.major_brand) || self.compatible_brands.iter().any(brand_is_avif)
@@ -2179,6 +2209,80 @@ pub fn parse_avif_sequence(data: &[u8]) -> Result<AvifSequence, DecoderError> {
     parse_avif_sequence_with_brands(data, &major_brand, &compatible_brands)
 }
 
+/// Parses AVIS samples and exposes exact timescale-based presentation timing.
+pub fn parse_avif_animation(data: &[u8]) -> Result<AvifAnimation, DecoderError> {
+    let (major_brand, compatible_brands) = parse_ftyp(data)?;
+    if major_brand != *BRAND_AVIS && !compatible_brands.iter().any(|brand| brand == BRAND_AVIS) {
+        return Ok(AvifAnimation {
+            sequence: AvifSequence {
+                color_samples: Vec::new(),
+                color_durations_ms: Vec::new(),
+                alpha_samples: Vec::new(),
+                alpha_durations_ms: Vec::new(),
+            },
+            color_timing: Vec::new(),
+            alpha_timing: Vec::new(),
+            color_timescale: 0,
+            duration_in_timescales: 0,
+            repetition_count: AvifRepetitionCount::Unknown,
+        });
+    }
+    let mut color = None;
+    let mut alpha = None;
+    for_each_top_level_box(data, |header| {
+        if header.box_type == *b"moov" {
+            let payload = box_payload(data, header)?;
+            for track in parse_sequence_tracks(data, payload)? {
+                if track.is_alpha {
+                    if alpha.is_none() {
+                        alpha = Some(track);
+                    }
+                } else if track.is_color && color.is_none() {
+                    color = Some(track);
+                }
+            }
+        }
+        Ok(())
+    })?;
+    let color = color.unwrap_or_default();
+    let alpha = alpha.unwrap_or_default();
+    if !alpha.samples.is_empty() && alpha.samples.len() != color.samples.len() {
+        return Err(DecoderError::Bitstream(format!(
+            "AVIS alpha track has {} samples, expected {}",
+            alpha.samples.len(),
+            color.samples.len()
+        )));
+    }
+    let color_timing = make_frame_timings(
+        color.timescale,
+        &color.pts_in_timescales,
+        &color.durations_in_timescales,
+    )?;
+    let alpha_timing = make_frame_timings(
+        alpha.timescale,
+        &alpha.pts_in_timescales,
+        &alpha.durations_in_timescales,
+    )?;
+    let duration_in_timescales = color
+        .durations_in_timescales
+        .iter()
+        .try_fold(0_u64, |total, duration| total.checked_add(*duration))
+        .ok_or_else(|| DecoderError::Bitstream("AVIS duration overflows u64".to_string()))?;
+    Ok(AvifAnimation {
+        sequence: AvifSequence {
+            color_samples: color.samples,
+            color_durations_ms: color.durations_ms,
+            alpha_samples: alpha.samples,
+            alpha_durations_ms: alpha.durations_ms,
+        },
+        color_timing,
+        alpha_timing,
+        color_timescale: color.timescale,
+        duration_in_timescales,
+        repetition_count: color.repetition_count,
+    })
+}
+
 fn parse_avif_sequence_with_brands(
     data: &[u8],
     major_brand: &[u8; 4],
@@ -2222,7 +2326,11 @@ fn parse_avif_sequence_with_brands(
 #[derive(Debug, Default)]
 struct SequenceTrack {
     samples: Vec<Vec<u8>>,
+    timescale: u64,
+    pts_in_timescales: Vec<u64>,
+    durations_in_timescales: Vec<u64>,
     durations_ms: Vec<u64>,
+    repetition_count: AvifRepetitionCount,
     is_alpha: bool,
     is_color: bool,
 }
@@ -2350,15 +2458,29 @@ fn parse_sequence_tracks(
             .map(parse_mdhd_timescale)
             .transpose()?
             .unwrap_or(1);
-        let durations_ms = child_box(stbl_payload, b"stts")?
+        let (pts_in_timescales, durations_in_timescales) = child_box(stbl_payload, b"stts")?
             .map(|stts| box_payload(stbl_payload, stts))
             .transpose()?
-            .map(|payload| parse_sample_durations(payload, samples.len(), timescale))
+            .map(|payload| parse_sample_timing(payload, samples.len()))
             .transpose()?
-            .unwrap_or_else(|| vec![0; samples.len()]);
+            .unwrap_or_else(|| (vec![0; samples.len()], vec![0; samples.len()]));
+        let durations_ms = durations_in_timescales
+            .iter()
+            .map(|duration| scale_to_milliseconds(*duration, u64::from(timescale)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let repetition_count = child_box(trak_payload, b"edts")?
+            .map(|edts| box_payload(trak_payload, edts))
+            .transpose()?
+            .map(parse_edit_list_repetition)
+            .transpose()?
+            .unwrap_or(AvifRepetitionCount::Unknown);
         tracks.push(SequenceTrack {
             samples,
+            timescale: u64::from(timescale),
+            pts_in_timescales,
+            durations_in_timescales,
             durations_ms,
+            repetition_count,
             is_alpha,
             is_color,
         });
@@ -2416,11 +2538,10 @@ fn parse_mdhd_timescale(payload: &[u8]) -> Result<u32, DecoderError> {
     Ok(timescale)
 }
 
-fn parse_sample_durations(
+fn parse_sample_timing(
     payload: &[u8],
     sample_count: usize,
-    timescale: u32,
-) -> Result<Vec<u64>, DecoderError> {
+) -> Result<(Vec<u64>, Vec<u64>), DecoderError> {
     if payload.len() < 8 {
         return Err(DecoderError::NotEnoughData(
             "stts payload is too short".to_string(),
@@ -2428,7 +2549,9 @@ fn parse_sample_durations(
     }
     let entry_count = usize::try_from(read_u32(payload, 4)?)
         .map_err(|_| DecoderError::Bitstream("stts entry count is too large".to_string()))?;
+    let mut pts = Vec::with_capacity(sample_count);
     let mut durations = Vec::with_capacity(sample_count);
+    let mut current_pts = 0_u64;
     let mut offset: usize = 8;
     for _ in 0..entry_count {
         let end = offset.checked_add(8).ok_or_else(|| {
@@ -2442,9 +2565,21 @@ fn parse_sample_durations(
         let count = usize::try_from(read_u32(payload, offset)?)
             .map_err(|_| DecoderError::Bitstream("stts sample count is too large".to_string()))?;
         let duration = u64::from(read_u32(payload, offset + 4)?);
-        let milliseconds =
-            (duration.saturating_mul(1000) + u64::from(timescale) / 2) / u64::from(timescale);
-        durations.extend(std::iter::repeat_n(milliseconds, count));
+        let next_count = durations.len().checked_add(count).ok_or_else(|| {
+            DecoderError::Bitstream("stts sample count overflows usize".to_string())
+        })?;
+        if next_count > sample_count {
+            return Err(DecoderError::Bitstream(format!(
+                "stts describes more than {sample_count} samples"
+            )));
+        }
+        for _ in 0..count {
+            pts.push(current_pts);
+            current_pts = current_pts.checked_add(duration).ok_or_else(|| {
+                DecoderError::Bitstream("stts presentation timestamp overflows u64".to_string())
+            })?;
+        }
+        durations.extend(std::iter::repeat_n(duration, count));
         offset = end;
     }
     if durations.len() != sample_count {
@@ -2453,7 +2588,123 @@ fn parse_sample_durations(
             durations.len()
         )));
     }
-    Ok(durations)
+    Ok((pts, durations))
+}
+
+fn scale_to_milliseconds(value: u64, timescale: u64) -> Result<u64, DecoderError> {
+    if timescale == 0 {
+        return Err(DecoderError::Bitstream(
+            "AVIS timescale must be non-zero".to_string(),
+        ));
+    }
+    let rounded = value
+        .checked_mul(1000)
+        .and_then(|scaled| scaled.checked_add(timescale / 2))
+        .ok_or_else(|| {
+            DecoderError::Bitstream("AVIS millisecond timing overflows u64".to_string())
+        })?;
+    Ok(rounded / timescale)
+}
+
+fn make_frame_timings(
+    timescale: u64,
+    pts: &[u64],
+    durations: &[u64],
+) -> Result<Vec<AvifFrameTiming>, DecoderError> {
+    if pts.len() != durations.len() {
+        return Err(DecoderError::Bitstream(
+            "AVIS timing arrays have different lengths".to_string(),
+        ));
+    }
+    pts.iter()
+        .copied()
+        .zip(durations.iter().copied())
+        .map(|(pts_in_timescales, duration_in_timescales)| {
+            Ok(AvifFrameTiming {
+                timescale,
+                pts_in_timescales,
+                duration_in_timescales,
+                pts_ms: scale_to_milliseconds(pts_in_timescales, timescale)?,
+                duration_ms: scale_to_milliseconds(duration_in_timescales, timescale)?,
+            })
+        })
+        .collect()
+}
+
+fn parse_edit_list_repetition(payload: &[u8]) -> Result<AvifRepetitionCount, DecoderError> {
+    if payload.len() < 8 {
+        return Err(DecoderError::NotEnoughData(
+            "edts payload is too short".to_string(),
+        ));
+    }
+    let Some(elst) = child_box(payload, b"elst")? else {
+        return Err(DecoderError::Bitstream("edts is missing elst".to_string()));
+    };
+    let elst_payload = box_payload(payload, elst)?;
+    if elst_payload.len() < 8 {
+        return Err(DecoderError::NotEnoughData(
+            "elst payload is too short".to_string(),
+        ));
+    }
+    let version = elst_payload[0];
+    if version > 1 {
+        return Err(DecoderError::Bitstream(
+            "elst version is unsupported".to_string(),
+        ));
+    }
+    let count = usize::try_from(read_u32(elst_payload, 4)?)
+        .map_err(|_| DecoderError::Bitstream("elst entry count is too large".to_string()))?;
+    let entry_size = if version == 1 { 20 } else { 12 };
+    let required = count
+        .checked_mul(entry_size)
+        .and_then(|size| size.checked_add(8))
+        .ok_or_else(|| DecoderError::Bitstream("elst size overflows usize".to_string()))?;
+    if required > elst_payload.len() {
+        return Err(DecoderError::NotEnoughData(
+            "elst entries are truncated".to_string(),
+        ));
+    }
+    if count == 0 {
+        return Ok(AvifRepetitionCount::Unknown);
+    }
+    let mut offset = 8;
+    let mut segment_durations = Vec::with_capacity(count);
+    let mut media_times = Vec::with_capacity(count);
+    for _ in 0..count {
+        let segment_duration = if version == 1 {
+            read_u64(elst_payload, offset)?
+        } else {
+            u64::from(read_u32(elst_payload, offset)?)
+        };
+        let media_time_offset = if version == 1 { 8 } else { 4 };
+        let media_time = if version == 1 {
+            i64::from_be_bytes(read_u64(elst_payload, offset + media_time_offset)?.to_be_bytes())
+        } else {
+            i64::from(i32::from_be_bytes(
+                read_u32(elst_payload, offset + media_time_offset)?.to_be_bytes(),
+            ))
+        };
+        segment_durations.push(segment_duration);
+        media_times.push(media_time);
+        offset += entry_size;
+    }
+    if segment_durations
+        .iter()
+        .zip(media_times.iter())
+        .any(|(duration, media_time)| *media_time == 0 && *duration == u64::from(u32::MAX))
+    {
+        return Ok(AvifRepetitionCount::Infinite);
+    }
+    if media_times.iter().all(|media_time| *media_time == 0)
+        && segment_durations
+            .windows(2)
+            .all(|durations| durations[0] == durations[1])
+    {
+        return Ok(AvifRepetitionCount::Finite(
+            u32::try_from(count.saturating_sub(1)).unwrap_or(u32::MAX),
+        ));
+    }
+    Ok(AvifRepetitionCount::Unknown)
 }
 
 fn sample_contains_sequence_header(sample: &[u8]) -> Result<bool, DecoderError> {
@@ -5167,5 +5418,65 @@ mod tests {
             DecoderError::Unsupported(message)
                 if message.contains("require a sequence header")
         ));
+    }
+
+    #[test]
+    fn stts_expands_checked_pts_and_durations() {
+        let mut payload = vec![0, 0, 0, 0];
+        push_u32(&mut payload, 2);
+        push_u32(&mut payload, 1);
+        push_u32(&mut payload, 3);
+        push_u32(&mut payload, 2);
+        push_u32(&mut payload, 5);
+        let (pts, durations) = parse_sample_timing(&payload, 3).unwrap();
+        assert_eq!(pts, vec![0, 3, 8]);
+        assert_eq!(durations, vec![3, 5, 5]);
+        let timing = make_frame_timings(1000, &pts, &durations).unwrap();
+        assert_eq!(timing[2].pts_ms, 8);
+        assert_eq!(timing[1].duration_ms, 5);
+    }
+
+    #[test]
+    fn timing_rejects_sample_count_and_millisecond_overflow() {
+        let mut payload = vec![0, 0, 0, 0];
+        push_u32(&mut payload, 1);
+        push_u32(&mut payload, 2);
+        push_u32(&mut payload, 1);
+        assert!(matches!(
+            parse_sample_timing(&payload, 1),
+            Err(DecoderError::Bitstream(message)) if message.contains("describes")
+        ));
+        assert!(matches!(
+            scale_to_milliseconds(u64::MAX, 1),
+            Err(DecoderError::Bitstream(message)) if message.contains("overflows")
+        ));
+    }
+
+    fn edit_list(entries: &[(u32, i32)]) -> Vec<u8> {
+        let mut elst = vec![0, 0, 0, 0];
+        push_u32(&mut elst, u32::try_from(entries.len()).unwrap());
+        for (duration, media_time) in entries {
+            push_u32(&mut elst, *duration);
+            push_i32(&mut elst, *media_time);
+            push_u16(&mut elst, 1);
+            push_u16(&mut elst, 0);
+        }
+        boxed(b"elst", &elst)
+    }
+
+    #[test]
+    fn edit_list_distinguishes_finite_infinite_and_repeated() {
+        assert_eq!(
+            parse_edit_list_repetition(&edit_list(&[(4000, 0)])).unwrap(),
+            AvifRepetitionCount::Finite(0)
+        );
+        assert_eq!(
+            parse_edit_list_repetition(&edit_list(&[(u32::MAX, 0)])).unwrap(),
+            AvifRepetitionCount::Infinite
+        );
+        assert_eq!(
+            parse_edit_list_repetition(&edit_list(&[(4000, 0), (4000, 0)])).unwrap(),
+            AvifRepetitionCount::Finite(1)
+        );
     }
 }

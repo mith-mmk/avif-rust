@@ -2,6 +2,27 @@
 
 All notable changes to this crate are documented in this file.
 
+## 0.0.5 - 2026-08-01
+
+### Added
+
+- Added exact AVIS frame timing (`timescale`, PTS, duration, and rounded
+  milliseconds) and finite, infinite, or unknown repetition metadata.
+- Added `AvifAnimation`, `DecodedSequenceFrame`, and the incremental
+  `AvifSequenceDecoder` API while preserving the existing sequence helpers.
+- AVIS callback output now decodes and emits one full-canvas RGBA frame at a
+  time, synchronizing color and alpha tracks and passing frame durations to
+  `NextOptions`.
+- Added animation metadata for frame count, loop count, timescale, total
+  duration, PTS, and per-frame durations.
+
+### Compatibility
+
+- Existing `AvifSequence`, indexed/batch sequence APIs, public callback method
+  shapes, fixed-canvas drawing, and alpha-plane behavior remain compatible.
+- Callback `Abort` is a normal early completion and does not call `terminate`;
+  callback errors continue to propagate immediately.
+
 ## 0.0.3 - 2026-07-29
 
 ### Fixed

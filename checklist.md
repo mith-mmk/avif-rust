@@ -2602,3 +2602,34 @@ approval-gated.
       `0.4731/0.7902`, `0.3103/0.4888`, and `0.2967/0.4786` ms; no clear
       regression against the 0.0.3 checkpoint.
 - [x] Do not publish, tag, or create a GitHub Release without explicit approval.
+
+## avif-rust 0.0.5 animation checklist
+
+- [x] Preserve the existing sequence helpers, `DecodedFrame`, callback method
+      shapes, fixed canvas, and full-canvas `Override` drawing contract.
+- [x] Parse `mdhd` timescale and checked `stts` PTS/duration values, exposing
+      rounded millisecond compatibility values.
+- [x] Parse `edts/elst` repetition as finite, infinite, or unknown and reject
+      truncated edit lists, zero timescales, overflow, and track-count
+      mismatches.
+- [x] Add `AvifAnimation`, `AvifFrameTiming`, `AvifRepetitionCount`,
+      `DecodedSequenceFrame`, and `AvifSequenceDecoder`.
+- [x] Emit AVIS callback frames one at a time with synchronized alpha timing,
+      duration-bearing `NextOptions`, and Abort/error handling.
+- [x] Add WML2-compatible animation metadata and map infinite/finite/unknown
+      repetition to loop counts 0/raw/1.
+- [x] Run the complete 0.0.5 strict oracle, FFmpeg, Clippy, Rustfmt, Rustdoc,
+      Wasm, fuzz-bin, MSRV 1.88, parent feature-on/off, APNG, and repeated
+      benchmark gates.
+- [x] Do not publish, tag, or create a GitHub Release without explicit approval.
+
+The 0.0.5 validation run passed `478` library tests with `6` ignored, `19`
+container tests, `107` FFmpeg tests with `2` ignored, `12` strict-oracle tests,
+the parent WML2 AVIF integration (`7` tests), and the AVIF feature-off test.
+Clippy with `-D warnings`, Rustfmt, Rustdoc, Wasm, fuzz-bin compilation, and
+Rust 1.88 all-target checking also passed. The 7-iteration same-host release
+benchmark measured `82.8875/81.8429 ms` for `WML2Viewer.avif` and
+`0.2581/0.4421 ms` for `colors-animated-8bpc.avif` (native/RGBA); this is
+consistent with the prior no-regression checkpoints. Crate packaging was not
+used as a publication step; the package command was blocked by unavailable
+crates.io index access in the sandbox.

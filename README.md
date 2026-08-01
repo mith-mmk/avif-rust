@@ -11,7 +11,7 @@ decoder. It provides direct RGBA helpers, access to decoded AV1 source planes,
 and a callback interface compatible with [`wml2`](https://github.com/mith-mmk/wml2-on-rust).
 
 The current release is
-[`avif-rust 0.0.3`](https://crates.io/crates/avif-rust/0.0.3).
+[`avif-rust 0.0.5`](https://crates.io/crates/avif-rust/0.0.5).
 
 The crate does not call FFmpeg, libaom, or another native codec at runtime.
 Those implementations are used only to generate and verify test oracles.
@@ -38,7 +38,7 @@ passes the FFmpeg RGB oracle (average absolute error about 0.075, maximum 6).
 | `clap`, `irot`, and `imir` composition | Supported |
 | One-frame `avis` primary item | Supported |
 | AVIS Key/IntraOnly/Inter/Switch/show-existing sample decode by index or batch | Supported for tested motion-compensated Inter and Switch samples |
-| Animated AVIF multi-frame callback output | Supported for Key/IntraOnly/Inter/Switch/show-existing samples (`animation: true`) |
+| Animated AVIF multi-frame callback output | Supported with one-frame-at-a-time color/alpha decode, exact timing, repetition metadata, and full-canvas `animation: true` callbacks |
 | Layered-image selectors (`a1op=0`, `lsel=0`/`0xffff`) | Parsed and accepted; specific non-default layer/operating-point selection remains fail-closed |
 | `tmap` primary item base-image fallback | Supported (base `av01` decode); ISO 21496 gain-map metadata and the referenced AV1 gain-map item can be inspected/decoded; explicit base-colour-space HDR application supports CICP, matrix-shaper, and linear-affine ICC LUT/mAB alternates (non-linear/reverse profiles fail closed) |
 | PQ/HLG transfer to bounded SDR RGBA16 | Supported (BT.709 luminance-axis gamut compression and bounded tone mapping) |
@@ -63,7 +63,7 @@ Or add the dependency manually:
 
 ```toml
 [dependencies]
-avif-rust = "0.0.3"
+avif-rust = "0.0.5"
 ```
 
 The minimum supported Rust version (MSRV) is Rust 1.88.

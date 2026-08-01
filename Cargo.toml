@@ -1,6 +1,6 @@
 [package]
 name = "avif-rust"
-version = "0.0.3"
+version = "0.0.5"
 edition = "2024"
 rust-version = "1.88"
 description = "Experimental pure Rust AVIF container and AV1 image-sequence decoder"
