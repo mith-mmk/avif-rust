@@ -2633,3 +2633,42 @@ benchmark measured `82.8875/81.8429 ms` for `WML2Viewer.avif` and
 consistent with the prior no-regression checkpoints. Crate packaging was not
 used as a publication step; the package command was blocked by unavailable
 crates.io index access in the sandbox.
+
+## avif-rust 0.0.6 stateful AVIS decoder checklist
+
+- [x] Retain color-track reference slots, CDF state, motion fields, sequence
+      prefix, and cursor across `AvifSequenceDecoder::next_frame` calls.
+- [x] Advance an independent alpha-track state once per color sample and cache
+      a static alpha auxiliary frame after its first successful decode.
+- [x] Commit color/alpha state only after the complete synchronized sample
+      succeeds; keep repeated end-of-sequence calls idempotent.
+- [x] Make `AvifAnimation` the single owner of track payloads retained by the
+      incremental decoder.
+- [x] Route incremental, batch, indexed, and WML2 callback paths through the
+      shared stateful sequence engine without changing public signatures.
+- [x] Add sample-count, rollback, end-state, alpha synchronization, and public
+      API parity tests.
+- [x] Extend the benchmark harness with full-sequence native and RGBA timing.
+- [x] Pass the complete library/container/FFmpeg/oracle, quality, Wasm, fuzz,
+      MSRV, parent integration, external compatibility, and benchmark gates.
+- [x] Verify the 0.0.6 package archive and `cargo publish --dry-run --locked`;
+      actual publication, tag, and GitHub Release remain approval-gated.
+
+The 0.0.6 validation run passed `481` library tests with `6` ignored, all `19`
+container tests, `107` FFmpeg tests with `2` ignored, and all `12` strict-oracle
+tests with `7` retained source hashes verified. Clippy with `-D warnings`,
+Rustfmt, Rustdoc, native and parent Wasm, fuzz-bin compilation, Rust 1.88, the
+parent workspace, the `7` parent AVIF+PNG tests, and the feature-off test pass.
+The external gate reports `75` successes, `1` expected failure, `0` unexpected
+results, and `0` partial PNGs. The package contains `74` files and its unpacked
+archive passes Rust 1.88; `cargo publish --dry-run --locked` completes without
+uploading.
+
+Three 7-iteration same-host runs compared the 0.0.6 stateful decoder with
+v0.0.5. Median-of-medians native/RGBA sequence time improved from
+`5.2531/6.1609 ms` to `1.8243/2.8291 ms` for
+`colors-animated-8bpc.avif`, and from `16.3732/17.8928 ms` to
+`6.2168/7.3007 ms` for `star-8bpc.avif`. The WML2Viewer still-image checkpoint
+changed from `78.7410/79.2254 ms` to `83.0357/82.0490 ms`, remaining inside the
+10% no-regression limit. These are same-host regression results, not portable
+speedup claims.

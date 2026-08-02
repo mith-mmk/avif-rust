@@ -2,6 +2,30 @@
 
 All notable changes to this crate are documented in this file.
 
+## 0.0.6 - 2026-08-02
+
+### Changed
+
+- `AvifSequenceDecoder` now retains AV1 reference slots, CDF state, motion
+  fields, and the sample cursor across calls instead of replaying the sequence
+  prefix for every frame.
+- Color and alpha tracks advance through independent synchronized states; a
+  static alpha auxiliary image is decoded once and reused for later frames.
+- Batch sequence decoding and WML2 animation callbacks now use the same linear
+  forward decoder. Indexed decoding remains compatible and replays only the
+  required prefix for each independent call.
+- Sequence payloads have one canonical owner inside the incremental decoder,
+  avoiding a second retained copy in its private container view.
+
+### Compatibility
+
+- Existing sequence types, constructors, indexed/batch helpers, frame timing,
+  metadata, full-canvas callbacks, and callback ordering are unchanged.
+- A failed color or alpha sample leaves the incremental decoder at the same
+  sample, and repeated calls after the end continue to return `Ok(None)`.
+- Grid sequences, additional AV1 tools, and encoding remain outside this
+  release.
+
 ## 0.0.5 - 2026-08-01
 
 ### Added

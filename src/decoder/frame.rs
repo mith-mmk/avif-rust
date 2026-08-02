@@ -1,7 +1,4 @@
-use super::sequence::{
-    decode_hidden_key_frame_show_existing, decode_sequence_frame_from_info,
-    decode_sequence_frames_from_info,
-};
+use super::sequence::{SequenceDecodeState, decode_hidden_key_frame_show_existing};
 use super::*;
 use crate::Rgba16ImageBuffer;
 use crate::av1::{convert_linear_rgb_primaries, frame_buffers_to_rgba_16};
@@ -53,13 +50,124 @@ pub struct DecodedSequenceFrame {
 /// Incremental AVIS decoder.
 ///
 /// The decoder exposes one color frame at a time and never retains decoded
-/// RGBA output for later frames. The current reference-state implementation
-/// delegates the source-plane step to the existing sequence decoder, while
-/// keeping the public cursor and alpha track synchronized at every call.
+/// RGBA output for later frames. Color and alpha tracks keep their AV1
+/// reference, CDF, and motion state between calls, so a forward traversal
+/// decodes every track sample exactly once.
 pub struct AvifSequenceDecoder {
-    info: AvifInfo,
     animation: AvifAnimation,
+    tracks: SequenceTracksDecoder,
     next_index: usize,
+}
+
+struct SequenceTracksDecoder {
+    info: AvifInfo,
+    color_state: SequenceDecodeState,
+    alpha_info: Option<AvifInfo>,
+    alpha_state: Option<SequenceDecodeState>,
+    static_alpha_frame: Option<DecodedFrame>,
+}
+
+impl SequenceTracksDecoder {
+    fn new(mut info: AvifInfo, sequence: &AvifSequence) -> Result<Self, DecoderError> {
+        if sequence.color_samples.is_empty() {
+            return Err(DecoderError::Bitstream(
+                "AVIS color track has no samples".to_string(),
+            ));
+        }
+        if !sequence.alpha_samples.is_empty()
+            && sequence.alpha_samples.len() != sequence.color_samples.len()
+        {
+            return Err(DecoderError::Bitstream(format!(
+                "AVIS alpha track has {} frames, expected {}",
+                sequence.alpha_samples.len(),
+                sequence.color_samples.len()
+            )));
+        }
+        let color_state = SequenceDecodeState::new(&info)?;
+        let (alpha_info, alpha_state) = if sequence.alpha_samples.is_empty() {
+            (None, None)
+        } else {
+            let mut alpha_info = info.clone();
+            alpha_info.primary_item_payload = sequence.alpha_samples[0].clone();
+            alpha_info.sequence_sample_payloads.clear();
+            alpha_info.alpha_auxiliary_items.clear();
+            alpha_info.alpha_grid = None;
+            alpha_info.av1_config = None;
+            let alpha_state = SequenceDecodeState::new(&alpha_info)?;
+            alpha_info.primary_item_payload.clear();
+            (Some(alpha_info), Some(alpha_state))
+        };
+        // The caller's `AvifSequence` is the canonical owner of track samples.
+        // Keep only container metadata in the private decode view rather than
+        // a second retained copy of every color payload.
+        info.primary_item_payload.clear();
+        info.sequence_sample_payloads.clear();
+        Ok(Self {
+            info,
+            color_state,
+            alpha_info,
+            alpha_state,
+            static_alpha_frame: None,
+        })
+    }
+
+    #[cfg(test)]
+    fn decoded_sample_counts(&self) -> (usize, Option<usize>) {
+        (
+            self.color_state.decoded_sample_count(),
+            self.alpha_state
+                .as_ref()
+                .map(SequenceDecodeState::decoded_sample_count),
+        )
+    }
+
+    fn next_frame(
+        &mut self,
+        sequence: &AvifSequence,
+        next_index: usize,
+    ) -> Result<Option<DecodedFrame>, DecoderError> {
+        let mut color_state = self.color_state.clone();
+        let mut alpha_state = self.alpha_state.clone();
+        let mut frame = color_state
+            .next_sample(&self.info, &sequence.color_samples)?
+            .ok_or_else(|| {
+                DecoderError::Bitstream(format!(
+                    "AVIS color track ended before sample {}",
+                    next_index
+                ))
+            })?;
+        if let (Some(alpha_info), Some(alpha_state)) =
+            (self.alpha_info.as_ref(), alpha_state.as_mut())
+        {
+            let alpha_frame = alpha_state
+                .next_sample(alpha_info, &sequence.alpha_samples)?
+                .ok_or_else(|| {
+                    DecoderError::Bitstream(format!(
+                        "AVIS alpha track ended before sample {}",
+                        next_index
+                    ))
+                })?;
+            append_alpha_plane(&mut frame, &alpha_frame)?;
+        } else if !self.info.alpha_auxiliary_items.is_empty() {
+            let new_static_alpha = if self.static_alpha_frame.is_none() {
+                Some(decode_alpha_auxiliary_frame(&self.info)?)
+            } else {
+                None
+            };
+            let alpha_frame = self
+                .static_alpha_frame
+                .as_ref()
+                .or(new_static_alpha.as_ref())
+                .expect("static alpha frame should be cached or freshly decoded");
+            append_alpha_plane(&mut frame, alpha_frame)?;
+            if let Some(alpha_frame) = new_static_alpha {
+                self.static_alpha_frame = Some(alpha_frame);
+            }
+        }
+        self.color_state = color_state;
+        self.alpha_state = alpha_state;
+        Ok(Some(frame))
+    }
 }
 
 impl AvifSequenceDecoder {
@@ -67,19 +175,15 @@ impl AvifSequenceDecoder {
         let info = parse_avif(data)?;
         validate_public_container_preflight(&info, false)?;
         let animation = parse_avif_animation(data)?;
-        if animation.sequence.color_samples.is_empty() {
-            return Err(DecoderError::Bitstream(
-                "AVIS color track has no samples".to_string(),
-            ));
-        }
         if animation.sequence.color_samples.len() != animation.color_timing.len() {
             return Err(DecoderError::Bitstream(
                 "AVIS color timing does not match the sample count".to_string(),
             ));
         }
+        let tracks = SequenceTracksDecoder::new(info, &animation.sequence)?;
         Ok(Self {
-            info,
             animation,
+            tracks,
             next_index: 0,
         })
     }
@@ -88,24 +192,24 @@ impl AvifSequenceDecoder {
         &self.animation
     }
 
+    #[cfg(test)]
+    pub(super) fn decoded_track_sample_counts(&self) -> (usize, Option<usize>) {
+        self.tracks.decoded_sample_counts()
+    }
+
     pub fn next_frame(&mut self) -> Result<Option<DecodedSequenceFrame>, DecoderError> {
         let Some(timing) = self.animation.color_timing.get(self.next_index).copied() else {
             return Ok(None);
         };
-        let index = self.next_index;
-        let mut frame = decode_sequence_frame_from_info(&self.info, index)?;
-        if !self.animation.sequence.alpha_samples.is_empty() {
-            let mut alpha_info = self.info.clone();
-            alpha_info.primary_item_payload = self.animation.sequence.alpha_samples[0].clone();
-            alpha_info.sequence_sample_payloads = self.animation.sequence.alpha_samples.clone();
-            alpha_info.alpha_auxiliary_items.clear();
-            alpha_info.av1_config = None;
-            let alpha_frame = decode_sequence_frame_from_info(&alpha_info, index)?;
-            append_alpha_plane(&mut frame, &alpha_frame)?;
-        } else if !self.info.alpha_auxiliary_items.is_empty() {
-            let alpha_frame = decode_alpha_auxiliary_frame(&self.info)?;
-            append_alpha_plane(&mut frame, &alpha_frame)?;
-        }
+        let frame = self
+            .tracks
+            .next_frame(&self.animation.sequence, self.next_index)?
+            .ok_or_else(|| {
+                DecoderError::Bitstream(format!(
+                    "AVIS sequence ended before sample {}",
+                    self.next_index
+                ))
+            })?;
         self.next_index += 1;
         Ok(Some(DecodedSequenceFrame { frame, timing }))
     }
@@ -512,25 +616,23 @@ pub fn decode_sequence_frame_bytes(
 ) -> Result<DecodedFrame, DecoderError> {
     let info = parse_avif(data)?;
     validate_public_container_preflight(&info, false)?;
-    let mut frame = decode_sequence_frame_from_info(&info, frame_index)?;
     let sequence = parse_avif_sequence(data)?;
-    if !sequence.alpha_samples.is_empty() {
-        let mut alpha_info = info.clone();
-        alpha_info.primary_item_payload = sequence
-            .alpha_samples
-            .first()
-            .cloned()
-            .ok_or_else(|| DecoderError::Bitstream("AVIS alpha track is empty".to_string()))?;
-        alpha_info.sequence_sample_payloads = sequence.alpha_samples.clone();
-        alpha_info.alpha_auxiliary_items.clear();
-        alpha_info.av1_config = None;
-        let alpha_frame = decode_sequence_frame_from_info(&alpha_info, frame_index)?;
-        append_alpha_plane(&mut frame, &alpha_frame)?;
-    } else if !info.alpha_auxiliary_items.is_empty() {
-        let alpha_frame = decode_alpha_auxiliary_frame(&info)?;
-        append_alpha_plane(&mut frame, &alpha_frame)?;
+    let sample_count = sequence.color_samples.len();
+    if frame_index >= sample_count {
+        return Err(DecoderError::InvalidParam(format!(
+            "AVIS frame index {frame_index} is outside the {sample_count}-sample sequence"
+        )));
     }
-    Ok(frame)
+    let mut tracks = SequenceTracksDecoder::new(info, &sequence)?;
+    for index in 0..=frame_index {
+        let frame = tracks.next_frame(&sequence, index)?.ok_or_else(|| {
+            DecoderError::Bitstream(format!("AVIS sequence ended before sample {frame_index}"))
+        })?;
+        if index == frame_index {
+            return Ok(frame);
+        }
+    }
+    unreachable!("validated AVIS frame index should be returned from the decode loop")
 }
 
 /// Decodes every independently addressable AVIS sample into source planes.
@@ -540,50 +642,14 @@ pub fn decode_sequence_frame_bytes(
 pub fn decode_sequence_frames_bytes(data: &[u8]) -> Result<Vec<DecodedFrame>, DecoderError> {
     let info = parse_avif(data)?;
     validate_public_container_preflight(&info, false)?;
-    let mut frames = decode_sequence_frames_from_info(&info)?;
     let sequence = parse_avif_sequence(data)?;
-    append_sequence_alpha_frames(&info, &sequence, &mut frames)?;
-    Ok(frames)
-}
-
-pub(super) fn append_sequence_alpha_frames(
-    info: &AvifInfo,
-    sequence: &AvifSequence,
-    frames: &mut [DecodedFrame],
-) -> Result<(), DecoderError> {
-    if !sequence.alpha_samples.is_empty() {
-        if sequence.alpha_samples.len() != frames.len() {
-            return Err(DecoderError::Bitstream(format!(
-                "AVIS alpha track has {} frames, expected {}",
-                sequence.alpha_samples.len(),
-                frames.len()
-            )));
-        }
-        let mut alpha_info = info.clone();
-        alpha_info.primary_item_payload = sequence
-            .alpha_samples
-            .first()
-            .cloned()
-            .ok_or_else(|| DecoderError::Bitstream("AVIS alpha track is empty".to_string()))?;
-        alpha_info.sequence_sample_payloads = sequence.alpha_samples.clone();
-        alpha_info.alpha_auxiliary_items.clear();
-        alpha_info.av1_config = None;
-        let alpha_frames = decode_sequence_frames_from_info(&alpha_info)?;
-        if alpha_frames.len() != frames.len() {
-            return Err(DecoderError::Bitstream(format!(
-                "AVIS alpha decode produced {} frames, expected {}",
-                alpha_frames.len(),
-                frames.len()
-            )));
-        }
-        for (frame, alpha_frame) in frames.iter_mut().zip(alpha_frames.iter()) {
-            append_alpha_plane(frame, alpha_frame)?;
-        }
-    } else if !info.alpha_auxiliary_items.is_empty() {
-        let alpha_frame = decode_alpha_auxiliary_frame(info)?;
-        for frame in frames {
-            append_alpha_plane(frame, &alpha_frame)?;
-        }
+    let mut tracks = SequenceTracksDecoder::new(info, &sequence)?;
+    let mut frames = Vec::with_capacity(sequence.color_samples.len());
+    for index in 0..sequence.color_samples.len() {
+        let frame = tracks.next_frame(&sequence, index)?.ok_or_else(|| {
+            DecoderError::Bitstream(format!("AVIS sequence ended before sample {index}"))
+        })?;
+        frames.push(frame);
     }
-    Ok(())
+    Ok(frames)
 }

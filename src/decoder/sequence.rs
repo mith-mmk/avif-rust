@@ -80,6 +80,7 @@ pub(super) fn split_av1_sequence_sample(
     Ok(units)
 }
 
+#[cfg(test)]
 pub(super) fn decode_sequence_frame_from_info(
     info: &AvifInfo,
     frame_index: usize,
@@ -110,6 +111,7 @@ pub(super) fn decode_sequence_frame_from_info(
     })
 }
 
+#[cfg(test)]
 pub(super) fn decode_sequence_frames_from_info(
     info: &AvifInfo,
 ) -> Result<Vec<DecodedFrame>, DecoderError> {
@@ -129,6 +131,7 @@ pub(super) fn decode_sequence_frames_from_info(
     decode_sequence_samples_from_info(info, sample_count - 1, true)
 }
 
+#[cfg(test)]
 fn decode_sequence_samples_from_info(
     info: &AvifInfo,
     stop_index: usize,
@@ -145,31 +148,94 @@ fn decode_sequence_samples_from_info(
             samples.len()
         )));
     }
-    let primary_obus = parse_obu_stream(&info.primary_item_payload)?;
-    let sequence_obu = primary_obus
-        .iter()
-        .find(|obu| obu.obu_type == ObuType::SequenceHeader)
-        .ok_or_else(|| DecoderError::Bitstream("AV1 sequence header OBU is missing".to_string()))?;
-    let sequence_prefix = encode_obu(sequence_obu.obu_type, sequence_obu.payload)?;
-    let sample_units: Vec<Vec<Av1SequenceSampleUnit>> = samples
-        .iter()
-        .take(stop_index + 1)
-        .map(|sample| {
-            let units = split_av1_sequence_sample(sample)?;
-            if units.is_empty() {
-                Err(DecoderError::Bitstream(
-                    "AVIS sample has no coded frame OBU".to_string(),
-                ))
-            } else {
-                Ok(units)
-            }
-        })
-        .collect::<Result<_, _>>()?;
-    let mut references = FrameReferenceSlots::default();
-    let mut cdf_states: Option<Vec<CdfContext>> = None;
-    let frame_capacity = if collect_all { sample_units.len() } else { 1 };
+    let mut state = SequenceDecodeState::new(info)?;
+    let frame_capacity = if collect_all { stop_index + 1 } else { 1 };
     let mut frames = Vec::with_capacity(frame_capacity);
-    for (index, units) in sample_units.iter().enumerate() {
+    while state.next_sample_index <= stop_index {
+        let index = state.next_sample_index;
+        let frame = state.next_sample(info, samples)?.ok_or_else(|| {
+            DecoderError::Bitstream(format!("AVIS sequence ended before sample {stop_index}"))
+        })?;
+        if collect_all {
+            frames.push(frame);
+        } else if index == stop_index {
+            return Ok(vec![frame]);
+        }
+    }
+    Ok(frames)
+}
+
+/// Mutable AV1 track state shared by the public incremental decoder and the
+/// indexed/batch compatibility helpers.
+///
+/// Cloning this value is intentionally cheap: frame planes, CDFs, motion
+/// fields, and the shared sequence prefix are reference counted. A sample is
+/// decoded against a clone and committed only after the whole sample succeeds,
+/// so an error never advances or partially mutates the public decoder cursor.
+#[derive(Debug, Clone, Default)]
+pub(super) struct SequenceDecodeState {
+    sequence_prefix: Arc<[u8]>,
+    references: FrameReferenceSlots,
+    cdf_states: Option<Arc<Vec<CdfContext>>>,
+    next_sample_index: usize,
+    #[cfg(test)]
+    decoded_sample_count: usize,
+}
+
+impl SequenceDecodeState {
+    pub(super) fn new(info: &AvifInfo) -> Result<Self, DecoderError> {
+        let primary_obus = parse_obu_stream(&info.primary_item_payload)?;
+        let sequence_obu = primary_obus
+            .iter()
+            .find(|obu| obu.obu_type == ObuType::SequenceHeader)
+            .ok_or_else(|| {
+                DecoderError::Bitstream("AV1 sequence header OBU is missing".to_string())
+            })?;
+        Ok(Self {
+            sequence_prefix: Arc::from(
+                encode_obu(sequence_obu.obu_type, sequence_obu.payload)?.into_boxed_slice(),
+            ),
+            ..Self::default()
+        })
+    }
+
+    pub(super) fn next_sample(
+        &mut self,
+        info: &AvifInfo,
+        samples: &[Vec<u8>],
+    ) -> Result<Option<DecodedFrame>, DecoderError> {
+        let Some(sample) = samples.get(self.next_sample_index) else {
+            return Ok(None);
+        };
+        let mut next = self.clone();
+        let index = next.next_sample_index;
+        let frame = next.decode_sample(info, sample, index)?;
+        next.next_sample_index += 1;
+        #[cfg(test)]
+        {
+            next.decoded_sample_count += 1;
+        }
+        *self = next;
+        Ok(Some(frame))
+    }
+
+    #[cfg(test)]
+    pub(super) fn decoded_sample_count(&self) -> usize {
+        self.decoded_sample_count
+    }
+
+    fn decode_sample(
+        &mut self,
+        info: &AvifInfo,
+        sample: &[u8],
+        index: usize,
+    ) -> Result<DecodedFrame, DecoderError> {
+        let units = split_av1_sequence_sample(sample)?;
+        if units.is_empty() {
+            return Err(DecoderError::Bitstream(
+                "AVIS sample has no coded frame OBU".to_string(),
+            ));
+        }
         let mut last_visible_frame = None;
         for (unit_index, unit) in units.iter().enumerate() {
             let sample_info = crate::container::inspect_av1_sequence_sample(&unit.payload)?;
@@ -191,15 +257,15 @@ fn decode_sequence_samples_from_info(
                         .flatten();
                     let headers = parse_av1_sequence_sample_headers(
                         info,
-                        &sequence_prefix,
+                        &self.sequence_prefix,
                         &unit.payload,
                         unit.has_sequence_header,
                         av1_config,
                     )?;
                     let initial_cdfs = if headers.frame.primary_ref_frame != 7 {
-                        references
+                        self.references
                             .cdf_for_header(&headers.frame)
-                            .or(cdf_states.as_deref())
+                            .or_else(|| self.cdf_states.as_ref().map(|cdf| cdf.as_slice()))
                     } else {
                         None
                     };
@@ -227,31 +293,25 @@ fn decode_sequence_samples_from_info(
                             cdf.reset_symbol_counters();
                         }
                     }
-                    references.refresh_with_cdf_and_motion(
+                    self.references.refresh_with_cdf_and_motion(
                         headers.frame.refresh_frame_flags,
                         &decoded,
                         &headers.frame,
                         &reference_cdfs,
                         &motion_field,
                     );
-                    references.set_previous_motion_field(motion_field);
+                    self.references.set_previous_motion_field(motion_field);
                     if !headers.frame.disable_frame_end_update_cdf {
-                        cdf_states = Some(next_cdf_states);
+                        self.cdf_states = Some(Arc::new(next_cdf_states));
                     }
                     if headers.frame.show_frame {
-                        if collect_all {
-                            frames.push(decoded.clone());
-                        }
                         last_visible_frame = Some(decoded);
                     }
                 }
                 crate::container::AvifSequenceSampleKind::ShowExisting {
                     frame_to_show_map_idx,
                 } => {
-                    let decoded = references.frame_to_show(frame_to_show_map_idx)?;
-                    if collect_all {
-                        frames.push(decoded.clone());
-                    }
+                    let decoded = self.references.frame_to_show(frame_to_show_map_idx)?;
                     last_visible_frame = Some(decoded);
                 }
                 crate::container::AvifSequenceSampleKind::Inter
@@ -259,10 +319,10 @@ fn decode_sequence_samples_from_info(
                     let av1_config = (!unit.has_sequence_header)
                         .then_some(info.av1_config.as_deref())
                         .flatten();
-                    let reference_states = references.states();
+                    let reference_states = self.references.states();
                     let headers = parse_av1_sequence_sample_headers_with_references(
                         info,
-                        &sequence_prefix,
+                        &self.sequence_prefix,
                         &unit.payload,
                         unit.has_sequence_header,
                         av1_config,
@@ -294,12 +354,13 @@ fn decode_sequence_samples_from_info(
                             &headers.tile_group.tile_data[start..end]
                         );
                     }
-                    let temporal_motion_field = references
+                    let temporal_motion_field = self
+                        .references
                         .temporal_motion_field(&headers.frame, headers.sequence.order_hint_bits);
                     let initial_cdfs = if headers.frame.primary_ref_frame != 7 {
-                        references
+                        self.references
                             .cdf_for_header(&headers.frame)
-                            .or(cdf_states.as_deref())
+                            .or_else(|| self.cdf_states.as_ref().map(|cdf| cdf.as_slice()))
                     } else {
                         None
                     };
@@ -308,7 +369,7 @@ fn decode_sequence_samples_from_info(
                             &headers,
                             Some(info),
                             true,
-                            references.buffers(),
+                            self.references.buffers(),
 
                             initial_cdfs,
                             temporal_motion_field,
@@ -342,33 +403,27 @@ fn decode_sequence_samples_from_info(
                             cdf.reset_symbol_counters();
                         }
                     }
-                    references.refresh_with_cdf_and_motion(
+                    self.references.refresh_with_cdf_and_motion(
                         headers.frame.refresh_frame_flags,
                         &decoded,
                         &headers.frame,
                         &reference_cdfs,
                         &motion_field,
                     );
-                    references.set_previous_motion_field(motion_field);
+                    self.references.set_previous_motion_field(motion_field);
                     if !headers.frame.disable_frame_end_update_cdf {
-                        cdf_states = Some(next_cdf_states);
+                        self.cdf_states = Some(Arc::new(next_cdf_states));
                     }
                     if headers.frame.show_frame {
-                        if collect_all {
-                            frames.push(decoded.clone());
-                        }
                         last_visible_frame = Some(decoded);
                     }
                 }
             }
         }
-        if !collect_all && index == stop_index {
-            return last_visible_frame.map(|frame| vec![frame]).ok_or_else(|| {
-                DecoderError::Bitstream(format!("AVIS sample {index} has no displayed frame"))
-            });
-        }
+        last_visible_frame.ok_or_else(|| {
+            DecoderError::Bitstream(format!("AVIS sample {index} has no displayed frame"))
+        })
     }
-    Ok(frames)
 }
 
 #[cfg(test)]
@@ -978,6 +1033,54 @@ mod reference_frame_tests {
         let expected = decode_frame_bytes(&data).unwrap();
         let frames = decode_sequence_frames_from_info(&info).unwrap();
         assert_eq!(frames, vec![expected.clone(), expected]);
+    }
+
+    #[test]
+    fn incremental_state_decodes_each_sample_once_and_stops_idempotently() {
+        let Some(data) = wml2viewer_data() else {
+            return;
+        };
+        let mut info = parse_avif(&data).unwrap();
+        info.major_brand = *b"avis";
+        let samples = vec![
+            info.primary_item_payload.clone(),
+            encode_obu(ObuType::FrameHeader, &[0x80]).unwrap(),
+        ];
+        let expected = decode_frame_bytes(&data).unwrap();
+        let mut state = SequenceDecodeState::new(&info).unwrap();
+
+        let first = state.next_sample(&info, &samples).unwrap().unwrap();
+        let shown = state.next_sample(&info, &samples).unwrap().unwrap();
+        assert_eq!(first, expected);
+        assert_eq!(shown, expected);
+        assert_eq!(state.decoded_sample_count(), samples.len());
+        assert!(state.next_sample(&info, &samples).unwrap().is_none());
+        assert!(state.next_sample(&info, &samples).unwrap().is_none());
+        assert_eq!(state.decoded_sample_count(), samples.len());
+    }
+
+    #[test]
+    fn incremental_state_does_not_advance_after_sample_error() {
+        let Some(data) = wml2viewer_data() else {
+            return;
+        };
+        let mut info = parse_avif(&data).unwrap();
+        info.major_brand = *b"avis";
+        let first = info.primary_item_payload.clone();
+        let valid_second = encode_obu(ObuType::FrameHeader, &[0x80]).unwrap();
+        let mut state = SequenceDecodeState::new(&info).unwrap();
+
+        state
+            .next_sample(&info, std::slice::from_ref(&first))
+            .unwrap()
+            .unwrap();
+        let invalid_samples = vec![first.clone(), vec![0xff]];
+        assert!(state.next_sample(&info, &invalid_samples).is_err());
+        assert_eq!(state.decoded_sample_count(), 1);
+
+        let valid_samples = vec![first, valid_second];
+        assert!(state.next_sample(&info, &valid_samples).unwrap().is_some());
+        assert_eq!(state.decoded_sample_count(), 2);
     }
 
     #[test]

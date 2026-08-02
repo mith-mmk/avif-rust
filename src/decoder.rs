@@ -4440,6 +4440,45 @@ mod gain_map_tests {
     }
 }
 
+#[cfg(test)]
+mod incremental_sequence_state_tests {
+    use super::*;
+
+    #[test]
+    fn external_alpha_sequence_decodes_each_track_sample_once() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("test/images/external/avif/unsupported/colors-animated-8bpc-alpha-exif-xmp.avif");
+        if !path.is_file() {
+            eprintln!("external alpha AVIS sample is unavailable; skipping linear-state audit");
+            return;
+        }
+        let data = std::fs::read(path).unwrap();
+        let expected = decode_sequence_frames_bytes(&data).unwrap();
+        let indexed = (0..expected.len())
+            .map(|index| decode_sequence_frame_bytes(&data, index).unwrap())
+            .collect::<Vec<_>>();
+        let mut decoder = AvifSequenceDecoder::new(&data).unwrap();
+        let mut incremental = Vec::new();
+        while let Some(decoded) = decoder.next_frame().unwrap() {
+            incremental.push(decoded.frame);
+        }
+
+        assert_eq!(incremental, expected);
+        assert_eq!(indexed, expected);
+        assert_eq!(
+            decoder.decoded_track_sample_counts(),
+            (expected.len(), Some(expected.len()))
+        );
+        assert!(decoder.next_frame().unwrap().is_none());
+        assert_eq!(
+            decoder.decoded_track_sample_counts(),
+            (expected.len(), Some(expected.len()))
+        );
+    }
+}
+
 fn read_to_end<B: BinaryReader>(reader: &mut B) -> Result<Vec<u8>, DecoderError> {
     let current = reader
         .offset()

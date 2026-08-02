@@ -34,6 +34,52 @@ fn benchmark_sample(sample: &PathBuf, iterations: usize) {
         decode_median.as_secs_f64() * 1000.0,
         rgba_median.as_secs_f64() * 1000.0
     );
+
+    let Ok(animation) = avif_rust::parse_avif_animation(&data) else {
+        return;
+    };
+    if animation.sequence.color_samples.len() <= 1 {
+        return;
+    }
+    for _ in 0..2 {
+        black_box(decode_sequence(&data, false));
+        black_box(decode_sequence(&data, true));
+    }
+    let mut sequence_times = Vec::with_capacity(iterations);
+    let mut sequence_rgba_times = Vec::with_capacity(iterations);
+    for _ in 0..iterations {
+        let start = Instant::now();
+        black_box(decode_sequence(&data, false));
+        sequence_times.push(start.elapsed());
+
+        let start = Instant::now();
+        black_box(decode_sequence(&data, true));
+        sequence_rgba_times.push(start.elapsed());
+    }
+    let sequence_median = median(&mut sequence_times);
+    let sequence_rgba_median = median(&mut sequence_rgba_times);
+    println!(
+        "sample={} frames={} iterations={} sequence_native_median_ms={} sequence_rgba_median_ms={}",
+        sample.display(),
+        animation.sequence.color_samples.len(),
+        iterations,
+        sequence_median.as_secs_f64() * 1000.0,
+        sequence_rgba_median.as_secs_f64() * 1000.0
+    );
+}
+
+fn decode_sequence(data: &[u8], convert_rgba: bool) -> usize {
+    let mut decoder = avif_rust::AvifSequenceDecoder::new(data).unwrap();
+    let mut frame_count = 0;
+    while let Some(decoded) = decoder.next_frame().unwrap() {
+        if convert_rgba {
+            black_box(decoded.frame.to_rgba8().unwrap());
+        } else {
+            black_box(decoded.frame);
+        }
+        frame_count += 1;
+    }
+    frame_count
 }
 
 fn main() {

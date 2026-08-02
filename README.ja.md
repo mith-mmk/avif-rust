@@ -12,7 +12,7 @@
 インターフェースを提供します。
 
 現在のreleaseは
-[`avif-rust 0.0.5`](https://crates.io/crates/avif-rust/0.0.5)です。
+[`avif-rust 0.0.6`](https://crates.io/crates/avif-rust/0.0.6)です。
 
 実行時にFFmpeg、libaom、その他のネイティブcodecは呼び出しません。これらは
 テスト用oracleの生成と検証にのみ使用します。
@@ -40,6 +40,7 @@ frame AVIF profileに対応します。1 frameの`avis` primary itemも静止画
 | 1 frameの`avis` primary item | 対応 |
 | AVISのKey／IntraOnly／Inter／Switch／show-existing frameをindex指定・一括でデコード | 対応（動き補償付きInter／Switchの検証サンプルを含む） |
 | animated AVIFの複数frame callback出力 | color／alphaを1 frameずつdecodeし、PTS／duration／repetitionを同期したfull-canvas callbackに対応（`animation: true`） |
+| AVISの状態保持型forward decode | 対応（color／alphaのreference・CDF・motion stateを保持し、各track sampleを1走査につき1回だけdecode） |
 | layered image selector（`a1op=0`、`lsel=0`） | 解析・受理（既定外の層／operating point選択はfail-closed） |
 | `tmap`主画像のbase画像フォールバック | 対応（base `av01`、ISO 21496 Gain Map、CICP、matrix-shaperおよびlinear-affine ICC LUT/mAB alternateの明示的HDR合成に対応。非線形／逆方向profileはfail-closed） |
 | PQ／HLG transferからbounded SDR RGBA16への変換 | 対応（bounded tone mapping、display固有のcalibrationは未適用） |
@@ -63,7 +64,7 @@ cargo add avif-rust
 
 ```toml
 [dependencies]
-avif-rust = "0.0.5"
+avif-rust = "0.0.6"
 ```
 
 最小サポートRustバージョン（MSRV）はRust 1.88です。
@@ -106,7 +107,10 @@ assert_eq!(rgba16.rgba.len(), rgba16.width * rgba16.height * 4);
 
 AVIS sequenceでは、`decode_sequence_frame_bytes`でKey／IntraOnly／動き補償付き
 Inter／Switchまたは`show_existing_frame`のサンプルをindex指定、
-`decode_sequence_frames_bytes`で対応サンプルを一括デコードできます。
+`decode_sequence_frames_bytes`で対応サンプルを一括デコードできます。長いanimationを
+前方向へ処理する場合は、color／alphaのreference・CDF・motion stateをcall間で
+保持する`AvifSequenceDecoder`を使用します。予測frameはrandom access pointでは
+ないため、独立したindex指定callはsample 0から必要なprefixをdecodeします。
 
 低水準の`parse_info`と`decode`は`bin-rs::reader::BinaryReader`を受け取ります。
 `decode`は`wml2`互換の`init -> next -> draw -> ... -> terminate` callback順序を
