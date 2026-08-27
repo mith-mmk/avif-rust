@@ -45,18 +45,23 @@ mod frame;
 mod sequence;
 #[allow(clippy::items_after_test_module)]
 mod still;
+#[cfg(test)]
+mod strict_alpha_tests;
+#[cfg(test)]
+mod strict_grid_tests;
 
 pub use frame::{
     AvifSequenceDecoder, DecodedFrame, DecodedGainMapFrame, DecodedSequenceFrame,
-    decode_frame_bytes, decode_gain_map_frame_bytes, decode_sequence_frame_bytes,
-    decode_sequence_frames_bytes,
+    decode_frame_bytes, decode_frame_bytes_strict, decode_gain_map_frame_bytes,
+    decode_sequence_frame_bytes, decode_sequence_frames_bytes,
 };
 #[cfg(test)]
 use frame::{resample_gain_map, unpremultiply_rgba8, unpremultiply_rgba16};
 use sequence::decode_hidden_key_frame_show_existing;
 use still::{
     append_alpha_plane, append_alpha_plane_buffer, decode_alpha_auxiliary_frame,
-    decode_alpha_grid_plane, decode_grid_frame, decode_grid_image, decode_still_image,
+    decode_alpha_grid_plane, decode_grid_frame, decode_grid_frame_raw, decode_grid_image,
+    decode_still_image,
 };
 #[cfg(test)]
 use still::{apply_alpha_rows, grid_composition_tests};

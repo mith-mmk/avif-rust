@@ -22,6 +22,21 @@ pub(super) fn decode_still_image(
 }
 
 pub(super) fn decode_grid_frame(info: &AvifInfo) -> Result<DecodedFrame, DecoderError> {
+    decode_grid_frame_with_geometry(info, true)
+}
+
+/// Decodes a grid while leaving its declared geometry operations unapplied.
+///
+/// This is used only by the strict native API.  The historical grid decoder
+/// continues to apply clap/irot/imir through `decode_grid_frame`.
+pub(super) fn decode_grid_frame_raw(info: &AvifInfo) -> Result<DecodedFrame, DecoderError> {
+    decode_grid_frame_with_geometry(info, false)
+}
+
+fn decode_grid_frame_with_geometry(
+    info: &AvifInfo,
+    apply_geometry: bool,
+) -> Result<DecodedFrame, DecoderError> {
     let grid = info
         .primary_grid
         .as_ref()
@@ -49,7 +64,7 @@ pub(super) fn decode_grid_frame(info: &AvifInfo) -> Result<DecodedFrame, Decoder
     let mut column_widths = vec![0usize; columns];
     let mut row_heights = vec![0usize; rows];
     let mut decoded_cells = decode_grid_cells(info, &grid.cells)?;
-    normalize_grid_cells(&mut decoded_cells)?;
+    prepare_grid_cells(&mut decoded_cells, apply_geometry)?;
     for (index, cell) in grid.cells.iter().enumerate() {
         let cell_width = usize::try_from(cell.width)
             .map_err(|_| DecoderError::InvalidParam("grid cell width is too large".to_string()))?;
@@ -209,8 +224,29 @@ pub(super) fn decode_grid_frame(info: &AvifInfo) -> Result<DecodedFrame, Decoder
         let alpha_frame = decode_alpha_auxiliary_frame(info)?;
         append_alpha_plane(&mut frame, &alpha_frame)?;
     }
-    apply_native_grid_geometry(&mut frame, info)?;
+    finish_grid_frame_geometry(&mut frame, info, apply_geometry)?;
     Ok(frame)
+}
+
+pub(super) fn prepare_grid_cells(
+    decoded_cells: &mut [DecodedFrame],
+    apply_geometry: bool,
+) -> Result<(), DecoderError> {
+    if apply_geometry {
+        normalize_grid_cells(decoded_cells)?;
+    }
+    Ok(())
+}
+
+pub(super) fn finish_grid_frame_geometry(
+    frame: &mut DecodedFrame,
+    info: &AvifInfo,
+    apply_geometry: bool,
+) -> Result<(), DecoderError> {
+    if apply_geometry {
+        apply_native_grid_geometry(frame, info)?;
+    }
+    Ok(())
 }
 
 fn decode_grid_cells(

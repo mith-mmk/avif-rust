@@ -22,16 +22,16 @@ pub use compat::{
 };
 pub use container::{
     AuxiliaryImage, AvifAnimation, AvifFrameTiming, AvifInfo, AvifRepetitionCount, AvifSequence,
-    AvifSequenceSampleKind, CleanAperture, ColorInformation, GainMapChannel, GainMapMetadata,
-    GainMapRational, GridCell, GridImage, ImageMirror, ImageRotation, ImageSpatialExtents,
-    NclxColorInformation, PixelChannelInformation, PixelInformation, PixelSubsampling,
-    classify_av1_sequence_sample, parse_avif_animation, parse_avif_sequence,
-    parse_gain_map_metadata,
+    AvifSequenceSampleKind, CleanAperture, ColorInformation, ColorInformationSet, GainMapChannel,
+    GainMapMetadata, GainMapRational, GridCell, GridImage, ImageMirror, ImageRotation,
+    ImageSpatialExtents, NclxColorInformation, PixelChannelInformation, PixelInformation,
+    PixelSubsampling, RichAvifInfo, classify_av1_sequence_sample, parse_avif_animation,
+    parse_avif_sequence, parse_gain_map_metadata, parse_rich_info,
 };
 pub use decoder::{
     AvifSequenceDecoder, DecodedFrame, DecodedGainMapFrame, DecodedSequenceFrame, decode,
-    decode_frame_bytes, decode_gain_map_frame_bytes, decode_sequence_frame_bytes,
-    decode_sequence_frames_bytes, parse_info,
+    decode_frame_bytes, decode_frame_bytes_strict, decode_gain_map_frame_bytes,
+    decode_sequence_frame_bytes, decode_sequence_frames_bytes, parse_info,
 };
 pub use error::DecoderError;
 pub use image::{ImageBuffer, Rgba16ImageBuffer};

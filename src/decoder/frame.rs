@@ -560,6 +560,105 @@ pub fn decode_frame_bytes(data: &[u8]) -> Result<DecodedFrame, DecoderError> {
     Ok(frame)
 }
 
+/// Strict native still-image decode used by high-precision consumers.
+///
+/// The historical [`decode_frame_bytes`] path keeps its established alpha
+/// normalization behaviour for compatibility.  This additive entry point
+/// validates AVIF's master/auxiliary constraints before attaching alpha, so a
+/// depth mismatch can never be rounded into a successful native frame.
+pub fn decode_frame_bytes_strict(data: &[u8]) -> Result<DecodedFrame, DecoderError> {
+    let info = parse_avif(data)?;
+    validate_public_container_preflight(&info, false)?;
+    if let Some(frame) = decode_sample_transform_frame(data, &info)? {
+        reject_strict_derived_alpha(
+            "sato",
+            info.alpha_grid.is_some(),
+            !info.alpha_auxiliary_items.is_empty(),
+        )?;
+        // Sample-transform output is a derived image.  Its relationships are
+        // validated by the transform parser and are intentionally not subject
+        // to the av01 master/alpha rule until a raw separate-alpha API exists.
+        return Ok(frame);
+    }
+    if info.primary_grid.is_some() {
+        reject_strict_derived_alpha(
+            "grid",
+            info.alpha_grid.is_some(),
+            !info.alpha_auxiliary_items.is_empty(),
+        )?;
+        // Grid items have their own derived-image validation rules.  Keep the
+        // established grid composition here until that separate contract is
+        // exposed by a future additive API.
+        return decode_grid_frame_raw(&info);
+    }
+    let mut frame = if let Some(frame) = decode_hidden_key_frame_show_existing(&info)? {
+        frame
+    } else {
+        let headers = parse_av1_headers(&info)?;
+        decode_still_frame(&headers, Some(&info))?
+    };
+    if !info.alpha_auxiliary_items.is_empty() {
+        let alpha_frame = decode_alpha_auxiliary_frame(&info)?;
+        validate_strict_alpha(&frame, &alpha_frame)?;
+        append_alpha_plane_buffer(
+            &mut frame,
+            alpha_frame.buffers.planes[0].clone(),
+            alpha_frame.bit_depth,
+        )?;
+    }
+    Ok(frame)
+}
+
+pub(super) fn reject_strict_derived_alpha(
+    derived_kind: &str,
+    has_alpha_grid: bool,
+    has_alpha_auxiliary: bool,
+) -> Result<(), DecoderError> {
+    if has_alpha_grid || has_alpha_auxiliary {
+        return Err(DecoderError::Unsupported(format!(
+            "strict native decode does not yet support alpha on a derived {derived_kind} image"
+        )));
+    }
+    Ok(())
+}
+
+pub(super) fn validate_strict_alpha(
+    master: &DecodedFrame,
+    alpha: &DecodedFrame,
+) -> Result<(), DecoderError> {
+    if alpha.width != master.width || alpha.height != master.height {
+        return Err(DecoderError::Bitstream(format!(
+            "AVIF alpha dimensions {}x{} do not match master dimensions {}x{}",
+            alpha.width, alpha.height, master.width, master.height
+        )));
+    }
+    let alpha_plane = alpha.buffers.planes.first().ok_or_else(|| {
+        DecoderError::Bitstream("AVIF alpha auxiliary plane is missing".to_string())
+    })?;
+    if alpha_plane.layout.width != alpha.width || alpha_plane.layout.height != alpha.height {
+        return Err(DecoderError::Bitstream(
+            "AVIF alpha plane geometry does not match its decoded header".to_string(),
+        ));
+    }
+    if alpha.buffers.planes.len() != 1 || !alpha.color_config.monochrome {
+        return Err(DecoderError::Unsupported(
+            "AVIF alpha auxiliary image must be monochrome".to_string(),
+        ));
+    }
+    if alpha.bit_depth != master.bit_depth {
+        return Err(DecoderError::Unsupported(format!(
+            "AVIF alpha bit depth {} does not match master bit depth {}",
+            alpha.bit_depth, master.bit_depth
+        )));
+    }
+    if alpha.color_config.color_range != ColorRange::Full {
+        return Err(DecoderError::Unsupported(
+            "AVIF alpha auxiliary image must use full range".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Decodes the AV1 gain-map item referenced by a `tmap` derived image.
 ///
 /// `Ok(None)` means that the input has no `tmap` item. Unsupported gain-map

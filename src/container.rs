@@ -209,6 +209,39 @@ pub struct ColorInformation {
     pub payload: Vec<u8>,
 }
 
+/// The complete colour signalling associated with one AVIF image item.
+///
+/// `AvifInfo::color_information` deliberately keeps its historical projection
+/// (nclx wins when it is associated alongside an ICC profile).  New callers
+/// that need to preserve the source metadata must use this additive type so
+/// that the two independent ISO BMFF properties are not lost.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ColorInformationSet {
+    pub icc_profile: Option<Vec<u8>>,
+    /// Original ICC property type (`prof` or `rICC`).
+    pub icc_color_type: Option<[u8; 4]>,
+    pub nclx: Option<NclxColorInformation>,
+    /// Unknown `colr` properties retained for lossless metadata forwarding.
+    pub unknown_colr: Vec<ColorInformation>,
+}
+
+impl ColorInformationSet {
+    pub fn is_empty(&self) -> bool {
+        self.icc_profile.is_none() && self.nclx.is_none() && self.unknown_colr.is_empty()
+    }
+}
+
+/// AVIF metadata with the complete colour-signalling set.
+///
+/// The embedded [`AvifInfo`] remains available unchanged for source and
+/// compatibility APIs.  This wrapper is intentionally additive and does not
+/// add fields to the established public struct.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RichAvifInfo {
+    pub info: AvifInfo,
+    pub color_information: ColorInformationSet,
+}
+
 impl ColorInformation {
     pub fn nclx(&self) -> Option<NclxColorInformation> {
         if &self.color_type != b"nclx" || self.payload.len() < 7 {
@@ -561,6 +594,51 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
         primary_item_payload,
         sequence_sample_payloads: sequence.color_samples,
     })
+}
+
+/// Parses AVIF metadata while retaining both ICC and CICP (`nclx`) colour
+/// properties when an item associates them together.
+///
+/// This is separate from [`parse_avif`] because its single
+/// `color_information` field is part of the legacy public API and therefore
+/// retains its historical nclx-preferred projection.
+pub fn parse_rich_info(data: &[u8]) -> Result<RichAvifInfo, DecoderError> {
+    let info = parse_avif(data)?;
+    let mut meta = MetaState::default();
+    for_each_top_level_box(data, |header| {
+        if &header.box_type == b"meta" {
+            parse_meta(data, header, &mut meta)?;
+        }
+        Ok(())
+    })?;
+    let primary_item_id = effective_primary_item_id(&meta)?;
+    let color_information =
+        collect_color_information(&item_color_information(&meta, primary_item_id)?)?;
+    Ok(RichAvifInfo {
+        info,
+        color_information,
+    })
+}
+
+fn collect_color_information(
+    colors: &[ColorInformation],
+) -> Result<ColorInformationSet, DecoderError> {
+    let mut color_information = ColorInformationSet::default();
+    for color in colors {
+        if let Some(profile) = color.icc_profile() {
+            color_information.icc_profile = Some(profile.to_vec());
+            color_information.icc_color_type = Some(color.color_type);
+        } else if &color.color_type == b"nclx" {
+            color_information.nclx = Some(color.nclx().ok_or_else(|| {
+                DecoderError::Bitstream(
+                    "nclx color information payload is shorter than seven bytes".to_string(),
+                )
+            })?);
+        } else {
+            color_information.unknown_colr.push(color.clone());
+        }
+    }
+    Ok(color_information)
 }
 
 /// Parses the first `tmap` item descriptor in an AVIF file.
@@ -1881,6 +1959,33 @@ fn item_metadata(state: &MetaState, item_id: u32) -> Result<PrimaryItemMetadata,
         }
     }
     Ok(metadata)
+}
+
+fn item_color_information(
+    state: &MetaState,
+    item_id: u32,
+) -> Result<Vec<ColorInformation>, DecoderError> {
+    let association = state
+        .item_property_associations
+        .iter()
+        .find(|association| association.item_id == item_id)
+        .ok_or_else(|| {
+            DecoderError::Bitstream(format!("item {item_id} has no property associations"))
+        })?;
+    let colors = association
+        .associations
+        .iter()
+        .filter_map(|association| {
+            state
+                .item_properties
+                .get(usize::from(association.index).checked_sub(1)?)
+                .and_then(|property| match property {
+                    ItemProperty::ColorInformation(color) => Some(color.clone()),
+                    _ => None,
+                })
+        })
+        .collect::<Vec<_>>();
+    Ok(colors)
 }
 
 fn parse_auxc(payload: &[u8]) -> Result<String, DecoderError> {
