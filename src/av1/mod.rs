@@ -25,6 +25,7 @@ pub use decode::{
 };
 pub(crate) use decode::{
     alloc_coded_frame_buffers, apply_superres_horizontal, crop_frame_buffers_to_plan,
+    plane_layout_for_geometry,
 };
 pub use entropy::EntropyDecoder;
 pub(crate) use film_grain::apply as apply_film_grain;
@@ -35,6 +36,7 @@ pub use frame::{
     CdefStrength, FilmGrainParams, FrameHeader, FrameType, GlobalMotionParams, GlobalMotionType,
     SegmentationParams, TxMode, parse_frame_header,
 };
+pub(crate) use frame::{FramePrefix, NO_REFERENCES, finish_frame_header, parse_frame_prefix};
 pub(crate) use frame::{ReferenceFrameState, parse_frame_header_with_references_and_metadata};
 pub use predict::{IntraEdges, predict_intra};
 pub use quant::{PlaneQuant, QuantState, dequantize_coefficients};

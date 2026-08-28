@@ -988,7 +988,13 @@ pub(super) fn decode_alpha_auxiliary_frame(info: &AvifInfo) -> Result<DecodedFra
     let auxiliary = info.alpha_auxiliary_items.first().ok_or_else(|| {
         DecoderError::Bitstream("AVIF alpha auxiliary item is missing".to_string())
     })?;
-    let alpha_info = AvifInfo {
+    let alpha_info = alpha_auxiliary_info(info, auxiliary);
+    let headers = super::parse_av1_headers(&alpha_info)?;
+    decode_still_frame(&headers, None)
+}
+
+fn alpha_auxiliary_info(info: &AvifInfo, auxiliary: &crate::container::AuxiliaryImage) -> AvifInfo {
+    AvifInfo {
         major_brand: info.major_brand,
         compatible_brands: info.compatible_brands.clone(),
         primary_item_id: None,
@@ -1006,9 +1012,117 @@ pub(super) fn decode_alpha_auxiliary_frame(info: &AvifInfo) -> Result<DecodedFra
         av1_config: None,
         primary_item_payload: auxiliary.payload.clone(),
         sequence_sample_payloads: Vec::new(),
-    };
-    let headers = parse_av1_headers(&alpha_info)?;
+    }
+}
+
+pub(super) fn decode_alpha_auxiliary_frame_with_prefix(
+    info: &AvifInfo,
+    parts: super::ItemHeaderParts<'_>,
+    frame_prefix: crate::av1::FramePrefix<'_, '_>,
+) -> Result<DecodedFrame, DecoderError> {
+    let auxiliary = info.alpha_auxiliary_items.first().ok_or_else(|| {
+        DecoderError::Bitstream("AVIF alpha auxiliary item is missing".to_string())
+    })?;
+    let source = super::ItemHeaderSource::from_auxiliary(auxiliary);
+    let headers = super::parse_av1_headers_for_item_with_prefix(&source, parts, frame_prefix)?;
     decode_still_frame(&headers, None)
+}
+
+pub(super) struct NativeAlphaHeader<'a> {
+    pub(super) prefix: crate::av1::FramePrefix<'a, 'static>,
+    pub(super) parts: super::ItemHeaderParts<'a>,
+    pub(super) sequence: crate::av1::SequenceHeader,
+}
+
+/// Validates the selected alpha's borrowed sequence/frame prefix without
+/// constructing an owned `AvifInfo` or parsing its tile payload.  The native
+/// master must pass this check before its entropy/tile materializer runs.
+pub(super) fn validate_alpha_auxiliary_header_limits<'a>(
+    info: &'a AvifInfo,
+    limits: &crate::limits::NativeDecodeLimits,
+    expected_width: usize,
+    expected_height: usize,
+    expected_bit_depth: u8,
+) -> Result<NativeAlphaHeader<'a>, DecoderError> {
+    let auxiliary = info.alpha_auxiliary_items.first().ok_or_else(|| {
+        DecoderError::Bitstream("AVIF alpha auxiliary item is missing".to_string())
+    })?;
+    let sequence_payload =
+        crate::obu::find_obu_payload(&auxiliary.payload, crate::obu::ObuType::SequenceHeader)?
+            .ok_or_else(|| {
+                DecoderError::Bitstream("AV1 sequence header OBU is missing".to_string())
+            })?;
+    let sequence = crate::av1::parse_sequence_header(sequence_payload)?;
+    limits.check_dimensions(
+        usize::try_from(sequence.max_frame_width).map_err(|_| {
+            DecoderError::InvalidParam("AV1 maximum width is too large".to_string())
+        })?,
+        usize::try_from(sequence.max_frame_height).map_err(|_| {
+            DecoderError::InvalidParam("AV1 maximum height is too large".to_string())
+        })?,
+    )?;
+    if sequence.enable_superres {
+        return Err(DecoderError::Unsupported(
+            "bounded native decode does not yet budget AV1 super-resolution".to_string(),
+        ));
+    }
+    let frame_payload =
+        crate::obu::find_obu_payload(&auxiliary.payload, crate::obu::ObuType::Frame)?;
+    let frame_header_payload = if frame_payload.is_none() {
+        crate::obu::find_obu_payload(&auxiliary.payload, crate::obu::ObuType::FrameHeader)?
+    } else {
+        None
+    };
+    let frame_payload_for_prefix = frame_payload
+        .or(frame_header_payload)
+        .ok_or_else(|| DecoderError::Bitstream("AV1 frame header OBU is missing".to_string()))?;
+    let (_, sequence_metadata) = crate::av1::parse_sequence_header_with_metadata(sequence_payload)?;
+    let frame_prefix = crate::av1::parse_frame_prefix(
+        frame_payload_for_prefix,
+        &sequence,
+        &sequence_metadata,
+        &crate::av1::NO_REFERENCES,
+    )?;
+    let (frame_width_u32, frame_height_u32, _, _, _) = frame_prefix.geometry();
+    super::frame::validate_native_frame_prefix_geometry_limits(&sequence, &frame_prefix, limits)?;
+    let frame_width = usize::try_from(frame_width_u32)
+        .map_err(|_| DecoderError::InvalidParam("AV1 frame width is too large".to_string()))?;
+    let frame_height = usize::try_from(frame_height_u32)
+        .map_err(|_| DecoderError::InvalidParam("AV1 frame height is too large".to_string()))?;
+    if frame_width != expected_width || frame_height != expected_height {
+        return Err(DecoderError::Bitstream(
+            "AVIF alpha dimensions do not match the master allocation plan".to_string(),
+        ));
+    }
+    if sequence.color_config.bit_depth != expected_bit_depth {
+        return Err(DecoderError::Unsupported(
+            "AVIF alpha bit depth does not match the master allocation plan".to_string(),
+        ));
+    }
+    if !sequence.color_config.monochrome {
+        return Err(DecoderError::Unsupported(
+            "AVIF alpha auxiliary image must be monochrome".to_string(),
+        ));
+    }
+    if sequence.color_config.color_range != crate::av1::ColorRange::Full {
+        return Err(DecoderError::Unsupported(
+            "AVIF alpha auxiliary image must use full range".to_string(),
+        ));
+    }
+    if !frame_prefix.show_frame() {
+        return Err(DecoderError::Unsupported(
+            "bounded native decode requires a displayed alpha AV1 frame".to_string(),
+        ));
+    }
+    Ok(NativeAlphaHeader {
+        prefix: frame_prefix,
+        parts: super::ItemHeaderParts {
+            sequence_payload,
+            frame_payload,
+            frame_header_payload,
+        },
+        sequence,
+    })
 }
 
 pub(super) fn decode_alpha_grid_plane(

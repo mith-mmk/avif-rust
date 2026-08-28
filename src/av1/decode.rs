@@ -342,6 +342,18 @@ fn build_plane_layouts(
     width: usize,
     height: usize,
 ) -> Result<Vec<PlaneLayout>, DecoderError> {
+    build_plane_layouts_for_geometry(sequence, width, height)
+}
+
+/// Computes the visible plane geometry without allocating any sample buffers.
+///
+/// Native bounded decoding uses the same checked arithmetic as the ordinary
+/// decode-plan builder before it resumes parsing or copies tile payloads.
+fn build_plane_layouts_for_geometry(
+    sequence: &SequenceHeader,
+    width: usize,
+    height: usize,
+) -> Result<Vec<PlaneLayout>, DecoderError> {
     let plane_count = if sequence.color_config.monochrome {
         1
     } else {
@@ -349,31 +361,53 @@ fn build_plane_layouts(
     };
     let mut planes = Vec::with_capacity(plane_count);
     for plane in 0..plane_count {
-        let subsampling_x = if plane == 0 {
-            0
-        } else {
-            sequence.color_config.subsampling_x as u8
-        };
-        let subsampling_y = if plane == 0 {
-            0
-        } else {
-            sequence.color_config.subsampling_y as u8
-        };
-        let plane_width = round_shift_usize(width, subsampling_x);
-        let plane_height = round_shift_usize(height, subsampling_y);
-        let sample_count = plane_width.checked_mul(plane_height).ok_or_else(|| {
-            DecoderError::InvalidParam("AV1 plane sample count overflow".to_string())
-        })?;
-        planes.push(PlaneLayout {
-            plane: plane as u8,
-            width: plane_width,
-            height: plane_height,
-            subsampling_x,
-            subsampling_y,
-            sample_count,
-        });
+        if let Some(layout) = plane_layout_for_geometry(sequence, width, height, plane)? {
+            planes.push(layout);
+        }
     }
     Ok(planes)
+}
+
+/// Returns one plane's checked geometry without allocating a container.  The
+/// native prefix preflight uses this fixed-slot form; the legacy decode-plan
+/// builder above remains a Vec-producing adapter.
+pub(crate) fn plane_layout_for_geometry(
+    sequence: &SequenceHeader,
+    width: usize,
+    height: usize,
+    plane: usize,
+) -> Result<Option<PlaneLayout>, DecoderError> {
+    let plane_count = if sequence.color_config.monochrome {
+        1
+    } else {
+        3
+    };
+    if plane >= plane_count {
+        return Ok(None);
+    }
+    let subsampling_x = if plane == 0 {
+        0
+    } else {
+        sequence.color_config.subsampling_x as u8
+    };
+    let subsampling_y = if plane == 0 {
+        0
+    } else {
+        sequence.color_config.subsampling_y as u8
+    };
+    let plane_width = round_shift_usize(width, subsampling_x);
+    let plane_height = round_shift_usize(height, subsampling_y);
+    let sample_count = plane_width
+        .checked_mul(plane_height)
+        .ok_or_else(|| DecoderError::InvalidParam("AV1 plane sample count overflow".to_string()))?;
+    Ok(Some(PlaneLayout {
+        plane: plane as u8,
+        width: plane_width,
+        height: plane_height,
+        subsampling_x,
+        subsampling_y,
+        sample_count,
+    }))
 }
 
 fn build_tile_plans(

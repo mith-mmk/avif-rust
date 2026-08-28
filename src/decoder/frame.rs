@@ -569,44 +569,384 @@ pub fn decode_frame_bytes(data: &[u8]) -> Result<DecodedFrame, DecoderError> {
 pub fn decode_frame_bytes_strict(data: &[u8]) -> Result<DecodedFrame, DecoderError> {
     let info = parse_avif(data)?;
     validate_public_container_preflight(&info, false)?;
-    if let Some(frame) = decode_sample_transform_frame(data, &info)? {
-        reject_strict_derived_alpha(
-            "sato",
-            info.alpha_grid.is_some(),
-            !info.alpha_auxiliary_items.is_empty(),
-        )?;
-        // Sample-transform output is a derived image.  Its relationships are
-        // validated by the transform parser and are intentionally not subject
-        // to the av01 master/alpha rule until a raw separate-alpha API exists.
-        return Ok(frame);
+    decode_frame_bytes_strict_from_info(data, &info, None)
+}
+
+/// Bounded native still decode. The rich container parse is performed once;
+/// the legacy unbounded entry point is not used as a fallback.
+///
+/// At this stage the limits cover the container/metadata projection and the
+/// pre-tile geometry/header checks for one ordinary still `av01` item and its
+/// selected auxiliary alpha. AVIS sequences and derived images are rejected
+/// by this entry point. Deep tile/entropy traversal, reference-frame state,
+/// post-filter scratch, and a total-live-allocation guarantee are not covered
+/// yet; those are the planned C2/C3 bounded-decoding stages.
+pub fn decode_frame_bytes_strict_with_limits(
+    data: &[u8],
+    limits: &crate::limits::NativeDecodeLimits,
+) -> Result<crate::native::NativeDecodedFrame, DecoderError> {
+    let information = crate::native::parse_native_info(data, limits)?;
+    let info = information.info();
+    validate_public_container_preflight(info, false)?;
+    if !info.sequence_sample_payloads.is_empty() {
+        return Err(DecoderError::Unsupported(
+            "bounded native decode accepts one still av01 item, not an AVIS sequence".to_string(),
+        ));
     }
-    if info.primary_grid.is_some() {
-        reject_strict_derived_alpha(
-            "grid",
-            info.alpha_grid.is_some(),
-            !info.alpha_auxiliary_items.is_empty(),
-        )?;
-        // Grid items have their own derived-image validation rules.  Keep the
-        // established grid composition here until that separate contract is
-        // exposed by a future additive API.
-        return decode_grid_frame_raw(&info);
+    if information.primary_item_type() != Some(*b"av01") {
+        return Err(DecoderError::Unsupported(
+            "bounded native decode accepts only a primary av01 item".to_string(),
+        ));
     }
-    let mut frame = if let Some(frame) = decode_hidden_key_frame_show_existing(&info)? {
+    let derived = information.primary_item_type() == Some(*b"sato") || info.primary_grid.is_some();
+    if derived {
+        limits.check_count(1, limits.max_derived_depth(), "derived image depth")?;
+        return Err(DecoderError::Unsupported(
+            "bounded native decode does not yet support derived images".to_string(),
+        ));
+    }
+    let frame = decode_frame_bytes_strict_from_info(data, info, Some(limits))?;
+    validate_native_frame_limits(&frame, limits)?;
+    Ok(crate::native::NativeDecodedFrame::new(frame, information))
+}
+
+fn decode_frame_bytes_strict_from_info(
+    data: &[u8],
+    info: &AvifInfo,
+    limits: Option<&crate::limits::NativeDecodeLimits>,
+) -> Result<DecodedFrame, DecoderError> {
+    if limits.is_none() {
+        if let Some(frame) = decode_sample_transform_frame(data, info)? {
+            reject_strict_derived_alpha(
+                "sato",
+                info.alpha_grid.is_some(),
+                !info.alpha_auxiliary_items.is_empty(),
+            )?;
+            return Ok(frame);
+        }
+        if info.primary_grid.is_some() {
+            reject_strict_derived_alpha(
+                "grid",
+                info.alpha_grid.is_some(),
+                !info.alpha_auxiliary_items.is_empty(),
+            )?;
+            return decode_grid_frame_raw(info);
+        }
+    }
+    let mut bounded_frame_prefix = None;
+    let mut bounded_alpha_prefix = None;
+    let bounded_sequence = if let Some(limits) = limits {
+        let sequence = validate_native_sequence_limits(info, limits)?;
+        let frame_prefix = validate_native_frame_prefix_limits(info, &sequence, limits)?;
+        if !info.alpha_auxiliary_items.is_empty() {
+            let alpha_header = super::still::validate_alpha_auxiliary_header_limits(
+                info,
+                limits,
+                usize::try_from(frame_prefix.geometry().0).map_err(|_| {
+                    DecoderError::InvalidParam("AV1 frame width is too large".to_string())
+                })?,
+                usize::try_from(frame_prefix.geometry().1).map_err(|_| {
+                    DecoderError::InvalidParam("AV1 frame height is too large".to_string())
+                })?,
+                sequence.color_config.bit_depth,
+            )?;
+            validate_bounded_item_payload(
+                &info.alpha_auxiliary_items[0].payload,
+                &alpha_header.sequence,
+                "alpha",
+            )?;
+            bounded_alpha_prefix = Some(alpha_header);
+        }
+        validate_bounded_item_payload(&info.primary_item_payload, &sequence, "primary")?;
+        bounded_frame_prefix = Some(frame_prefix);
+        Some(sequence)
+    } else {
+        None
+    };
+    let mut frame = if bounded_sequence.is_some() {
+        let headers = parse_av1_headers_with_frame_prefix(
+            info,
+            bounded_frame_prefix
+                .take()
+                .expect("bounded native path has a validated frame prefix"),
+        )?;
+        validate_native_decode_plan_limits(&headers.decode_plan, limits.expect("bounded path"))?;
+        decode_still_frame(&headers, Some(info))?
+    } else if let Some(frame) = decode_hidden_key_frame_show_existing(info)? {
         frame
     } else {
-        let headers = parse_av1_headers(&info)?;
-        decode_still_frame(&headers, Some(&info))?
+        let headers = parse_av1_headers(info)?;
+        decode_still_frame(&headers, Some(info))?
     };
     if !info.alpha_auxiliary_items.is_empty() {
-        let alpha_frame = decode_alpha_auxiliary_frame(&info)?;
-        validate_strict_alpha(&frame, &alpha_frame)?;
-        append_alpha_plane_buffer(
-            &mut frame,
-            alpha_frame.buffers.planes[0].clone(),
-            alpha_frame.bit_depth,
-        )?;
+        let alpha_frame = if limits.is_some() {
+            let prefix = bounded_alpha_prefix
+                .take()
+                .expect("bounded native path has a validated alpha frame prefix");
+            super::still::decode_alpha_auxiliary_frame_with_prefix(
+                info,
+                prefix.parts,
+                prefix.prefix,
+            )?
+        } else {
+            decode_alpha_auxiliary_frame(info)?
+        };
+        if limits.is_some() {
+            append_native_alpha_plane(&mut frame, alpha_frame)?;
+        } else {
+            validate_strict_alpha(&frame, &alpha_frame)?;
+            append_alpha_plane_buffer(
+                &mut frame,
+                alpha_frame.buffers.planes[0].clone(),
+                alpha_frame.bit_depth,
+            )?;
+        }
     }
     Ok(frame)
+}
+
+/// Attaches the already-decoded alpha owner on the strict native path.
+///
+/// The ownership move is intentionally kept in the production helper used by
+/// the bounded decoder.  The legacy path above continues to clone its plane,
+/// preserving the historical callback/API behavior.
+pub(super) fn append_native_alpha_plane(
+    frame: &mut DecodedFrame,
+    alpha_frame: DecodedFrame,
+) -> Result<(), DecoderError> {
+    validate_strict_alpha(frame, &alpha_frame)?;
+    let alpha_bit_depth = alpha_frame.bit_depth;
+    let alpha_plane = alpha_frame
+        .buffers
+        .planes
+        .into_iter()
+        .next()
+        .ok_or_else(|| {
+            DecoderError::Bitstream("AVIF alpha auxiliary plane is missing".to_string())
+        })?;
+    append_alpha_plane_buffer(frame, alpha_plane, alpha_bit_depth)
+}
+
+pub(super) fn validate_native_sequence_limits(
+    info: &AvifInfo,
+    limits: &crate::limits::NativeDecodeLimits,
+) -> Result<crate::av1::SequenceHeader, DecoderError> {
+    let sequence_payload = crate::obu::find_obu_payload(
+        &info.primary_item_payload,
+        crate::obu::ObuType::SequenceHeader,
+    )?
+    .ok_or_else(|| DecoderError::Bitstream("AV1 sequence header OBU is missing".to_string()))?;
+    let sequence = crate::av1::parse_sequence_header(sequence_payload)?;
+    limits.check_dimensions(
+        usize::try_from(sequence.max_frame_width).map_err(|_| {
+            DecoderError::InvalidParam("AV1 maximum width is too large".to_string())
+        })?,
+        usize::try_from(sequence.max_frame_height).map_err(|_| {
+            DecoderError::InvalidParam("AV1 maximum height is too large".to_string())
+        })?,
+    )?;
+    if sequence.enable_superres {
+        return Err(DecoderError::Unsupported(
+            "bounded native decode does not yet budget AV1 super-resolution".to_string(),
+        ));
+    }
+    Ok(sequence)
+}
+
+fn validate_bounded_item_payload(
+    payload: &[u8],
+    sequence: &crate::av1::SequenceHeader,
+    item_label: &str,
+) -> Result<(), DecoderError> {
+    let mut displayed_frames = 0usize;
+    for obu in crate::obu::ObuIter::new(payload) {
+        let obu = obu?;
+        if matches!(
+            obu.obu_type,
+            crate::obu::ObuType::Frame | crate::obu::ObuType::FrameHeader
+        ) {
+            displayed_frames = displayed_frames.checked_add(1).ok_or_else(|| {
+                DecoderError::InvalidParam("AV1 frame count overflows".to_string())
+            })?;
+            if !sequence.reduced_still_picture_header
+                && crate::av1::parse_show_existing_frame_index(obu.payload)?.is_some()
+            {
+                return Err(DecoderError::Unsupported(
+                    "bounded native decode does not yet support show_existing_frame".to_string(),
+                ));
+            }
+        }
+    }
+    if displayed_frames > 1 {
+        return Err(DecoderError::Unsupported(format!(
+            "bounded native decode accepts one displayed {item_label} AV1 frame"
+        )));
+    }
+    Ok(())
+}
+
+/// Parse only the borrowed AV1 frame header and account for every visible
+/// geometry before the materializer is allowed to copy a tile payload.
+///
+/// This is deliberately separate from `parse_av1_headers`: that routine owns
+/// the frame/tile data used by the legacy decoder.  Native callers need the
+/// header decision first so a plane limit cannot be discovered after the
+/// frame OBU has already been copied.
+pub(super) fn validate_native_frame_prefix_limits<'a>(
+    info: &'a AvifInfo,
+    sequence: &crate::av1::SequenceHeader,
+    limits: &crate::limits::NativeDecodeLimits,
+) -> Result<crate::av1::FramePrefix<'a, 'static>, DecoderError> {
+    let payload =
+        crate::obu::find_obu_payload(&info.primary_item_payload, crate::obu::ObuType::Frame)?
+            .or(crate::obu::find_obu_payload(
+                &info.primary_item_payload,
+                crate::obu::ObuType::FrameHeader,
+            )?)
+            .ok_or_else(|| {
+                DecoderError::Bitstream("AV1 frame header OBU is missing".to_string())
+            })?;
+    let sequence_payload = crate::obu::find_obu_payload(
+        &info.primary_item_payload,
+        crate::obu::ObuType::SequenceHeader,
+    )?
+    .ok_or_else(|| DecoderError::Bitstream("AV1 sequence header OBU is missing".to_string()))?;
+    let (_, sequence_metadata) = crate::av1::parse_sequence_header_with_metadata(sequence_payload)?;
+    let prefix = crate::av1::parse_frame_prefix(
+        payload,
+        sequence,
+        &sequence_metadata,
+        &crate::av1::NO_REFERENCES,
+    )?;
+    if !prefix.show_frame() {
+        return Err(DecoderError::Unsupported(
+            "bounded native decode requires a displayed AV1 frame".to_string(),
+        ));
+    }
+    validate_native_frame_prefix_geometry_limits(sequence, &prefix, limits)?;
+    Ok(prefix)
+}
+
+pub(super) fn validate_native_frame_prefix_geometry_limits(
+    sequence: &crate::av1::SequenceHeader,
+    prefix: &crate::av1::FramePrefix<'_, '_>,
+    limits: &crate::limits::NativeDecodeLimits,
+) -> Result<(), DecoderError> {
+    let (width, height, upscaled_width, render_width, render_height) = prefix.geometry();
+    validate_native_frame_geometry_limits(
+        sequence,
+        width,
+        height,
+        upscaled_width,
+        render_width,
+        render_height,
+        limits,
+    )
+}
+
+fn validate_native_frame_geometry_limits(
+    sequence: &crate::av1::SequenceHeader,
+    frame_width: u32,
+    frame_height: u32,
+    upscaled_width: u32,
+    render_width: u32,
+    render_height: u32,
+    limits: &crate::limits::NativeDecodeLimits,
+) -> Result<(), DecoderError> {
+    let width = usize::try_from(frame_width)
+        .map_err(|_| DecoderError::InvalidParam("AV1 frame width is too large".to_string()))?;
+    let height = usize::try_from(frame_height)
+        .map_err(|_| DecoderError::InvalidParam("AV1 frame height is too large".to_string()))?;
+    let upscaled_width = usize::try_from(upscaled_width)
+        .map_err(|_| DecoderError::InvalidParam("AV1 upscaled width is too large".to_string()))?;
+    let render_width = usize::try_from(render_width)
+        .map_err(|_| DecoderError::InvalidParam("AV1 render width is too large".to_string()))?;
+    let render_height = usize::try_from(render_height)
+        .map_err(|_| DecoderError::InvalidParam("AV1 render height is too large".to_string()))?;
+    validate_native_geometry(sequence, width, height, limits, "visible")?;
+    validate_native_geometry(sequence, upscaled_width, height, limits, "upscaled")?;
+    validate_native_geometry(sequence, render_width, render_height, limits, "render")?;
+
+    let coded_width = width
+        .div_ceil(8)
+        .checked_mul(8)
+        .ok_or_else(|| DecoderError::InvalidParam("AV1 coded width overflows".to_string()))?;
+    let coded_height = height
+        .div_ceil(8)
+        .checked_mul(8)
+        .ok_or_else(|| DecoderError::InvalidParam("AV1 coded height overflows".to_string()))?;
+    validate_native_geometry(sequence, coded_width, coded_height, limits, "coded")
+}
+
+fn validate_native_geometry(
+    sequence: &crate::av1::SequenceHeader,
+    width: usize,
+    height: usize,
+    limits: &crate::limits::NativeDecodeLimits,
+    label: &str,
+) -> Result<(), DecoderError> {
+    limits.check_dimensions(width, height)?;
+    for plane in 0..3 {
+        if let Some(layout) = crate::av1::plane_layout_for_geometry(sequence, width, height, plane)?
+        {
+            let bytes = layout
+                .sample_count
+                .checked_mul(std::mem::size_of::<u16>())
+                .ok_or_else(|| {
+                    DecoderError::InvalidParam(format!("AV1 {label} plane size overflows"))
+                })?;
+            limits.check_plane_bytes(bytes)?;
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn validate_native_decode_plan_limits(
+    plan: &FrameDecodePlan,
+    limits: &crate::limits::NativeDecodeLimits,
+) -> Result<(), DecoderError> {
+    limits.check_dimensions(plan.width, plan.height)?;
+    limits.check_dimensions(plan.upscaled_width, plan.render_height)?;
+    limits.check_dimensions(plan.render_width, plan.render_height)?;
+    for layout in &plan.planes {
+        let bytes = layout
+            .sample_count
+            .checked_mul(std::mem::size_of::<u16>())
+            .ok_or_else(|| DecoderError::InvalidParam("native plane size overflows".to_string()))?;
+        limits.check_plane_bytes(bytes)?;
+        let coded_width = plan.width.div_ceil(8).checked_mul(8).ok_or_else(|| {
+            DecoderError::InvalidParam("native coded width overflows".to_string())
+        })?;
+        let coded_height = plan.height.div_ceil(8).checked_mul(8).ok_or_else(|| {
+            DecoderError::InvalidParam("native coded height overflows".to_string())
+        })?;
+        let coded_width = coded_width.div_ceil(1usize << layout.subsampling_x);
+        let coded_height = coded_height.div_ceil(1usize << layout.subsampling_y);
+        let coded_bytes = coded_width
+            .checked_mul(coded_height)
+            .and_then(|samples| samples.checked_mul(std::mem::size_of::<u16>()))
+            .ok_or_else(|| {
+                DecoderError::InvalidParam("native coded plane size overflows".to_string())
+            })?;
+        limits.check_plane_bytes(coded_bytes)?;
+    }
+    Ok(())
+}
+
+fn validate_native_frame_limits(
+    frame: &DecodedFrame,
+    limits: &crate::limits::NativeDecodeLimits,
+) -> Result<(), DecoderError> {
+    limits.check_dimensions(frame.width, frame.height)?;
+    for plane in &frame.buffers.planes {
+        let bytes = plane
+            .samples
+            .len()
+            .checked_mul(std::mem::size_of::<u16>())
+            .ok_or_else(|| DecoderError::InvalidParam("native plane size overflows".to_string()))?;
+        limits.check_plane_bytes(bytes)?;
+    }
+    Ok(())
 }
 
 pub(super) fn reject_strict_derived_alpha(

@@ -1,7 +1,31 @@
 use std::borrow::Cow;
 
 use crate::DecoderError;
+use crate::limits::NativeDecodeLimits;
 use crate::obu::{ObuType, parse_obu_stream};
+
+#[path = "container_budget.rs"]
+mod container_budget;
+#[path = "container_native_plan.rs"]
+mod native_plan;
+use container_budget::{AllocationClass, AllocationToken, ParseContext};
+use native_plan::{
+    for_each_native_selected_alpha_item, native_direct_item_payload, retained_metadata_capacity,
+    validate_native_selected_plan,
+};
+
+#[cfg(test)]
+#[path = "container_budget_tests.rs"]
+mod container_budget_tests;
+#[cfg(test)]
+#[path = "container_counter_tests.rs"]
+mod container_counter_tests;
+#[cfg(test)]
+#[path = "container_direct_payload_tests.rs"]
+mod container_direct_payload_tests;
+#[cfg(test)]
+#[path = "container_sort_tests.rs"]
+mod container_sort_tests;
 
 const BRAND_AVIF: &[u8; 4] = b"avif";
 const BRAND_AVIS: &[u8; 4] = b"avis";
@@ -207,6 +231,29 @@ pub struct PixelSubsampling {
 pub struct ColorInformation {
     pub color_type: [u8; 4],
     pub payload: Vec<u8>,
+}
+
+/// Pixel aspect ratio carried by a `pasp` item property.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PixelAspectRatio {
+    pub h_spacing: u32,
+    pub v_spacing: u32,
+}
+
+/// One primary-item property in source association order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NativePropertyRecord {
+    AuxiliaryType(String),
+    CleanAperture(CleanAperture),
+    Rotation(ImageRotation),
+    Mirror(ImageMirror),
+    SpatialExtents(ImageSpatialExtents),
+    PixelInformation(PixelInformation),
+    Av1Config(Vec<u8>),
+    ColorInformation(ColorInformation),
+    Premultiplied,
+    PixelAspectRatio(PixelAspectRatio),
+    Other([u8; 4]),
 }
 
 /// The complete colour signalling associated with one AVIF image item.
@@ -424,14 +471,14 @@ pub struct ImageMirror {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct ItemLocation {
+pub(crate) struct ItemLocation {
     item_id: u32,
     base_offset: u64,
     extents: Vec<ItemExtent>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct ItemExtent {
+pub(crate) struct ItemExtent {
     offset: u64,
     length: u64,
 }
@@ -448,10 +495,11 @@ struct AlternateEntityGroup {
     entity_ids: Vec<u32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 struct ItemPropertyAssociation {
     item_id: u32,
     associations: Vec<PropertyAssociation>,
+    token: AllocationToken,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -481,7 +529,8 @@ enum ItemProperty {
     OperatingPointSelector(u8),
     LayerSelector(u16),
     LayerIndexing([u64; 3]),
-    Other,
+    PixelAspectRatio(PixelAspectRatio),
+    Other([u8; 4]),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -498,6 +547,7 @@ enum PropertyKind {
     OperatingPointSelector,
     LayerSelector,
     LayerIndexing,
+    PixelAspectRatio,
     Other,
 }
 
@@ -521,22 +571,49 @@ fn property_kind(property: &ItemProperty) -> PropertyKind {
         ItemProperty::OperatingPointSelector(_) => PropertyKind::OperatingPointSelector,
         ItemProperty::LayerSelector(_) => PropertyKind::LayerSelector,
         ItemProperty::LayerIndexing(_) => PropertyKind::LayerIndexing,
-        ItemProperty::Other => PropertyKind::Other,
+        ItemProperty::PixelAspectRatio(_) => PropertyKind::PixelAspectRatio,
+        ItemProperty::Other(_) => PropertyKind::Other,
     }
 }
 
 #[derive(Debug, Default)]
-struct MetaState {
+pub(crate) struct MetaState {
     primary_item_id: Option<u32>,
     item_locations: Vec<ItemLocation>,
+    item_locations_token: AllocationToken,
     item_construction_methods: Vec<(u32, u16)>,
+    item_construction_methods_token: AllocationToken,
     item_extent_indexes: Vec<(u32, Vec<u64>)>,
+    item_extent_indexes_token: AllocationToken,
     idat_payload: Option<Vec<u8>>,
+    /// Native parsing keeps idat borrowed until selected-item validation has
+    /// completed. Legacy parsing retains its historical copied Vec above.
+    idat_payload_range: Option<(usize, usize)>,
     item_infos: Vec<ItemInfo>,
+    item_infos_token: AllocationToken,
     item_references: Vec<ItemReference>,
+    item_references_token: AllocationToken,
     alternate_entity_groups: Vec<AlternateEntityGroup>,
+    alternate_entity_groups_token: AllocationToken,
     item_property_associations: Vec<ItemPropertyAssociation>,
     item_properties: Vec<ItemProperty>,
+    item_property_associations_token: AllocationToken,
+    item_properties_token: AllocationToken,
+}
+
+impl MetaState {
+    fn reserve_item_properties(
+        &mut self,
+        context: &mut ParseContext<'_>,
+        additional: usize,
+    ) -> Result<(), DecoderError> {
+        context.try_reserve_with_token(
+            &mut self.item_properties,
+            &mut self.item_properties_token,
+            additional,
+            "item property",
+        )
+    }
 }
 
 pub fn is_avif_file(data: &[u8]) -> bool {
@@ -546,7 +623,42 @@ pub fn is_avif_file(data: &[u8]) -> bool {
 }
 
 pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
-    let (major_brand, compatible_brands) = parse_ftyp(data)?;
+    Ok(parse_avif_with_metadata(data)?.info)
+}
+
+pub(crate) struct ParsedAvif {
+    pub info: AvifInfo,
+    pub(crate) metadata: MetaState,
+}
+
+pub(crate) fn parse_avif_with_metadata(data: &[u8]) -> Result<ParsedAvif, DecoderError> {
+    let mut context = ParseContext::legacy();
+    parse_avif_with_context(data, &mut context)
+}
+
+/// Shared container parse core used by both compatibility and native readers.
+///
+/// The native policy rejects unsupported movie/derived construction before any
+/// sequence, grid, or recursive item payload is materialized. Legacy callers
+/// retain the previous parse order and error behaviour through `Legacy`.
+pub(crate) fn parse_avif_with_context(
+    data: &[u8],
+    context: &mut ParseContext<'_>,
+) -> Result<ParsedAvif, DecoderError> {
+    let checkpoint = context.checkpoint();
+    let result = parse_avif_with_context_inner(data, context);
+    if result.is_err() {
+        context.rollback(checkpoint);
+    }
+    result
+}
+
+fn parse_avif_with_context_inner(
+    data: &[u8],
+    context: &mut ParseContext<'_>,
+) -> Result<ParsedAvif, DecoderError> {
+    context.check_input_len(data.len())?;
+    let (major_brand, compatible_brands) = parse_ftyp_with_context(data, context)?;
     if !brand_is_avif(&major_brand) && !compatible_brands.iter().any(brand_is_avif) {
         return Err(DecoderError::Bitstream(
             "file type box does not advertise AVIF".to_string(),
@@ -556,43 +668,107 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
     let mut meta = MetaState::default();
     for_each_top_level_box(data, |header| {
         match &header.box_type {
-            b"meta" => parse_meta(data, header, &mut meta)?,
+            b"meta" => parse_meta_with_context(data, header, &mut meta, context)?,
             // The primary still image item remains independently decodable in
             // an AVIS file. The movie box describes later frames; the public
             // still-image API intentionally selects the primary item.
-            b"moov" => {}
+            b"moov" => context.reject_native(
+                "bounded native decode does not support AVIS movie containers yet",
+            )?,
             _ => {}
         }
         Ok(())
     })?;
 
     let decode_primary_item_id = effective_primary_item_id(&meta)?;
-    let primary_item_payload = item_payload(data, &meta, decode_primary_item_id)?;
-    let sequence = parse_avif_sequence_with_brands(data, &major_brand, &compatible_brands)?;
-    validate_primary_item_metadata(&meta)?;
-    let alpha_auxiliary_items =
-        alpha_auxiliary_items_for(data, &meta, Some(decode_primary_item_id))?;
-    let primary_grid = primary_grid(data, &primary_item_payload, &meta)?;
-    let alpha_grid = alpha_grid(data, &alpha_auxiliary_items, &meta)?;
-    let primary_metadata = item_metadata(&meta, decode_primary_item_id)?;
-    Ok(AvifInfo {
-        major_brand,
-        compatible_brands,
-        primary_item_id: meta.primary_item_id,
-        width: primary_metadata.width,
-        height: primary_metadata.height,
-        pixel_information: primary_metadata.pixel_information,
-        color_information: primary_metadata.color_information,
-        alpha_premultiplied: primary_metadata.alpha_premultiplied,
-        alpha_auxiliary_items,
-        alpha_grid,
-        primary_grid,
-        clean_aperture: primary_metadata.clean_aperture,
-        rotation: primary_metadata.rotation,
-        mirror: primary_metadata.mirror,
-        av1_config: primary_metadata.av1_config,
-        primary_item_payload,
-        sequence_sample_payloads: sequence.color_samples,
+    let declared_primary_type = meta.primary_item_id.and_then(|item_id| {
+        meta.item_infos
+            .iter()
+            .find(|item| item.item_id == item_id)
+            .map(|item| item.item_type)
+    });
+    if context.is_native_still() && declared_primary_type != Some(*b"av01") {
+        return Err(DecoderError::Unsupported(
+            "bounded native decode accepts only a primary av01 item".to_string(),
+        ));
+    }
+    let primary_type = meta
+        .item_infos
+        .iter()
+        .find(|item| item.item_id == decode_primary_item_id)
+        .map(|item| item.item_type);
+    if matches!(primary_type, Some(item_type) if item_type == *b"grid" || item_type == *b"sato") {
+        context.reject_native(
+            "bounded native decode does not support derived image construction yet",
+        )?;
+    }
+    let (alpha_auxiliary_items, primary_item_payload, sequence) = if context.is_native_still() {
+        validate_native_selected_plan(data, &meta, decode_primary_item_id, context)?;
+        let alpha_auxiliary_items = alpha_auxiliary_items_for_with_context(
+            data,
+            &meta,
+            Some(decode_primary_item_id),
+            context,
+        )?;
+        let primary_item_payload =
+            item_payload_with_context(data, &meta, decode_primary_item_id, context)?;
+        (
+            alpha_auxiliary_items,
+            primary_item_payload,
+            AvifSequence {
+                color_samples: Vec::new(),
+                color_durations_ms: Vec::new(),
+                alpha_samples: Vec::new(),
+                alpha_durations_ms: Vec::new(),
+            },
+        )
+    } else {
+        // Keep the established compatibility order: primary payload, sequence
+        // parsing, metadata validation, and only then alpha materialization.
+        let primary_item_payload =
+            item_payload_with_context(data, &meta, decode_primary_item_id, context)?;
+        let sequence = parse_avif_sequence_with_brands(data, &major_brand, &compatible_brands)?;
+        validate_primary_item_metadata(&meta)?;
+        let alpha_auxiliary_items = alpha_auxiliary_items_for_with_context(
+            data,
+            &meta,
+            Some(decode_primary_item_id),
+            context,
+        )?;
+        (alpha_auxiliary_items, primary_item_payload, sequence)
+    };
+    let primary_grid = if context.is_native_still() {
+        None
+    } else {
+        primary_grid(data, &primary_item_payload, &meta)?
+    };
+    let alpha_grid = if context.is_native_still() {
+        None
+    } else {
+        alpha_grid(data, &alpha_auxiliary_items, &meta)?
+    };
+    let primary_metadata = item_metadata_with_context(&meta, decode_primary_item_id, context)?;
+    Ok(ParsedAvif {
+        info: AvifInfo {
+            major_brand,
+            compatible_brands,
+            primary_item_id: meta.primary_item_id,
+            width: primary_metadata.width,
+            height: primary_metadata.height,
+            pixel_information: primary_metadata.pixel_information,
+            color_information: primary_metadata.color_information,
+            alpha_premultiplied: primary_metadata.alpha_premultiplied,
+            alpha_auxiliary_items,
+            alpha_grid,
+            primary_grid,
+            clean_aperture: primary_metadata.clean_aperture,
+            rotation: primary_metadata.rotation,
+            mirror: primary_metadata.mirror,
+            av1_config: primary_metadata.av1_config,
+            primary_item_payload,
+            sequence_sample_payloads: sequence.color_samples,
+        },
+        metadata: meta,
     })
 }
 
@@ -603,30 +779,515 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
 /// `color_information` field is part of the legacy public API and therefore
 /// retains its historical nclx-preferred projection.
 pub fn parse_rich_info(data: &[u8]) -> Result<RichAvifInfo, DecoderError> {
-    let info = parse_avif(data)?;
-    let mut meta = MetaState::default();
-    for_each_top_level_box(data, |header| {
-        if &header.box_type == b"meta" {
-            parse_meta(data, header, &mut meta)?;
-        }
-        Ok(())
-    })?;
-    let primary_item_id = effective_primary_item_id(&meta)?;
-    let color_information =
-        collect_color_information(&item_color_information(&meta, primary_item_id)?)?;
+    let parsed = parse_avif_with_metadata(data)?;
+    let primary_item_id = effective_primary_item_id(&parsed.metadata)?;
+    let colors = item_color_information(&parsed.metadata, primary_item_id)?;
+    let color_information = collect_color_information(colors)?;
     Ok(RichAvifInfo {
-        info,
+        info: parsed.info,
         color_information,
     })
 }
 
-fn collect_color_information(
-    colors: &[ColorInformation],
-) -> Result<ColorInformationSet, DecoderError> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NativeParseStats {
+    pub metadata_bytes: usize,
+    pub retained_metadata_bytes: usize,
+    pub icc_bytes: usize,
+    pub item_count: usize,
+    pub property_count: usize,
+    pub property_association_count: usize,
+    iloc_item_count: usize,
+    pub primary_item_type: Option<[u8; 4]>,
+    pub grid_cells: usize,
+    pub ordered_primary_properties: Vec<NativePropertyRecord>,
+}
+
+/// Parses rich metadata after a non-allocating, caller-bounded container scan.
+pub(crate) fn parse_rich_info_with_limits(
+    data: &[u8],
+    limits: &NativeDecodeLimits,
+) -> Result<(RichAvifInfo, NativeParseStats), DecoderError> {
+    let mut stats = scan_native_limits(data, limits)?;
+    let mut context = ParseContext::native_still(limits);
+    let parsed = parse_avif_with_context(data, &mut context)?;
+    if let (Some(width), Some(height)) = (parsed.info.width, parsed.info.height) {
+        limits.check_dimensions(
+            usize::try_from(width)
+                .map_err(|_| DecoderError::InvalidParam("AVIF width is too large".to_string()))?,
+            usize::try_from(height)
+                .map_err(|_| DecoderError::InvalidParam("AVIF height is too large".to_string()))?,
+        )?;
+    }
+    stats.grid_cells = parsed
+        .info
+        .primary_grid
+        .as_ref()
+        .map_or(0, |grid| grid.cells.len());
+    limits.check_count(stats.grid_cells, limits.max_grid_cells(), "grid cell")?;
+    let frame_count = parsed.info.sequence_sample_payloads.len();
+    limits.check_count(frame_count, limits.max_frames(), "frame")?;
+    let primary_item_id = effective_primary_item_id(&parsed.metadata)?;
+    stats.primary_item_type = parsed
+        .metadata
+        .item_infos
+        .iter()
+        .find(|item| item.item_id == primary_item_id)
+        .map(|item| item.item_type);
+    let colors = item_color_information(&parsed.metadata, primary_item_id)?;
+    let color_information = collect_color_information_with_context(colors, &mut context)?;
+    stats.ordered_primary_properties =
+        primary_property_records_with_context(&parsed.metadata, primary_item_id, &mut context)?;
+    context.retain_accounting();
+    let accounting = context.accounting();
+    let rich = RichAvifInfo {
+        info: parsed.info,
+        color_information,
+    };
+    let retained = retained_metadata_capacity(
+        &rich.info,
+        &rich.color_information,
+        &stats.ordered_primary_properties,
+    )?;
+    // Wire metadata and parser-owned scratch are not the retained result. The
+    // native report describes the capacities still reachable by the returned
+    // projections; parser-only properties (including unselected ICC) are not
+    // allowed to inflate this value.
+    stats.metadata_bytes = retained;
+    stats.retained_metadata_bytes = retained;
+    stats.icc_bytes = stats.icc_bytes.max(accounting.icc_live);
+    limits.check_metadata(stats.metadata_bytes, stats.icc_bytes)?;
+    Ok((rich, stats))
+}
+
+#[allow(dead_code)]
+fn primary_property_records(
+    state: &MetaState,
+    item_id: u32,
+) -> Result<Vec<NativePropertyRecord>, DecoderError> {
+    let mut context = ParseContext::legacy();
+    primary_property_records_with_context(state, item_id, &mut context)
+}
+
+fn primary_property_records_with_context(
+    state: &MetaState,
+    item_id: u32,
+    context: &mut ParseContext<'_>,
+) -> Result<Vec<NativePropertyRecord>, DecoderError> {
+    let association_count = state
+        .item_property_associations
+        .iter()
+        .filter(|association| association.item_id == item_id)
+        .map(|association| association.associations.len())
+        .try_fold(0usize, |count, next| count.checked_add(next))
+        .ok_or_else(|| {
+            DecoderError::InvalidParam("property association count overflows".to_string())
+        })?;
+    let mut records = Vec::new();
+    context.try_reserve(&mut records, association_count, "ordered property metadata")?;
+    for association in state
+        .item_property_associations
+        .iter()
+        .filter(|association| association.item_id == item_id)
+    {
+        for property in &association.associations {
+            if let Some(property) =
+                state
+                    .item_properties
+                    .get(usize::from(property.index).checked_sub(1).ok_or_else(|| {
+                        DecoderError::Bitstream("property association index is zero".to_string())
+                    })?)
+            {
+                records.push(property_record_with_context(property, context)?);
+            }
+        }
+    }
+    Ok(records)
+}
+
+#[allow(dead_code)]
+fn property_record(property: &ItemProperty) -> NativePropertyRecord {
+    property_record_with_context(property, &mut ParseContext::legacy())
+        .expect("legacy property record allocation should succeed")
+}
+
+fn property_record_with_context(
+    property: &ItemProperty,
+    context: &mut ParseContext<'_>,
+) -> Result<NativePropertyRecord, DecoderError> {
+    Ok(match property {
+        ItemProperty::AuxiliaryType(value) => {
+            NativePropertyRecord::AuxiliaryType(copy_string_with_context(value, context)?)
+        }
+        ItemProperty::CleanAperture(value) => NativePropertyRecord::CleanAperture(*value),
+        ItemProperty::Rotation(value) => NativePropertyRecord::Rotation(*value),
+        ItemProperty::Mirror(value) => NativePropertyRecord::Mirror(*value),
+        ItemProperty::SpatialExtents(value) => NativePropertyRecord::SpatialExtents(*value),
+        ItemProperty::PixelInformation(value) => {
+            NativePropertyRecord::PixelInformation(clone_pixi_with_context(value, context)?)
+        }
+        ItemProperty::Av1Config(value) => {
+            NativePropertyRecord::Av1Config(copy_bytes_with_context(value, context, "av1C")?)
+        }
+        ItemProperty::ColorInformation(value) => {
+            NativePropertyRecord::ColorInformation(ColorInformation {
+                color_type: value.color_type,
+                payload: copy_bytes_with_class(
+                    &value.payload,
+                    context,
+                    if value.icc_profile().is_some() {
+                        AllocationClass::Icc
+                    } else {
+                        AllocationClass::Metadata
+                    },
+                    "color information",
+                )?,
+            })
+        }
+        ItemProperty::Premultiplied => NativePropertyRecord::Premultiplied,
+        ItemProperty::OperatingPointSelector(_) => NativePropertyRecord::Other(*b"a1op"),
+        ItemProperty::LayerSelector(_) => NativePropertyRecord::Other(*b"lsel"),
+        ItemProperty::LayerIndexing(_) => NativePropertyRecord::Other(*b"a1lx"),
+        ItemProperty::PixelAspectRatio(value) => NativePropertyRecord::PixelAspectRatio(*value),
+        ItemProperty::Other(box_type) => NativePropertyRecord::Other(*box_type),
+    })
+}
+
+fn copy_bytes_with_context(
+    bytes: &[u8],
+    context: &mut ParseContext<'_>,
+    label: &str,
+) -> Result<Vec<u8>, DecoderError> {
+    copy_bytes_with_class(bytes, context, AllocationClass::Metadata, label)
+}
+
+fn copy_bytes_with_class(
+    bytes: &[u8],
+    context: &mut ParseContext<'_>,
+    class: AllocationClass,
+    label: &str,
+) -> Result<Vec<u8>, DecoderError> {
+    let mut copy = Vec::new();
+    context.try_reserve_class(&mut copy, bytes.len(), class, label)?;
+    copy.extend_from_slice(bytes);
+    Ok(copy)
+}
+
+fn copy_string_with_context(
+    value: &str,
+    context: &mut ParseContext<'_>,
+) -> Result<String, DecoderError> {
+    let mut bytes = Vec::new();
+    context.try_reserve(&mut bytes, value.len(), "string")?;
+    bytes.extend_from_slice(value.as_bytes());
+    Ok(String::from_utf8(bytes).expect("source string was already validated as UTF-8"))
+}
+
+fn scan_native_limits(
+    data: &[u8],
+    limits: &NativeDecodeLimits,
+) -> Result<NativeParseStats, DecoderError> {
+    limits.check_input_len(data.len())?;
+    let mut stats = NativeParseStats {
+        metadata_bytes: 0,
+        retained_metadata_bytes: 0,
+        icc_bytes: 0,
+        item_count: 0,
+        property_count: 0,
+        property_association_count: 0,
+        iloc_item_count: 0,
+        primary_item_type: None,
+        grid_cells: 0,
+        ordered_primary_properties: Vec::new(),
+    };
+    for_each_top_level_box(data, |header| {
+        let payload = box_payload(data, header)?;
+        match &header.box_type {
+            b"meta" => {
+                scan_meta_limits(payload, limits, &mut stats)?;
+            }
+            b"moov" => scan_movie_limits(payload, limits)?,
+            _ => {}
+        }
+        Ok(())
+    })?;
+    limits.check_metadata(stats.metadata_bytes, stats.icc_bytes)?;
+    Ok(stats)
+}
+
+fn scan_meta_limits(
+    payload: &[u8],
+    limits: &NativeDecodeLimits,
+    stats: &mut NativeParseStats,
+) -> Result<(), DecoderError> {
+    if payload.len() < 4 {
+        return Err(DecoderError::NotEnoughData(
+            "meta full-box header is missing".to_string(),
+        ));
+    }
+    let mut offset = 4;
+    while offset < payload.len() {
+        let header = read_box_header(payload, offset, payload.len())?;
+        let child = box_payload(payload, header)?;
+        match &header.box_type {
+            b"iinf" => {
+                let count = collection_count(child, 4, 0, "iinf")?;
+                stats.item_count = stats.item_count.checked_add(count).ok_or_else(|| {
+                    DecoderError::InvalidParam("iinf item count overflows".to_string())
+                })?;
+                limits.check_count(stats.item_count, limits.max_items(), "item")?;
+            }
+            b"iloc" => {
+                let count = if child.len() < 8 {
+                    return Err(DecoderError::NotEnoughData(
+                        "iloc payload is too short".to_string(),
+                    ));
+                } else if child[0] < 2 {
+                    usize::from(read_u16(child, 6)?)
+                } else {
+                    usize::try_from(read_u32(child, 6)?).map_err(|_| {
+                        DecoderError::InvalidParam("iloc item count is too large".to_string())
+                    })?
+                };
+                stats.iloc_item_count =
+                    stats.iloc_item_count.checked_add(count).ok_or_else(|| {
+                        DecoderError::InvalidParam("iloc item count overflows".to_string())
+                    })?;
+                limits.check_count(stats.iloc_item_count, limits.max_items(), "iloc item")?;
+            }
+            b"iprp" => scan_iprp_limits(child, limits, stats)?,
+            _ => {}
+        }
+        offset = checked_add(header.offset, header.size, "meta child box end")?;
+    }
+    Ok(())
+}
+
+fn scan_iprp_limits(
+    payload: &[u8],
+    limits: &NativeDecodeLimits,
+    stats: &mut NativeParseStats,
+) -> Result<(), DecoderError> {
+    let mut offset = 0;
+    while offset < payload.len() {
+        let header = read_box_header(payload, offset, payload.len())?;
+        let child = box_payload(payload, header)?;
+        match &header.box_type {
+            b"ipco" => {
+                let mut property_offset = 0;
+                while property_offset < child.len() {
+                    let property = read_box_header(child, property_offset, child.len())?;
+                    let property_payload = box_payload(child, property)?;
+                    stats.property_count =
+                        stats.property_count.checked_add(1).ok_or_else(|| {
+                            DecoderError::InvalidParam("property count overflows".to_string())
+                        })?;
+                    limits.check_count(
+                        stats.property_count,
+                        limits.max_properties(),
+                        "property",
+                    )?;
+                    if property.box_type == *b"colr" && property_payload.len() >= 4 {
+                        let kind = &property_payload[..4];
+                        if kind == b"prof" || kind == b"rICC" {
+                            stats.icc_bytes = stats
+                                .icc_bytes
+                                .checked_add(property_payload.len() - 4)
+                                .ok_or_else(|| {
+                                    DecoderError::InvalidParam("ICC size overflows".to_string())
+                                })?;
+                        }
+                    }
+                    if property.box_type == *b"ispe" && property_payload.len() >= 12 {
+                        let width =
+                            usize::try_from(read_u32(property_payload, 4)?).map_err(|_| {
+                                DecoderError::InvalidParam("ispe width is too large".to_string())
+                            })?;
+                        let height =
+                            usize::try_from(read_u32(property_payload, 8)?).map_err(|_| {
+                                DecoderError::InvalidParam("ispe height is too large".to_string())
+                            })?;
+                        limits.check_dimensions(width, height)?;
+                    }
+                    property_offset =
+                        checked_add(property.offset, property.size, "ipco property end")?;
+                }
+            }
+            b"ipma" => {
+                let (count, association_count) = ipma_counts(child)?;
+                limits.check_count(count, limits.max_items(), "property association entry")?;
+                stats.property_association_count = stats
+                    .property_association_count
+                    .checked_add(association_count)
+                    .ok_or_else(|| {
+                        DecoderError::InvalidParam(
+                            "property association count overflows".to_string(),
+                        )
+                    })?;
+                limits.check_count(
+                    stats.property_association_count,
+                    limits.max_properties(),
+                    "property association",
+                )?;
+            }
+            _ => {}
+        }
+        offset = checked_add(header.offset, header.size, "iprp child box end")?;
+    }
+    Ok(())
+}
+
+fn ipma_counts(payload: &[u8]) -> Result<(usize, usize), DecoderError> {
+    if payload.len() < 8 {
+        return Err(DecoderError::NotEnoughData(
+            "ipma payload is too short".to_string(),
+        ));
+    }
+    let version = payload[0];
+    if version > 1 {
+        return Err(DecoderError::Unsupported(format!(
+            "ipma version {version} is not supported"
+        )));
+    }
+    let flags = read_u24(payload, 1)?;
+    let association_bytes = if flags & 1 != 0 { 2 } else { 1 };
+    let entry_count = usize::try_from(read_u32(payload, 4)?)
+        .map_err(|_| DecoderError::InvalidParam("ipma entry count is too large".to_string()))?;
+    let item_id_bytes = if version == 1 { 4 } else { 2 };
+    let mut cursor = 8usize;
+    let mut association_count = 0usize;
+    for _ in 0..entry_count {
+        cursor = checked_add(cursor, item_id_bytes, "ipma item id")?;
+        let count = usize::from(read_u8(payload, cursor)?);
+        cursor = checked_add(cursor, 1, "ipma association count")?;
+        association_count = association_count.checked_add(count).ok_or_else(|| {
+            DecoderError::InvalidParam("ipma association count overflows".to_string())
+        })?;
+        let bytes = count.checked_mul(association_bytes).ok_or_else(|| {
+            DecoderError::InvalidParam("ipma association bytes overflows".to_string())
+        })?;
+        cursor = checked_add(cursor, bytes, "ipma associations")?;
+        if cursor > payload.len() {
+            return Err(DecoderError::NotEnoughData(
+                "ipma associations exceed the payload".to_string(),
+            ));
+        }
+    }
+    Ok((entry_count, association_count))
+}
+
+fn scan_movie_limits(payload: &[u8], limits: &NativeDecodeLimits) -> Result<(), DecoderError> {
+    scan_known_children(payload, limits)
+}
+
+fn scan_known_children(payload: &[u8], limits: &NativeDecodeLimits) -> Result<(), DecoderError> {
+    const MAX_CONTAINER_DEPTH: usize = 64;
+    let mut stack: [Option<(&[u8], usize)>; MAX_CONTAINER_DEPTH] = [None; MAX_CONTAINER_DEPTH];
+    let mut stack_len = 1;
+    stack[0] = Some((payload, 0));
+    while stack_len != 0 {
+        stack_len -= 1;
+        let (container, depth) = stack[stack_len]
+            .take()
+            .expect("container stack slot is initialized");
+        let mut offset = 0;
+        while offset < container.len() {
+            let header = read_box_header(container, offset, container.len())?;
+            let child = box_payload(container, header)?;
+            if header.box_type == *b"stsz" && child.len() >= 12 {
+                let sample_count = usize::try_from(read_u32(child, 8)?).map_err(|_| {
+                    DecoderError::InvalidParam("AVIS sample count is too large".to_string())
+                })?;
+                limits.check_count(sample_count, limits.max_frames(), "frame")?;
+            }
+            if matches!(
+                &header.box_type,
+                b"moov" | b"trak" | b"mdia" | b"minf" | b"stbl" | b"meta"
+            ) {
+                let next_depth = depth.checked_add(1).ok_or_else(|| {
+                    DecoderError::InvalidParam("movie container depth overflows".to_string())
+                })?;
+                if next_depth >= MAX_CONTAINER_DEPTH {
+                    return Err(DecoderError::InvalidParam(
+                        "movie container nesting exceeds the native decode limit".to_string(),
+                    ));
+                }
+                if stack_len >= MAX_CONTAINER_DEPTH {
+                    return Err(DecoderError::InvalidParam(
+                        "movie container worklist exceeds the native decode limit".to_string(),
+                    ));
+                }
+                let child = if header.box_type == *b"meta" {
+                    child.get(4..).ok_or_else(|| {
+                        DecoderError::NotEnoughData(
+                            "movie meta full-box header is missing".to_string(),
+                        )
+                    })?
+                } else {
+                    child
+                };
+                stack[stack_len] = Some((child, next_depth));
+                stack_len += 1;
+            }
+            offset = checked_add(header.offset, header.size, "movie child box end")?;
+        }
+    }
+    Ok(())
+}
+
+fn collection_count(
+    payload: &[u8],
+    count_offset: usize,
+    version_offset: usize,
+    label: &str,
+) -> Result<usize, DecoderError> {
+    let version = payload
+        .get(version_offset)
+        .copied()
+        .ok_or_else(|| DecoderError::NotEnoughData(format!("{label} payload is too short")))?;
+    if label == "iinf" && version == 0 {
+        if payload.len() < count_offset + 2 {
+            return Err(DecoderError::NotEnoughData(format!(
+                "{label} payload is too short"
+            )));
+        }
+        return Ok(usize::from(read_u16(payload, count_offset)?));
+    }
+    if payload.len() < count_offset + 4 {
+        return Err(DecoderError::NotEnoughData(format!(
+            "{label} payload is too short"
+        )));
+    }
+    let count = usize::try_from(read_u32(payload, count_offset)?)
+        .map_err(|_| DecoderError::InvalidParam(format!("{label} count is too large")))?;
+    Ok(count)
+}
+
+fn collect_color_information<'a, I>(colors: I) -> Result<ColorInformationSet, DecoderError>
+where
+    I: IntoIterator<Item = &'a ColorInformation>,
+{
+    let mut context = ParseContext::legacy();
+    collect_color_information_with_context(colors, &mut context)
+}
+
+fn collect_color_information_with_context<'a, I>(
+    colors: I,
+    context: &mut ParseContext<'_>,
+) -> Result<ColorInformationSet, DecoderError>
+where
+    I: IntoIterator<Item = &'a ColorInformation>,
+{
     let mut color_information = ColorInformationSet::default();
+    let mut unknown_token = AllocationToken::new(AllocationClass::Metadata);
     for color in colors {
         if let Some(profile) = color.icc_profile() {
-            color_information.icc_profile = Some(profile.to_vec());
+            color_information.icc_profile = Some(copy_bytes_with_class(
+                profile,
+                context,
+                AllocationClass::Icc,
+                "ICC profile",
+            )?);
             color_information.icc_color_type = Some(color.color_type);
         } else if &color.color_type == b"nclx" {
             color_information.nclx = Some(color.nclx().ok_or_else(|| {
@@ -635,7 +1296,16 @@ fn collect_color_information(
                 )
             })?);
         } else {
-            color_information.unknown_colr.push(color.clone());
+            context.try_reserve_with_token(
+                &mut color_information.unknown_colr,
+                &mut unknown_token,
+                1,
+                "unknown colr",
+            )?;
+            color_information.unknown_colr.push(ColorInformation {
+                color_type: color.color_type,
+                payload: copy_bytes_with_context(&color.payload, context, "unknown colr")?,
+            });
         }
     }
     Ok(color_information)
@@ -1224,6 +1894,15 @@ fn brand_is_avif(brand: &[u8; 4]) -> bool {
 }
 
 fn parse_ftyp(data: &[u8]) -> Result<([u8; 4], Vec<[u8; 4]>), DecoderError> {
+    let mut context = ParseContext::legacy();
+    parse_ftyp_with_context(data, &mut context)
+}
+
+fn parse_ftyp_with_context(
+    data: &[u8],
+    context: &mut ParseContext<'_>,
+) -> Result<([u8; 4], Vec<[u8; 4]>), DecoderError> {
+    context.check_input_len(data.len())?;
     let header = read_box_header(data, 0, data.len())?;
     if &header.box_type != b"ftyp" {
         return Err(DecoderError::Bitstream("first box is not ftyp".to_string()));
@@ -1235,7 +1914,9 @@ fn parse_ftyp(data: &[u8]) -> Result<([u8; 4], Vec<[u8; 4]>), DecoderError> {
         ));
     }
     let major_brand = read_fourcc(payload, 0)?;
+    let brand_count = (payload.len() - 8) / 4;
     let mut compatible_brands = Vec::new();
+    context.try_reserve(&mut compatible_brands, brand_count, "compatible brands")?;
     let mut offset = 8;
     while offset + 4 <= payload.len() {
         compatible_brands.push(read_fourcc(payload, offset)?);
@@ -1263,38 +1944,132 @@ where
 }
 
 fn parse_meta(data: &[u8], header: BoxHeader, state: &mut MetaState) -> Result<(), DecoderError> {
+    let mut context = ParseContext::legacy();
+    parse_meta_with_context(data, header, state, &mut context)
+}
+
+fn parse_meta_with_context(
+    data: &[u8],
+    header: BoxHeader,
+    state: &mut MetaState,
+    context: &mut ParseContext<'_>,
+) -> Result<(), DecoderError> {
     let payload = box_payload(data, header)?;
     if payload.len() < 4 {
         return Err(DecoderError::NotEnoughData(
             "meta full-box header is missing".to_string(),
         ));
     }
-    parse_meta_children(data, payload, 4, state)
+    let payload_base = header
+        .offset
+        .checked_add(header.header_size)
+        .ok_or_else(|| DecoderError::InvalidParam("meta payload offset overflows".to_string()))?;
+    parse_meta_children_with_context(data, payload, 4, state, context, payload_base)
 }
 
+#[allow(dead_code)]
 fn parse_meta_children(
+    source: &[u8],
+    payload: &[u8],
+    offset: usize,
+    state: &mut MetaState,
+) -> Result<(), DecoderError> {
+    let mut context = ParseContext::legacy();
+    parse_meta_children_with_context(source, payload, offset, state, &mut context, 0)
+}
+
+fn parse_meta_children_with_context(
     source: &[u8],
     payload: &[u8],
     mut offset: usize,
     state: &mut MetaState,
+    context: &mut ParseContext<'_>,
+    payload_base: usize,
 ) -> Result<(), DecoderError> {
     while offset < payload.len() {
         let header = read_box_header(payload, offset, payload.len())?;
         let child_payload = box_payload(payload, header)?;
         match &header.box_type {
             b"pitm" => state.primary_item_id = parse_pitm(child_payload)?,
-            b"iinf" => state.item_infos = parse_iinf(child_payload)?,
-            b"iloc" => {
-                let (locations, construction_methods, extent_indexes) =
-                    parse_iloc_with_indexes(child_payload)?;
-                state.item_locations = locations;
-                state.item_construction_methods = construction_methods;
-                state.item_extent_indexes = extent_indexes;
+            b"iinf" => {
+                let (item_infos, item_infos_token) =
+                    parse_iinf_owned_with_context(child_payload, context)?;
+                release_item_infos(context, &mut state.item_infos, &mut state.item_infos_token)?;
+                state.item_infos = item_infos;
+                state.item_infos_token = item_infos_token;
             }
-            b"idat" => state.idat_payload = Some(child_payload.to_vec()),
-            b"iref" => state.item_references = parse_iref(child_payload)?,
-            b"grpl" => state.alternate_entity_groups = parse_grpl(child_payload)?,
-            b"iprp" => parse_iprp(source, child_payload, state)?,
+            b"iloc" => {
+                let (
+                    locations,
+                    construction_methods,
+                    extent_indexes,
+                    locations_token,
+                    construction_methods_token,
+                    extent_indexes_token,
+                ) = parse_iloc_owned_with_context(child_payload, context)?;
+                release_item_locations(
+                    context,
+                    &mut state.item_locations,
+                    &mut state.item_locations_token,
+                    &mut state.item_construction_methods,
+                    &mut state.item_construction_methods_token,
+                    &mut state.item_extent_indexes,
+                    &mut state.item_extent_indexes_token,
+                )?;
+                state.item_locations = locations;
+                state.item_locations_token = locations_token;
+                state.item_construction_methods = construction_methods;
+                state.item_construction_methods_token = construction_methods_token;
+                state.item_extent_indexes = extent_indexes;
+                state.item_extent_indexes_token = extent_indexes_token;
+            }
+            b"idat" => {
+                if context.is_native_still() {
+                    let start = payload_base
+                        .checked_add(header.offset)
+                        .and_then(|offset| offset.checked_add(header.header_size))
+                        .ok_or_else(|| {
+                            DecoderError::InvalidParam("idat payload offset overflows".to_string())
+                        })?;
+                    let end = start.checked_add(child_payload.len()).ok_or_else(|| {
+                        DecoderError::InvalidParam("idat payload end overflows".to_string())
+                    })?;
+                    if end > source.len() {
+                        return Err(DecoderError::NotEnoughData(
+                            "idat payload is outside the input".to_string(),
+                        ));
+                    }
+                    state.idat_payload_range = Some((start, end));
+                } else {
+                    state.idat_payload = Some(copy_bytes_with_context(
+                        child_payload,
+                        context,
+                        "idat payload",
+                    )?)
+                }
+            }
+            b"iref" => {
+                let (references, references_token) =
+                    parse_iref_owned_with_context(child_payload, context)?;
+                release_item_references(
+                    context,
+                    &mut state.item_references,
+                    &mut state.item_references_token,
+                )?;
+                state.item_references = references;
+                state.item_references_token = references_token;
+            }
+            b"grpl" => {
+                let (groups, groups_token) = parse_grpl_owned_with_context(child_payload, context)?;
+                release_alternate_entity_groups(
+                    context,
+                    &mut state.alternate_entity_groups,
+                    &mut state.alternate_entity_groups_token,
+                )?;
+                state.alternate_entity_groups = groups;
+                state.alternate_entity_groups_token = groups_token;
+            }
+            b"iprp" => parse_iprp_with_context(source, child_payload, state, context)?,
             _ => {}
         }
         offset = checked_add(header.offset, header.size, "meta child box end")?;
@@ -1302,17 +2077,35 @@ fn parse_meta_children(
     Ok(())
 }
 
+#[allow(dead_code)]
 fn parse_iprp(source: &[u8], payload: &[u8], state: &mut MetaState) -> Result<(), DecoderError> {
+    let mut context = ParseContext::legacy();
+    parse_iprp_with_context(source, payload, state, &mut context)
+}
+
+fn parse_iprp_with_context(
+    source: &[u8],
+    payload: &[u8],
+    state: &mut MetaState,
+    context: &mut ParseContext<'_>,
+) -> Result<(), DecoderError> {
     let mut offset = 0;
     while offset < payload.len() {
         let header = read_box_header(payload, offset, payload.len())?;
         let child_payload = box_payload(payload, header)?;
         match &header.box_type {
-            b"ipco" => parse_ipco(source, child_payload, state)?,
-            b"ipma" => merge_ipma(
-                &mut state.item_property_associations,
-                parse_ipma(child_payload)?,
-            )?,
+            b"ipco" => parse_ipco_with_context(source, child_payload, state, context)?,
+            b"ipma" => {
+                let (incoming, incoming_token) =
+                    parse_ipma_owned_with_context(child_payload, context)?;
+                merge_ipma_with_context(
+                    &mut state.item_property_associations,
+                    incoming,
+                    incoming_token,
+                    context,
+                    &mut state.item_property_associations_token,
+                )?
+            }
             _ => {}
         }
         offset = checked_add(header.offset, header.size, "iprp child box end")?;
@@ -1320,26 +2113,48 @@ fn parse_iprp(source: &[u8], payload: &[u8], state: &mut MetaState) -> Result<()
     Ok(())
 }
 
+#[allow(dead_code)]
 fn parse_ipco(_source: &[u8], payload: &[u8], state: &mut MetaState) -> Result<(), DecoderError> {
+    let mut context = ParseContext::legacy();
+    parse_ipco_with_context(_source, payload, state, &mut context)
+}
+
+fn parse_ipco_with_context(
+    _source: &[u8],
+    payload: &[u8],
+    state: &mut MetaState,
+    context: &mut ParseContext<'_>,
+) -> Result<(), DecoderError> {
     let mut offset = 0;
     while offset < payload.len() {
         let header = read_box_header(payload, offset, payload.len())?;
         let child_payload = box_payload(payload, header)?;
+        context.admit_property()?;
         let property = match &header.box_type {
-            b"auxC" => ItemProperty::AuxiliaryType(parse_auxc(child_payload)?),
+            b"auxC" => {
+                ItemProperty::AuxiliaryType(parse_auxc_with_context(child_payload, context)?)
+            }
             b"clap" => ItemProperty::CleanAperture(parse_clap(child_payload)?),
             b"irot" => ItemProperty::Rotation(parse_irot(child_payload)?),
             b"imir" => ItemProperty::Mirror(parse_imir(child_payload)?),
             b"ispe" => ItemProperty::SpatialExtents(parse_ispe(child_payload)?),
-            b"pixi" => ItemProperty::PixelInformation(parse_pixi(child_payload)?),
-            b"av1C" => ItemProperty::Av1Config(child_payload.to_vec()),
-            b"colr" => ItemProperty::ColorInformation(parse_colr(child_payload)?),
+            b"pasp" => ItemProperty::PixelAspectRatio(parse_pasp(child_payload)?),
+            b"pixi" => {
+                ItemProperty::PixelInformation(parse_pixi_with_context(child_payload, context)?)
+            }
+            b"av1C" => {
+                ItemProperty::Av1Config(copy_bytes_with_context(child_payload, context, "av1C")?)
+            }
+            b"colr" => {
+                ItemProperty::ColorInformation(parse_colr_with_context(child_payload, context)?)
+            }
             b"prem" => ItemProperty::Premultiplied,
             b"a1op" => ItemProperty::OperatingPointSelector(parse_a1op(child_payload)?),
             b"lsel" => ItemProperty::LayerSelector(parse_lsel(child_payload)?),
             b"a1lx" => ItemProperty::LayerIndexing(parse_a1lx(child_payload)?),
-            _ => ItemProperty::Other,
+            _ => ItemProperty::Other(header.box_type),
         };
+        state.reserve_item_properties(context, 1)?;
         state.item_properties.push(property);
         offset = checked_add(header.offset, header.size, "ipco child box end")?;
     }
@@ -1365,7 +2180,23 @@ fn parse_pitm(payload: &[u8]) -> Result<Option<u32>, DecoderError> {
     Ok(Some(item_id))
 }
 
+#[allow(dead_code)]
 fn parse_iinf(payload: &[u8]) -> Result<Vec<ItemInfo>, DecoderError> {
+    let mut context = ParseContext::legacy();
+    parse_iinf_with_context(payload, &mut context)
+}
+
+fn parse_iinf_with_context(
+    payload: &[u8],
+    context: &mut ParseContext<'_>,
+) -> Result<Vec<ItemInfo>, DecoderError> {
+    parse_iinf_owned_with_context(payload, context).map(|(infos, _)| infos)
+}
+
+fn parse_iinf_owned_with_context(
+    payload: &[u8],
+    context: &mut ParseContext<'_>,
+) -> Result<(Vec<ItemInfo>, AllocationToken), DecoderError> {
     if payload.len() < 6 {
         return Err(DecoderError::NotEnoughData(
             "iinf payload is too short".to_string(),
@@ -1388,19 +2219,50 @@ fn parse_iinf(payload: &[u8]) -> Result<Vec<ItemInfo>, DecoderError> {
         8,
         "iinf entry",
     )?;
-    let mut infos = Vec::with_capacity(entry_count);
+    context.admit_iinf_entries(entry_count)?;
+    let mut infos = Vec::new();
+    let mut infos_token = AllocationToken::new(AllocationClass::Metadata);
+    context.try_reserve_with_token(&mut infos, &mut infos_token, entry_count, "iinf entries")?;
     for _ in 0..entry_count {
         let header = read_box_header(payload, offset, payload.len())?;
         let child_payload = box_payload(payload, header)?;
         if &header.box_type == b"infe" {
-            infos.push(parse_infe(child_payload)?);
+            infos.push(parse_infe_with_context(child_payload, context)?);
         }
         offset = checked_add(header.offset, header.size, "iinf child box end")?;
     }
-    Ok(infos)
+    Ok((infos, infos_token))
 }
 
+fn release_item_infos(
+    context: &mut ParseContext<'_>,
+    infos: &mut Vec<ItemInfo>,
+    token: &mut AllocationToken,
+) -> Result<(), DecoderError> {
+    if !context.is_native_still() {
+        return Ok(());
+    }
+    let string_bytes = infos.iter().try_fold(0usize, |total, info| {
+        total.checked_add(info.item_name.capacity()).ok_or_else(|| {
+            DecoderError::InvalidParam("iinf item-name capacity overflows".to_string())
+        })
+    })?;
+    context.release_class_bytes(AllocationClass::Metadata, string_bytes)?;
+    context.release_token(token)?;
+    infos.clear();
+    Ok(())
+}
+
+#[allow(dead_code)]
 fn parse_infe(payload: &[u8]) -> Result<ItemInfo, DecoderError> {
+    let mut context = ParseContext::legacy();
+    parse_infe_with_context(payload, &mut context)
+}
+
+fn parse_infe_with_context(
+    payload: &[u8],
+    context: &mut ParseContext<'_>,
+) -> Result<ItemInfo, DecoderError> {
     if payload.len() < 12 {
         return Err(DecoderError::NotEnoughData(
             "infe payload is too short".to_string(),
@@ -1429,7 +2291,7 @@ fn parse_infe(payload: &[u8]) -> Result<ItemInfo, DecoderError> {
     cursor += 2;
     let item_type = read_fourcc(payload, cursor)?;
     cursor += 4;
-    let item_name = read_c_string(payload, cursor)?;
+    let item_name = read_c_string_with_context(payload, cursor, context)?;
     Ok(ItemInfo {
         item_id,
         item_type,
@@ -1449,9 +2311,32 @@ fn parse_iloc_with_methods(
     parse_iloc_with_indexes(payload).map(|(locations, methods, _)| (locations, methods))
 }
 
+#[allow(dead_code)]
 fn parse_iloc_with_indexes(
     payload: &[u8],
 ) -> Result<(Vec<ItemLocation>, Vec<(u32, u16)>, Vec<(u32, Vec<u64>)>), DecoderError> {
+    let mut context = ParseContext::legacy();
+    parse_iloc_owned_with_context(payload, &mut context).map(
+        |(locations, construction_methods, extent_indexes, _, _, _)| {
+            (locations, construction_methods, extent_indexes)
+        },
+    )
+}
+
+fn parse_iloc_owned_with_context(
+    payload: &[u8],
+    context: &mut ParseContext<'_>,
+) -> Result<
+    (
+        Vec<ItemLocation>,
+        Vec<(u32, u16)>,
+        Vec<(u32, Vec<u64>)>,
+        AllocationToken,
+        AllocationToken,
+        AllocationToken,
+    ),
+    DecoderError,
+> {
     if payload.len() < 8 {
         return Err(DecoderError::NotEnoughData(
             "iloc payload is too short".to_string(),
@@ -1499,10 +2384,32 @@ fn parse_iloc_with_indexes(
         minimum_item_size,
         "iloc item",
     )?;
+    context.admit_iloc_entries(item_count)?;
 
-    let mut locations = Vec::with_capacity(item_count);
-    let mut construction_methods = Vec::with_capacity(item_count);
-    let mut all_extent_indexes = Vec::with_capacity(item_count);
+    let mut locations = Vec::new();
+    let mut construction_methods = Vec::new();
+    let mut all_extent_indexes = Vec::new();
+    let mut locations_token = AllocationToken::new(AllocationClass::Metadata);
+    let mut construction_methods_token = AllocationToken::new(AllocationClass::Metadata);
+    let mut extent_indexes_token = AllocationToken::new(AllocationClass::Metadata);
+    context.try_reserve_with_token(
+        &mut locations,
+        &mut locations_token,
+        item_count,
+        "iloc locations",
+    )?;
+    context.try_reserve_with_token(
+        &mut construction_methods,
+        &mut construction_methods_token,
+        item_count,
+        "iloc methods",
+    )?;
+    context.try_reserve_with_token(
+        &mut all_extent_indexes,
+        &mut extent_indexes_token,
+        item_count,
+        "iloc extent indexes",
+    )?;
     for _ in 0..item_count {
         let item_id = if version < 2 {
             let value = read_u16(payload, cursor)? as u32;
@@ -1521,6 +2428,11 @@ fn parse_iloc_with_indexes(
                 return Err(DecoderError::Unsupported(format!(
                     "iloc construction_method {construction_method} is not supported"
                 )));
+            }
+            if construction_method == 2 {
+                context.reject_native(
+                    "bounded native decode does not support item_offset construction yet",
+                )?;
             }
             construction_method
         } else {
@@ -1551,8 +2463,10 @@ fn parse_iloc_with_indexes(
                 "iloc extent",
             )?;
         }
-        let mut extents = Vec::with_capacity(extent_count);
-        let mut extent_indexes = Vec::with_capacity(extent_count);
+        let mut extents = Vec::new();
+        let mut extent_indexes = Vec::new();
+        context.try_reserve(&mut extents, extent_count, "iloc extents")?;
+        context.try_reserve(&mut extent_indexes, extent_count, "iloc extent indexes")?;
         for _ in 0..extent_count {
             let extent_index = if version == 1 || version == 2 {
                 let value = read_sized_int(payload, &mut cursor, index_size)?;
@@ -1578,10 +2492,87 @@ fn parse_iloc_with_indexes(
         all_extent_indexes.push((item_id, extent_indexes));
     }
 
-    Ok((locations, construction_methods, all_extent_indexes))
+    Ok((
+        locations,
+        construction_methods,
+        all_extent_indexes,
+        locations_token,
+        construction_methods_token,
+        extent_indexes_token,
+    ))
 }
 
+fn release_item_locations(
+    context: &mut ParseContext<'_>,
+    locations: &mut Vec<ItemLocation>,
+    locations_token: &mut AllocationToken,
+    construction_methods: &mut Vec<(u32, u16)>,
+    construction_methods_token: &mut AllocationToken,
+    extent_indexes: &mut Vec<(u32, Vec<u64>)>,
+    extent_indexes_token: &mut AllocationToken,
+) -> Result<(), DecoderError> {
+    if !context.is_native_still() {
+        return Ok(());
+    }
+    let extent_bytes = locations.iter().try_fold(0usize, |total, location| {
+        total
+            .checked_add(
+                location
+                    .extents
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<ItemExtent>())
+                    .ok_or_else(|| {
+                        DecoderError::InvalidParam("iloc extent capacity overflows".to_string())
+                    })?,
+            )
+            .ok_or_else(|| DecoderError::InvalidParam("iloc extent capacity overflows".to_string()))
+    })?;
+    let index_bytes = extent_indexes
+        .iter()
+        .try_fold(0usize, |total, (_, indexes)| {
+            total
+                .checked_add(
+                    indexes
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<u64>())
+                        .ok_or_else(|| {
+                            DecoderError::InvalidParam(
+                                "iloc extent-index capacity overflows".to_string(),
+                            )
+                        })?,
+                )
+                .ok_or_else(|| {
+                    DecoderError::InvalidParam("iloc extent-index capacity overflows".to_string())
+                })
+        })?;
+    context.release_class_bytes(AllocationClass::Metadata, extent_bytes)?;
+    context.release_class_bytes(AllocationClass::Metadata, index_bytes)?;
+    context.release_token(locations_token)?;
+    context.release_token(construction_methods_token)?;
+    context.release_token(extent_indexes_token)?;
+    locations.clear();
+    construction_methods.clear();
+    extent_indexes.clear();
+    Ok(())
+}
+
+#[allow(dead_code)]
 fn parse_iref(payload: &[u8]) -> Result<Vec<ItemReference>, DecoderError> {
+    let mut context = ParseContext::legacy();
+    parse_iref_with_context(payload, &mut context)
+}
+
+fn parse_iref_with_context(
+    payload: &[u8],
+    context: &mut ParseContext<'_>,
+) -> Result<Vec<ItemReference>, DecoderError> {
+    parse_iref_owned_with_context(payload, context).map(|(references, _)| references)
+}
+
+fn parse_iref_owned_with_context(
+    payload: &[u8],
+    context: &mut ParseContext<'_>,
+) -> Result<(Vec<ItemReference>, AllocationToken), DecoderError> {
     if payload.len() < 4 {
         return Err(DecoderError::NotEnoughData(
             "iref full-box header is missing".to_string(),
@@ -1595,6 +2586,8 @@ fn parse_iref(payload: &[u8]) -> Result<Vec<ItemReference>, DecoderError> {
     }
     let large_ids = version == 1;
     let mut references = Vec::new();
+    let mut references_token = AllocationToken::new(AllocationClass::Metadata);
+    context.try_reserve_with_token(&mut references, &mut references_token, 1, "iref references")?;
     let mut offset = 4;
     while offset < payload.len() {
         let header = read_box_header(payload, offset, payload.len())?;
@@ -1603,10 +2596,17 @@ fn parse_iref(payload: &[u8]) -> Result<Vec<ItemReference>, DecoderError> {
         let from_item_id = read_item_id(child_payload, &mut cursor, large_ids)?;
         let reference_count = read_u16(child_payload, cursor)? as usize;
         cursor += 2;
-        let mut to_item_ids = Vec::with_capacity(reference_count);
+        let mut to_item_ids = Vec::new();
+        context.try_reserve(&mut to_item_ids, reference_count, "iref target ids")?;
         for _ in 0..reference_count {
             to_item_ids.push(read_item_id(child_payload, &mut cursor, large_ids)?);
         }
+        context.try_reserve_with_token(
+            &mut references,
+            &mut references_token,
+            1,
+            "iref references",
+        )?;
         references.push(ItemReference {
             reference_type: header.box_type,
             from_item_id,
@@ -1614,26 +2614,116 @@ fn parse_iref(payload: &[u8]) -> Result<Vec<ItemReference>, DecoderError> {
         });
         offset = checked_add(header.offset, header.size, "iref child box end")?;
     }
-    Ok(references)
+    Ok((references, references_token))
 }
 
+#[allow(dead_code)]
 fn parse_grpl(payload: &[u8]) -> Result<Vec<AlternateEntityGroup>, DecoderError> {
+    let mut context = ParseContext::legacy();
+    parse_grpl_with_context(payload, &mut context)
+}
+
+fn parse_grpl_with_context(
+    payload: &[u8],
+    context: &mut ParseContext<'_>,
+) -> Result<Vec<AlternateEntityGroup>, DecoderError> {
+    parse_grpl_owned_with_context(payload, context).map(|(groups, _)| groups)
+}
+
+fn parse_grpl_owned_with_context(
+    payload: &[u8],
+    context: &mut ParseContext<'_>,
+) -> Result<(Vec<AlternateEntityGroup>, AllocationToken), DecoderError> {
     let mut groups = Vec::new();
+    let mut groups_token = AllocationToken::new(AllocationClass::Metadata);
     let mut offset = 0;
     while offset < payload.len() {
         let header = read_box_header(payload, offset, payload.len())?;
         let child_payload = box_payload(payload, header)?;
         if &header.box_type == b"altr" {
+            context.try_reserve_with_token(
+                &mut groups,
+                &mut groups_token,
+                1,
+                "alternate groups",
+            )?;
             groups.push(AlternateEntityGroup {
-                entity_ids: parse_altr(child_payload)?,
+                entity_ids: parse_altr_with_context(child_payload, context)?,
             });
         }
         offset = checked_add(header.offset, header.size, "grpl child box end")?;
     }
-    Ok(groups)
+    Ok((groups, groups_token))
 }
 
+fn release_item_references(
+    context: &mut ParseContext<'_>,
+    references: &mut Vec<ItemReference>,
+    token: &mut AllocationToken,
+) -> Result<(), DecoderError> {
+    if !context.is_native_still() {
+        return Ok(());
+    }
+    let nested_bytes = references.iter().try_fold(0usize, |total, reference| {
+        total
+            .checked_add(
+                reference
+                    .to_item_ids
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<u32>())
+                    .ok_or_else(|| {
+                        DecoderError::InvalidParam("iref target-id capacity overflows".to_string())
+                    })?,
+            )
+            .ok_or_else(|| DecoderError::InvalidParam("iref capacity overflows".to_string()))
+    })?;
+    context.release_class_bytes(AllocationClass::Metadata, nested_bytes)?;
+    context.release_token(token)?;
+    references.clear();
+    Ok(())
+}
+
+fn release_alternate_entity_groups(
+    context: &mut ParseContext<'_>,
+    groups: &mut Vec<AlternateEntityGroup>,
+    token: &mut AllocationToken,
+) -> Result<(), DecoderError> {
+    if !context.is_native_still() {
+        return Ok(());
+    }
+    let nested_bytes = groups.iter().try_fold(0usize, |total, group| {
+        total
+            .checked_add(
+                group
+                    .entity_ids
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<u32>())
+                    .ok_or_else(|| {
+                        DecoderError::InvalidParam(
+                            "alternate entity-id capacity overflows".to_string(),
+                        )
+                    })?,
+            )
+            .ok_or_else(|| {
+                DecoderError::InvalidParam("alternate group capacity overflows".to_string())
+            })
+    })?;
+    context.release_class_bytes(AllocationClass::Metadata, nested_bytes)?;
+    context.release_token(token)?;
+    groups.clear();
+    Ok(())
+}
+
+#[allow(dead_code)]
 fn parse_altr(payload: &[u8]) -> Result<Vec<u32>, DecoderError> {
+    let mut context = ParseContext::legacy();
+    parse_altr_with_context(payload, &mut context)
+}
+
+fn parse_altr_with_context(
+    payload: &[u8],
+    context: &mut ParseContext<'_>,
+) -> Result<Vec<u32>, DecoderError> {
     if payload.len() < 12 {
         return Err(DecoderError::NotEnoughData(
             "altr payload is too short".to_string(),
@@ -1652,7 +2742,8 @@ fn parse_altr(payload: &[u8]) -> Result<Vec<u32>, DecoderError> {
         4,
         "altr entity",
     )?;
-    let mut entity_ids = Vec::with_capacity(entity_count);
+    let mut entity_ids = Vec::new();
+    context.try_reserve(&mut entity_ids, entity_count, "alternate entity ids")?;
     let mut offset = 12;
     for _ in 0..entity_count {
         entity_ids.push(read_u32(payload, offset)?);
@@ -1666,7 +2757,23 @@ fn parse_altr(payload: &[u8]) -> Result<Vec<u32>, DecoderError> {
     Ok(entity_ids)
 }
 
+#[allow(dead_code)]
 fn parse_ipma(payload: &[u8]) -> Result<Vec<ItemPropertyAssociation>, DecoderError> {
+    let mut context = ParseContext::legacy();
+    parse_ipma_with_context(payload, &mut context)
+}
+
+fn parse_ipma_with_context(
+    payload: &[u8],
+    context: &mut ParseContext<'_>,
+) -> Result<Vec<ItemPropertyAssociation>, DecoderError> {
+    parse_ipma_owned_with_context(payload, context).map(|(associations, _)| associations)
+}
+
+fn parse_ipma_owned_with_context(
+    payload: &[u8],
+    context: &mut ParseContext<'_>,
+) -> Result<(Vec<ItemPropertyAssociation>, AllocationToken), DecoderError> {
     if payload.len() < 8 {
         return Err(DecoderError::NotEnoughData(
             "ipma payload is too short".to_string(),
@@ -1689,7 +2796,19 @@ fn parse_ipma(payload: &[u8]) -> Result<Vec<ItemPropertyAssociation>, DecoderErr
         item_id_size + 1,
         "ipma entry",
     )?;
-    let mut item_associations = Vec::with_capacity(entry_count);
+    if context.is_native_still() {
+        let (counted_entries, counted_associations) = ipma_counts(payload)?;
+        debug_assert_eq!(counted_entries, entry_count);
+        context.admit_ipma(counted_entries, counted_associations)?;
+    }
+    let mut item_associations = Vec::new();
+    let mut item_associations_token = AllocationToken::new(AllocationClass::Metadata);
+    context.try_reserve_with_token(
+        &mut item_associations,
+        &mut item_associations_token,
+        entry_count,
+        "ipma entries",
+    )?;
     for _ in 0..entry_count {
         let item_id = read_item_id(payload, &mut cursor, version == 1)?;
         let association_count = read_u8(payload, cursor)? as usize;
@@ -1700,7 +2819,14 @@ fn parse_ipma(payload: &[u8]) -> Result<Vec<ItemPropertyAssociation>, DecoderErr
             if large_property_index { 2 } else { 1 },
             "ipma association",
         )?;
-        let mut property_associations = Vec::with_capacity(association_count);
+        let mut property_associations = Vec::new();
+        let mut property_token = AllocationToken::new(AllocationClass::Metadata);
+        context.try_reserve_with_token(
+            &mut property_associations,
+            &mut property_token,
+            association_count,
+            "ipma associations",
+        )?;
         for _ in 0..association_count {
             let (index, essential) = if large_property_index {
                 let value = read_u16(payload, cursor)?;
@@ -1716,23 +2842,40 @@ fn parse_ipma(payload: &[u8]) -> Result<Vec<ItemPropertyAssociation>, DecoderErr
         item_associations.push(ItemPropertyAssociation {
             item_id,
             associations: property_associations,
+            token: property_token,
         });
     }
-    Ok(item_associations)
+    Ok((item_associations, item_associations_token))
 }
 
+#[allow(dead_code)]
 fn merge_ipma(
     target: &mut Vec<ItemPropertyAssociation>,
     incoming: Vec<ItemPropertyAssociation>,
+) -> Result<(), DecoderError> {
+    let mut context = ParseContext::legacy();
+    let mut token = AllocationToken::new(AllocationClass::Metadata);
+    let incoming_token = AllocationToken::new(AllocationClass::Metadata);
+    merge_ipma_with_context(target, incoming, incoming_token, &mut context, &mut token)
+}
+
+fn merge_ipma_with_context(
+    target: &mut Vec<ItemPropertyAssociation>,
+    incoming: Vec<ItemPropertyAssociation>,
+    mut incoming_token: AllocationToken,
+    context: &mut ParseContext<'_>,
+    target_token: &mut AllocationToken,
 ) -> Result<(), DecoderError> {
     for incoming_item in incoming {
         let Some(existing) = target
             .iter_mut()
             .find(|association| association.item_id == incoming_item.item_id)
         else {
+            context.try_reserve_with_token(target, target_token, 1, "merged ipma entries")?;
             target.push(incoming_item);
             continue;
         };
+        let mut incoming_item = incoming_item;
         for incoming_property in incoming_item.associations {
             if existing
                 .associations
@@ -1744,9 +2887,17 @@ fn merge_ipma(
                     existing.item_id, incoming_property.index
                 )));
             }
+            context.try_reserve_with_token(
+                &mut existing.associations,
+                &mut existing.token,
+                1,
+                "merged ipma associations",
+            )?;
             existing.associations.push(incoming_property);
         }
+        context.release_token(&mut incoming_item.token)?;
     }
+    context.release_token(&mut incoming_token)?;
     Ok(())
 }
 
@@ -1781,9 +2932,7 @@ fn validate_primary_item_metadata(state: &MetaState) -> Result<(), DecoderError>
                 association.item_id
             )));
         }
-        let mut seen_kinds = Vec::new();
-        let mut seen_color_types = Vec::<[u8; 4]>::new();
-        for property in &association.associations {
+        for (position, property) in association.associations.iter().enumerate() {
             let index = property.index;
             if index == 0 || usize::from(index) > state.item_properties.len() {
                 return Err(DecoderError::Bitstream(format!(
@@ -1832,24 +2981,43 @@ fn validate_primary_item_metadata(state: &MetaState) -> Result<(), DecoderError>
                 } else {
                     color.color_type
                 };
-                if seen_color_types.contains(&color_type) {
+                let duplicate_color = association.associations[..position].iter().any(|previous| {
+                    state
+                        .item_properties
+                        .get(usize::from(previous.index).saturating_sub(1))
+                        .and_then(|property| match property {
+                            ItemProperty::ColorInformation(previous) => {
+                                Some(if previous.icc_profile().is_some() {
+                                    *b"icc "
+                                } else {
+                                    previous.color_type
+                                })
+                            }
+                            _ => None,
+                        })
+                        == Some(color_type)
+                });
+                if duplicate_color {
                     return Err(DecoderError::Bitstream(format!(
                         "item {} has duplicate ColorInformation property association",
                         association.item_id
                     )));
                 }
-                seen_color_types.push(color_type);
             }
             if kind.is_singleton()
                 && kind != PropertyKind::ColorInformation
-                && seen_kinds.contains(&kind)
+                && association.associations[..position].iter().any(|previous| {
+                    state
+                        .item_properties
+                        .get(usize::from(previous.index).saturating_sub(1))
+                        .is_some_and(|property| property_kind(property) == kind)
+                })
             {
                 return Err(DecoderError::Bitstream(format!(
                     "item {} has duplicate {kind:?} property association",
                     association.item_id
                 )));
             }
-            seen_kinds.push(kind);
         }
     }
     let Some(primary_association) = state
@@ -1861,13 +3029,14 @@ fn validate_primary_item_metadata(state: &MetaState) -> Result<(), DecoderError>
             "primary item {primary_item_id} has no property associations"
         )));
     };
-    let kinds = primary_association
-        .associations
-        .iter()
-        .map(|association| {
-            property_kind(&state.item_properties[usize::from(association.index) - 1])
+    let has_kind = |required: PropertyKind| {
+        primary_association.associations.iter().any(|association| {
+            state
+                .item_properties
+                .get(usize::from(association.index).saturating_sub(1))
+                .is_some_and(|property| property_kind(property) == required)
         })
-        .collect::<Vec<_>>();
+    };
     let is_derived = state
         .item_infos
         .iter()
@@ -1883,7 +3052,7 @@ fn validate_primary_item_metadata(state: &MetaState) -> Result<(), DecoderError>
         ]
     };
     for required in required {
-        if !kinds.contains(required) {
+        if !has_kind(*required) {
             return Err(DecoderError::Bitstream(format!(
                 "primary item {primary_item_id} is missing required {required:?} property"
             )));
@@ -1916,6 +3085,15 @@ fn primary_item_metadata(state: &MetaState) -> Result<PrimaryItemMetadata, Decod
 }
 
 fn item_metadata(state: &MetaState, item_id: u32) -> Result<PrimaryItemMetadata, DecoderError> {
+    let mut context = ParseContext::legacy();
+    item_metadata_with_context(state, item_id, &mut context)
+}
+
+fn item_metadata_with_context(
+    state: &MetaState,
+    item_id: u32,
+    context: &mut ParseContext<'_>,
+) -> Result<PrimaryItemMetadata, DecoderError> {
     let association = state
         .item_property_associations
         .iter()
@@ -1932,9 +3110,11 @@ fn item_metadata(state: &MetaState, item_id: u32) -> Result<PrimaryItemMetadata,
                 metadata.height = Some(extents.height);
             }
             ItemProperty::PixelInformation(pixi) => {
-                metadata.pixel_information = Some(pixi.clone());
+                metadata.pixel_information = Some(clone_pixi_with_context(pixi, context)?);
             }
-            ItemProperty::Av1Config(config) => metadata.av1_config = Some(config.clone()),
+            ItemProperty::Av1Config(config) => {
+                metadata.av1_config = Some(copy_bytes_with_context(config, context, "av1C")?)
+            }
             ItemProperty::ColorInformation(color) => {
                 // When both descriptions are present, keep the CICP `nclx`
                 // property as the active AVIF colour description. The ICC
@@ -1944,7 +3124,7 @@ fn item_metadata(state: &MetaState, item_id: u32) -> Result<PrimaryItemMetadata,
                     existing.icc_profile().is_some() && color.icc_profile().is_none()
                 });
                 if replace {
-                    metadata.color_information = Some(color.clone());
+                    metadata.color_information = Some(clone_color_with_context(color, context)?);
                 }
             }
             ItemProperty::Premultiplied => metadata.alpha_premultiplied = true,
@@ -1952,19 +3132,20 @@ fn item_metadata(state: &MetaState, item_id: u32) -> Result<PrimaryItemMetadata,
             ItemProperty::Rotation(rotation) => metadata.rotation = Some(*rotation),
             ItemProperty::Mirror(mirror) => metadata.mirror = Some(*mirror),
             ItemProperty::AuxiliaryType(_)
+            | ItemProperty::PixelAspectRatio(_)
             | ItemProperty::OperatingPointSelector(_)
             | ItemProperty::LayerSelector(_)
             | ItemProperty::LayerIndexing(_)
-            | ItemProperty::Other => {}
+            | ItemProperty::Other(_) => {}
         }
     }
     Ok(metadata)
 }
 
-fn item_color_information(
-    state: &MetaState,
+fn item_color_information<'a>(
+    state: &'a MetaState,
     item_id: u32,
-) -> Result<Vec<ColorInformation>, DecoderError> {
+) -> Result<impl Iterator<Item = &'a ColorInformation> + 'a, DecoderError> {
     let association = state
         .item_property_associations
         .iter()
@@ -1972,23 +3153,73 @@ fn item_color_information(
         .ok_or_else(|| {
             DecoderError::Bitstream(format!("item {item_id} has no property associations"))
         })?;
-    let colors = association
-        .associations
-        .iter()
-        .filter_map(|association| {
-            state
-                .item_properties
-                .get(usize::from(association.index).checked_sub(1)?)
-                .and_then(|property| match property {
-                    ItemProperty::ColorInformation(color) => Some(color.clone()),
-                    _ => None,
-                })
-        })
-        .collect::<Vec<_>>();
-    Ok(colors)
+    Ok(association.associations.iter().filter_map(|association| {
+        state
+            .item_properties
+            .get(usize::from(association.index).checked_sub(1)?)
+            .and_then(|property| match property {
+                ItemProperty::ColorInformation(color) => Some(color),
+                _ => None,
+            })
+    }))
 }
 
+fn clone_pixi_with_context(
+    pixi: &PixelInformation,
+    context: &mut ParseContext<'_>,
+) -> Result<PixelInformation, DecoderError> {
+    let mut bits_per_channel = Vec::new();
+    context.try_reserve(
+        &mut bits_per_channel,
+        pixi.bits_per_channel.len(),
+        "pixi channel depths",
+    )?;
+    bits_per_channel.extend_from_slice(&pixi.bits_per_channel);
+    let extended_channels = pixi
+        .extended_channels
+        .as_ref()
+        .map(|channels| {
+            let mut copy = Vec::new();
+            context.try_reserve(&mut copy, channels.len(), "pixi channel descriptors")?;
+            copy.extend_from_slice(channels);
+            Ok(copy)
+        })
+        .transpose()?;
+    Ok(PixelInformation {
+        bits_per_channel,
+        extended_channels,
+    })
+}
+
+fn clone_color_with_context(
+    color: &ColorInformation,
+    context: &mut ParseContext<'_>,
+) -> Result<ColorInformation, DecoderError> {
+    Ok(ColorInformation {
+        color_type: color.color_type,
+        payload: copy_bytes_with_class(
+            &color.payload,
+            context,
+            if color.icc_profile().is_some() {
+                AllocationClass::Icc
+            } else {
+                AllocationClass::Metadata
+            },
+            "color information",
+        )?,
+    })
+}
+
+#[allow(dead_code)]
 fn parse_auxc(payload: &[u8]) -> Result<String, DecoderError> {
+    let mut context = ParseContext::legacy();
+    parse_auxc_with_context(payload, &mut context)
+}
+
+fn parse_auxc_with_context(
+    payload: &[u8],
+    context: &mut ParseContext<'_>,
+) -> Result<String, DecoderError> {
     if payload.len() < 4 {
         return Err(DecoderError::NotEnoughData(
             "auxC full-box header is missing".to_string(),
@@ -1999,9 +3230,9 @@ fn parse_auxc(payload: &[u8]) -> Result<String, DecoderError> {
         .iter()
         .position(|value| *value == 0)
         .unwrap_or(aux_type.len());
-    std::str::from_utf8(&aux_type[..end])
-        .map(|value| value.to_string())
-        .map_err(|_| DecoderError::Bitstream("auxC auxiliary type is not UTF-8".to_string()))
+    let value = std::str::from_utf8(&aux_type[..end])
+        .map_err(|_| DecoderError::Bitstream("auxC auxiliary type is not UTF-8".to_string()))?;
+    copy_string_with_context(value, context)
 }
 
 fn parse_a1op(payload: &[u8]) -> Result<u8, DecoderError> {
@@ -2111,7 +3342,35 @@ fn parse_ispe(payload: &[u8]) -> Result<ImageSpatialExtents, DecoderError> {
     })
 }
 
+fn parse_pasp(payload: &[u8]) -> Result<PixelAspectRatio, DecoderError> {
+    if payload.len() < 8 {
+        return Err(DecoderError::NotEnoughData(
+            "pasp payload is too short".to_string(),
+        ));
+    }
+    let h_spacing = read_u32(payload, 0)?;
+    let v_spacing = read_u32(payload, 4)?;
+    if h_spacing == 0 || v_spacing == 0 {
+        return Err(DecoderError::Bitstream(
+            "pasp spacing values must be non-zero".to_string(),
+        ));
+    }
+    Ok(PixelAspectRatio {
+        h_spacing,
+        v_spacing,
+    })
+}
+
+#[allow(dead_code)]
 fn parse_pixi(payload: &[u8]) -> Result<PixelInformation, DecoderError> {
+    let mut context = ParseContext::legacy();
+    parse_pixi_with_context(payload, &mut context)
+}
+
+fn parse_pixi_with_context(
+    payload: &[u8],
+    context: &mut ParseContext<'_>,
+) -> Result<PixelInformation, DecoderError> {
     if payload.len() < 5 {
         return Err(DecoderError::NotEnoughData(
             "pixi payload is too short".to_string(),
@@ -2139,7 +3398,8 @@ fn parse_pixi(payload: &[u8]) -> Result<PixelInformation, DecoderError> {
         None
     } else {
         let mut reader = PixiBitReader::new(&payload[5 + channel_count..]);
-        let mut channels = Vec::with_capacity(channel_count);
+        let mut channels = Vec::new();
+        context.try_reserve(&mut channels, channel_count, "pixi channels")?;
         for channel in 0..channel_count {
             let channel_idc = reader.read_bits(3, "pixi channel_idc")? as u8;
             let reserved = reader.read_bits(1, "pixi reserved")?;
@@ -2193,7 +3453,11 @@ fn parse_pixi(payload: &[u8]) -> Result<PixelInformation, DecoderError> {
         Some(channels)
     };
     Ok(PixelInformation {
-        bits_per_channel: payload[5..5 + channel_count].to_vec(),
+        bits_per_channel: copy_bytes_with_context(
+            &payload[5..5 + channel_count],
+            context,
+            "pixi channel depths",
+        )?,
         extended_channels,
     })
 }
@@ -2252,15 +3516,30 @@ impl<'a> PixiBitReader<'a> {
     }
 }
 
+#[allow(dead_code)]
 fn parse_colr(payload: &[u8]) -> Result<ColorInformation, DecoderError> {
+    let mut context = ParseContext::legacy();
+    parse_colr_with_context(payload, &mut context)
+}
+
+fn parse_colr_with_context(
+    payload: &[u8],
+    context: &mut ParseContext<'_>,
+) -> Result<ColorInformation, DecoderError> {
     if payload.len() < 4 {
         return Err(DecoderError::NotEnoughData(
             "colr payload is too short".to_string(),
         ));
     }
+    let color_type = read_fourcc(payload, 0)?;
+    let class = if color_type == *b"prof" || color_type == *b"rICC" {
+        AllocationClass::Icc
+    } else {
+        AllocationClass::Metadata
+    };
     Ok(ColorInformation {
-        color_type: read_fourcc(payload, 0)?,
-        payload: payload[4..].to_vec(),
+        color_type,
+        payload: copy_bytes_with_class(&payload[4..], context, class, "colr payload")?,
     })
 }
 
@@ -3032,63 +4311,119 @@ fn alpha_auxiliary_items(
     alpha_auxiliary_items_for(data, state, state.primary_item_id)
 }
 
+#[allow(dead_code)]
 fn alpha_auxiliary_items_for(
     data: &[u8],
     state: &MetaState,
     owner_item_id: Option<u32>,
 ) -> Result<Vec<AuxiliaryImage>, DecoderError> {
+    let mut context = ParseContext::legacy();
+    alpha_auxiliary_items_for_with_context(data, state, owner_item_id, &mut context)
+}
+
+fn alpha_auxiliary_items_for_with_context(
+    data: &[u8],
+    state: &MetaState,
+    owner_item_id: Option<u32>,
+    context: &mut ParseContext<'_>,
+) -> Result<Vec<AuxiliaryImage>, DecoderError> {
     let mut item_ids: Vec<(u32, String)> = Vec::new();
-    if let Some(owner_item_id) = owner_item_id {
-        item_ids.extend(
-            state
-                .item_references
-                .iter()
-                .filter(|reference| {
-                    reference.reference_type == *b"auxl" && reference.from_item_id == owner_item_id
-                })
-                .flat_map(|reference| {
-                    reference
-                        .to_item_ids
-                        .iter()
-                        .map(|item_id| (*item_id, ALPHA_AUX_TYPE.to_string()))
-                }),
-        );
+    let mut item_ids_token = AllocationToken::new(AllocationClass::Metadata);
+    if context.is_native_still() {
+        if let Some(owner_item_id) = owner_item_id {
+            for_each_native_selected_alpha_item(state, owner_item_id, |item_id| {
+                context.try_reserve_with_token(
+                    &mut item_ids,
+                    &mut item_ids_token,
+                    1,
+                    "alpha item ids",
+                )?;
+                item_ids.push((item_id, copy_string_with_context(ALPHA_AUX_TYPE, context)?));
+                Ok(())
+            })?;
+        }
+    } else if let Some(owner_item_id) = owner_item_id {
+        for reference in state.item_references.iter().filter(|reference| {
+            reference.reference_type == *b"auxl" && reference.from_item_id == owner_item_id
+        }) {
+            for item_id in &reference.to_item_ids {
+                context.try_reserve_with_token(
+                    &mut item_ids,
+                    &mut item_ids_token,
+                    1,
+                    "alpha item ids",
+                )?;
+                item_ids.push((*item_id, copy_string_with_context(ALPHA_AUX_TYPE, context)?));
+            }
+        }
     }
     if item_ids.is_empty() {
-        item_ids = state
-            .item_property_associations
-            .iter()
-            .filter_map(|association| {
-                association
-                    .associations
-                    .iter()
-                    .filter_map(|index| {
-                        state
-                            .item_properties
-                            .get(usize::from(index.index).saturating_sub(1))
-                    })
-                    .find_map(|property| match property {
+        for association in &state.item_property_associations {
+            let Some(aux_type) = association.associations.iter().find_map(|index| {
+                state
+                    .item_properties
+                    .get(usize::from(index.index).saturating_sub(1))
+                    .and_then(|property| match property {
                         ItemProperty::AuxiliaryType(aux_type) if aux_type == ALPHA_AUX_TYPE => {
-                            Some((association.item_id, aux_type.clone()))
+                            Some(aux_type)
                         }
                         _ => None,
                     })
-            })
-            .collect();
+            }) else {
+                continue;
+            };
+            context.try_reserve_with_token(
+                &mut item_ids,
+                &mut item_ids_token,
+                1,
+                "alpha item ids",
+            )?;
+            item_ids.push((
+                association.item_id,
+                copy_string_with_context(aux_type, context)?,
+            ));
+        }
     }
 
-    item_ids.sort_by_key(|(item_id, _)| *item_id);
-    item_ids.dedup_by_key(|(item_id, _)| *item_id);
-    item_ids
-        .into_iter()
-        .map(|(item_id, aux_type)| {
-            Ok(AuxiliaryImage {
-                item_id,
-                aux_type,
-                payload: item_payload(data, state, item_id)?,
-            })
-        })
-        .collect()
+    if context.is_native_still() {
+        // `for_each_native_selected_alpha_item` establishes uniqueness while
+        // walking auxl/property fallback associations. An unstable in-place
+        // ordering therefore avoids the stable-sort scratch allocation.
+        item_ids.sort_unstable_by_key(|(item_id, _)| *item_id);
+    } else {
+        // Preserve Legacy's historical stable ordering and first-duplicate
+        // selection semantics.
+        item_ids.sort_by_key(|(item_id, _)| *item_id);
+        item_ids.dedup_by_key(|(item_id, _)| *item_id);
+    }
+    let mut auxiliary_items = Vec::new();
+    context.try_reserve(
+        &mut auxiliary_items,
+        item_ids.len(),
+        "alpha auxiliary items",
+    )?;
+    for (item_id, aux_type) in item_ids {
+        let item_type = state
+            .item_infos
+            .iter()
+            .find(|item| item.item_id == item_id)
+            .map(|item| item.item_type);
+        if context.is_native_still() && item_type != Some(*b"av01") {
+            return Err(DecoderError::Unsupported(
+                "bounded native decode accepts only an av01 alpha item".to_string(),
+            ));
+        }
+        auxiliary_items.push(AuxiliaryImage {
+            item_id,
+            aux_type,
+            payload: item_payload_with_context(data, state, item_id, context)?,
+        });
+    }
+    // The selected IDs are only a temporary planning vector. Release its
+    // charge after IntoIter has dropped the Vec; the auxiliary records below
+    // own the moved strings and payloads.
+    context.release_token(&mut item_ids_token)?;
+    Ok(auxiliary_items)
 }
 
 fn primary_grid(
@@ -3398,14 +4733,39 @@ fn parse_grid_payload(payload: &[u8]) -> Result<ParsedGridPayload, DecoderError>
 }
 
 fn item_payload(data: &[u8], state: &MetaState, item_id: u32) -> Result<Vec<u8>, DecoderError> {
-    item_payload_with_stack(data, state, item_id, &mut Vec::new())
+    let mut context = ParseContext::legacy();
+    item_payload_with_context(data, state, item_id, &mut context)
 }
 
+fn item_payload_with_context(
+    data: &[u8],
+    state: &MetaState,
+    item_id: u32,
+    context: &mut ParseContext<'_>,
+) -> Result<Vec<u8>, DecoderError> {
+    if context.is_native_still() {
+        return native_direct_item_payload(data, state, item_id, context);
+    }
+    item_payload_with_stack_context(data, state, item_id, &mut Vec::new(), context)
+}
+
+#[allow(dead_code)]
 fn item_payload_with_stack(
     data: &[u8],
     state: &MetaState,
     item_id: u32,
     stack: &mut Vec<u32>,
+) -> Result<Vec<u8>, DecoderError> {
+    let mut context = ParseContext::legacy();
+    item_payload_with_stack_context(data, state, item_id, stack, &mut context)
+}
+
+fn item_payload_with_stack_context(
+    data: &[u8],
+    state: &MetaState,
+    item_id: u32,
+    stack: &mut Vec<u32>,
+    context: &mut ParseContext<'_>,
 ) -> Result<Vec<u8>, DecoderError> {
     if stack.contains(&item_id) {
         return Err(DecoderError::Bitstream(format!(
@@ -3430,23 +4790,67 @@ fn item_payload_with_stack(
             DecoderError::Bitstream("item extent payload length overflow".to_string())
         })
     })?;
-    let mut payload = Vec::with_capacity(payload_len);
+    if construction_method == 0 || construction_method == 1 {
+        let source_len = if construction_method == 0 {
+            data.len()
+        } else {
+            state
+                .idat_payload_range
+                .map(|(start, end)| {
+                    end.checked_sub(start).ok_or_else(|| {
+                        DecoderError::Bitstream("idat payload range is inverted".to_string())
+                    })
+                })
+                .transpose()?
+                .or_else(|| state.idat_payload.as_ref().map(Vec::len))
+                .ok_or_else(|| {
+                    DecoderError::Bitstream(format!("item {item_id} references missing idat box"))
+                })?
+        };
+        if payload_len > source_len {
+            return Err(DecoderError::Bitstream(
+                "item extent payload length exceeds file size".to_string(),
+            ));
+        }
+        for extent in &location.extents {
+            validate_item_extent(location, extent, source_len)?;
+        }
+    }
+    let mut payload = Vec::new();
+    let mut payload_token = AllocationToken::new(AllocationClass::Payload);
+    context.try_reserve_class_with_token(
+        &mut payload,
+        &mut payload_token,
+        payload_len,
+        AllocationClass::Payload,
+        "item payload",
+    )?;
     match construction_method {
         0 | 1 => {
             let source: Cow<'_, [u8]> = if construction_method == 0 {
                 Cow::Borrowed(data)
             } else {
-                Cow::Borrowed(state.idat_payload.as_deref().ok_or_else(|| {
-                    DecoderError::Bitstream(format!("item {item_id} references missing idat box"))
-                })?)
+                if let Some((start, end)) = state.idat_payload_range {
+                    Cow::Borrowed(data.get(start..end).ok_or_else(|| {
+                        DecoderError::NotEnoughData("idat payload is outside the input".to_string())
+                    })?)
+                } else {
+                    Cow::Borrowed(state.idat_payload.as_deref().ok_or_else(|| {
+                        DecoderError::Bitstream(format!(
+                            "item {item_id} references missing idat box"
+                        ))
+                    })?)
+                }
             };
-            if payload_len > source.len() {
-                return Err(DecoderError::Bitstream(
-                    "item extent payload length exceeds file size".to_string(),
-                ));
-            }
             for extent in &location.extents {
-                append_item_extent(&mut payload, location, extent, &source)?;
+                append_item_extent_with_context(
+                    &mut payload,
+                    location,
+                    extent,
+                    &source,
+                    context,
+                    &mut payload_token,
+                )?;
             }
         }
         2 => {
@@ -3473,8 +4877,15 @@ fn item_payload_with_stack(
                             "item {item_id} item_offset reference index {extent_index} is missing"
                         ))
                     })?;
-                let source = item_payload_with_stack(data, state, target, stack)?;
-                append_item_extent(&mut payload, location, extent, &source)?;
+                let source = item_payload_with_stack_context(data, state, target, stack, context)?;
+                append_item_extent_with_context(
+                    &mut payload,
+                    location,
+                    extent,
+                    &source,
+                    context,
+                    &mut payload_token,
+                )?;
             }
         }
         method => {
@@ -3487,12 +4898,50 @@ fn item_payload_with_stack(
     Ok(payload)
 }
 
+#[allow(dead_code)]
 fn append_item_extent(
     payload: &mut Vec<u8>,
     location: &ItemLocation,
     extent: &ItemExtent,
     source: &[u8],
 ) -> Result<(), DecoderError> {
+    let mut context = ParseContext::legacy();
+    let mut payload_token = AllocationToken::new(AllocationClass::Payload);
+    append_item_extent_with_context(
+        payload,
+        location,
+        extent,
+        source,
+        &mut context,
+        &mut payload_token,
+    )
+}
+
+fn append_item_extent_with_context(
+    payload: &mut Vec<u8>,
+    location: &ItemLocation,
+    extent: &ItemExtent,
+    source: &[u8],
+    context: &mut ParseContext<'_>,
+    payload_token: &mut AllocationToken,
+) -> Result<(), DecoderError> {
+    let (start, end) = item_extent_bounds(location, extent, source.len())?;
+    context.try_reserve_class_with_token(
+        payload,
+        payload_token,
+        end - start,
+        AllocationClass::Payload,
+        "item extent",
+    )?;
+    payload.extend_from_slice(&source[start..end]);
+    Ok(())
+}
+
+pub(super) fn item_extent_bounds(
+    location: &ItemLocation,
+    extent: &ItemExtent,
+    source_len: usize,
+) -> Result<(usize, usize), DecoderError> {
     let start = location
         .base_offset
         .checked_add(extent.offset)
@@ -3504,13 +4953,20 @@ fn append_item_extent(
         .map_err(|_| DecoderError::Bitstream("item extent start is too large".to_string()))?;
     let end = usize::try_from(end)
         .map_err(|_| DecoderError::Bitstream("item extent end is too large".to_string()))?;
-    if end > source.len() || start > end {
+    if end > source_len || start > end {
         return Err(DecoderError::NotEnoughData(
             "item extent points outside the file".to_string(),
         ));
     }
-    payload.extend_from_slice(&source[start..end]);
-    Ok(())
+    Ok((start, end))
+}
+
+fn validate_item_extent(
+    location: &ItemLocation,
+    extent: &ItemExtent,
+    source_len: usize,
+) -> Result<(), DecoderError> {
+    item_extent_bounds(location, extent, source_len).map(|_| ())
 }
 
 fn read_box_header(data: &[u8], offset: usize, limit: usize) -> Result<BoxHeader, DecoderError> {
@@ -3597,7 +5053,17 @@ fn read_fourcc(data: &[u8], offset: usize) -> Result<[u8; 4], DecoderError> {
         .expect("slice length checked"))
 }
 
+#[allow(dead_code)]
 fn read_c_string(data: &[u8], offset: usize) -> Result<String, DecoderError> {
+    let mut context = ParseContext::legacy();
+    read_c_string_with_context(data, offset, &mut context)
+}
+
+fn read_c_string_with_context(
+    data: &[u8],
+    offset: usize,
+    context: &mut ParseContext<'_>,
+) -> Result<String, DecoderError> {
     let bytes = data
         .get(offset..)
         .ok_or_else(|| DecoderError::NotEnoughData("string offset exceeds input".to_string()))?;
@@ -3605,9 +5071,9 @@ fn read_c_string(data: &[u8], offset: usize) -> Result<String, DecoderError> {
         .iter()
         .position(|value| *value == 0)
         .unwrap_or(bytes.len());
-    std::str::from_utf8(&bytes[..end])
-        .map(|value| value.to_string())
-        .map_err(|_| DecoderError::Bitstream("box string is not UTF-8".to_string()))
+    let value = std::str::from_utf8(&bytes[..end])
+        .map_err(|_| DecoderError::Bitstream("box string is not UTF-8".to_string()))?;
+    copy_string_with_context(value, context)
 }
 
 fn read_u8(data: &[u8], offset: usize) -> Result<u8, DecoderError> {
@@ -3661,9 +5127,9 @@ fn validate_collection_count(
     minimum_entry_size: usize,
     label: &str,
 ) -> Result<(), DecoderError> {
-    let minimum_size = count
-        .checked_mul(minimum_entry_size)
-        .ok_or_else(|| DecoderError::Bitstream(format!("{label} count overflow")))?;
+    let minimum_size = count.checked_mul(minimum_entry_size).ok_or_else(|| {
+        DecoderError::NotEnoughData(format!("{label} count exceeds the remaining payload"))
+    })?;
     if minimum_size > remaining_payload {
         return Err(DecoderError::NotEnoughData(format!(
             "{label} count exceeds the remaining payload"
@@ -4542,6 +6008,7 @@ mod tests {
                     index: 1,
                     essential: false,
                 }],
+                token: AllocationToken::new(AllocationClass::Metadata),
             }],
             item_properties: vec![ItemProperty::AuxiliaryType(ALPHA_AUX_TYPE.to_string())],
             ..MetaState::default()
@@ -4655,6 +6122,7 @@ mod tests {
                     index: 1,
                     essential: true,
                 }],
+                token: AllocationToken::new(AllocationClass::Metadata),
             }]
         );
     }
@@ -4708,6 +6176,7 @@ mod tests {
                         essential: true,
                     },
                 ],
+                token: AllocationToken::new(AllocationClass::Metadata),
             }],
             item_properties: vec![
                 ItemProperty::SpatialExtents(ImageSpatialExtents {
@@ -4812,6 +6281,7 @@ mod tests {
                         essential: true,
                     },
                 ],
+                token: AllocationToken::new(AllocationClass::Metadata),
             }],
             item_properties: vec![
                 ItemProperty::SpatialExtents(ImageSpatialExtents {
@@ -4823,7 +6293,7 @@ mod tests {
                     extended_channels: None,
                 }),
                 ItemProperty::Av1Config(vec![0x81, 0, 0, 0]),
-                ItemProperty::Other,
+                ItemProperty::Other(*b"zzzz"),
             ],
             ..MetaState::default()
         };
@@ -4858,8 +6328,9 @@ mod tests {
                     index: 2,
                     essential: false,
                 }],
+                token: AllocationToken::new(AllocationClass::Metadata),
             }],
-            item_properties: vec![ItemProperty::Other],
+            item_properties: vec![ItemProperty::Other(*b"zzzz")],
             ..MetaState::default()
         };
 
@@ -5010,6 +6481,7 @@ mod tests {
                         essential: false,
                     },
                 ],
+                token: AllocationToken::new(AllocationClass::Metadata),
             }],
             item_properties: vec![
                 ItemProperty::CleanAperture(clap),
@@ -5038,6 +6510,7 @@ mod tests {
                     index: 1,
                     essential: false,
                 }],
+                token: AllocationToken::new(AllocationClass::Metadata),
             }],
             item_properties: vec![ItemProperty::Premultiplied],
             ..MetaState::default()
@@ -5131,6 +6604,7 @@ mod tests {
                             essential: false,
                         },
                     ],
+                    token: AllocationToken::new(AllocationClass::Metadata),
                 },
                 ItemPropertyAssociation {
                     item_id: 2,
@@ -5152,6 +6626,7 @@ mod tests {
                             essential: false,
                         },
                     ],
+                    token: AllocationToken::new(AllocationClass::Metadata),
                 },
             ],
             ..MetaState::default()
@@ -5208,6 +6683,7 @@ mod tests {
                         essential: true,
                     },
                 ],
+                token: AllocationToken::new(AllocationClass::Metadata),
             }],
             ..MetaState::default()
         };
@@ -5275,6 +6751,7 @@ mod tests {
                 index: 2,
                 essential: true,
             }],
+            token: AllocationToken::new(AllocationClass::Metadata),
         }];
         merge_ipma(
             &mut target,
@@ -5284,6 +6761,7 @@ mod tests {
                     index: 1,
                     essential: false,
                 }],
+                token: AllocationToken::new(AllocationClass::Metadata),
             }],
         )
         .unwrap();
@@ -5310,6 +6788,7 @@ mod tests {
                 index: 1,
                 essential: false,
             }],
+            token: AllocationToken::new(AllocationClass::Metadata),
         }];
         let duplicate = merge_ipma(
             &mut target,
@@ -5319,6 +6798,7 @@ mod tests {
                     index: 1,
                     essential: true,
                 }],
+                token: AllocationToken::new(AllocationClass::Metadata),
             }],
         )
         .unwrap_err();
@@ -5376,6 +6856,7 @@ mod tests {
                         essential: false,
                     },
                 ],
+                token: AllocationToken::new(AllocationClass::Metadata),
             }],
             ..MetaState::default()
         };
@@ -5426,6 +6907,7 @@ mod tests {
                         essential: false,
                     })
                     .collect(),
+                token: AllocationToken::new(AllocationClass::Metadata),
             }],
             ..MetaState::default()
         };

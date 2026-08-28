@@ -26,9 +26,9 @@ use crate::av1::{
 };
 use crate::compat::{DataMap, DecodeOptions};
 use crate::container::{
-    AvifAnimation, AvifInfo, ColorInformation, GridCell, ImageMirror, ImageRotation,
-    PixelInformation, SampleTransformInput, SampleTransformToken, grid_cell_alpha_item_id,
-    grid_has_cell_alpha, parse_avif, parse_sample_transform,
+    AuxiliaryImage, AvifAnimation, AvifInfo, ColorInformation, GridCell, ImageMirror,
+    ImageRotation, PixelInformation, SampleTransformInput, SampleTransformToken,
+    grid_cell_alpha_item_id, grid_has_cell_alpha, parse_avif, parse_sample_transform,
 };
 use crate::obu::{ObuType, find_obu_payloads_in_parts, parse_obu_stream};
 use crate::{DecoderError, ImageBuffer};
@@ -41,6 +41,8 @@ type Error = Box<dyn std::error::Error>;
 mod callback;
 mod composition;
 mod frame;
+#[cfg(test)]
+mod native_hookup_tests;
 #[allow(clippy::items_after_test_module)]
 mod sequence;
 #[allow(clippy::items_after_test_module)]
@@ -52,8 +54,8 @@ mod strict_grid_tests;
 
 pub use frame::{
     AvifSequenceDecoder, DecodedFrame, DecodedGainMapFrame, DecodedSequenceFrame,
-    decode_frame_bytes, decode_frame_bytes_strict, decode_gain_map_frame_bytes,
-    decode_sequence_frame_bytes, decode_sequence_frames_bytes,
+    decode_frame_bytes, decode_frame_bytes_strict, decode_frame_bytes_strict_with_limits,
+    decode_gain_map_frame_bytes, decode_sequence_frame_bytes, decode_sequence_frames_bytes,
 };
 #[cfg(test)]
 use frame::{resample_gain_map, unpremultiply_rgba8, unpremultiply_rgba16};
@@ -167,7 +169,7 @@ pub fn decode_bytes(data: &[u8]) -> Result<ImageBuffer, DecoderError> {
     decode_still_image(&headers, Some(&info))
 }
 
-struct Av1Headers {
+pub(super) struct Av1Headers {
     config: Option<Av1CodecConfiguration>,
     sequence: SequenceHeader,
     frame: FrameHeader,
@@ -188,6 +190,51 @@ struct ParsedTileGroup {
     residual_probes: Vec<ResidualProbe>,
 }
 
+/// Borrowed metadata needed while parsing one AV1 item.  Native auxiliary
+/// items use this source directly instead of fabricating a cloned `AvifInfo`;
+/// the legacy parser still constructs the same view from the public
+/// container projection.
+#[derive(Clone, Copy)]
+pub(super) struct ItemHeaderSource<'a> {
+    pub(super) payload: &'a [u8],
+    pub(super) pixel_information: Option<&'a PixelInformation>,
+    pub(super) color_information: Option<&'a ColorInformation>,
+    pub(super) width: Option<u32>,
+    pub(super) height: Option<u32>,
+    pub(super) av1_config: Option<&'a [u8]>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct ItemHeaderParts<'a> {
+    pub(super) sequence_payload: &'a [u8],
+    pub(super) frame_payload: Option<&'a [u8]>,
+    pub(super) frame_header_payload: Option<&'a [u8]>,
+}
+
+impl<'a> ItemHeaderSource<'a> {
+    fn from_info(info: &'a AvifInfo) -> Self {
+        Self {
+            payload: &info.primary_item_payload,
+            pixel_information: info.pixel_information.as_ref(),
+            color_information: info.color_information.as_ref(),
+            width: info.width,
+            height: info.height,
+            av1_config: info.av1_config.as_deref(),
+        }
+    }
+
+    pub(super) fn from_auxiliary(auxiliary: &'a AuxiliaryImage) -> Self {
+        Self {
+            payload: &auxiliary.payload,
+            pixel_information: None,
+            color_information: None,
+            width: None,
+            height: None,
+            av1_config: None,
+        }
+    }
+}
+
 fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
     parse_av1_headers_from_parts_with_references(
         info,
@@ -197,42 +244,113 @@ fn parse_av1_headers(info: &AvifInfo) -> Result<Av1Headers, DecoderError> {
     )
 }
 
+fn parse_av1_headers_with_frame_prefix(
+    info: &AvifInfo,
+    frame_prefix: crate::av1::FramePrefix<'_, '_>,
+) -> Result<Av1Headers, DecoderError> {
+    parse_av1_headers_from_parts_with_prefix(
+        info,
+        &[&info.primary_item_payload],
+        info.av1_config.as_deref(),
+        &[None; 8],
+        Some(frame_prefix),
+    )
+}
+
 fn parse_av1_headers_from_parts_with_references(
     info: &AvifInfo,
     payloads: &[&[u8]],
     av1_config: Option<&[u8]>,
     references: &[Option<ReferenceFrameState>; 8],
 ) -> Result<Av1Headers, DecoderError> {
+    let source = ItemHeaderSource::from_info(info);
+    parse_av1_headers_from_source_with_prefix(&source, payloads, av1_config, references, None, None)
+}
+
+fn parse_av1_headers_from_parts_with_prefix(
+    info: &AvifInfo,
+    payloads: &[&[u8]],
+    av1_config: Option<&[u8]>,
+    references: &[Option<ReferenceFrameState>; 8],
+    frame_prefix: Option<crate::av1::FramePrefix<'_, '_>>,
+) -> Result<Av1Headers, DecoderError> {
+    let source = ItemHeaderSource::from_info(info);
+    parse_av1_headers_from_source_with_prefix(
+        &source,
+        payloads,
+        av1_config,
+        references,
+        frame_prefix,
+        None,
+    )
+}
+
+pub(super) fn parse_av1_headers_for_item_with_prefix(
+    source: &ItemHeaderSource<'_>,
+    parts: ItemHeaderParts<'_>,
+    frame_prefix: crate::av1::FramePrefix<'_, '_>,
+) -> Result<Av1Headers, DecoderError> {
+    parse_av1_headers_from_source_with_prefix(
+        source,
+        &[source.payload],
+        source.av1_config,
+        &[None; 8],
+        Some(frame_prefix),
+        Some(parts),
+    )
+}
+
+fn parse_av1_headers_from_source_with_prefix(
+    source: &ItemHeaderSource<'_>,
+    payloads: &[&[u8]],
+    av1_config: Option<&[u8]>,
+    references: &[Option<ReferenceFrameState>; 8],
+    mut frame_prefix: Option<crate::av1::FramePrefix<'_, '_>>,
+    header_parts: Option<ItemHeaderParts<'_>>,
+) -> Result<Av1Headers, DecoderError> {
     let [
         sequence_payload,
         frame_payload,
         frame_header_payload,
         _tile_group_payload,
-    ] = find_obu_payloads_in_parts(
-        payloads,
+    ] = if let Some(parts) = header_parts {
         [
-            ObuType::SequenceHeader,
-            ObuType::Frame,
-            ObuType::FrameHeader,
-            ObuType::TileGroup,
-        ],
-    )?;
+            Some(parts.sequence_payload),
+            parts.frame_payload,
+            parts.frame_header_payload,
+            None,
+        ]
+    } else {
+        find_obu_payloads_in_parts(
+            payloads,
+            [
+                ObuType::SequenceHeader,
+                ObuType::Frame,
+                ObuType::FrameHeader,
+                ObuType::TileGroup,
+            ],
+        )?
+    };
     let sequence_payload = sequence_payload
         .ok_or_else(|| DecoderError::Bitstream("AV1 sequence header OBU is missing".to_string()))?;
     let (sequence, sequence_metadata) = parse_sequence_header_with_metadata(sequence_payload)?;
-    validate_extended_pixi(info.pixel_information.as_ref(), &sequence.color_config)?;
-    validate_color_metadata(info.color_information.as_ref(), &sequence.color_config)?;
+    validate_extended_pixi(source.pixel_information, &sequence.color_config)?;
+    validate_color_metadata(source.color_information, &sequence.color_config)?;
     let config = av1_config.map(parse_av1_config).transpose()?;
     if let Some(config) = config {
         validate_av1_config(&config, &sequence)?;
     }
     let (frame, tile_group_payload) = if let Some(frame_payload) = frame_payload {
-        let frame = parse_frame_header_with_references_and_metadata(
-            frame_payload,
-            &sequence,
-            &sequence_metadata,
-            references,
-        )?;
+        let frame = if let Some(prefix) = frame_prefix.take() {
+            crate::av1::finish_frame_header(prefix)?
+        } else {
+            parse_frame_header_with_references_and_metadata(
+                frame_payload,
+                &sequence,
+                &sequence_metadata,
+                references,
+            )?
+        };
         if frame.payload_after_header_offset > frame_payload.len() {
             return Err(DecoderError::Bitstream(
                 "AV1 frame payload offset points outside OBU_FRAME".to_string(),
@@ -269,12 +387,16 @@ fn parse_av1_headers_from_parts_with_references(
         let frame_header_payload = frame_header_payload.ok_or_else(|| {
             DecoderError::Bitstream("AV1 frame header OBU is missing".to_string())
         })?;
-        let frame = parse_frame_header_with_references_and_metadata(
-            frame_header_payload,
-            &sequence,
-            &sequence_metadata,
-            references,
-        )?;
+        let frame = if let Some(prefix) = frame_prefix.take() {
+            crate::av1::finish_frame_header(prefix)?
+        } else {
+            parse_frame_header_with_references_and_metadata(
+                frame_header_payload,
+                &sequence,
+                &sequence_metadata,
+                references,
+            )?
+        };
         // A primary item may carry an AV1 sequence. The still-image API
         // exposes the first frame, so stop collecting tiles at the next
         // frame boundary instead of mixing subsequent frames into it.
@@ -319,7 +441,7 @@ fn parse_av1_headers_from_parts_with_references(
             },
         )
     };
-    if let Some(width) = info.width
+    if let Some(width) = source.width
         && width != frame.upscaled_width
     {
         return Err(DecoderError::Bitstream(format!(
@@ -327,7 +449,7 @@ fn parse_av1_headers_from_parts_with_references(
             frame.upscaled_width
         )));
     }
-    if let Some(height) = info.height
+    if let Some(height) = source.height
         && height != frame.frame_height
     {
         return Err(DecoderError::Bitstream(format!(

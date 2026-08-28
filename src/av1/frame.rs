@@ -236,12 +236,81 @@ pub(crate) fn parse_frame_header_with_references(
     )
 }
 
+/// Borrowed AV1 header state at the boundary immediately before tile syntax.
+/// The reader is moved into `finish_frame_header`, so the payload is never
+/// reparsed and no tile-owned vectors are created by the prefix grammar.
+pub(crate) struct FramePrefix<'data, 'refs> {
+    reader: BitReader<'data>,
+    sequence: SequenceHeader,
+    references: &'refs [Option<ReferenceFrameState>; 8],
+    frame_type: FrameType,
+    show_existing_frame: bool,
+    show_frame: bool,
+    showable_frame: bool,
+    error_resilient_mode: bool,
+    disable_cdf_update: bool,
+    allow_screen_content_tools: bool,
+    force_integer_mv: u8,
+    frame_size_override_flag: bool,
+    order_hint: u32,
+    primary_ref_frame: u8,
+    refresh_frame_flags: u8,
+    reference_frame_indices: [u8; 7],
+    reference_order_hints: [Option<u32>; 7],
+    frame_refs_short_signaling: bool,
+    frame_id: Option<u16>,
+    allow_high_precision_mv: bool,
+    is_filter_switchable: bool,
+    interpolation_filter: InterpolationFilter,
+    is_motion_mode_switchable: bool,
+    use_ref_frame_mvs: bool,
+    frame_size: FrameSize,
+    render_size: RenderSize,
+    allow_intrabc: bool,
+    disable_frame_end_update_cdf: bool,
+    frame_is_intra: bool,
+}
+
+/// Native still-image validation has no decoded reference-frame state. Keep
+/// this table static so a borrowed prefix can safely cross the validation
+/// helper boundary without inventing an owned reference allocation.
+pub(crate) static NO_REFERENCES: [Option<ReferenceFrameState>; 8] = [None; 8];
+
+impl FramePrefix<'_, '_> {
+    pub(crate) fn geometry(&self) -> (u32, u32, u32, u32, u32) {
+        (
+            self.frame_size.width,
+            self.frame_size.height,
+            self.frame_size.upscaled_width,
+            self.render_size.width,
+            self.render_size.height,
+        )
+    }
+
+    /// Whether this prefix describes a displayed frame rather than a hidden
+    /// frame.  Native still decoding must inspect this scalar before it
+    /// resumes the prefix into tile syntax.
+    pub(crate) fn show_frame(&self) -> bool {
+        self.show_frame
+    }
+}
+
 pub(crate) fn parse_frame_header_with_references_and_metadata(
     data: &[u8],
     sequence: &SequenceHeader,
     sequence_metadata: &SequenceHeaderMetadata,
     references: &[Option<ReferenceFrameState>; 8],
 ) -> Result<FrameHeader, DecoderError> {
+    let prefix = parse_frame_prefix(data, sequence, sequence_metadata, references)?;
+    finish_frame_header(prefix)
+}
+
+pub(crate) fn parse_frame_prefix<'a, 'refs>(
+    data: &'a [u8],
+    sequence: &SequenceHeader,
+    sequence_metadata: &SequenceHeaderMetadata,
+    references: &'refs [Option<ReferenceFrameState>; 8],
+) -> Result<FramePrefix<'a, 'refs>, DecoderError> {
     let mut reader = BitReader::new(data);
 
     if sequence.reduced_still_picture_header {
@@ -257,28 +326,10 @@ pub(crate) fn parse_frame_header_with_references_and_metadata(
             } else {
                 false
             };
-        let tile_info =
-            parse_tile_info(&mut reader, sequence, frame_size.width, frame_size.height)?;
-        let trailing = parse_frame_header_trailing_params(
-            &mut reader,
-            sequence,
-            allow_intrabc,
-            FrameType::Key,
-            true,
-            0,
-            [0; 7],
-            &[None; 8],
-            7,
-        )?;
-        let film_grain = parse_film_grain_params(
-            &mut reader,
-            sequence,
-            FrameType::Key,
-            true,
-            false,
-            &[None; 8],
-        )?;
-        return Ok(FrameHeader {
+        return Ok(FramePrefix {
+            reader,
+            sequence: *sequence,
+            references,
             frame_type: FrameType::Key,
             show_existing_frame: false,
             show_frame: true,
@@ -300,32 +351,11 @@ pub(crate) fn parse_frame_header_with_references_and_metadata(
             interpolation_filter: InterpolationFilter::Regular,
             is_motion_mode_switchable: false,
             use_ref_frame_mvs: false,
-            reference_select: false,
-            skip_mode_present: false,
-            skip_mode_frame: [0; 2],
-            allow_warped_motion: false,
-            global_motion: GlobalMotionParams::default(),
-            frame_width: frame_size.width,
-            frame_height: frame_size.height,
-            upscaled_width: frame_size.upscaled_width,
-            render_width: render_size.width,
-            render_height: render_size.height,
+            frame_size,
+            render_size,
             allow_intrabc,
             disable_frame_end_update_cdf: false,
-            tile_info,
-            base_q_idx: trailing.quantization.base_q_idx,
-            quantization: trailing.quantization,
-            segmentation: trailing.segmentation,
-            delta_q: trailing.delta_q,
-            delta_lf: trailing.delta_lf,
-            loop_filter: trailing.loop_filter,
-            cdef: trailing.cdef,
-            restoration: trailing.restoration,
-            tx_mode: trailing.tx_mode,
-            reduced_tx_set: trailing.reduced_tx_set,
-            film_grain,
-            uncompressed_header_bits: reader.bit_position(),
-            payload_after_header_offset: reader.byte_position_ceil(),
+            frame_is_intra: true,
         });
     }
 
@@ -483,52 +513,10 @@ pub(crate) fn parse_frame_header_with_references_and_metadata(
         );
     }
     let disable_frame_end_update_cdf = reader.read_bool("disable_frame_end_update_cdf")?;
-    let tile_info = parse_tile_info(&mut reader, sequence, frame_size.width, frame_size.height)?;
-    #[cfg(test)]
-    if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && order_hint == 5 {
-        eprintln!(
-            "entropy-trace header-step step=tile-info position={}",
-            reader.bit_position()
-        );
-    }
-    let trailing = parse_frame_header_trailing_params(
-        &mut reader,
-        sequence,
-        allow_intrabc,
-        frame_type,
-        error_resilient_mode,
-        order_hint,
-        reference_frame_indices,
+    Ok(FramePrefix {
+        reader,
+        sequence: *sequence,
         references,
-        primary_ref_frame,
-    )?;
-    #[cfg(test)]
-    if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && order_hint == 5 {
-        eprintln!(
-            "entropy-trace header-step step=trailing position={}",
-            reader.bit_position()
-        );
-    }
-    let global_motion = if !frame_is_intra {
-        read_global_motion_params(
-            &mut reader,
-            allow_high_precision_mv,
-            &reference_frame_indices,
-            references,
-            primary_ref_frame,
-        )?
-    } else {
-        GlobalMotionParams::default()
-    };
-    let film_grain = parse_film_grain_params(
-        &mut reader,
-        sequence,
-        frame_type,
-        show_frame,
-        showable_frame,
-        references,
-    )?;
-    Ok(FrameHeader {
         frame_type,
         show_existing_frame,
         show_frame,
@@ -550,18 +538,111 @@ pub(crate) fn parse_frame_header_with_references_and_metadata(
         interpolation_filter,
         is_motion_mode_switchable,
         use_ref_frame_mvs,
+        frame_size,
+        render_size,
+        allow_intrabc,
+        disable_frame_end_update_cdf,
+        frame_is_intra,
+    })
+}
+
+pub(crate) fn finish_frame_header(
+    mut prefix: FramePrefix<'_, '_>,
+) -> Result<FrameHeader, DecoderError> {
+    let sequence = &prefix.sequence;
+    // Reduced still-picture headers have no reference-frame syntax.  Keep the
+    // legacy parser's fixed NONE table for the trailing and film-grain stages;
+    // a caller-supplied table must not leak into this path.
+    let reduced_references = [None; 8];
+    let references = if prefix.sequence.reduced_still_picture_header {
+        &reduced_references
+    } else {
+        prefix.references
+    };
+    let tile_info = parse_tile_info(
+        &mut prefix.reader,
+        sequence,
+        prefix.frame_size.width,
+        prefix.frame_size.height,
+    )?;
+    #[cfg(test)]
+    if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && prefix.order_hint == 5 {
+        eprintln!(
+            "entropy-trace header-step step=tile-info position={}",
+            prefix.reader.bit_position()
+        );
+    }
+    let trailing = parse_frame_header_trailing_params(
+        &mut prefix.reader,
+        sequence,
+        prefix.allow_intrabc,
+        prefix.frame_type,
+        prefix.error_resilient_mode,
+        prefix.order_hint,
+        prefix.reference_frame_indices,
+        references,
+        prefix.primary_ref_frame,
+    )?;
+    #[cfg(test)]
+    if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && prefix.order_hint == 5 {
+        eprintln!(
+            "entropy-trace header-step step=trailing position={}",
+            prefix.reader.bit_position()
+        );
+    }
+    let global_motion = if !prefix.frame_is_intra {
+        read_global_motion_params(
+            &mut prefix.reader,
+            prefix.allow_high_precision_mv,
+            &prefix.reference_frame_indices,
+            references,
+            prefix.primary_ref_frame,
+        )?
+    } else {
+        GlobalMotionParams::default()
+    };
+    let film_grain = parse_film_grain_params(
+        &mut prefix.reader,
+        sequence,
+        prefix.frame_type,
+        prefix.show_frame,
+        prefix.showable_frame,
+        references,
+    )?;
+    Ok(FrameHeader {
+        frame_type: prefix.frame_type,
+        show_existing_frame: prefix.show_existing_frame,
+        show_frame: prefix.show_frame,
+        showable_frame: prefix.showable_frame,
+        error_resilient_mode: prefix.error_resilient_mode,
+        disable_cdf_update: prefix.disable_cdf_update,
+        allow_screen_content_tools: prefix.allow_screen_content_tools,
+        force_integer_mv: prefix.force_integer_mv,
+        frame_size_override_flag: prefix.frame_size_override_flag,
+        order_hint: prefix.order_hint,
+        primary_ref_frame: prefix.primary_ref_frame,
+        refresh_frame_flags: prefix.refresh_frame_flags,
+        reference_frame_indices: prefix.reference_frame_indices,
+        reference_order_hints: prefix.reference_order_hints,
+        frame_refs_short_signaling: prefix.frame_refs_short_signaling,
+        frame_id: prefix.frame_id,
+        allow_high_precision_mv: prefix.allow_high_precision_mv,
+        is_filter_switchable: prefix.is_filter_switchable,
+        interpolation_filter: prefix.interpolation_filter,
+        is_motion_mode_switchable: prefix.is_motion_mode_switchable,
+        use_ref_frame_mvs: prefix.use_ref_frame_mvs,
         reference_select: trailing.reference_select,
         skip_mode_present: trailing.skip_mode_present,
         skip_mode_frame: trailing.skip_mode_frame,
         allow_warped_motion: trailing.allow_warped_motion,
         global_motion,
-        frame_width: frame_size.width,
-        frame_height: frame_size.height,
-        upscaled_width: frame_size.upscaled_width,
-        render_width: render_size.width,
-        render_height: render_size.height,
-        allow_intrabc,
-        disable_frame_end_update_cdf,
+        frame_width: prefix.frame_size.width,
+        frame_height: prefix.frame_size.height,
+        upscaled_width: prefix.frame_size.upscaled_width,
+        render_width: prefix.render_size.width,
+        render_height: prefix.render_size.height,
+        allow_intrabc: prefix.allow_intrabc,
+        disable_frame_end_update_cdf: prefix.disable_frame_end_update_cdf,
         tile_info,
         base_q_idx: trailing.quantization.base_q_idx,
         quantization: trailing.quantization,
@@ -574,8 +655,8 @@ pub(crate) fn parse_frame_header_with_references_and_metadata(
         tx_mode: trailing.tx_mode,
         reduced_tx_set: trailing.reduced_tx_set,
         film_grain,
-        uncompressed_header_bits: reader.bit_position(),
-        payload_after_header_offset: reader.byte_position_ceil(),
+        uncompressed_header_bits: prefix.reader.bit_position(),
+        payload_after_header_offset: prefix.reader.byte_position_ceil(),
     })
 }
 
@@ -2564,3 +2645,7 @@ mod tests {
         assert_eq!(reader.bit_position(), 17);
     }
 }
+
+#[cfg(test)]
+#[path = "frame_prefix_tests.rs"]
+mod frame_prefix_tests;
