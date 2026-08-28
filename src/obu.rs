@@ -40,18 +40,60 @@ pub struct Obu<'a> {
     pub payload: &'a [u8],
 }
 
+/// A borrowed, allocation-free OBU stream iterator.
+///
+/// The parser is deliberately kept in [`read_next_obu`], so the iterator and
+/// the legacy collecting/searching helpers use exactly the same framing and
+/// diagnostics.  Once a malformed OBU is observed, the error is yielded once
+/// and the iterator is fused; callers cannot accidentally continue after a
+/// failed boundary check.
+pub(crate) struct ObuIter<'a> {
+    data: &'a [u8],
+    offset: usize,
+    failed: bool,
+}
+
+impl<'a> ObuIter<'a> {
+    pub(crate) fn new(data: &'a [u8]) -> Self {
+        Self {
+            data,
+            offset: 0,
+            failed: false,
+        }
+    }
+}
+
+impl<'a> Iterator for ObuIter<'a> {
+    type Item = Result<Obu<'a>, DecoderError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.failed || self.offset >= self.data.len() {
+            return None;
+        }
+        match read_next_obu(self.data, &mut self.offset) {
+            Ok(Some(obu)) => Some(Ok(obu)),
+            Ok(None) => None,
+            Err(error) => {
+                self.failed = true;
+                Some(Err(error))
+            }
+        }
+    }
+}
+
+impl std::iter::FusedIterator for ObuIter<'_> {}
+
 pub fn parse_obu_stream(data: &[u8]) -> Result<Vec<Obu<'_>>, DecoderError> {
-    let mut offset = 0usize;
     let mut obus = Vec::new();
-    while let Some(obu) = read_next_obu(data, &mut offset)? {
-        obus.push(obu);
+    for obu in ObuIter::new(data) {
+        obus.push(obu?);
     }
     Ok(obus)
 }
 
 pub fn find_obu_payload(data: &[u8], target: ObuType) -> Result<Option<&[u8]>, DecoderError> {
-    let mut offset = 0usize;
-    while let Some(obu) = read_next_obu(data, &mut offset)? {
+    for obu in ObuIter::new(data) {
+        let obu = obu?;
         if obu.obu_type == target {
             return Ok(Some(obu.payload));
         }
@@ -60,9 +102,9 @@ pub fn find_obu_payload(data: &[u8], target: ObuType) -> Result<Option<&[u8]>, D
 }
 
 pub fn count_obus(data: &[u8], target: ObuType) -> Result<usize, DecoderError> {
-    let mut offset = 0usize;
     let mut count = 0usize;
-    while let Some(obu) = read_next_obu(data, &mut offset)? {
+    for obu in ObuIter::new(data) {
+        let obu = obu?;
         if obu.obu_type == target {
             count = count
                 .checked_add(1)
@@ -89,8 +131,8 @@ pub fn find_obu_payloads_in_parts<'a, const N: usize>(
 ) -> Result<[Option<&'a [u8]>; N], DecoderError> {
     let mut payloads = [None; N];
     for part in parts {
-        let mut offset = 0usize;
-        while let Some(obu) = read_next_obu(part, &mut offset)? {
+        for obu in ObuIter::new(part) {
+            let obu = obu?;
             for (index, target) in targets.iter().enumerate() {
                 if payloads[index].is_none() && obu.obu_type == *target {
                     payloads[index] = Some(obu.payload);
@@ -103,6 +145,10 @@ pub fn find_obu_payloads_in_parts<'a, const N: usize>(
     }
     Ok(payloads)
 }
+
+#[cfg(test)]
+#[path = "obu_iter_tests.rs"]
+mod obu_iter_tests;
 
 fn read_next_obu<'a>(data: &'a [u8], offset: &mut usize) -> Result<Option<Obu<'a>>, DecoderError> {
     if *offset >= data.len() {
