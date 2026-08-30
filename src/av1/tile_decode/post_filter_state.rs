@@ -720,7 +720,7 @@ pub(crate) fn wiener_filter_unit_into_with_scratch_bit_depth_visible(
     source: &[u16],
     output: &mut [u16],
     width: usize,
-    _height: usize,
+    height: usize,
     visible_width: usize,
     visible_height: usize,
     origin_x: usize,
@@ -731,12 +731,61 @@ pub(crate) fn wiener_filter_unit_into_with_scratch_bit_depth_visible(
     bit_depth: u8,
     horizontal_scratch: &mut Vec<i32>,
 ) {
+    let output_width = unit_width.min(visible_width.saturating_sub(origin_x));
+    let output_height = unit_height.min(visible_height.saturating_sub(origin_y));
+    let scratch_len = output_width
+        .checked_mul(output_height.saturating_add(6))
+        .unwrap_or(0);
+    horizontal_scratch.resize(scratch_len, 0);
+    wiener_filter_unit_into_with_fixed_scratch_bit_depth_visible(
+        source,
+        output,
+        width,
+        height,
+        visible_width,
+        visible_height,
+        origin_x,
+        origin_y,
+        unit_width,
+        unit_height,
+        filters,
+        bit_depth,
+        horizontal_scratch,
+    );
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "strict scalar Wiener kernel uses preallocated fixed slices"
+)]
+pub(crate) fn wiener_filter_unit_into_with_fixed_scratch_bit_depth_visible(
+    source: &[u16],
+    output: &mut [u16],
+    width: usize,
+    _height: usize,
+    visible_width: usize,
+    visible_height: usize,
+    origin_x: usize,
+    origin_y: usize,
+    unit_width: usize,
+    unit_height: usize,
+    filters: [[i16; 3]; 2],
+    bit_depth: u8,
+    horizontal_scratch: &mut [i32],
+) {
     const FILTER_BITS: u32 = 7;
     const ROUND_0_BITS: u32 = 3;
     const ROUND_1_BITS: u32 = 2 * FILTER_BITS - ROUND_0_BITS;
     let output_width = unit_width.min(visible_width.saturating_sub(origin_x));
     let output_height = unit_height.min(visible_height.saturating_sub(origin_y));
     if output_width == 0 || output_height == 0 {
+        return;
+    }
+    let scratch_len = match output_width.checked_mul(output_height + 6) {
+        Some(length) => length,
+        None => return,
+    };
+    if horizontal_scratch.len() < scratch_len {
         return;
     }
     let sample = |x: isize, y: isize| {
@@ -769,7 +818,6 @@ pub(crate) fn wiener_filter_unit_into_with_scratch_bit_depth_visible(
     let horizontal_kernel = residual_kernel(1);
     let vertical_kernel = residual_kernel(0);
     let intermediate_height = output_height + 6;
-    horizontal_scratch.resize(output_width * intermediate_height, 0);
     let horizontal = &mut horizontal_scratch[..output_width * intermediate_height];
     let horizontal_offset = 1_i32 << (u32::from(bit_depth) + FILTER_BITS - 1);
     let horizontal_limit = (1_i32 << (u32::from(bit_depth) + 1 + FILTER_BITS - ROUND_0_BITS)) - 1;
@@ -954,7 +1002,7 @@ pub(crate) fn sgrproj_filter_unit_into_with_scratch_bit_depth_visible(
     source: &[u16],
     output: &mut [u16],
     width: usize,
-    _height: usize,
+    height: usize,
     visible_width: usize,
     visible_height: usize,
     origin_x: usize,
@@ -965,6 +1013,72 @@ pub(crate) fn sgrproj_filter_unit_into_with_scratch_bit_depth_visible(
     xqd: [i16; 2],
     bit_depth: u8,
     scratch: &mut [Vec<i32>; 4],
+) {
+    let output_width = unit_width.min(visible_width.saturating_sub(origin_x));
+    let output_height = unit_height.min(visible_height.saturating_sub(origin_y));
+    let scratch_len = output_width
+        .checked_add(4)
+        .and_then(|value| {
+            output_height
+                .checked_add(4)
+                .and_then(|height| value.checked_mul(height))
+        })
+        .unwrap_or(0);
+    let index = usize::from(sgr_index.min(15));
+    let first_radius = index < 10 || index >= 14;
+    let second_radius = index < 14;
+    if first_radius {
+        scratch[0].resize(scratch_len, 0);
+        scratch[1].resize(scratch_len, 0);
+    }
+    if second_radius {
+        scratch[2].resize(scratch_len, 0);
+        scratch[3].resize(scratch_len, 0);
+    }
+    let [first, second, third, fourth] = scratch;
+    let mut fixed = [
+        &mut first[..],
+        &mut second[..],
+        &mut third[..],
+        &mut fourth[..],
+    ];
+    sgrproj_filter_unit_into_with_fixed_scratch_bit_depth_visible(
+        source,
+        output,
+        width,
+        height,
+        visible_width,
+        visible_height,
+        origin_x,
+        origin_y,
+        unit_width,
+        unit_height,
+        sgr_index,
+        xqd,
+        bit_depth,
+        &mut fixed,
+    );
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "strict scalar SGRPROJ kernel uses preallocated fixed slices"
+)]
+pub(crate) fn sgrproj_filter_unit_into_with_fixed_scratch_bit_depth_visible(
+    source: &[u16],
+    output: &mut [u16],
+    width: usize,
+    _height: usize,
+    visible_width: usize,
+    visible_height: usize,
+    origin_x: usize,
+    origin_y: usize,
+    unit_width: usize,
+    unit_height: usize,
+    sgr_index: u8,
+    xqd: [i16; 2],
+    bit_depth: u8,
+    scratch: &mut [&mut [i32]; 4],
 ) {
     const RADII: [[usize; 2]; 16] = [
         [2, 1],
@@ -1008,6 +1122,22 @@ pub(crate) fn sgrproj_filter_unit_into_with_scratch_bit_depth_visible(
     if output_width == 0 || output_height == 0 {
         return;
     }
+    let scratch_len = match output_width.checked_add(4).and_then(|value| {
+        output_height
+            .checked_add(4)
+            .and_then(|height| value.checked_mul(height))
+    }) {
+        Some(length) => length,
+        None => return,
+    };
+    let first_needs_scratch = RADII[index][0] != 0;
+    let second_needs_scratch = RADII[index][1] != 0;
+    if (first_needs_scratch && (scratch[0].len() < scratch_len || scratch[1].len() < scratch_len))
+        || (second_needs_scratch
+            && (scratch[2].len() < scratch_len || scratch[3].len() < scratch_len))
+    {
+        return;
+    }
     let sample = |x: isize, y: isize| {
         restoration_sample_with_visible_bounds(
             source,
@@ -1027,11 +1157,12 @@ pub(crate) fn sgrproj_filter_unit_into_with_scratch_bit_depth_visible(
         |value: i64, shift: u32| -> i64 { (value + (1_i64 << shift.saturating_sub(1))) >> shift };
     let bd_shift = u32::from(bit_depth.saturating_sub(8));
     let max_sample = ((1_u32 << u32::from(bit_depth.min(16))) - 1) as i32;
-    let intermediate = |radius: usize, scale: i32, a: &mut Vec<i32>, b: &mut Vec<i32>| -> usize {
+    let intermediate = |radius: usize, scale: i32, a: &mut [i32], b: &mut [i32]| -> usize {
         let stride = output_width + 4;
         let scratch_len = (output_height + 4) * stride;
-        a.resize(scratch_len, 0);
-        b.resize(scratch_len, 0);
+        if a.len() < scratch_len || b.len() < scratch_len {
+            return 0;
+        }
         let side = radius * 2 + 1;
         let n = (side * side) as i64;
         if bit_depth == 8 {
@@ -1688,7 +1819,7 @@ impl PostFilterState {
         }
     }
 
-    fn is_empty(&self) -> bool {
+    pub(super) fn is_empty(&self) -> bool {
         self.cdef_units.is_empty()
             && self.cdef_blocks.is_empty()
             && self.transform_boundaries.is_empty()

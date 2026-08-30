@@ -47,6 +47,7 @@ pub struct Obu<'a> {
 /// diagnostics.  Once a malformed OBU is observed, the error is yielded once
 /// and the iterator is fused; callers cannot accidentally continue after a
 /// failed boundary check.
+#[derive(Clone)]
 pub(crate) struct ObuIter<'a> {
     data: &'a [u8],
     offset: usize,

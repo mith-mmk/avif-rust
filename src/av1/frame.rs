@@ -1,8 +1,11 @@
 use super::bitstream::BitReader;
 use super::sequence::{SequenceHeader, SequenceHeaderMetadata};
 use super::syntax::BlockSize;
-use super::tile::{TileInfo, parse_tile_info};
+use super::tile::{
+    NativeTileInfoAllocation, TileInfo, parse_tile_info, parse_tile_info_with_budget,
+};
 use crate::DecoderError;
+use crate::container::DecodeBudget;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameType {
@@ -549,6 +552,42 @@ pub(crate) fn parse_frame_prefix<'a, 'refs>(
 pub(crate) fn finish_frame_header(
     mut prefix: FramePrefix<'_, '_>,
 ) -> Result<FrameHeader, DecoderError> {
+    let tile_info = parse_tile_info(
+        &mut prefix.reader,
+        &prefix.sequence,
+        prefix.frame_size.width,
+        prefix.frame_size.height,
+    )?;
+    finish_frame_header_after_tile_info(prefix, tile_info)
+}
+
+/// Strict-native completion of the common header parser.  Only the TileInfo
+/// boundary arrays receive an allocation context here; all scalar grammar and
+/// the legacy wrapper above share `finish_frame_header_after_tile_info`.
+pub(crate) fn finish_frame_header_with_budget(
+    mut prefix: FramePrefix<'_, '_>,
+    budget: &mut DecodeBudget,
+) -> Result<(FrameHeader, NativeTileInfoAllocation), DecoderError> {
+    let (tile_info, mut allocation) = parse_tile_info_with_budget(
+        &mut prefix.reader,
+        &prefix.sequence,
+        prefix.frame_size.width,
+        prefix.frame_size.height,
+        budget,
+    )?;
+    match finish_frame_header_after_tile_info(prefix, tile_info) {
+        Ok(header) => Ok((header, allocation)),
+        Err(error) => {
+            allocation.release(budget)?;
+            Err(error)
+        }
+    }
+}
+
+fn finish_frame_header_after_tile_info(
+    mut prefix: FramePrefix<'_, '_>,
+    tile_info: TileInfo,
+) -> Result<FrameHeader, DecoderError> {
     let sequence = &prefix.sequence;
     // Reduced still-picture headers have no reference-frame syntax.  Keep the
     // legacy parser's fixed NONE table for the trailing and film-grain stages;
@@ -559,12 +598,6 @@ pub(crate) fn finish_frame_header(
     } else {
         prefix.references
     };
-    let tile_info = parse_tile_info(
-        &mut prefix.reader,
-        sequence,
-        prefix.frame_size.width,
-        prefix.frame_size.height,
-    )?;
     #[cfg(test)]
     if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() && prefix.order_hint == 5 {
         eprintln!(

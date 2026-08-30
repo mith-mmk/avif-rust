@@ -3,6 +3,9 @@ use super::sequence::SequenceHeader;
 use super::syntax::mi_dimension;
 use super::tile_group::TileGroup;
 use crate::DecoderError;
+use crate::allocation::{AllocationClass, AllocationTicket, admit_fresh_with, fresh_replacement};
+use crate::container::DecodeBudget;
+use crate::limits::NativeDecodeLimits;
 
 const MAX_PLANE_SAMPLE_ALLOCATION: usize = 1 << 28;
 
@@ -62,6 +65,29 @@ pub struct FrameDecodePlan {
     pub tiles: Vec<TileDecodePlan>,
 }
 
+/// Ownership tickets for the dynamic decode-plan tables created by the
+/// strict-native `OBU_FRAME` assembler.  The plan itself remains the public
+/// compatibility type; these tickets exist only until its private header is
+/// dropped.
+pub(crate) struct NativeDecodePlanAllocation {
+    planes: AllocationTicket,
+    tiles: AllocationTicket,
+}
+
+impl NativeDecodePlanAllocation {
+    fn new() -> Self {
+        Self {
+            planes: AllocationTicket::new(AllocationClass::Frame),
+            tiles: AllocationTicket::new(AllocationClass::Frame),
+        }
+    }
+
+    pub(crate) fn release(&mut self, budget: &mut DecodeBudget) -> Result<(), DecoderError> {
+        budget.release_token(&mut self.planes)?;
+        budget.release_token(&mut self.tiles)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlaneBuffer {
     pub layout: PlaneLayout,
@@ -73,6 +99,92 @@ pub struct FrameBuffers {
     pub width: usize,
     pub height: usize,
     pub planes: Vec<PlaneBuffer>,
+}
+
+/// Private ownership tickets for a frame allocated by the bounded native
+/// still decoder.  The public `FrameBuffers` layout remains unchanged; this
+/// sidecar exists only until the strict decode returns.
+pub(crate) struct NativeFrameAllocation {
+    outer: AllocationTicket,
+    samples: [Option<AllocationTicket>; 4],
+}
+
+impl NativeFrameAllocation {
+    fn new() -> Self {
+        Self {
+            outer: AllocationTicket::new(AllocationClass::Frame),
+            samples: std::array::from_fn(|_| None),
+        }
+    }
+
+    pub(crate) fn release(&mut self, budget: &mut DecodeBudget) -> Result<(), DecoderError> {
+        budget.release_token(&mut self.outer)?;
+        for ticket in self.samples.iter_mut().flatten() {
+            budget.release_token(ticket)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn take_plane_ticket(
+        &mut self,
+        index: usize,
+    ) -> Result<AllocationTicket, DecoderError> {
+        self.samples
+            .get_mut(index)
+            .and_then(Option::take)
+            .ok_or_else(|| {
+                DecoderError::InvalidParam("native AVIF plane ticket is missing".to_string())
+            })
+    }
+
+    pub(crate) fn release_outer(&mut self, budget: &mut DecodeBudget) -> Result<(), DecoderError> {
+        budget.release_token(&mut self.outer)
+    }
+
+    pub(crate) fn adopt_alpha(&mut self, ticket: AllocationTicket) -> Result<(), DecoderError> {
+        let slot = self.samples.get_mut(3).ok_or_else(|| {
+            DecoderError::InvalidParam("native AVIF alpha ticket slot is missing".to_string())
+        })?;
+        if slot.is_some() {
+            return Err(DecoderError::InvalidParam(
+                "native AVIF alpha ticket is already present".to_string(),
+            ));
+        }
+        *slot = Some(ticket);
+        Ok(())
+    }
+
+    pub(crate) fn grow_outer_for_alpha(
+        &mut self,
+        planes: &mut Vec<PlaneBuffer>,
+        budget: &mut DecodeBudget,
+    ) -> Result<(), DecoderError> {
+        self.grow_outer_for_alpha_with_maker(planes, budget, fresh_replacement::<PlaneBuffer>)
+    }
+
+    fn grow_outer_for_alpha_with_maker<F>(
+        &mut self,
+        planes: &mut Vec<PlaneBuffer>,
+        budget: &mut DecodeBudget,
+        make: F,
+    ) -> Result<(), DecoderError>
+    where
+        F: FnOnce(
+            usize,
+            &str,
+        )
+            -> Result<crate::allocation::FreshReplacement<PlaneBuffer>, DecoderError>,
+    {
+        crate::allocation::replace_vec_with_maker(
+            budget,
+            planes,
+            &mut self.outer,
+            1,
+            AllocationClass::Frame,
+            "native frame plane owner",
+            make,
+        )
+    }
 }
 
 pub fn build_still_decode_plan(
@@ -132,6 +244,117 @@ pub fn build_still_decode_plan(
         planes,
         tiles,
     })
+}
+
+/// Strict-native counterpart of [`build_still_decode_plan`].  The final
+/// `planes` and `tiles` tables are admitted before they are populated, rather
+/// than being made by an untracked legacy helper and moved into the plan.
+pub(crate) fn build_still_decode_plan_with_budget(
+    sequence: &SequenceHeader,
+    frame: &FrameHeader,
+    tile_group: &TileGroup,
+    budget: &mut DecodeBudget,
+) -> Result<(FrameDecodePlan, NativeDecodePlanAllocation), DecoderError> {
+    validate_complete_tile_group(
+        frame.tile_info.tile_cols,
+        frame.tile_info.tile_rows,
+        tile_group,
+    )?;
+    if frame.frame_width == 0 || frame.frame_height == 0 {
+        return Err(DecoderError::Bitstream(
+            "AV1 frame dimensions must be non-zero".to_string(),
+        ));
+    }
+
+    let width = usize::try_from(frame.frame_width)
+        .map_err(|_| DecoderError::InvalidParam("AV1 frame width is too large".to_string()))?;
+    let height = usize::try_from(frame.frame_height)
+        .map_err(|_| DecoderError::InvalidParam("AV1 frame height is too large".to_string()))?;
+    let upscaled_width = usize::try_from(frame.upscaled_width)
+        .map_err(|_| DecoderError::InvalidParam("AV1 upscaled width is too large".to_string()))?;
+    let superblock_size: usize = if sequence.use_128x128_superblock {
+        128
+    } else {
+        64
+    };
+    let superblock_mi = superblock_size / 4;
+    let mi_cols = usize::try_from(mi_dimension(frame.frame_width))
+        .map_err(|_| DecoderError::InvalidParam("AV1 frame width is too large".to_string()))?;
+    let mi_rows = usize::try_from(mi_dimension(frame.frame_height))
+        .map_err(|_| DecoderError::InvalidParam("AV1 frame height is too large".to_string()))?;
+    let superblock_cols = round_shift_usize(mi_cols, superblock_mi.trailing_zeros() as u8) as u32;
+    let superblock_rows = round_shift_usize(mi_rows, superblock_mi.trailing_zeros() as u8) as u32;
+    let plane_count = if sequence.color_config.monochrome {
+        1
+    } else {
+        3
+    };
+    let tile_count = tile_group.tiles.len();
+
+    let mut allocation = NativeDecodePlanAllocation::new();
+    let result = (|| {
+        let (mut plane_candidate, plane_ticket) = admit_fresh_with(
+            budget,
+            plane_count,
+            AllocationClass::Frame,
+            "native AV1 decode plan planes",
+            fresh_replacement::<PlaneLayout>,
+        )?;
+        allocation.planes = plane_ticket;
+        for plane in 0..plane_count {
+            let layout =
+                plane_layout_for_geometry(sequence, width, height, plane)?.ok_or_else(|| {
+                    DecoderError::InvalidParam("AV1 decode plan plane is missing".to_string())
+                })?;
+            plane_candidate.values_mut().push(layout);
+        }
+
+        let (mut tile_candidate, tile_ticket) = admit_fresh_with(
+            budget,
+            tile_count,
+            AllocationClass::Frame,
+            "native AV1 decode plan tiles",
+            fresh_replacement::<TileDecodePlan>,
+        )?;
+        allocation.tiles = tile_ticket;
+        populate_tile_plans(
+            tile_candidate.values_mut(),
+            frame,
+            tile_group,
+            width,
+            height,
+            superblock_mi as u32,
+        )?;
+
+        Ok(FrameDecodePlan {
+            width,
+            height,
+            upscaled_width,
+            render_width: usize::try_from(frame.render_width).map_err(|_| {
+                DecoderError::InvalidParam("AV1 render width is too large".to_string())
+            })?,
+            render_height: usize::try_from(frame.render_height).map_err(|_| {
+                DecoderError::InvalidParam("AV1 render height is too large".to_string())
+            })?,
+            bit_depth: sequence.color_config.bit_depth,
+            base_q_idx: frame.base_q_idx,
+            tx_mode: frame.tx_mode,
+            superblock_size,
+            superblock_cols,
+            superblock_rows,
+            uses_cdef: frame.cdef.enabled,
+            uses_restoration: frame.restoration.uses_lr,
+            planes: plane_candidate.into_vec(),
+            tiles: tile_candidate.into_vec(),
+        })
+    })();
+    match result {
+        Ok(plan) => Ok((plan, allocation)),
+        Err(error) => {
+            allocation.release(budget)?;
+            Err(error)
+        }
+    }
 }
 
 #[rustfmt::skip]
@@ -301,6 +524,179 @@ pub(crate) fn alloc_coded_frame_buffers(
     alloc_frame_buffers_for_layouts(plan.bit_depth, plan.width, plan.height, &coded_layouts)
 }
 
+/// Bounded variant of coded-frame allocation used only by strict native
+/// decode.  Actual vector capacities, not just requested samples, are
+/// admitted into the parser's moved budget before the frame is materialized.
+pub(crate) fn alloc_coded_frame_buffers_with_budget(
+    plan: &FrameDecodePlan,
+    budget: &mut DecodeBudget,
+    limits: &NativeDecodeLimits,
+) -> Result<(FrameBuffers, NativeFrameAllocation), DecoderError> {
+    let coded_width =
+        usize::try_from(mi_dimension(u32::try_from(plan.width).map_err(|_| {
+            DecoderError::InvalidParam("AV1 frame width is too large".to_string())
+        })?))
+        .map_err(|_| DecoderError::InvalidParam("AV1 frame width is too large".to_string()))?
+            << 2;
+    let coded_height =
+        usize::try_from(mi_dimension(u32::try_from(plan.height).map_err(|_| {
+            DecoderError::InvalidParam("AV1 frame height is too large".to_string())
+        })?))
+        .map_err(|_| DecoderError::InvalidParam("AV1 frame height is too large".to_string()))?
+            << 2;
+    if plan.planes.len() > 3 {
+        return Err(DecoderError::InvalidParam(
+            "native AVIF coded frame has too many planes".to_string(),
+        ));
+    }
+    let mut layouts = plan.planes.clone();
+    for layout in &mut layouts {
+        layout.width = round_shift_usize(coded_width, layout.subsampling_x);
+        layout.height = round_shift_usize(coded_height, layout.subsampling_y);
+        layout.sample_count = layout.width.checked_mul(layout.height).ok_or_else(|| {
+            DecoderError::InvalidParam("AV1 coded plane dimensions are too large".to_string())
+        })?;
+    }
+
+    let mut allocation = NativeFrameAllocation::new();
+    let result = (|| {
+        let mut planes = Vec::new();
+        budget.try_reserve_class_with_token(
+            &mut planes,
+            &mut allocation.outer,
+            layouts.len(),
+            AllocationClass::Frame,
+            "native frame plane owner",
+        )?;
+        for (index, layout) in layouts.into_iter().enumerate() {
+            if layout.sample_count > MAX_PLANE_SAMPLE_ALLOCATION {
+                return Err(DecoderError::InvalidParam(format!(
+                    "AV1 plane sample count {} exceeds decoder resource limit",
+                    layout.sample_count
+                )));
+            }
+            let requested_bytes = layout
+                .sample_count
+                .checked_mul(std::mem::size_of::<u16>())
+                .ok_or_else(|| {
+                    DecoderError::InvalidParam("native AVIF plane size overflows".to_string())
+                })?;
+            limits.check_plane_bytes(requested_bytes)?;
+            let mut samples = Vec::new();
+            let mut ticket = AllocationTicket::new(AllocationClass::Frame);
+            budget.try_reserve_class_with_token(
+                &mut samples,
+                &mut ticket,
+                layout.sample_count,
+                AllocationClass::Frame,
+                "native frame samples",
+            )?;
+            samples.resize(layout.sample_count, 0);
+            allocation.samples[index] = Some(ticket);
+            planes.push(PlaneBuffer { layout, samples });
+        }
+        Ok(FrameBuffers {
+            width: plan.width,
+            height: plan.height,
+            planes,
+        })
+    })();
+    match result {
+        Ok(buffers) => Ok((buffers, allocation)),
+        Err(error) => {
+            allocation.release(budget)?;
+            Err(error)
+        }
+    }
+}
+
+/// Crops native coded planes while their old allocations remain live. Each
+/// visible candidate is budgeted at its actual capacity before its coded owner
+/// is dropped, so the caller-observable live cap covers the crop peak.
+pub(crate) fn crop_native_frame_buffers_to_plan(
+    buffers: &mut FrameBuffers,
+    allocation: &mut NativeFrameAllocation,
+    plan: &FrameDecodePlan,
+    budget: &mut DecodeBudget,
+    limits: &NativeDecodeLimits,
+) -> Result<(), DecoderError> {
+    crop_native_frame_buffers_to_plan_with_maker(
+        buffers,
+        allocation,
+        plan,
+        budget,
+        limits,
+        fresh_replacement::<u16>,
+    )
+}
+
+fn crop_native_frame_buffers_to_plan_with_maker<F>(
+    buffers: &mut FrameBuffers,
+    allocation: &mut NativeFrameAllocation,
+    plan: &FrameDecodePlan,
+    budget: &mut DecodeBudget,
+    limits: &NativeDecodeLimits,
+    mut make: F,
+) -> Result<(), DecoderError>
+where
+    F: FnMut(usize, &str) -> Result<crate::allocation::FreshReplacement<u16>, DecoderError>,
+{
+    if buffers.planes.len() != plan.planes.len() {
+        return Err(DecoderError::InvalidParam(
+            "AV1 frame buffer plane count does not match decode plan".to_string(),
+        ));
+    }
+    if buffers
+        .planes
+        .iter()
+        .zip(&plan.planes)
+        .all(|(plane, target)| plane.layout == *target)
+    {
+        return Ok(());
+    }
+    for (index, (plane, target)) in buffers.planes.iter_mut().zip(&plan.planes).enumerate() {
+        if plane.layout.width < target.width || plane.layout.height < target.height {
+            return Err(DecoderError::InvalidParam(
+                "AV1 coded plane is smaller than the visible frame".to_string(),
+            ));
+        }
+        let requested_bytes = target
+            .sample_count
+            .checked_mul(std::mem::size_of::<u16>())
+            .ok_or_else(|| {
+                DecoderError::InvalidParam("native AVIF visible plane size overflows".to_string())
+            })?;
+        limits.check_plane_bytes(requested_bytes)?;
+        if allocation.samples.get(index).is_none_or(Option::is_none) {
+            return Err(DecoderError::InvalidParam(
+                "native AVIF coded frame plane ticket is missing".to_string(),
+            ));
+        }
+        let (mut visible, candidate) = admit_fresh_with(
+            budget,
+            target.sample_count,
+            AllocationClass::Frame,
+            "native visible frame samples",
+            &mut make,
+        )?;
+        visible.values_mut().resize(target.sample_count, 0);
+        for row in 0..target.height {
+            let source = row * plane.layout.width;
+            let destination = row * target.width;
+            visible.values_mut()[destination..destination + target.width]
+                .copy_from_slice(&plane.samples[source..source + target.width]);
+        }
+        let previous = std::mem::replace(&mut plane.samples, visible.into_vec());
+        let previous_ticket = allocation.take_plane_ticket(index)?;
+        drop(previous);
+        let mut previous_ticket = previous_ticket;
+        budget.release_token(&mut previous_ticket)?;
+        allocation.samples[index] = Some(candidate);
+        plane.layout = *target;
+    }
+    Ok(())
+}
+
 pub(crate) fn crop_frame_buffers_to_plan(
     buffers: &mut FrameBuffers,
     plan: &FrameDecodePlan,
@@ -425,6 +821,29 @@ fn build_tile_plans(
     }
 
     let mut plans = Vec::with_capacity(tile_group.tiles.len());
+    populate_tile_plans(&mut plans, frame, tile_group, width, height, superblock_mi)?;
+    Ok(plans)
+}
+
+fn populate_tile_plans(
+    plans: &mut Vec<TileDecodePlan>,
+    frame: &FrameHeader,
+    tile_group: &TileGroup,
+    width: usize,
+    height: usize,
+    superblock_mi: u32,
+) -> Result<(), DecoderError> {
+    if plans.capacity().saturating_sub(plans.len()) < tile_group.tiles.len() {
+        return Err(DecoderError::InvalidParam(
+            "AV1 tile decode plan capacity is too small".to_string(),
+        ));
+    }
+    let tile_cols = frame.tile_info.tile_cols;
+    if tile_cols == 0 || frame.tile_info.tile_rows == 0 {
+        return Err(DecoderError::Bitstream(
+            "AV1 tile grid must be non-zero".to_string(),
+        ));
+    }
     for payload in &tile_group.tiles {
         let tile_col = payload.tile_id % tile_cols;
         let tile_row = payload.tile_id / tile_cols;
@@ -472,7 +891,7 @@ fn build_tile_plans(
             payload_len: payload.len,
         });
     }
-    Ok(plans)
+    Ok(())
 }
 
 fn round_shift_usize(value: usize, shift: u8) -> usize {
@@ -486,7 +905,272 @@ fn round_shift_u32(value: u32, shift: u8) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::allocation::test_fresh_replacement;
     use crate::av1::tile_group::TilePayload;
+    use crate::limits::NativeDecodeLimits;
+
+    fn native_limits(live: usize) -> NativeDecodeLimits {
+        NativeDecodeLimits::new(
+            1 << 20,
+            64,
+            64,
+            4096,
+            1 << 20,
+            1 << 20,
+            1 << 20,
+            8,
+            8,
+            1,
+            1,
+            1,
+        )
+        .with_max_live_allocation_bytes(live)
+        .unwrap()
+    }
+
+    fn native_crop_plan(width: usize, height: usize) -> FrameDecodePlan {
+        FrameDecodePlan {
+            width,
+            height,
+            upscaled_width: width,
+            render_width: width,
+            render_height: height,
+            bit_depth: 8,
+            base_q_idx: 0,
+            tx_mode: TxMode::Largest,
+            superblock_size: 64,
+            superblock_cols: 1,
+            superblock_rows: 1,
+            uses_cdef: false,
+            uses_restoration: false,
+            planes: vec![PlaneLayout {
+                plane: 0,
+                width,
+                height,
+                subsampling_x: 0,
+                subsampling_y: 0,
+                sample_count: width * height,
+            }],
+            tiles: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn native_crop_accounts_coded_and_visible_peak_then_retires_coded_owner() {
+        let plan = native_crop_plan(5, 5);
+        let limits = native_limits(1 << 20);
+        let mut budget = DecodeBudget::new(limits.max_live_allocation_bytes());
+        let (mut buffers, mut owners) =
+            alloc_coded_frame_buffers_with_budget(&plan, &mut budget, &limits).unwrap();
+        let coded_live = budget.accounting().aggregate_live;
+        assert_eq!(buffers.planes[0].layout.width, 8);
+
+        crop_native_frame_buffers_to_plan(&mut buffers, &mut owners, &plan, &mut budget, &limits)
+            .unwrap();
+
+        let final_live = budget.accounting().aggregate_live;
+        assert_eq!(buffers.planes[0].layout, plan.planes[0]);
+        assert!(budget.accounting().aggregate_peak > coded_live);
+        assert!(budget.accounting().aggregate_peak > final_live);
+        owners.release(&mut budget).unwrap();
+        assert_eq!(budget.accounting().frame_live, 0);
+    }
+
+    #[test]
+    fn native_crop_skips_replacement_when_coded_and_visible_layouts_match() {
+        let plan = native_crop_plan(8, 8);
+        let limits = native_limits(1 << 20);
+        let mut budget = DecodeBudget::new(limits.max_live_allocation_bytes());
+        let (mut buffers, mut owners) =
+            alloc_coded_frame_buffers_with_budget(&plan, &mut budget, &limits).unwrap();
+        let pointer = buffers.planes[0].samples.as_ptr();
+        let live = budget.accounting().aggregate_live;
+
+        crop_native_frame_buffers_to_plan(&mut buffers, &mut owners, &plan, &mut budget, &limits)
+            .unwrap();
+
+        assert_eq!(buffers.planes[0].samples.as_ptr(), pointer);
+        assert_eq!(budget.accounting().aggregate_live, live);
+        owners.release(&mut budget).unwrap();
+    }
+
+    #[test]
+    fn native_crop_actual_capacity_keeps_coded_owner_live_one_under_then_retries() {
+        let plan = native_crop_plan(5, 5);
+        let limits = native_limits(1 << 20);
+        let mut budget = DecodeBudget::new(None);
+        let (mut master, mut master_owners) =
+            alloc_coded_frame_buffers_with_budget(&plan, &mut budget, &limits).unwrap();
+        let master_live = budget.accounting().aggregate_live;
+
+        let mut exact_candidate = Some(Vec::<u16>::with_capacity(26));
+        let exact_bytes = exact_candidate.as_ref().unwrap().capacity() * std::mem::size_of::<u16>();
+        budget.set_max_live_bytes_for_test(master_live + exact_bytes);
+        crop_native_frame_buffers_to_plan_with_maker(
+            &mut master,
+            &mut master_owners,
+            &plan,
+            &mut budget,
+            &limits,
+            move |_, label| test_fresh_replacement(exact_candidate.take().unwrap(), label),
+        )
+        .unwrap();
+        assert_eq!(master.planes[0].layout, plan.planes[0]);
+        master_owners.release(&mut budget).unwrap();
+        assert_eq!(budget.accounting().frame_live, 0);
+
+        let (mut master, mut master_owners) =
+            alloc_coded_frame_buffers_with_budget(&plan, &mut budget, &limits).unwrap();
+        let master_pointer = master.planes[0].samples.as_ptr();
+        let master_ticket = master_owners.samples[0]
+            .as_ref()
+            .unwrap()
+            .charged_capacity_bytes;
+        let master_live = budget.accounting().aggregate_live;
+
+        let mut under_candidate = Some(Vec::<u16>::with_capacity(26));
+        let under_bytes = under_candidate.as_ref().unwrap().capacity() * std::mem::size_of::<u16>();
+        assert!(under_bytes > plan.planes[0].sample_count * std::mem::size_of::<u16>());
+        budget.set_max_live_bytes_for_test(master_live + under_bytes - 1);
+        let observation = crate::test_allocation_observer::Observation::begin(1, false);
+        observation.track(under_candidate.as_ref().unwrap());
+        observation.track_raw_slot(
+            0,
+            under_candidate.as_ref().unwrap().as_ptr().cast(),
+            under_bytes,
+        );
+        let error = crop_native_frame_buffers_to_plan_with_maker(
+            &mut master,
+            &mut master_owners,
+            &plan,
+            &mut budget,
+            &limits,
+            move |_, label| test_fresh_replacement(under_candidate.take().unwrap(), label),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, DecoderError::InvalidParam(message) if message.contains("live allocation"))
+        );
+        assert_eq!(budget.accounting().aggregate_live, master_live);
+        assert_eq!(master.planes[0].samples.as_ptr(), master_pointer);
+        assert_eq!(
+            master_owners.samples[0]
+                .as_ref()
+                .unwrap()
+                .charged_capacity_bytes,
+            master_ticket
+        );
+        assert_eq!(observation.drops(), 1);
+        assert_eq!(observation.restore_count(), 1);
+        assert!(observation.restore_drop_snapshots()[0] >= 1);
+        drop(observation);
+
+        let mut retry_candidate = Some(Vec::<u16>::with_capacity(26));
+        let retry_bytes = retry_candidate.as_ref().unwrap().capacity() * std::mem::size_of::<u16>();
+        budget.set_max_live_bytes_for_test(master_live + retry_bytes);
+        crop_native_frame_buffers_to_plan_with_maker(
+            &mut master,
+            &mut master_owners,
+            &plan,
+            &mut budget,
+            &limits,
+            move |_, label| test_fresh_replacement(retry_candidate.take().unwrap(), label),
+        )
+        .unwrap();
+        master_owners.release(&mut budget).unwrap();
+        assert_eq!(budget.accounting().frame_live, 0);
+    }
+
+    #[test]
+    fn native_alpha_outer_growth_uses_combined_peak_and_preserves_both_frames_on_one_under() {
+        fn setup() -> (
+            FrameBuffers,
+            NativeFrameAllocation,
+            FrameBuffers,
+            NativeFrameAllocation,
+            DecodeBudget,
+            NativeDecodeLimits,
+        ) {
+            let plan = native_crop_plan(8, 8);
+            let limits = native_limits(1 << 20);
+            let mut budget = DecodeBudget::new(None);
+            let (master, master_owners) =
+                alloc_coded_frame_buffers_with_budget(&plan, &mut budget, &limits).unwrap();
+            let (alpha, alpha_owners) =
+                alloc_coded_frame_buffers_with_budget(&plan, &mut budget, &limits).unwrap();
+            (master, master_owners, alpha, alpha_owners, budget, limits)
+        }
+
+        let (mut master, mut master_owners, alpha, mut alpha_owners, mut budget, _limits) = setup();
+        let baseline = budget.accounting().aggregate_live;
+        let exact_candidate = Vec::<PlaneBuffer>::with_capacity(3);
+        let exact_bytes = exact_candidate.capacity() * std::mem::size_of::<PlaneBuffer>();
+        budget.set_max_live_bytes_for_test(baseline + exact_bytes);
+        master_owners
+            .grow_outer_for_alpha_with_maker(&mut master.planes, &mut budget, move |_, label| {
+                test_fresh_replacement(exact_candidate, label)
+            })
+            .unwrap();
+        master_owners.release(&mut budget).unwrap();
+        alpha_owners.release(&mut budget).unwrap();
+        drop(master);
+        drop(alpha);
+        assert_eq!(budget.accounting().frame_live, 0);
+
+        let (mut master, mut master_owners, alpha, mut alpha_owners, mut budget, _limits) = setup();
+        let baseline = budget.accounting().aggregate_live;
+        let master_plane_pointer = master.planes.as_ptr();
+        let master_sample_pointer = master.planes[0].samples.as_ptr();
+        let alpha_plane_pointer = alpha.planes.as_ptr();
+        let alpha_sample_pointer = alpha.planes[0].samples.as_ptr();
+        let old_outer_bytes = master_owners.outer.charged_capacity_bytes;
+        let old_outer_class = master_owners.outer.class;
+        let alpha_outer_bytes = alpha_owners.outer.charged_capacity_bytes;
+        let alpha_outer_class = alpha_owners.outer.class;
+        let under_candidate = Vec::<PlaneBuffer>::with_capacity(3);
+        let under_bytes = under_candidate.capacity() * std::mem::size_of::<PlaneBuffer>();
+        assert!(under_bytes > 2 * std::mem::size_of::<PlaneBuffer>());
+        budget.set_max_live_bytes_for_test(baseline + under_bytes - 1);
+        let observation = crate::test_allocation_observer::Observation::begin(1, false);
+        observation.track(&under_candidate);
+        observation.track_raw_slot(0, under_candidate.as_ptr().cast(), under_bytes);
+        let error = master_owners.grow_outer_for_alpha_with_maker(
+            &mut master.planes,
+            &mut budget,
+            move |_, label| test_fresh_replacement(under_candidate, label),
+        );
+        let error = error.unwrap_err();
+        assert!(
+            matches!(error, DecoderError::InvalidParam(message) if message.contains("live allocation"))
+        );
+        assert_eq!(budget.accounting().aggregate_live, baseline);
+        assert_eq!(master.planes.as_ptr(), master_plane_pointer);
+        assert_eq!(master.planes[0].samples.as_ptr(), master_sample_pointer);
+        assert_eq!(alpha.planes.as_ptr(), alpha_plane_pointer);
+        assert_eq!(alpha.planes[0].samples.as_ptr(), alpha_sample_pointer);
+        assert_eq!(master_owners.outer.charged_capacity_bytes, old_outer_bytes);
+        assert_eq!(master_owners.outer.class, old_outer_class);
+        assert_eq!(alpha_owners.outer.charged_capacity_bytes, alpha_outer_bytes);
+        assert_eq!(alpha_owners.outer.class, alpha_outer_class);
+        assert_eq!(observation.drops(), 1);
+        assert_eq!(observation.restore_count(), 1);
+        assert!(observation.restore_drop_snapshots()[0] >= 1);
+        drop(observation);
+
+        let retry_candidate = Vec::<PlaneBuffer>::with_capacity(3);
+        let retry_bytes = retry_candidate.capacity() * std::mem::size_of::<PlaneBuffer>();
+        budget.set_max_live_bytes_for_test(baseline + retry_bytes);
+        master_owners
+            .grow_outer_for_alpha_with_maker(&mut master.planes, &mut budget, move |_, label| {
+                test_fresh_replacement(retry_candidate, label)
+            })
+            .unwrap();
+        master_owners.release(&mut budget).unwrap();
+        alpha_owners.release(&mut budget).unwrap();
+        drop(master);
+        drop(alpha);
+        assert_eq!(budget.accounting().frame_live, 0);
+    }
 
     #[test]
     fn rejects_frame_buffer_allocation_above_resource_limit() {

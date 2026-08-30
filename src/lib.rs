@@ -4,6 +4,7 @@
 //! draw-side adapter. Container parsing is implemented with `bin-rs`
 //! `BinaryReader` inputs for compatibility with the surrounding codecs.
 
+mod allocation;
 pub mod av1;
 pub mod compat;
 pub mod container;
@@ -14,6 +15,8 @@ mod image;
 pub mod limits;
 mod native;
 pub mod obu;
+#[cfg(test)]
+pub(crate) mod test_allocation_observer;
 #[cfg(test)]
 mod test_support;
 
@@ -32,7 +35,8 @@ pub use container::{
     parse_gain_map_metadata, parse_rich_info,
 };
 pub use decoder::{
-    AvifSequenceDecoder, DecodedFrame, DecodedGainMapFrame, DecodedSequenceFrame, decode,
+    AvifSequenceDecoder, DecodedFrame, DecodedGainMapFrame, DecodedSequenceFrame,
+    PreparedSequenceCommit, PreparedSequenceFrame, StrictAvifSequenceDecoder, decode,
     decode_frame_bytes, decode_frame_bytes_strict, decode_frame_bytes_strict_with_limits,
     decode_gain_map_frame_bytes, decode_sequence_frame_bytes, decode_sequence_frames_bytes,
     parse_info,

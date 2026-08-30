@@ -24,8 +24,10 @@ pub use decode::{
     build_still_decode_plan,
 };
 pub(crate) use decode::{
-    alloc_coded_frame_buffers, apply_superres_horizontal, crop_frame_buffers_to_plan,
-    plane_layout_for_geometry,
+    NativeDecodePlanAllocation, NativeFrameAllocation, alloc_coded_frame_buffers,
+    alloc_coded_frame_buffers_with_budget, apply_superres_horizontal,
+    build_still_decode_plan_with_budget, crop_frame_buffers_to_plan,
+    crop_native_frame_buffers_to_plan, plane_layout_for_geometry,
 };
 pub use entropy::EntropyDecoder;
 pub(crate) use film_grain::apply as apply_film_grain;
@@ -36,7 +38,10 @@ pub use frame::{
     CdefStrength, FilmGrainParams, FrameHeader, FrameType, GlobalMotionParams, GlobalMotionType,
     SegmentationParams, TxMode, parse_frame_header,
 };
-pub(crate) use frame::{FramePrefix, NO_REFERENCES, finish_frame_header, parse_frame_prefix};
+pub(crate) use frame::{
+    FramePrefix, NO_REFERENCES, finish_frame_header, finish_frame_header_with_budget,
+    parse_frame_prefix,
+};
 pub(crate) use frame::{ReferenceFrameState, parse_frame_header_with_references_and_metadata};
 pub use predict::{IntraEdges, predict_intra};
 pub use quant::{PlaneQuant, QuantState, dequantize_coefficients};
@@ -53,17 +58,22 @@ pub use sequence::{
 };
 pub use syntax::UvPredictionMode;
 pub use syntax::{BlockSize, Partition, PredictionMode, TxSize, TxType};
+pub(crate) use tile::NativeTileInfoAllocation;
 pub use tile::TileInfo;
 pub(crate) use tile_decode::BlockFilterState;
+#[cfg(test)]
+pub(crate) use tile_decode::{CdefBlockIndex, CdefUnit};
 pub(crate) use tile_decode::MotionField;
 pub(crate) use tile_decode::PostFilterState;
 #[cfg(test)]
 pub(crate) use tile_decode::RestorationUnit;
+pub(crate) use tile_decode::TransformBoundary;
 #[cfg(test)]
 pub(crate) use tile_decode::decode_luma_root_block_prefix_with_post_filter_state_and_entropy;
 #[cfg(test)]
 pub(crate) use tile_decode::decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options;
 pub(crate) use tile_decode::decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf_and_motion;
+pub(crate) use tile_decode::decode_luma_root_block_prefix_with_post_filter_state_and_entropy_options_with_references_and_cdf_and_motion_and_budget;
 #[cfg(test)]
 pub(crate) use tile_decode::wiener_filter_unit;
 pub use tile_decode::{
@@ -77,8 +87,13 @@ pub(crate) use tile_decode::{
     cdef_adjust_primary_strength, cdef_chroma_direction,
     cdef_filter_block_region_with_edge_mode_into_bit_depth_visible_scaled,
     cdef_find_direction_with_variance_visible, deblock_filter_edge_with_visible_bounds,
+    sgrproj_filter_unit_into_with_fixed_scratch_bit_depth_visible,
     sgrproj_filter_unit_into_with_scratch_bit_depth_visible,
+    wiener_filter_unit_into_with_fixed_scratch_bit_depth_visible,
     wiener_filter_unit_into_with_scratch_bit_depth_visible,
+};
+pub(crate) use tile_group::{
+    NativeTileGroupAllocation, parse_tile_group_with_budget, walk_tile_group,
 };
 pub use tile_group::{TileGroup, TilePayload, parse_tile_group};
 pub use transform::{

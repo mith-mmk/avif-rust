@@ -4,10 +4,402 @@ use crate::av1::{CdfContext, ReferenceFrameState};
 use crate::container::AvifInfo;
 use crate::obu::{ObuType, parse_obu_stream};
 
+#[path = "sequence_state_memory.rs"]
+mod sequence_state_memory;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Av1SequenceSampleUnit {
     pub(super) payload: Vec<u8>,
     has_sequence_header: bool,
+}
+
+/// The allocation-free result of the first pass of the strict sequence
+/// splitter.  The unit lengths are not stored in a temporary Vec: the second
+/// pass uses a cloned borrowed iterator to compute each current unit's exact
+/// length immediately before reserving its payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct StrictSequenceSplitPlan<'a> {
+    sequence_prefix_payload: Option<&'a [u8]>,
+    pub(super) sequence_prefix_encoded_len: usize,
+    pub(super) coded_unit_count: usize,
+    pub(super) coded_unit_bytes: usize,
+    pub(super) max_current_encoded_len: usize,
+    pub(super) outer_capacity: usize,
+}
+
+impl StrictSequenceSplitPlan<'_> {
+    pub(super) fn scratch_bytes(&self) -> Result<usize, DecoderError> {
+        self.outer_capacity
+            .checked_mul(std::mem::size_of::<Av1SequenceSampleUnit>())
+            .and_then(|bytes| bytes.checked_add(self.coded_unit_bytes))
+            .ok_or_else(|| {
+                DecoderError::InvalidParam("AVIS strict sequence split plan overflows".to_string())
+            })
+    }
+}
+
+/// A strict split result with the actual capacities of the only retained
+/// owners.  The plan itself is allocation-free; callers compare this value
+/// with the pre-admitted plan before entering AV1 decode.
+pub(super) struct StrictSequenceSplit {
+    units: Vec<Av1SequenceSampleUnit>,
+    actual_bytes: usize,
+}
+
+impl StrictSequenceSplit {
+    fn actual_bytes(&self) -> Result<usize, DecoderError> {
+        let mut bytes = self
+            .units
+            .capacity()
+            .checked_mul(std::mem::size_of::<Av1SequenceSampleUnit>())
+            .ok_or_else(|| {
+                DecoderError::InvalidParam(
+                    "AVIS strict sequence outer capacity overflows".to_string(),
+                )
+            })?;
+        for unit in &self.units {
+            bytes = bytes.checked_add(unit.payload.capacity()).ok_or_else(|| {
+                DecoderError::InvalidParam(
+                    "AVIS strict sequence unit capacity overflows".to_string(),
+                )
+            })?;
+        }
+        Ok(bytes)
+    }
+}
+
+fn encoded_obu_len(obu_type: ObuType, payload: &[u8]) -> Result<usize, DecoderError> {
+    match obu_type {
+        ObuType::SequenceHeader | ObuType::Frame | ObuType::FrameHeader | ObuType::TileGroup => {}
+        _ => {
+            return Err(DecoderError::Unsupported(format!(
+                "cannot rebuild AV1 {:?} OBU for strict sequence splitting",
+                obu_type
+            )));
+        }
+    }
+    let mut length = payload.len();
+    let mut leb_bytes = 1usize;
+    while length >= 0x80 {
+        length >>= 7;
+        leb_bytes = leb_bytes
+            .checked_add(1)
+            .ok_or_else(|| DecoderError::InvalidParam("AVIS OBU length overflows".to_string()))?;
+    }
+    1usize
+        .checked_add(leb_bytes)
+        .and_then(|bytes| bytes.checked_add(payload.len()))
+        .ok_or_else(|| DecoderError::InvalidParam("AVIS OBU length overflows".to_string()))
+}
+
+fn add_len(total: &mut usize, value: usize, label: &str) -> Result<(), DecoderError> {
+    *total = total.checked_add(value).ok_or_else(|| {
+        DecoderError::InvalidParam(format!("AVIS strict sequence {label} overflows"))
+    })?;
+    Ok(())
+}
+
+fn reject_strict_extension_header(extension_header: Option<u8>) -> Result<(), DecoderError> {
+    if extension_header.is_some() {
+        return Err(DecoderError::Unsupported(
+            "AVIS strict sequence splitting does not support OBU extension headers".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Computes exact strict split ownership using borrowed OBU traversal only.
+///
+/// This pass deliberately counts coded units rather than using the sample
+/// byte length as a proxy.  In particular, a sample with a long tile group
+/// does not cause an O(sample length) outer vector reservation.
+pub(super) fn strict_sequence_split_plan(
+    sample: &[u8],
+) -> Result<StrictSequenceSplitPlan<'_>, DecoderError> {
+    let mut sequence_prefix_payload = None;
+    let mut coded_unit_count = 0usize;
+    let mut coded_unit_bytes = 0usize;
+    let mut current_coded_bytes = 0usize;
+    let mut max_current_coded_bytes = 0usize;
+    let mut current_active = false;
+    let mut finish_current = |current: &mut usize, active: &mut bool| -> Result<(), DecoderError> {
+        if *active {
+            coded_unit_count = coded_unit_count.checked_add(1).ok_or_else(|| {
+                DecoderError::InvalidParam("AVIS strict sequence unit count overflows".to_string())
+            })?;
+            add_len(&mut coded_unit_bytes, *current, "coded unit bytes")?;
+            max_current_coded_bytes = max_current_coded_bytes.max(*current);
+            *current = 0;
+            *active = false;
+        }
+        Ok(())
+    };
+    for obu in crate::obu::ObuIter::new(sample) {
+        let obu = obu?;
+        reject_strict_extension_header(obu.extension_header)?;
+        match obu.obu_type {
+            ObuType::SequenceHeader => {
+                if sequence_prefix_payload.is_none() {
+                    sequence_prefix_payload = Some(obu.payload);
+                }
+            }
+            ObuType::TemporalDelimiter if current_active => {
+                finish_current(&mut current_coded_bytes, &mut current_active)?;
+            }
+            ObuType::Frame => {
+                finish_current(&mut current_coded_bytes, &mut current_active)?;
+                current_coded_bytes = encoded_obu_len(obu.obu_type, obu.payload)?;
+                current_active = true;
+                finish_current(&mut current_coded_bytes, &mut current_active)?;
+            }
+            ObuType::FrameHeader => {
+                finish_current(&mut current_coded_bytes, &mut current_active)?;
+                current_coded_bytes = encoded_obu_len(obu.obu_type, obu.payload)?;
+                current_active = true;
+            }
+            ObuType::TileGroup if current_active => {
+                let length = encoded_obu_len(obu.obu_type, obu.payload)?;
+                add_len(&mut current_coded_bytes, length, "coded unit bytes")?;
+            }
+            _ => {}
+        }
+    }
+    finish_current(&mut current_coded_bytes, &mut current_active)?;
+    let sequence_prefix_encoded_len = sequence_prefix_payload
+        .map(|payload| encoded_obu_len(ObuType::SequenceHeader, payload))
+        .transpose()?
+        .unwrap_or(0);
+    let prefix_bytes = sequence_prefix_encoded_len
+        .checked_mul(coded_unit_count)
+        .ok_or_else(|| {
+            DecoderError::InvalidParam("AVIS strict sequence prefix bytes overflow".to_string())
+        })?;
+    let coded_unit_bytes = coded_unit_bytes.checked_add(prefix_bytes).ok_or_else(|| {
+        DecoderError::InvalidParam("AVIS strict sequence coded bytes overflow".to_string())
+    })?;
+    let max_current_encoded_len = max_current_coded_bytes
+        .checked_add(sequence_prefix_encoded_len)
+        .ok_or_else(|| {
+            DecoderError::InvalidParam("AVIS strict sequence current bytes overflow".to_string())
+        })?;
+    Ok(StrictSequenceSplitPlan {
+        sequence_prefix_payload,
+        sequence_prefix_encoded_len,
+        coded_unit_count,
+        coded_unit_bytes,
+        max_current_encoded_len,
+        outer_capacity: coded_unit_count,
+    })
+}
+
+fn strict_unit_encoded_len(
+    prefix_len: usize,
+    first_type: ObuType,
+    first_payload: &[u8],
+    remainder: &crate::obu::ObuIter<'_>,
+) -> Result<usize, DecoderError> {
+    let mut length = prefix_len
+        .checked_add(encoded_obu_len(first_type, first_payload)?)
+        .ok_or_else(|| {
+            DecoderError::InvalidParam("AVIS strict unit length overflows".to_string())
+        })?;
+    if first_type == ObuType::Frame {
+        return Ok(length);
+    }
+    let mut lookahead = remainder.clone();
+    for obu in &mut lookahead {
+        let obu = obu?;
+        match obu.obu_type {
+            ObuType::Frame | ObuType::FrameHeader | ObuType::TemporalDelimiter => break,
+            ObuType::TileGroup => add_len(
+                &mut length,
+                encoded_obu_len(obu.obu_type, obu.payload)?,
+                "strict unit length",
+            )?,
+            _ => {}
+        }
+    }
+    Ok(length)
+}
+
+fn append_encoded_obu(
+    output: &mut Vec<u8>,
+    obu_type: ObuType,
+    payload: &[u8],
+) -> Result<(), DecoderError> {
+    let needed = encoded_obu_len(obu_type, payload)?;
+    let end = output.len().checked_add(needed).ok_or_else(|| {
+        DecoderError::InvalidParam("AVIS strict sequence output length overflows".to_string())
+    })?;
+    if end > output.capacity() {
+        return Err(DecoderError::InvalidParam(
+            "AVIS strict sequence unit reservation was underestimated".to_string(),
+        ));
+    }
+    let type_bits: u8 = match obu_type {
+        ObuType::SequenceHeader => 1,
+        ObuType::Frame => 6,
+        ObuType::FrameHeader => 3,
+        ObuType::TileGroup => 4,
+        _ => unreachable!("encoded_obu_len validates the OBU type"),
+    };
+    output.push((type_bits << 3) | 0x02);
+    let mut length = payload.len();
+    loop {
+        let mut byte = (length & 0x7f) as u8;
+        length >>= 7;
+        if length != 0 {
+            byte |= 0x80;
+        }
+        output.push(byte);
+        if length == 0 {
+            break;
+        }
+    }
+    output.extend_from_slice(payload);
+    Ok(())
+}
+
+fn split_av1_sequence_sample_strict(
+    sample: &[u8],
+) -> Result<(StrictSequenceSplitPlan<'_>, StrictSequenceSplit), DecoderError> {
+    #[cfg(test)]
+    let capacity_extra = crate::test_allocation_observer::fresh_capacity_extra(
+        "AVIS strict sequence split",
+    );
+    #[cfg(not(test))]
+    let capacity_extra = 0;
+    split_av1_sequence_sample_strict_with_capacity_extra(sample, capacity_extra)
+}
+
+fn split_av1_sequence_sample_strict_with_capacity_extra(
+    sample: &[u8],
+    capacity_extra: usize,
+) -> Result<(StrictSequenceSplitPlan<'_>, StrictSequenceSplit), DecoderError> {
+    let plan = strict_sequence_split_plan(sample)?;
+    let mut units = Vec::new();
+    let outer_capacity = plan
+        .outer_capacity
+        .checked_add(capacity_extra)
+        .ok_or_else(|| {
+            DecoderError::InvalidParam("AVIS strict sequence outer capacity overflows".to_string())
+        })?;
+    units.try_reserve_exact(outer_capacity).map_err(|_| {
+        DecoderError::InvalidParam("AVIS strict sequence unit list allocation failed".to_string())
+    })?;
+    let mut current = Vec::new();
+    let mut current_active = false;
+    let finish_current = |units: &mut Vec<Av1SequenceSampleUnit>, current: &mut Vec<u8>| {
+        if !current.is_empty() {
+            units.push(Av1SequenceSampleUnit {
+                payload: std::mem::take(current),
+                has_sequence_header: plan.sequence_prefix_payload.is_some(),
+            });
+        }
+    };
+    let mut obus = crate::obu::ObuIter::new(sample);
+    while let Some(obu) = obus.next() {
+        let obu = obu?;
+        reject_strict_extension_header(obu.extension_header)?;
+        match obu.obu_type {
+            ObuType::SequenceHeader => {}
+            ObuType::TemporalDelimiter if current_active => {
+                finish_current(&mut units, &mut current);
+                current_active = false;
+            }
+            ObuType::Frame => {
+                if current_active {
+                    finish_current(&mut units, &mut current);
+                }
+                let unit_len = strict_unit_encoded_len(
+                    plan.sequence_prefix_encoded_len,
+                    obu.obu_type,
+                    obu.payload,
+                    &obus,
+                )?;
+                let reserve_len = unit_len.checked_add(capacity_extra).ok_or_else(|| {
+                    DecoderError::InvalidParam(
+                        "AVIS strict sequence unit capacity overflows".to_string(),
+                    )
+                })?;
+                current.try_reserve_exact(reserve_len).map_err(|_| {
+                    DecoderError::InvalidParam(
+                        "AVIS strict sequence unit allocation failed".to_string(),
+                    )
+                })?;
+                if let Some(prefix) = plan.sequence_prefix_payload {
+                    append_encoded_obu(&mut current, ObuType::SequenceHeader, prefix)?;
+                }
+                append_encoded_obu(&mut current, obu.obu_type, obu.payload)?;
+                finish_current(&mut units, &mut current);
+                current_active = false;
+            }
+            ObuType::FrameHeader => {
+                if current_active {
+                    finish_current(&mut units, &mut current);
+                }
+                let unit_len = strict_unit_encoded_len(
+                    plan.sequence_prefix_encoded_len,
+                    obu.obu_type,
+                    obu.payload,
+                    &obus,
+                )?;
+                let reserve_len = unit_len.checked_add(capacity_extra).ok_or_else(|| {
+                    DecoderError::InvalidParam(
+                        "AVIS strict sequence unit capacity overflows".to_string(),
+                    )
+                })?;
+                current.try_reserve_exact(reserve_len).map_err(|_| {
+                    DecoderError::InvalidParam(
+                        "AVIS strict sequence unit allocation failed".to_string(),
+                    )
+                })?;
+                if let Some(prefix) = plan.sequence_prefix_payload {
+                    append_encoded_obu(&mut current, ObuType::SequenceHeader, prefix)?;
+                }
+                append_encoded_obu(&mut current, obu.obu_type, obu.payload)?;
+                current_active = true;
+            }
+            ObuType::TileGroup if current_active => {
+                append_encoded_obu(&mut current, obu.obu_type, obu.payload)?;
+            }
+            _ => {}
+        }
+    }
+    if current_active {
+        finish_current(&mut units, &mut current);
+    }
+    if units.len() != plan.coded_unit_count {
+        return Err(DecoderError::InvalidParam(
+            "AVIS strict sequence split plan changed during materialization".to_string(),
+        ));
+    }
+    let result = StrictSequenceSplit {
+        units,
+        actual_bytes: 0,
+    };
+    let actual_bytes = result.actual_bytes()?;
+    let planned_bytes = plan.scratch_bytes()?;
+    if actual_bytes > planned_bytes {
+        return Err(DecoderError::InvalidParam(
+            "AVIS strict sequence split exceeded its allocation plan".to_string(),
+        ));
+    }
+    Ok((
+        plan,
+        StrictSequenceSplit {
+            actual_bytes,
+            ..result
+        },
+    ))
+}
+
+#[cfg(test)]
+pub(super) fn strict_split_with_capacity_extra_for_test(
+    sample: &[u8],
+    capacity_extra: usize,
+) -> Result<(StrictSequenceSplitPlan<'_>, StrictSequenceSplit), DecoderError> {
+    split_av1_sequence_sample_strict_with_capacity_extra(sample, capacity_extra)
 }
 
 /// Splits an AVIS sample into the coded frame units it contains.
@@ -204,12 +596,40 @@ impl SequenceDecodeState {
         info: &AvifInfo,
         samples: &[Vec<u8>],
     ) -> Result<Option<DecodedFrame>, DecoderError> {
+        self.next_sample_with_split_mode(info, samples, false, None, None)
+    }
+
+    pub(super) fn next_sample_strict(
+        &mut self,
+        info: &AvifInfo,
+        samples: &[Vec<u8>],
+        limits: &crate::limits::NativeDecodeLimits,
+        budget: &mut crate::container::DecodeBudget,
+    ) -> Result<Option<DecodedFrame>, DecoderError> {
+        self.next_sample_with_split_mode(info, samples, true, Some(limits), Some(budget))
+    }
+
+    fn next_sample_with_split_mode(
+        &mut self,
+        info: &AvifInfo,
+        samples: &[Vec<u8>],
+        strict_split: bool,
+        strict_limits: Option<&crate::limits::NativeDecodeLimits>,
+        mut strict_budget: Option<&mut crate::container::DecodeBudget>,
+    ) -> Result<Option<DecodedFrame>, DecoderError> {
         let Some(sample) = samples.get(self.next_sample_index) else {
             return Ok(None);
         };
         let mut next = self.clone();
         let index = next.next_sample_index;
-        let frame = next.decode_sample(info, sample, index)?;
+        let frame = next.decode_sample(
+            info,
+            sample,
+            index,
+            strict_split,
+            strict_limits,
+            strict_budget.as_deref_mut(),
+        )?;
         next.next_sample_index += 1;
         #[cfg(test)]
         {
@@ -224,13 +644,95 @@ impl SequenceDecodeState {
         self.decoded_sample_count
     }
 
+    pub(super) fn sequence_prefix_upper_bound(payload_len: usize) -> Result<usize, DecoderError> {
+        sequence_state_memory::prefix_upper_bound(payload_len)
+    }
+
+    pub(super) fn refresh_plan_bytes(
+        info: &AvifInfo,
+        sample: &[u8],
+        limits: &crate::limits::NativeDecodeLimits,
+    ) -> Result<usize, DecoderError> {
+        Ok(sequence_state_memory::state_refresh_plan(info, sample, limits)?.additional_bytes())
+    }
+
+    pub(super) fn strict_header_peak_bytes(
+        info: &AvifInfo,
+        state: &Self,
+        sample: &[u8],
+        limits: &crate::limits::NativeDecodeLimits,
+    ) -> Result<usize, DecoderError> {
+        let mut sample_has_sequence_header = false;
+        for obu in crate::obu::ObuIter::new(sample) {
+            if obu?.obu_type == ObuType::SequenceHeader {
+                sample_has_sequence_header = true;
+                break;
+            }
+        }
+        crate::decoder::strict_sequence_header_peak_bytes(
+            info,
+            &state.sequence_prefix,
+            sample,
+            sample_has_sequence_header,
+            info.av1_config.as_deref(),
+            &state.references.states(),
+            limits,
+        )
+    }
+
+    pub(super) fn memory_bytes_for_tracks(
+        color: &Self,
+        alpha: Option<&Self>,
+    ) -> Result<usize, DecoderError> {
+        sequence_state_memory::state_memory_bytes_for_tracks(color, alpha)
+    }
+
+    pub(super) fn additional_memory_bytes_for_tracks(
+        baseline_color: &Self,
+        baseline_alpha: Option<&Self>,
+        candidate_color: &Self,
+        candidate_alpha: Option<&Self>,
+    ) -> Result<usize, DecoderError> {
+        sequence_state_memory::additional_state_memory_bytes_for_tracks(
+            baseline_color,
+            baseline_alpha,
+            candidate_color,
+            candidate_alpha,
+        )
+    }
+
     fn decode_sample(
         &mut self,
         info: &AvifInfo,
         sample: &[u8],
         index: usize,
+        strict_split: bool,
+        strict_limits: Option<&crate::limits::NativeDecodeLimits>,
+        mut strict_budget: Option<&mut crate::container::DecodeBudget>,
     ) -> Result<DecodedFrame, DecoderError> {
-        let units = split_av1_sequence_sample(sample)?;
+        #[cfg(test)]
+        let _split_phase =
+            strict_split.then(|| crate::test_allocation_observer::begin_phase(2));
+        let strict_split_result = strict_split
+            .then(|| split_av1_sequence_sample_strict(sample))
+            .transpose()?;
+        #[cfg(test)]
+        drop(_split_phase);
+        #[cfg(test)]
+        let _decode_phase =
+            strict_split.then(|| crate::test_allocation_observer::begin_phase(3));
+        let units = if let Some(split) = strict_split_result {
+            let (plan, split) = split;
+            let actual_bytes = split.actual_bytes;
+            if actual_bytes > plan.scratch_bytes()? {
+                return Err(DecoderError::InvalidParam(
+                    "AVIS strict sequence split plan underestimated actual capacity".to_string(),
+                ));
+            }
+            split.units
+        } else {
+            split_av1_sequence_sample(sample)?
+        };
         if units.is_empty() {
             return Err(DecoderError::Bitstream(
                 "AVIS sample has no coded frame OBU".to_string(),
@@ -255,56 +757,34 @@ impl SequenceDecodeState {
                     let av1_config = (!unit.has_sequence_header)
                         .then_some(info.av1_config.as_deref())
                         .flatten();
-                    let headers = parse_av1_sequence_sample_headers(
-                        info,
-                        &self.sequence_prefix,
-                        &unit.payload,
-                        unit.has_sequence_header,
-                        av1_config,
-                    )?;
-                    let initial_cdfs = if headers.frame.primary_ref_frame != 7 {
-                        self.references
-                            .cdf_for_header(&headers.frame)
-                            .or_else(|| self.cdf_states.as_ref().map(|cdf| cdf.as_slice()))
+                    let decoded = if let Some(limits) = strict_limits {
+                        let budget = strict_budget
+                            .as_deref_mut()
+                            .expect("strict sequence limits require a budget");
+                        let references = [None; 8];
+                        let sequence_prefix = self.sequence_prefix.clone();
+                        crate::decoder::with_strict_sequence_headers(
+                            info,
+                            sequence_prefix.as_ref(),
+                            &unit.payload,
+                            unit.has_sequence_header,
+                            av1_config,
+                            &references,
+                            limits,
+                            budget,
+                            |headers| self.decode_key_unit(headers, info),
+                        )?
                     } else {
-                        None
-                    };
-                    let (decoded_state, next_cdf_states) =
-                        decode_still_frame_with_filter_policy_and_state_and_references_and_cdf(
-                            &headers,
-                            Some(info),
-                            true,
-                            std::array::from_fn(|_| None),
-                            initial_cdfs,
-                            true,
-                            true,
+                        let headers = parse_av1_sequence_sample_headers(
+                            info,
+                            &self.sequence_prefix,
+                            &unit.payload,
+                            unit.has_sequence_header,
+                            av1_config,
                         )?;
-                    let (decoded, motion_field) =
-                        finish_decoded_still_frame(&headers, decoded_state, true)?;
-                    let mut reference_cdfs = if headers.frame.disable_frame_end_update_cdf {
-                        initial_cdfs.map(ToOwned::to_owned).unwrap_or_else(|| {
-                            vec![CdfContext::new(headers.frame.base_q_idx); next_cdf_states.len()]
-                        })
-                    } else {
-                        next_cdf_states.clone()
+                        self.decode_key_unit(&headers, info)?
                     };
-                    if !headers.frame.disable_frame_end_update_cdf {
-                        for cdf in &mut reference_cdfs {
-                            cdf.reset_symbol_counters();
-                        }
-                    }
-                    self.references.refresh_with_cdf_and_motion(
-                        headers.frame.refresh_frame_flags,
-                        &decoded,
-                        &headers.frame,
-                        &reference_cdfs,
-                        &motion_field,
-                    );
-                    self.references.set_previous_motion_field(motion_field);
-                    if !headers.frame.disable_frame_end_update_cdf {
-                        self.cdf_states = Some(Arc::new(next_cdf_states));
-                    }
-                    if headers.frame.show_frame {
+                    if let Some(decoded) = decoded {
                         last_visible_frame = Some(decoded);
                     }
                 }
@@ -320,101 +800,36 @@ impl SequenceDecodeState {
                         .then_some(info.av1_config.as_deref())
                         .flatten();
                     let reference_states = self.references.states();
-                    let headers = parse_av1_sequence_sample_headers_with_references(
-                        info,
-                        &self.sequence_prefix,
-                        &unit.payload,
-                        unit.has_sequence_header,
-                        av1_config,
-                        &reference_states,
-                    )?;
-                    #[cfg(test)]
-                    if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
-                        let start = headers.tile_group.group.data_start_offset;
-                        let end = start
-                            .saturating_add(8)
-                            .min(headers.tile_group.tile_data.len());
-                        eprintln!(
-                            "entropy-trace headers sample={index} unit={unit_index} kind={kind:?} show={} order_hint={} primary_ref={} refresh={:#04x} disable_cdf={} disable_frame_end_cdf={} refs={:?} reference_select={} skip_mode={}/{:?} base_q={} delta_q={} segmentation={:?} global={:?} header_bits={} tile_start={start} tile_bytes={:02x?}",
-                            headers.frame.show_frame,
-                            headers.frame.order_hint,
-                            headers.frame.primary_ref_frame,
-                            headers.frame.refresh_frame_flags,
-                            headers.frame.disable_cdf_update,
-                            headers.frame.disable_frame_end_update_cdf,
-                            headers.frame.reference_frame_indices,
-                            headers.frame.reference_select,
-                            headers.frame.skip_mode_present,
-                            headers.frame.skip_mode_frame,
-                            headers.frame.base_q_idx,
-                            headers.frame.delta_q.present,
-                            headers.frame.segmentation,
-                            headers.frame.global_motion.types,
-                            headers.frame.uncompressed_header_bits,
-                            &headers.tile_group.tile_data[start..end]
-                        );
-                    }
-                    let temporal_motion_field = self
-                        .references
-                        .temporal_motion_field(&headers.frame, headers.sequence.order_hint_bits);
-                    let initial_cdfs = if headers.frame.primary_ref_frame != 7 {
-                        self.references
-                            .cdf_for_header(&headers.frame)
-                            .or_else(|| self.cdf_states.as_ref().map(|cdf| cdf.as_slice()))
+                    let decoded = if let Some(limits) = strict_limits {
+                        let budget = strict_budget
+                            .as_deref_mut()
+                            .expect("strict sequence limits require a budget");
+                        let sequence_prefix = self.sequence_prefix.clone();
+                        crate::decoder::with_strict_sequence_headers(
+                            info,
+                            sequence_prefix.as_ref(),
+                            &unit.payload,
+                            unit.has_sequence_header,
+                            av1_config,
+                            &reference_states,
+                            limits,
+                            budget,
+                            |headers| {
+                                self.decode_inter_unit(headers, info, index, unit_index, kind)
+                            },
+                        )?
                     } else {
-                        None
+                        let headers = parse_av1_sequence_sample_headers_with_references(
+                            info,
+                            &self.sequence_prefix,
+                            &unit.payload,
+                            unit.has_sequence_header,
+                            av1_config,
+                            &reference_states,
+                        )?;
+                        self.decode_inter_unit(&headers, info, index, unit_index, kind)?
                     };
-                    let (decoded_state, next_cdf_states) =
-                        match decode_still_frame_with_filter_policy_and_state_and_references_and_cdf_and_motion(
-                            &headers,
-                            Some(info),
-                            true,
-                            self.references.buffers(),
-
-                            initial_cdfs,
-                            temporal_motion_field,
-                            true,
-                            true,
-                        ) {
-                            Ok(decoded) => decoded,
-                            Err(DecoderError::Unsupported(message)) => {
-                                return Err(DecoderError::Unsupported(format!(
-                                    "AVIS sample {index} unit {unit_index} uses unsupported {kind:?} frame prediction: {message}"
-                                )));
-                            }
-                            Err(DecoderError::Bitstream(message)) => {
-                                return Err(DecoderError::Bitstream(format!(
-                                    "AVIS sample {index} unit {unit_index} {kind:?} frame: {message}"
-                                )));
-                            }
-                            Err(err) => return Err(err),
-                        };
-                    let (decoded, motion_field) =
-                        finish_decoded_still_frame(&headers, decoded_state, true)?;
-                    let mut reference_cdfs = if headers.frame.disable_frame_end_update_cdf {
-                        initial_cdfs.map(ToOwned::to_owned).unwrap_or_else(|| {
-                            vec![CdfContext::new(headers.frame.base_q_idx); next_cdf_states.len()]
-                        })
-                    } else {
-                        next_cdf_states.clone()
-                    };
-                    if !headers.frame.disable_frame_end_update_cdf {
-                        for cdf in &mut reference_cdfs {
-                            cdf.reset_symbol_counters();
-                        }
-                    }
-                    self.references.refresh_with_cdf_and_motion(
-                        headers.frame.refresh_frame_flags,
-                        &decoded,
-                        &headers.frame,
-                        &reference_cdfs,
-                        &motion_field,
-                    );
-                    self.references.set_previous_motion_field(motion_field);
-                    if !headers.frame.disable_frame_end_update_cdf {
-                        self.cdf_states = Some(Arc::new(next_cdf_states));
-                    }
-                    if headers.frame.show_frame {
+                    if let Some(decoded) = decoded {
                         last_visible_frame = Some(decoded);
                     }
                 }
@@ -423,6 +838,150 @@ impl SequenceDecodeState {
         last_visible_frame.ok_or_else(|| {
             DecoderError::Bitstream(format!("AVIS sample {index} has no displayed frame"))
         })
+    }
+
+    fn decode_key_unit(
+        &mut self,
+        headers: &Av1Headers,
+        info: &AvifInfo,
+    ) -> Result<Option<DecodedFrame>, DecoderError> {
+        let initial_cdfs = if headers.frame.primary_ref_frame != 7 {
+            self.references
+                .cdf_for_header(&headers.frame)
+                .or_else(|| self.cdf_states.as_ref().map(|cdf| cdf.as_slice()))
+        } else {
+            None
+        };
+        let (decoded_state, next_cdf_states) =
+            decode_still_frame_with_filter_policy_and_state_and_references_and_cdf(
+                headers,
+                Some(info),
+                true,
+                std::array::from_fn(|_| None),
+                initial_cdfs,
+                true,
+                true,
+            )?;
+        let (decoded, motion_field) = finish_decoded_still_frame(headers, decoded_state, true)?;
+        let mut reference_cdfs = if headers.frame.disable_frame_end_update_cdf {
+            initial_cdfs.map(ToOwned::to_owned).unwrap_or_else(|| {
+                vec![CdfContext::new(headers.frame.base_q_idx); next_cdf_states.len()]
+            })
+        } else {
+            next_cdf_states.clone()
+        };
+        if !headers.frame.disable_frame_end_update_cdf {
+            for cdf in &mut reference_cdfs {
+                cdf.reset_symbol_counters();
+            }
+        }
+        self.references.refresh_with_cdf_and_motion(
+            headers.frame.refresh_frame_flags,
+            &decoded,
+            &headers.frame,
+            &reference_cdfs,
+            &motion_field,
+        );
+        self.references.set_previous_motion_field(motion_field);
+        if !headers.frame.disable_frame_end_update_cdf {
+            self.cdf_states = Some(Arc::new(next_cdf_states));
+        }
+        Ok(headers.frame.show_frame.then_some(decoded))
+    }
+
+    fn decode_inter_unit(
+        &mut self,
+        headers: &Av1Headers,
+        info: &AvifInfo,
+        index: usize,
+        unit_index: usize,
+        kind: crate::container::AvifSequenceSampleKind,
+    ) -> Result<Option<DecodedFrame>, DecoderError> {
+        #[cfg(test)]
+        if std::env::var_os("AVIF_ENTROPY_TRACE").is_some() {
+            let start = headers.tile_group.group.data_start_offset;
+            let end = start
+                .saturating_add(8)
+                .min(headers.tile_group.tile_data.len());
+            eprintln!(
+                "entropy-trace headers sample={index} unit={unit_index} kind={kind:?} show={} order_hint={} primary_ref={} refresh={:#04x} disable_cdf={} disable_frame_end_cdf={} refs={:?} reference_select={} skip_mode={}/{:?} base_q={} delta_q={} segmentation={:?} global={:?} header_bits={} tile_start={start} tile_bytes={:02x?}",
+                headers.frame.show_frame,
+                headers.frame.order_hint,
+                headers.frame.primary_ref_frame,
+                headers.frame.refresh_frame_flags,
+                headers.frame.disable_cdf_update,
+                headers.frame.disable_frame_end_update_cdf,
+                headers.frame.reference_frame_indices,
+                headers.frame.reference_select,
+                headers.frame.skip_mode_present,
+                headers.frame.skip_mode_frame,
+                headers.frame.base_q_idx,
+                headers.frame.delta_q.present,
+                headers.frame.segmentation,
+                headers.frame.global_motion.types,
+                headers.frame.uncompressed_header_bits,
+                &headers.tile_group.tile_data[start..end]
+            );
+        }
+        let temporal_motion_field = self
+            .references
+            .temporal_motion_field(&headers.frame, headers.sequence.order_hint_bits);
+        let initial_cdfs = if headers.frame.primary_ref_frame != 7 {
+            self.references
+                .cdf_for_header(&headers.frame)
+                .or_else(|| self.cdf_states.as_ref().map(|cdf| cdf.as_slice()))
+        } else {
+            None
+        };
+        let (decoded_state, next_cdf_states) =
+            match decode_still_frame_with_filter_policy_and_state_and_references_and_cdf_and_motion(
+                headers,
+                Some(info),
+                true,
+                self.references.buffers(),
+                initial_cdfs,
+                temporal_motion_field,
+                true,
+                true,
+            ) {
+                Ok(decoded) => decoded,
+                Err(DecoderError::Unsupported(message)) => {
+                    return Err(DecoderError::Unsupported(format!(
+                        "AVIS sample {index} unit {unit_index} uses unsupported {kind:?} frame prediction: {message}"
+                    )));
+                }
+                Err(DecoderError::Bitstream(message)) => {
+                    return Err(DecoderError::Bitstream(format!(
+                        "AVIS sample {index} unit {unit_index} {kind:?} frame: {message}"
+                    )));
+                }
+                Err(err) => return Err(err),
+            };
+        let (decoded, motion_field) = finish_decoded_still_frame(headers, decoded_state, true)?;
+        let mut reference_cdfs = if headers.frame.disable_frame_end_update_cdf {
+            initial_cdfs.map(ToOwned::to_owned).unwrap_or_else(|| {
+                vec![CdfContext::new(headers.frame.base_q_idx); next_cdf_states.len()]
+            })
+        } else {
+            next_cdf_states.clone()
+        };
+        if !headers.frame.disable_frame_end_update_cdf {
+            for cdf in &mut reference_cdfs {
+                cdf.reset_symbol_counters();
+            }
+        }
+        self.references.refresh_with_cdf_and_motion(
+            headers.frame.refresh_frame_flags,
+            &decoded,
+            &headers.frame,
+            &reference_cdfs,
+            &motion_field,
+        );
+        self.references.set_previous_motion_field(motion_field);
+        if !headers.frame.disable_frame_end_update_cdf {
+            self.cdf_states = Some(Arc::new(next_cdf_states));
+        }
+        Ok(headers.frame.show_frame.then_some(decoded))
     }
 }
 

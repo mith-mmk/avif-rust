@@ -275,7 +275,7 @@ pub(super) fn decode_plane_block_unit(
             let (top_right_available, bottom_left_available) =
                 decoder.reconstructed_extension_availability(plane, transform)?;
             let prediction_len = transform.tx_size.width() * transform.tx_size.height();
-            let prediction = &mut decoder.prediction_scratch[..prediction_len];
+            let prediction = &mut decoder.scratch.prediction[..prediction_len];
             predict_plane_block_into(
                 plane,
                 reference_plane,
@@ -307,7 +307,7 @@ pub(super) fn decode_plane_block_unit(
                 subsampling_x,
                 subsampling_y,
                 prediction,
-                &mut decoder.inter_intra_scratch[..prediction_len],
+                &mut decoder.scratch.inter_intra[..prediction_len],
                 &obmc_neighbors,
             )?;
             write_plane_block(
@@ -377,7 +377,7 @@ pub(super) fn decode_plane_block_unit(
             let (top_right_available, bottom_left_available) =
                 decoder.reconstructed_extension_availability(plane, transform)?;
             let prediction_len = transform.tx_size.width() * transform.tx_size.height();
-            let prediction = &mut decoder.prediction_scratch[..prediction_len];
+            let prediction = &mut decoder.scratch.prediction[..prediction_len];
             predict_plane_block_into(
                 plane,
                 reference_plane,
@@ -409,7 +409,7 @@ pub(super) fn decode_plane_block_unit(
                 subsampling_x,
                 subsampling_y,
                 prediction,
-                &mut decoder.inter_intra_scratch[..prediction_len],
+                &mut decoder.scratch.inter_intra[..prediction_len],
                 &obmc_neighbors,
             )?;
             write_plane_block(
@@ -448,7 +448,7 @@ pub(super) fn decode_plane_block_unit(
         let (top_right_available, bottom_left_available) =
             decoder.reconstructed_extension_availability(plane, transform)?;
         let prediction_len = transform.tx_size.width() * transform.tx_size.height();
-        let prediction = &mut decoder.prediction_scratch[..prediction_len];
+        let prediction = &mut decoder.scratch.prediction[..prediction_len];
         predict_plane_block_into(
             plane,
             reference_plane,
@@ -480,14 +480,14 @@ pub(super) fn decode_plane_block_unit(
             subsampling_x,
             subsampling_y,
             prediction,
-            &mut decoder.inter_intra_scratch[..prediction_len],
+            &mut decoder.scratch.inter_intra[..prediction_len],
             &obmc_neighbors,
         )?;
         let block = decoded_transform.transform;
         let tx_type = decoded_transform.tx_type;
-        let dequant = &mut decoder.dequant_scratch[..prediction_len];
-        let reconstructed = &mut decoder.reconstruction_scratch[..prediction_len];
-        let residual = &mut decoder.residual_scratch[..prediction_len];
+        let dequant = &mut decoder.scratch.dequant[..prediction_len];
+        let reconstructed = &mut decoder.scratch.reconstruction[..prediction_len];
+        let residual = &mut decoder.scratch.residual[..prediction_len];
         let reconstructed_transform = if frame.coded_lossless() {
             reconstruct_lossless_transform_block_parts_into(
                 plane,

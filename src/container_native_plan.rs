@@ -3,6 +3,7 @@
 //! The compatibility parser intentionally remains in `container.rs`; this
 //! module contains only the native still preflight and result ownership walk.
 
+use super::container_budget::RetainedOwnerKind;
 use super::*;
 
 /// Visits the unique alpha items selected by the native still policy. An
@@ -116,11 +117,28 @@ pub(super) fn validate_native_selected_plan(
 /// compatibility resolver's recursion stack. Native still parsing has
 /// already rejected item-offset construction, but keeping that check here as
 /// well makes this allocation boundary explicit and atomic.
+#[cfg(test)]
 pub(super) fn native_direct_item_payload(
     data: &[u8],
     state: &MetaState,
     item_id: u32,
     context: &mut ParseContext<'_>,
+) -> Result<Vec<u8>, DecoderError> {
+    native_direct_item_payload_with_owner(
+        data,
+        state,
+        item_id,
+        context,
+        RetainedOwnerKind::PrimaryPayload,
+    )
+}
+
+pub(super) fn native_direct_item_payload_with_owner(
+    data: &[u8],
+    state: &MetaState,
+    item_id: u32,
+    context: &mut ParseContext<'_>,
+    owner_kind: RetainedOwnerKind,
 ) -> Result<Vec<u8>, DecoderError> {
     let construction_method = state
         .item_construction_methods
@@ -177,6 +195,7 @@ pub(super) fn native_direct_item_payload(
         let (start, end) = super::item_extent_bounds(location, extent, source.len())?;
         payload.extend_from_slice(&source[start..end]);
     }
+    context.retain_native_token(owner_kind, payload_token)?;
     Ok(payload)
 }
 
@@ -312,20 +331,39 @@ pub(super) fn retained_metadata_capacity(
     for color in &colors.unknown_colr {
         add(color.payload.capacity())?;
     }
-    add(bytes_for(
-        ordered.capacity(),
-        std::mem::size_of::<NativePropertyRecord>(),
-    )?)?;
+    add(retained_ordered_metadata_capacity(ordered)?)?;
+    Ok(total)
+}
+
+pub(super) fn retained_ordered_metadata_capacity(
+    ordered: &Vec<NativePropertyRecord>,
+) -> Result<usize, DecoderError> {
+    let mut total = ordered
+        .capacity()
+        .checked_mul(std::mem::size_of::<NativePropertyRecord>())
+        .ok_or_else(|| {
+            DecoderError::InvalidParam("retained metadata capacity overflows".to_string())
+        })?;
     for property in ordered {
+        let mut add = |bytes: usize| {
+            total = total.checked_add(bytes).ok_or_else(|| {
+                DecoderError::InvalidParam("retained metadata capacity overflows".to_string())
+            })?;
+            Ok::<(), DecoderError>(())
+        };
         match property {
             NativePropertyRecord::AuxiliaryType(value) => add(value.capacity())?,
             NativePropertyRecord::PixelInformation(pixi) => {
                 add(pixi.bits_per_channel.capacity())?;
                 if let Some(channels) = pixi.extended_channels.as_ref() {
-                    add(bytes_for(
-                        channels.capacity(),
-                        std::mem::size_of::<PixelChannelInformation>(),
-                    )?)?;
+                    add(channels
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<PixelChannelInformation>())
+                        .ok_or_else(|| {
+                            DecoderError::InvalidParam(
+                                "retained metadata capacity overflows".to_string(),
+                            )
+                        })?)?;
                 }
             }
             NativePropertyRecord::Av1Config(value) => add(value.capacity())?,
@@ -338,6 +376,67 @@ pub(super) fn retained_metadata_capacity(
             | NativePropertyRecord::PixelAspectRatio(_)
             | NativePropertyRecord::Other(_) => {}
         }
+    }
+    Ok(total)
+}
+
+/// Counts ICC payloads in the owners that survive the parser handoff.
+///
+/// The parser may temporarily own the source `colr` payload in addition to
+/// the legacy projection, rich projection, and ordered property record.  Its
+/// ICC counter therefore cannot be reused for the retained budget: only the
+/// copies reachable from the returned values belong in the handoff budget.
+pub(super) fn retained_icc_capacity(
+    info: &AvifInfo,
+    colors: &ColorInformationSet,
+    ordered: &Vec<NativePropertyRecord>,
+) -> Result<usize, DecoderError> {
+    let mut total = 0usize;
+    let mut add = |bytes: usize| {
+        total = total.checked_add(bytes).ok_or_else(|| {
+            DecoderError::InvalidParam("retained ICC capacity overflows".to_string())
+        })?;
+        Ok::<(), DecoderError>(())
+    };
+    if let Some(color) = info
+        .color_information
+        .as_ref()
+        .filter(|color| color.icc_profile().is_some())
+    {
+        add(color.payload.capacity())?;
+    }
+    if let Some(icc) = colors.icc_profile.as_ref() {
+        add(icc.capacity())?;
+    }
+    for property in ordered {
+        if let Some(color) = match property {
+            NativePropertyRecord::ColorInformation(color) if color.icc_profile().is_some() => {
+                Some(color)
+            }
+            _ => None,
+        } {
+            add(color.payload.capacity())?;
+        }
+    }
+    Ok(total)
+}
+
+/// Counts only payload vectors that survive the parser-to-native handoff.
+/// Metadata capacities intentionally stay in the separate metadata total.
+pub(super) fn retained_payload_capacity(info: &AvifInfo) -> Result<usize, DecoderError> {
+    let mut total = 0usize;
+    let mut add = |bytes: usize| {
+        total = total.checked_add(bytes).ok_or_else(|| {
+            DecoderError::InvalidParam("retained payload capacity overflows".to_string())
+        })?;
+        Ok::<(), DecoderError>(())
+    };
+    add(info.primary_item_payload.capacity())?;
+    for auxiliary in &info.alpha_auxiliary_items {
+        add(auxiliary.payload.capacity())?;
+    }
+    for payload in &info.sequence_sample_payloads {
+        add(payload.capacity())?;
     }
     Ok(total)
 }

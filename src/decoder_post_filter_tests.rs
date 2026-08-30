@@ -1,9 +1,10 @@
 use super::{
     DecodedFrame, RestorationBoundaryRows, apply_alpha_rows, apply_cdef_plane,
-    apply_loop_filter_deltas, apply_loop_restoration_stage, cdef_filtered_block_mask,
-    cdef_has_active_strengths, cdef_indices_have_active_strengths, cdef_strengths_disabled,
-    deblock_has_active_strengths, loop_filter_mode_delta_index, loop_filter_reference_delta_index,
-    patch_restoration_stripe_boundaries, restore_restoration_stripe_boundaries, tile_id_at,
+    apply_cdef_plane_from_source, apply_loop_filter_deltas, apply_loop_restoration_stage,
+    cdef_filtered_block_mask, cdef_has_active_strengths, cdef_indices_have_active_strengths,
+    cdef_strengths_disabled, deblock_has_active_strengths, loop_filter_mode_delta_index,
+    loop_filter_reference_delta_index, patch_restoration_stripe_boundaries,
+    restore_restoration_stripe_boundaries, tile_id_at,
 };
 use crate::av1::CdefParams;
 use crate::av1::{
@@ -198,6 +199,67 @@ fn cdef_visible_bounds_preserve_coded_padding() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn cdef_source_core_matches_legacy_for_high_bit_depth_without_heap_work() {
+    for (coeff_shift, max_sample) in [(0u8, 255u16), (2, 1023), (4, 4095)] {
+        let source: Vec<u16> = (0..64)
+            .map(|index| ((index * 37 + 19) as u16) & max_sample)
+            .collect();
+        let mut legacy_plane = PlaneBuffer {
+            layout: PlaneLayout {
+                plane: 0,
+                width: 8,
+                height: 8,
+                subsampling_x: 0,
+                subsampling_y: 0,
+                sample_count: source.len(),
+            },
+            samples: source.clone(),
+        };
+        let mut cdef = CdefParams {
+            enabled: true,
+            damping: 3,
+            bits: 0,
+            ..CdefParams::default()
+        };
+        cdef.strengths[0].y_pri = 4;
+        cdef.strengths[0].y_sec = 2;
+        let blocks = [(0, 0, 0, 0, 0)];
+        apply_cdef_plane(
+            &mut legacy_plane,
+            0,
+            false,
+            false,
+            coeff_shift,
+            cdef,
+            8,
+            8,
+            &blocks,
+        );
+
+        let mut strict_output = source.clone();
+        let ((), allocation_requests) =
+            crate::test_allocation_observer::count_allocation_requests(|| {
+                apply_cdef_plane_from_source(
+                    &source,
+                    &mut strict_output,
+                    8,
+                    8,
+                    0,
+                    false,
+                    false,
+                    coeff_shift,
+                    cdef,
+                    8,
+                    8,
+                    &blocks,
+                );
+            });
+        assert_eq!(allocation_requests, 0);
+        assert_eq!(strict_output, legacy_plane.samples);
     }
 }
 

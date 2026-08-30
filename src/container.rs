@@ -6,14 +6,29 @@ use crate::obu::{ObuType, parse_obu_stream};
 
 #[path = "container_budget.rs"]
 mod container_budget;
+#[path = "container_iinf_owners.rs"]
+mod iinf_owners;
+#[path = "container_iloc_owners.rs"]
+mod iloc_owners;
 #[path = "container_native_plan.rs"]
 mod native_plan;
-use container_budget::{AllocationClass, AllocationToken, ParseContext};
+#[path = "container_sequence_table.rs"]
+mod sequence_table;
+pub(crate) use container_budget::{DecodeBudget, ParseAccounting};
+use container_budget::{AllocationClass, AllocationToken, ParseContext, RetainedOwnerKind};
+use iinf_owners::{NativeItemNameOwners, OwnedItemInfos};
+use iloc_owners::{NativeIlocOwners, OwnedItemLocations};
+#[cfg(test)]
+use native_plan::native_direct_item_payload;
 use native_plan::{
-    for_each_native_selected_alpha_item, native_direct_item_payload, retained_metadata_capacity,
+    for_each_native_selected_alpha_item, native_direct_item_payload_with_owner,
+    retained_icc_capacity, retained_metadata_capacity, retained_payload_capacity,
     validate_native_selected_plan,
 };
 
+#[cfg(test)]
+#[path = "container_budget_handoff_tests.rs"]
+mod container_budget_handoff_tests;
 #[cfg(test)]
 #[path = "container_budget_tests.rs"]
 mod container_budget_tests;
@@ -21,11 +36,20 @@ mod container_budget_tests;
 #[path = "container_counter_tests.rs"]
 mod container_counter_tests;
 #[cfg(test)]
+#[path = "container_box_iter_tests.rs"]
+mod container_box_iter_tests;
+#[cfg(test)]
 #[path = "container_direct_payload_tests.rs"]
 mod container_direct_payload_tests;
 #[cfg(test)]
+#[path = "container_iloc_owner_tests.rs"]
+mod container_iloc_owner_tests;
+#[cfg(test)]
 #[path = "container_sort_tests.rs"]
 mod container_sort_tests;
+#[cfg(test)]
+#[path = "container_sequence_selection_tests.rs"]
+mod container_sequence_selection_tests;
 
 const BRAND_AVIF: &[u8; 4] = b"avif";
 const BRAND_AVIS: &[u8; 4] = b"avis";
@@ -581,6 +605,7 @@ pub(crate) struct MetaState {
     primary_item_id: Option<u32>,
     item_locations: Vec<ItemLocation>,
     item_locations_token: AllocationToken,
+    item_location_owners: Option<NativeIlocOwners>,
     item_construction_methods: Vec<(u32, u16)>,
     item_construction_methods_token: AllocationToken,
     item_extent_indexes: Vec<(u32, Vec<u64>)>,
@@ -591,6 +616,7 @@ pub(crate) struct MetaState {
     idat_payload_range: Option<(usize, usize)>,
     item_infos: Vec<ItemInfo>,
     item_infos_token: AllocationToken,
+    item_name_owners: Option<NativeItemNameOwners>,
     item_references: Vec<ItemReference>,
     item_references_token: AllocationToken,
     alternate_entity_groups: Vec<AlternateEntityGroup>,
@@ -629,6 +655,22 @@ pub fn parse_avif(data: &[u8]) -> Result<AvifInfo, DecoderError> {
 pub(crate) struct ParsedAvif {
     pub info: AvifInfo,
     pub(crate) metadata: MetaState,
+    pub(crate) animation_timing: Option<ParsedAnimationTiming>,
+}
+
+/// Timing-only AVIS parse result. Selected color samples remain owned by
+/// `AvifInfo`; alpha samples and final timing vectors are moved here so a
+/// strict sequence decoder does not materialize the compressed track twice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ParsedAnimationTiming {
+    pub color_timing: Vec<AvifFrameTiming>,
+    pub alpha_timing: Vec<AvifFrameTiming>,
+    pub color_durations_ms: Vec<u64>,
+    pub alpha_durations_ms: Vec<u64>,
+    pub color_timescale: u64,
+    pub duration_in_timescales: u64,
+    pub repetition_count: AvifRepetitionCount,
+    pub alpha_samples: Vec<Vec<u8>>,
 }
 
 pub(crate) fn parse_avif_with_metadata(data: &[u8]) -> Result<ParsedAvif, DecoderError> {
@@ -672,7 +714,7 @@ fn parse_avif_with_context_inner(
             // The primary still image item remains independently decodable in
             // an AVIS file. The movie box describes later frames; the public
             // still-image API intentionally selects the primary item.
-            b"moov" => context.reject_native(
+            b"moov" if context.is_native_still() => context.reject_native(
                 "bounded native decode does not support AVIS movie containers yet",
             )?,
             _ => {}
@@ -702,7 +744,8 @@ fn parse_avif_with_context_inner(
             "bounded native decode does not support derived image construction yet",
         )?;
     }
-    let (alpha_auxiliary_items, primary_item_payload, sequence) = if context.is_native_still() {
+    let (alpha_auxiliary_items, primary_item_payload, sequence, animation_timing) =
+        if context.is_native_still() {
         validate_native_selected_plan(data, &meta, decode_primary_item_id, context)?;
         let alpha_auxiliary_items = alpha_auxiliary_items_for_with_context(
             data,
@@ -710,8 +753,13 @@ fn parse_avif_with_context_inner(
             Some(decode_primary_item_id),
             context,
         )?;
-        let primary_item_payload =
-            item_payload_with_context(data, &meta, decode_primary_item_id, context)?;
+        let primary_item_payload = item_payload_with_owner_context(
+            data,
+            &meta,
+            decode_primary_item_id,
+            context,
+            RetainedOwnerKind::PrimaryPayload,
+        )?;
         (
             alpha_auxiliary_items,
             primary_item_payload,
@@ -721,13 +769,33 @@ fn parse_avif_with_context_inner(
                 alpha_samples: Vec::new(),
                 alpha_durations_ms: Vec::new(),
             },
+            None,
         )
     } else {
         // Keep the established compatibility order: primary payload, sequence
         // parsing, metadata validation, and only then alpha materialization.
         let primary_item_payload =
             item_payload_with_context(data, &meta, decode_primary_item_id, context)?;
-        let sequence = parse_avif_sequence_with_brands(data, &major_brand, &compatible_brands)?;
+        let parsed_animation = parse_avif_animation_with_context(
+            data,
+            &major_brand,
+            &compatible_brands,
+            context,
+        )?;
+        let ParsedAnimation {
+            sequence:
+                AvifSequence {
+                    color_samples,
+                    color_durations_ms,
+                    alpha_samples,
+                    alpha_durations_ms,
+                },
+            color_timing,
+            alpha_timing,
+            color_timescale,
+            duration_in_timescales,
+            repetition_count,
+        } = parsed_animation;
         validate_primary_item_metadata(&meta)?;
         let alpha_auxiliary_items = alpha_auxiliary_items_for_with_context(
             data,
@@ -735,7 +803,26 @@ fn parse_avif_with_context_inner(
             Some(decode_primary_item_id),
             context,
         )?;
-        (alpha_auxiliary_items, primary_item_payload, sequence)
+        (
+            alpha_auxiliary_items,
+            primary_item_payload,
+            AvifSequence {
+                color_samples,
+                color_durations_ms: Vec::new(),
+                alpha_samples: Vec::new(),
+                alpha_durations_ms: Vec::new(),
+            },
+            Some(ParsedAnimationTiming {
+                color_timing,
+                alpha_timing,
+                color_durations_ms,
+                alpha_durations_ms,
+                color_timescale,
+                duration_in_timescales,
+                repetition_count,
+                alpha_samples,
+            }),
+        )
     };
     let primary_grid = if context.is_native_still() {
         None
@@ -769,6 +856,7 @@ fn parse_avif_with_context_inner(
             sequence_sample_payloads: sequence.color_samples,
         },
         metadata: meta,
+        animation_timing,
     })
 }
 
@@ -801,6 +889,7 @@ pub(crate) struct NativeParseStats {
     pub primary_item_type: Option<[u8; 4]>,
     pub grid_cells: usize,
     pub ordered_primary_properties: Vec<NativePropertyRecord>,
+    pub animation_timing: Option<ParsedAnimationTiming>,
 }
 
 /// Parses rich metadata after a non-allocating, caller-bounded container scan.
@@ -808,8 +897,41 @@ pub(crate) fn parse_rich_info_with_limits(
     data: &[u8],
     limits: &NativeDecodeLimits,
 ) -> Result<(RichAvifInfo, NativeParseStats), DecoderError> {
+    let (rich, stats, _budget) = parse_rich_info_with_limits_and_budget(data, limits)?;
+    Ok((rich, stats))
+}
+
+/// Native parse variant used by strict decoding. The returned move-only
+/// budget retains only owners reachable from the projected rich information
+/// and selected item payloads; parser-only metadata has already been dropped.
+pub(crate) fn parse_rich_info_with_limits_and_budget(
+    data: &[u8],
+    limits: &NativeDecodeLimits,
+) -> Result<(RichAvifInfo, NativeParseStats, DecodeBudget), DecoderError> {
+    parse_rich_info_with_limits_and_budget_mode(data, limits, false)
+}
+
+/// Native sequence variant. It shares the same metadata/parser core as the
+/// still path but permits the AVIS movie box and retains its timing result in
+/// the parse handoff.
+pub(crate) fn parse_rich_info_with_limits_and_budget_sequence(
+    data: &[u8],
+    limits: &NativeDecodeLimits,
+) -> Result<(RichAvifInfo, NativeParseStats, DecodeBudget), DecoderError> {
+    parse_rich_info_with_limits_and_budget_mode(data, limits, true)
+}
+
+fn parse_rich_info_with_limits_and_budget_mode(
+    data: &[u8],
+    limits: &NativeDecodeLimits,
+    sequence_mode: bool,
+) -> Result<(RichAvifInfo, NativeParseStats, DecodeBudget), DecoderError> {
     let mut stats = scan_native_limits(data, limits)?;
-    let mut context = ParseContext::native_still(limits);
+    let mut context = if sequence_mode {
+        ParseContext::native_sequence(limits)
+    } else {
+        ParseContext::native_still(limits)
+    };
     let parsed = parse_avif_with_context(data, &mut context)?;
     if let (Some(width), Some(height)) = (parsed.info.width, parsed.info.height) {
         limits.check_dimensions(
@@ -838,13 +960,31 @@ pub(crate) fn parse_rich_info_with_limits(
     let color_information = collect_color_information_with_context(colors, &mut context)?;
     stats.ordered_primary_properties =
         primary_property_records_with_context(&parsed.metadata, primary_item_id, &mut context)?;
-    context.retain_accounting();
-    let accounting = context.accounting();
+    let ParsedAvif {
+        info: parsed_info,
+        metadata,
+        animation_timing,
+    } = parsed;
+    // The timing handoff owns the alpha sample vectors.  Moving it avoids a
+    // hidden deep clone before the native budget can account for ownership.
+    stats.animation_timing = animation_timing;
+    release_native_parser_metadata(&mut context, metadata)?;
     let rich = RichAvifInfo {
-        info: parsed.info,
+        info: parsed_info,
         color_information,
     };
-    let retained = retained_metadata_capacity(
+    let mut retained = retained_metadata_capacity(
+        &rich.info,
+        &rich.color_information,
+        &stats.ordered_primary_properties,
+    )?;
+    if let Some(timing) = stats.animation_timing.as_ref() {
+        let timing_bytes = parsed_animation_timing_metadata_bytes(timing)?;
+        retained = retained.checked_add(timing_bytes).ok_or_else(|| {
+            DecoderError::InvalidParam("retained AVIS timing metadata overflows".to_string())
+        })?;
+    }
+    let retained_icc = retained_icc_capacity(
         &rich.info,
         &rich.color_information,
         &stats.ordered_primary_properties,
@@ -855,9 +995,245 @@ pub(crate) fn parse_rich_info_with_limits(
     // allowed to inflate this value.
     stats.metadata_bytes = retained;
     stats.retained_metadata_bytes = retained;
-    stats.icc_bytes = stats.icc_bytes.max(accounting.icc_live);
-    limits.check_metadata(stats.metadata_bytes, stats.icc_bytes)?;
-    Ok((rich, stats))
+    stats.icc_bytes = stats.icc_bytes.max(retained_icc);
+    let mut payload = retained_payload_capacity(&rich.info)?;
+    if let Some(timing) = stats.animation_timing.as_ref() {
+        payload = payload
+            .checked_add(
+                timing
+                    .alpha_samples
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<Vec<u8>>())
+                    .ok_or_else(|| {
+                        DecoderError::InvalidParam(
+                            "retained AVIS alpha sample capacity overflows".to_string(),
+                        )
+                    })?,
+            )
+            .ok_or_else(|| {
+                DecoderError::InvalidParam("retained AVIS payload capacity overflows".to_string())
+            })?;
+        for sample in &timing.alpha_samples {
+            payload = payload
+                .checked_add(sample.capacity())
+                .ok_or_else(|| {
+                    DecoderError::InvalidParam("retained AVIS payload capacity overflows".to_string())
+                })?;
+        }
+    }
+    let owner_handoff = context
+        .take_native_owners()
+        .ok_or_else(|| DecoderError::InvalidParam("native owner handoff is missing".to_string()))?;
+    let budget_metadata = retained
+        .checked_add(owner_handoff.storage_bytes())
+        .ok_or_else(|| {
+            DecoderError::InvalidParam("retained metadata capacity overflows".to_string())
+        })?;
+    limits.check_metadata(budget_metadata, stats.icc_bytes)?;
+    let budget =
+        context.into_budget_with_handoff(budget_metadata, payload, retained_icc, owner_handoff)?;
+    Ok((rich, stats, budget))
+}
+
+/// Counts the final timing vectors which survive native sequence parsing.
+/// Track-local `pts`/`durations` vectors are consumed while creating
+/// `AvifFrameTiming`; only these final vectors are retained and therefore
+/// charged.  Capacities are used instead of lengths because the handoff owns
+/// the actual allocator reservations.
+pub(crate) fn parsed_animation_timing_metadata_bytes(
+    timing: &ParsedAnimationTiming,
+) -> Result<usize, DecoderError> {
+    let timing_entries = timing
+        .color_timing
+        .capacity()
+        .checked_add(timing.alpha_timing.capacity())
+        .ok_or_else(|| {
+            DecoderError::InvalidParam("AVIS timing metadata capacity overflows".to_string())
+        })?;
+    let duration_entries = timing
+        .color_durations_ms
+        .capacity()
+        .checked_add(timing.alpha_durations_ms.capacity())
+        .ok_or_else(|| {
+            DecoderError::InvalidParam("AVIS timing metadata capacity overflows".to_string())
+        })?;
+    let timing_bytes = crate::allocation::capacity_bytes::<AvifFrameTiming>(
+        timing_entries,
+        "AVIS frame timing",
+    )?;
+    let duration_bytes =
+        crate::allocation::capacity_bytes::<u64>(duration_entries, "AVIS durations")?;
+    timing_bytes.checked_add(duration_bytes).ok_or_else(|| {
+        DecoderError::InvalidParam("AVIS timing metadata capacity overflows".to_string())
+    })
+}
+
+/// Drops parser-only container state before its allocation tickets are
+/// released.  Native projections have already copied the selected values, so
+/// none of these allocations are reachable from the returned information.
+/// Keeping this transition explicit lets the handoff adopt the original
+/// projection tickets instead of rebuilding accounting from byte totals.
+fn release_native_parser_metadata(
+    context: &mut ParseContext<'_>,
+    metadata: MetaState,
+) -> Result<(), DecoderError> {
+    if !context.is_native() {
+        drop(metadata);
+        return Ok(());
+    }
+
+    OwnedItemInfos::validate_for_retire(
+        &metadata.item_infos,
+        &metadata.item_infos_token,
+        metadata.item_name_owners.as_ref(),
+        context,
+    )?;
+
+    let MetaState {
+        item_locations,
+        item_locations_token,
+        item_location_owners,
+        item_construction_methods,
+        item_construction_methods_token,
+        item_extent_indexes,
+        item_extent_indexes_token,
+        idat_payload,
+        idat_payload_range: _,
+        item_infos,
+        item_infos_token,
+        item_name_owners,
+        item_references,
+        mut item_references_token,
+        alternate_entity_groups,
+        mut alternate_entity_groups_token,
+        item_property_associations,
+        item_properties,
+        mut item_property_associations_token,
+        mut item_properties_token,
+        primary_item_id: _,
+    } = metadata;
+    let iloc = OwnedItemLocations {
+        locations: item_locations,
+        construction_methods: item_construction_methods,
+        extent_indexes: item_extent_indexes,
+        locations_token: item_locations_token,
+        construction_methods_token: item_construction_methods_token,
+        extent_indexes_token: item_extent_indexes_token,
+        native_owners: item_location_owners,
+    };
+    let reference_target_bytes = item_references
+        .iter()
+        .try_fold(0usize, |total, reference| {
+            let bytes = crate::allocation::capacity_bytes::<u32>(
+                reference.to_item_ids.capacity(),
+                "iref target ids",
+            )?;
+            total
+                .checked_add(bytes)
+                .ok_or_else(|| DecoderError::InvalidParam("iref capacity overflows".to_string()))
+        })?;
+    let alternate_entity_bytes =
+        alternate_entity_groups
+            .iter()
+            .try_fold(0usize, |total, group| {
+                let bytes = crate::allocation::capacity_bytes::<u32>(
+                    group.entity_ids.capacity(),
+                    "alternate entity ids",
+                )?;
+                total.checked_add(bytes).ok_or_else(|| {
+                    DecoderError::InvalidParam("alternate group capacity overflows".to_string())
+                })
+            })?;
+    let association_nested_bytes =
+        item_property_associations
+            .iter()
+            .try_fold(0usize, |total, association| {
+                total
+                    .checked_add(association.token.charged_capacity_bytes)
+                    .ok_or_else(|| {
+                        DecoderError::InvalidParam(
+                            "property association capacity overflows".to_string(),
+                        )
+                    })
+            })?;
+    let (property_metadata_bytes, property_icc_bytes) =
+        parser_property_owned_bytes(&item_properties)?;
+    let idat_bytes = idat_payload.as_ref().map_or(0, Vec::capacity);
+
+    // The values are dead before the accounting is released.  This is also
+    // important for nested Vec/String owners whose deallocation is observed
+    // by bounded-parser tests.
+    drop(item_references);
+    drop(alternate_entity_groups);
+    drop(item_property_associations);
+    drop(item_properties);
+    drop(idat_payload);
+
+    context.release_class_bytes(AllocationClass::Metadata, reference_target_bytes)?;
+    context.release_class_bytes(AllocationClass::Metadata, alternate_entity_bytes)?;
+    context.release_class_bytes(AllocationClass::Metadata, association_nested_bytes)?;
+    context.release_class_bytes(AllocationClass::Metadata, property_metadata_bytes)?;
+    context.release_class_bytes(AllocationClass::Icc, property_icc_bytes)?;
+    context.release_class_bytes(AllocationClass::Metadata, idat_bytes)?;
+    iloc.retire(context)?;
+    OwnedItemInfos {
+        infos: item_infos,
+        outer_token: item_infos_token,
+        name_owners: item_name_owners,
+    }
+    .retire(context)?;
+    context.release_token(&mut item_references_token)?;
+    context.release_token(&mut alternate_entity_groups_token)?;
+    context.release_token(&mut item_property_associations_token)?;
+    context.release_token(&mut item_properties_token)?;
+    Ok(())
+}
+
+fn parser_property_owned_bytes(
+    properties: &[ItemProperty],
+) -> Result<(usize, usize), DecoderError> {
+    properties
+        .iter()
+        .try_fold((0usize, 0usize), |(metadata, icc), property| {
+            let (property_metadata, property_icc) = match property {
+                ItemProperty::AuxiliaryType(value) => (value.capacity(), 0),
+                ItemProperty::PixelInformation(pixi) => {
+                    let bits = crate::allocation::capacity_bytes::<u8>(
+                        pixi.bits_per_channel.capacity(),
+                        "pixi channel depths",
+                    )?;
+                    let extended = pixi.extended_channels.as_ref().map_or(Ok(0), |channels| {
+                        crate::allocation::capacity_bytes::<PixelChannelInformation>(
+                            channels.capacity(),
+                            "pixi channel descriptors",
+                        )
+                    })?;
+                    (
+                        bits.checked_add(extended).ok_or_else(|| {
+                            DecoderError::InvalidParam("pixi capacity overflows".to_string())
+                        })?,
+                        0,
+                    )
+                }
+                ItemProperty::Av1Config(value) => (value.capacity(), 0),
+                ItemProperty::ColorInformation(value) => {
+                    if value.icc_profile().is_some() {
+                        (0, value.payload.capacity())
+                    } else {
+                        (value.payload.capacity(), 0)
+                    }
+                }
+                _ => (0, 0),
+            };
+            Ok((
+                metadata.checked_add(property_metadata).ok_or_else(|| {
+                    DecoderError::InvalidParam("property metadata capacity overflows".to_string())
+                })?,
+                icc.checked_add(property_icc).ok_or_else(|| {
+                    DecoderError::InvalidParam("property ICC capacity overflows".to_string())
+                })?,
+            ))
+        })
 }
 
 #[allow(dead_code)]
@@ -884,7 +1260,13 @@ fn primary_property_records_with_context(
             DecoderError::InvalidParam("property association count overflows".to_string())
         })?;
     let mut records = Vec::new();
-    context.try_reserve(&mut records, association_count, "ordered property metadata")?;
+    let mut records_token = AllocationToken::new(AllocationClass::Metadata);
+    context.try_reserve_with_token(
+        &mut records,
+        &mut records_token,
+        association_count,
+        "ordered property metadata",
+    )?;
     for association in state
         .item_property_associations
         .iter()
@@ -902,6 +1284,7 @@ fn primary_property_records_with_context(
             }
         }
     }
+    context.retain_native_token(RetainedOwnerKind::OrderedProperties, records_token)?;
     Ok(records)
 }
 
@@ -916,29 +1299,38 @@ fn property_record_with_context(
     context: &mut ParseContext<'_>,
 ) -> Result<NativePropertyRecord, DecoderError> {
     Ok(match property {
-        ItemProperty::AuxiliaryType(value) => {
-            NativePropertyRecord::AuxiliaryType(copy_string_with_context(value, context)?)
-        }
+        ItemProperty::AuxiliaryType(value) => NativePropertyRecord::AuxiliaryType(
+            copy_string_with_owner(value, context, RetainedOwnerKind::OrderedProperties)?,
+        ),
         ItemProperty::CleanAperture(value) => NativePropertyRecord::CleanAperture(*value),
         ItemProperty::Rotation(value) => NativePropertyRecord::Rotation(*value),
         ItemProperty::Mirror(value) => NativePropertyRecord::Mirror(*value),
         ItemProperty::SpatialExtents(value) => NativePropertyRecord::SpatialExtents(*value),
-        ItemProperty::PixelInformation(value) => {
-            NativePropertyRecord::PixelInformation(clone_pixi_with_context(value, context)?)
-        }
-        ItemProperty::Av1Config(value) => {
-            NativePropertyRecord::Av1Config(copy_bytes_with_context(value, context, "av1C")?)
-        }
+        ItemProperty::PixelInformation(value) => NativePropertyRecord::PixelInformation(
+            clone_pixi_with_owner(value, context, RetainedOwnerKind::OrderedProperties)?,
+        ),
+        ItemProperty::Av1Config(value) => NativePropertyRecord::Av1Config(copy_bytes_with_owner(
+            value,
+            context,
+            AllocationClass::Metadata,
+            RetainedOwnerKind::OrderedProperties,
+            "av1C",
+        )?),
         ItemProperty::ColorInformation(value) => {
             NativePropertyRecord::ColorInformation(ColorInformation {
                 color_type: value.color_type,
-                payload: copy_bytes_with_class(
+                payload: copy_bytes_with_owner(
                     &value.payload,
                     context,
                     if value.icc_profile().is_some() {
                         AllocationClass::Icc
                     } else {
                         AllocationClass::Metadata
+                    },
+                    if value.icc_profile().is_some() {
+                        RetainedOwnerKind::IccSubset
+                    } else {
+                        RetainedOwnerKind::OrderedProperties
                     },
                     "color information",
                 )?,
@@ -973,6 +1365,21 @@ fn copy_bytes_with_class(
     Ok(copy)
 }
 
+fn copy_bytes_with_owner(
+    bytes: &[u8],
+    context: &mut ParseContext<'_>,
+    class: AllocationClass,
+    owner_kind: RetainedOwnerKind,
+    label: &str,
+) -> Result<Vec<u8>, DecoderError> {
+    let mut copy = Vec::new();
+    let mut token = AllocationToken::new(class);
+    context.try_reserve_class_with_token(&mut copy, &mut token, bytes.len(), class, label)?;
+    copy.extend_from_slice(bytes);
+    context.retain_native_token(owner_kind, token)?;
+    Ok(copy)
+}
+
 fn copy_string_with_context(
     value: &str,
     context: &mut ParseContext<'_>,
@@ -981,6 +1388,38 @@ fn copy_string_with_context(
     context.try_reserve(&mut bytes, value.len(), "string")?;
     bytes.extend_from_slice(value.as_bytes());
     Ok(String::from_utf8(bytes).expect("source string was already validated as UTF-8"))
+}
+
+fn copy_string_with_owner(
+    value: &str,
+    context: &mut ParseContext<'_>,
+    owner_kind: RetainedOwnerKind,
+) -> Result<String, DecoderError> {
+    let mut bytes = Vec::new();
+    let mut token = AllocationToken::new(AllocationClass::Metadata);
+    context.try_reserve_with_token(&mut bytes, &mut token, value.len(), "owned string")?;
+    bytes.extend_from_slice(value.as_bytes());
+    context.retain_native_token(owner_kind, token)?;
+    Ok(String::from_utf8(bytes).expect("source string was already validated as UTF-8"))
+}
+
+fn copy_string_owned(
+    value: &str,
+    context: &mut ParseContext<'_>,
+) -> Result<(String, AllocationToken), DecoderError> {
+    let mut bytes = Vec::new();
+    let mut token = AllocationToken::new(AllocationClass::Metadata);
+    let label = if context.is_native() {
+        "owned string"
+    } else {
+        "string"
+    };
+    context.try_reserve_with_token(&mut bytes, &mut token, value.len(), label)?;
+    bytes.extend_from_slice(value.as_bytes());
+    Ok((
+        String::from_utf8(bytes).expect("source string was already validated as UTF-8"),
+        token,
+    ))
 }
 
 fn scan_native_limits(
@@ -999,6 +1438,7 @@ fn scan_native_limits(
         primary_item_type: None,
         grid_cells: 0,
         ordered_primary_properties: Vec::new(),
+        animation_timing: None,
     };
     for_each_top_level_box(data, |header| {
         let payload = box_payload(data, header)?;
@@ -1282,10 +1722,11 @@ where
     let mut unknown_token = AllocationToken::new(AllocationClass::Metadata);
     for color in colors {
         if let Some(profile) = color.icc_profile() {
-            color_information.icc_profile = Some(copy_bytes_with_class(
+            color_information.icc_profile = Some(copy_bytes_with_owner(
                 profile,
                 context,
                 AllocationClass::Icc,
+                RetainedOwnerKind::IccSubset,
                 "ICC profile",
             )?);
             color_information.icc_color_type = Some(color.color_type);
@@ -1304,10 +1745,17 @@ where
             )?;
             color_information.unknown_colr.push(ColorInformation {
                 color_type: color.color_type,
-                payload: copy_bytes_with_context(&color.payload, context, "unknown colr")?,
+                payload: copy_bytes_with_owner(
+                    &color.payload,
+                    context,
+                    AllocationClass::Metadata,
+                    RetainedOwnerKind::RichMetadata,
+                    "unknown colr",
+                )?,
             });
         }
     }
+    context.retain_native_token(RetainedOwnerKind::RichMetadata, unknown_token)?;
     Ok(color_information)
 }
 
@@ -1916,12 +2364,19 @@ fn parse_ftyp_with_context(
     let major_brand = read_fourcc(payload, 0)?;
     let brand_count = (payload.len() - 8) / 4;
     let mut compatible_brands = Vec::new();
-    context.try_reserve(&mut compatible_brands, brand_count, "compatible brands")?;
+    let mut compatible_brands_token = AllocationToken::new(AllocationClass::Metadata);
+    context.try_reserve_with_token(
+        &mut compatible_brands,
+        &mut compatible_brands_token,
+        brand_count,
+        "compatible brands",
+    )?;
     let mut offset = 8;
     while offset + 4 <= payload.len() {
         compatible_brands.push(read_fourcc(payload, offset)?);
         offset += 4;
     }
+    context.retain_native_token(RetainedOwnerKind::RichMetadata, compatible_brands_token)?;
     Ok((major_brand, compatible_brands))
 }
 
@@ -1992,39 +2447,94 @@ fn parse_meta_children_with_context(
         match &header.box_type {
             b"pitm" => state.primary_item_id = parse_pitm(child_payload)?,
             b"iinf" => {
-                let (item_infos, item_infos_token) =
-                    parse_iinf_owned_with_context(child_payload, context)?;
-                release_item_infos(context, &mut state.item_infos, &mut state.item_infos_token)?;
-                state.item_infos = item_infos;
-                state.item_infos_token = item_infos_token;
+                let checkpoint = context.checkpoint();
+                let incoming = match parse_iinf_owned_with_context(child_payload, context) {
+                    Ok(incoming) => incoming,
+                    Err(error) => {
+                        <ParseContext<'_> as crate::allocation::AllocationLedger>::restore(
+                            context, checkpoint,
+                        );
+                        return Err(error);
+                    }
+                };
+                OwnedItemInfos::validate_for_retire(
+                    &state.item_infos,
+                    &state.item_infos_token,
+                    state.item_name_owners.as_ref(),
+                    context,
+                )?;
+                let previous = OwnedItemInfos {
+                    infos: std::mem::take(&mut state.item_infos),
+                    outer_token: std::mem::take(&mut state.item_infos_token),
+                    name_owners: state.item_name_owners.take(),
+                };
+                previous.retire(context)?;
+                state.item_infos = incoming.infos;
+                state.item_infos_token = incoming.outer_token;
+                state.item_name_owners = incoming.name_owners;
             }
             b"iloc" => {
-                let (
-                    locations,
-                    construction_methods,
-                    extent_indexes,
-                    locations_token,
-                    construction_methods_token,
-                    extent_indexes_token,
-                ) = parse_iloc_owned_with_context(child_payload, context)?;
-                release_item_locations(
-                    context,
-                    &mut state.item_locations,
-                    &mut state.item_locations_token,
-                    &mut state.item_construction_methods,
-                    &mut state.item_construction_methods_token,
-                    &mut state.item_extent_indexes,
-                    &mut state.item_extent_indexes_token,
-                )?;
-                state.item_locations = locations;
-                state.item_locations_token = locations_token;
-                state.item_construction_methods = construction_methods;
-                state.item_construction_methods_token = construction_methods_token;
-                state.item_extent_indexes = extent_indexes;
-                state.item_extent_indexes_token = extent_indexes_token;
+                let checkpoint = context.checkpoint();
+                let incoming = match parse_iloc_owned_with_context(child_payload, context) {
+                    Ok(incoming) => incoming,
+                    Err(error) => {
+                        <ParseContext<'_> as crate::allocation::AllocationLedger>::restore(
+                            context, checkpoint,
+                        );
+                        return Err(error);
+                    }
+                };
+                let previous = OwnedItemLocations {
+                    locations: std::mem::take(&mut state.item_locations),
+                    construction_methods: std::mem::take(&mut state.item_construction_methods),
+                    extent_indexes: std::mem::take(&mut state.item_extent_indexes),
+                    locations_token: std::mem::take(&mut state.item_locations_token),
+                    construction_methods_token: std::mem::take(
+                        &mut state.item_construction_methods_token,
+                    ),
+                    extent_indexes_token: std::mem::take(&mut state.item_extent_indexes_token),
+                    native_owners: state.item_location_owners.take(),
+                };
+                if let Err(error) = previous.validate_for_retire(context) {
+                    let OwnedItemLocations {
+                        locations,
+                        construction_methods,
+                        extent_indexes,
+                        locations_token,
+                        construction_methods_token,
+                        extent_indexes_token,
+                        native_owners,
+                    } = previous;
+                    state.item_locations = locations;
+                    state.item_construction_methods = construction_methods;
+                    state.item_extent_indexes = extent_indexes;
+                    state.item_locations_token = locations_token;
+                    state.item_construction_methods_token = construction_methods_token;
+                    state.item_extent_indexes_token = extent_indexes_token;
+                    state.item_location_owners = native_owners;
+                    drop(incoming);
+                    <ParseContext<'_> as crate::allocation::AllocationLedger>::restore(
+                        context, checkpoint,
+                    );
+                    return Err(error);
+                }
+                if let Err(error) = previous.retire(context) {
+                    drop(incoming);
+                    <ParseContext<'_> as crate::allocation::AllocationLedger>::restore(
+                        context, checkpoint,
+                    );
+                    return Err(error);
+                }
+                state.item_locations = incoming.locations;
+                state.item_construction_methods = incoming.construction_methods;
+                state.item_extent_indexes = incoming.extent_indexes;
+                state.item_locations_token = incoming.locations_token;
+                state.item_construction_methods_token = incoming.construction_methods_token;
+                state.item_extent_indexes_token = incoming.extent_indexes_token;
+                state.item_location_owners = incoming.native_owners;
             }
             b"idat" => {
-                if context.is_native_still() {
+                if context.is_native() {
                     let start = payload_base
                         .checked_add(header.offset)
                         .and_then(|offset| offset.checked_add(header.header_size))
@@ -2190,13 +2700,13 @@ fn parse_iinf_with_context(
     payload: &[u8],
     context: &mut ParseContext<'_>,
 ) -> Result<Vec<ItemInfo>, DecoderError> {
-    parse_iinf_owned_with_context(payload, context).map(|(infos, _)| infos)
+    parse_iinf_owned_with_context(payload, context).map(|owned| owned.infos)
 }
 
 fn parse_iinf_owned_with_context(
     payload: &[u8],
     context: &mut ParseContext<'_>,
-) -> Result<(Vec<ItemInfo>, AllocationToken), DecoderError> {
+) -> Result<OwnedItemInfos, DecoderError> {
     if payload.len() < 6 {
         return Err(DecoderError::NotEnoughData(
             "iinf payload is too short".to_string(),
@@ -2223,34 +2733,24 @@ fn parse_iinf_owned_with_context(
     let mut infos = Vec::new();
     let mut infos_token = AllocationToken::new(AllocationClass::Metadata);
     context.try_reserve_with_token(&mut infos, &mut infos_token, entry_count, "iinf entries")?;
+    let mut name_owners = NativeItemNameOwners::new(context, entry_count)?;
     for _ in 0..entry_count {
         let header = read_box_header(payload, offset, payload.len())?;
         let child_payload = box_payload(payload, header)?;
         if &header.box_type == b"infe" {
-            infos.push(parse_infe_with_context(child_payload, context)?);
+            let (info, name_token) = parse_infe_owned_with_context(child_payload, context)?;
+            if let Some(owners) = name_owners.as_mut() {
+                owners.push(context, name_token)?;
+            }
+            infos.push(info);
         }
         offset = checked_add(header.offset, header.size, "iinf child box end")?;
     }
-    Ok((infos, infos_token))
-}
-
-fn release_item_infos(
-    context: &mut ParseContext<'_>,
-    infos: &mut Vec<ItemInfo>,
-    token: &mut AllocationToken,
-) -> Result<(), DecoderError> {
-    if !context.is_native_still() {
-        return Ok(());
-    }
-    let string_bytes = infos.iter().try_fold(0usize, |total, info| {
-        total.checked_add(info.item_name.capacity()).ok_or_else(|| {
-            DecoderError::InvalidParam("iinf item-name capacity overflows".to_string())
-        })
-    })?;
-    context.release_class_bytes(AllocationClass::Metadata, string_bytes)?;
-    context.release_token(token)?;
-    infos.clear();
-    Ok(())
+    Ok(OwnedItemInfos {
+        infos,
+        outer_token: infos_token,
+        name_owners,
+    })
 }
 
 #[allow(dead_code)]
@@ -2263,6 +2763,13 @@ fn parse_infe_with_context(
     payload: &[u8],
     context: &mut ParseContext<'_>,
 ) -> Result<ItemInfo, DecoderError> {
+    parse_infe_owned_with_context(payload, context).map(|(info, _)| info)
+}
+
+fn parse_infe_owned_with_context(
+    payload: &[u8],
+    context: &mut ParseContext<'_>,
+) -> Result<(ItemInfo, AllocationToken), DecoderError> {
     if payload.len() < 12 {
         return Err(DecoderError::NotEnoughData(
             "infe payload is too short".to_string(),
@@ -2291,12 +2798,15 @@ fn parse_infe_with_context(
     cursor += 2;
     let item_type = read_fourcc(payload, cursor)?;
     cursor += 4;
-    let item_name = read_c_string_with_context(payload, cursor, context)?;
-    Ok(ItemInfo {
-        item_id,
-        item_type,
-        item_name,
-    })
+    let (item_name, item_name_token) = read_c_string_owned_with_context(payload, cursor, context)?;
+    Ok((
+        ItemInfo {
+            item_id,
+            item_type,
+            item_name,
+        },
+        item_name_token,
+    ))
 }
 
 #[cfg(test)]
@@ -2316,27 +2826,19 @@ fn parse_iloc_with_indexes(
     payload: &[u8],
 ) -> Result<(Vec<ItemLocation>, Vec<(u32, u16)>, Vec<(u32, Vec<u64>)>), DecoderError> {
     let mut context = ParseContext::legacy();
-    parse_iloc_owned_with_context(payload, &mut context).map(
-        |(locations, construction_methods, extent_indexes, _, _, _)| {
-            (locations, construction_methods, extent_indexes)
-        },
-    )
+    parse_iloc_owned_with_context(payload, &mut context).map(|owned| {
+        (
+            owned.locations,
+            owned.construction_methods,
+            owned.extent_indexes,
+        )
+    })
 }
 
 fn parse_iloc_owned_with_context(
     payload: &[u8],
     context: &mut ParseContext<'_>,
-) -> Result<
-    (
-        Vec<ItemLocation>,
-        Vec<(u32, u16)>,
-        Vec<(u32, Vec<u64>)>,
-        AllocationToken,
-        AllocationToken,
-        AllocationToken,
-    ),
-    DecoderError,
-> {
+) -> Result<OwnedItemLocations, DecoderError> {
     if payload.len() < 8 {
         return Err(DecoderError::NotEnoughData(
             "iloc payload is too short".to_string(),
@@ -2410,6 +2912,7 @@ fn parse_iloc_owned_with_context(
         item_count,
         "iloc extent indexes",
     )?;
+    let mut native_owners = NativeIlocOwners::new(context, item_count)?;
     for _ in 0..item_count {
         let item_id = if version < 2 {
             let value = read_u16(payload, cursor)? as u32;
@@ -2465,8 +2968,20 @@ fn parse_iloc_owned_with_context(
         }
         let mut extents = Vec::new();
         let mut extent_indexes = Vec::new();
-        context.try_reserve(&mut extents, extent_count, "iloc extents")?;
-        context.try_reserve(&mut extent_indexes, extent_count, "iloc extent indexes")?;
+        let mut extents_token = AllocationToken::new(AllocationClass::Metadata);
+        let mut extent_indexes_token = AllocationToken::new(AllocationClass::Metadata);
+        context.try_reserve_with_token(
+            &mut extents,
+            &mut extents_token,
+            extent_count,
+            "iloc extents",
+        )?;
+        context.try_reserve_with_token(
+            &mut extent_indexes,
+            &mut extent_indexes_token,
+            extent_count,
+            "iloc extent indexes",
+        )?;
         for _ in 0..extent_count {
             let extent_index = if version == 1 || version == 2 {
                 let value = read_sized_int(payload, &mut cursor, index_size)?;
@@ -2490,70 +3005,20 @@ fn parse_iloc_owned_with_context(
             extents,
         });
         all_extent_indexes.push((item_id, extent_indexes));
+        if let Some(owners) = native_owners.as_mut() {
+            owners.push(extents_token, extent_indexes_token)?;
+        }
     }
 
-    Ok((
+    Ok(OwnedItemLocations {
         locations,
         construction_methods,
-        all_extent_indexes,
+        extent_indexes: all_extent_indexes,
         locations_token,
         construction_methods_token,
         extent_indexes_token,
-    ))
-}
-
-fn release_item_locations(
-    context: &mut ParseContext<'_>,
-    locations: &mut Vec<ItemLocation>,
-    locations_token: &mut AllocationToken,
-    construction_methods: &mut Vec<(u32, u16)>,
-    construction_methods_token: &mut AllocationToken,
-    extent_indexes: &mut Vec<(u32, Vec<u64>)>,
-    extent_indexes_token: &mut AllocationToken,
-) -> Result<(), DecoderError> {
-    if !context.is_native_still() {
-        return Ok(());
-    }
-    let extent_bytes = locations.iter().try_fold(0usize, |total, location| {
-        total
-            .checked_add(
-                location
-                    .extents
-                    .capacity()
-                    .checked_mul(std::mem::size_of::<ItemExtent>())
-                    .ok_or_else(|| {
-                        DecoderError::InvalidParam("iloc extent capacity overflows".to_string())
-                    })?,
-            )
-            .ok_or_else(|| DecoderError::InvalidParam("iloc extent capacity overflows".to_string()))
-    })?;
-    let index_bytes = extent_indexes
-        .iter()
-        .try_fold(0usize, |total, (_, indexes)| {
-            total
-                .checked_add(
-                    indexes
-                        .capacity()
-                        .checked_mul(std::mem::size_of::<u64>())
-                        .ok_or_else(|| {
-                            DecoderError::InvalidParam(
-                                "iloc extent-index capacity overflows".to_string(),
-                            )
-                        })?,
-                )
-                .ok_or_else(|| {
-                    DecoderError::InvalidParam("iloc extent-index capacity overflows".to_string())
-                })
-        })?;
-    context.release_class_bytes(AllocationClass::Metadata, extent_bytes)?;
-    context.release_class_bytes(AllocationClass::Metadata, index_bytes)?;
-    context.release_token(locations_token)?;
-    context.release_token(construction_methods_token)?;
-    context.release_token(extent_indexes_token)?;
-    locations.clear();
-    construction_methods.clear();
-    extent_indexes.clear();
-    Ok(())
+        native_owners,
+    })
 }
 
 #[allow(dead_code)]
@@ -2661,7 +3126,7 @@ fn release_item_references(
     references: &mut Vec<ItemReference>,
     token: &mut AllocationToken,
 ) -> Result<(), DecoderError> {
-    if !context.is_native_still() {
+    if !context.is_native() {
         return Ok(());
     }
     let nested_bytes = references.iter().try_fold(0usize, |total, reference| {
@@ -2688,7 +3153,7 @@ fn release_alternate_entity_groups(
     groups: &mut Vec<AlternateEntityGroup>,
     token: &mut AllocationToken,
 ) -> Result<(), DecoderError> {
-    if !context.is_native_still() {
+    if !context.is_native() {
         return Ok(());
     }
     let nested_bytes = groups.iter().try_fold(0usize, |total, group| {
@@ -2796,7 +3261,7 @@ fn parse_ipma_owned_with_context(
         item_id_size + 1,
         "ipma entry",
     )?;
-    if context.is_native_still() {
+    if context.is_native() {
         let (counted_entries, counted_associations) = ipma_counts(payload)?;
         debug_assert_eq!(counted_entries, entry_count);
         context.admit_ipma(counted_entries, counted_associations)?;
@@ -3102,6 +3567,39 @@ fn item_metadata_with_context(
             DecoderError::Bitstream(format!("item {item_id} has no property associations"))
         })?;
     let mut metadata = PrimaryItemMetadata::default();
+    // Resolve the legacy active colour projection before cloning any colour
+    // payload.  `nclx` is the historical winner when it is associated with an
+    // ICC profile, regardless of property order.  Selecting first is
+    // important for native parsing: cloning an ICC payload and then replacing
+    // it with nclx leaves an unreachable ICC owner ticket behind.
+    let selected_color = association
+        .associations
+        .iter()
+        .filter_map(|association| {
+            state
+                .item_properties
+                .get(usize::from(association.index).checked_sub(1)?)
+                .and_then(|property| match property {
+                    ItemProperty::ColorInformation(color) => Some(color),
+                    _ => None,
+                })
+        })
+        .find(|color| &color.color_type == b"nclx")
+        .or_else(|| {
+            association
+                .associations
+                .iter()
+                .filter_map(|association| {
+                    state
+                        .item_properties
+                        .get(usize::from(association.index).checked_sub(1)?)
+                        .and_then(|property| match property {
+                            ItemProperty::ColorInformation(color) => Some(color),
+                            _ => None,
+                        })
+                })
+                .find(|color| color.icc_profile().is_some())
+        });
     for association in &association.associations {
         let property = &state.item_properties[usize::from(association.index) - 1];
         match property {
@@ -3110,23 +3608,22 @@ fn item_metadata_with_context(
                 metadata.height = Some(extents.height);
             }
             ItemProperty::PixelInformation(pixi) => {
-                metadata.pixel_information = Some(clone_pixi_with_context(pixi, context)?);
+                metadata.pixel_information = Some(clone_pixi_with_owner(
+                    pixi,
+                    context,
+                    RetainedOwnerKind::RichMetadata,
+                )?);
             }
             ItemProperty::Av1Config(config) => {
-                metadata.av1_config = Some(copy_bytes_with_context(config, context, "av1C")?)
+                metadata.av1_config = Some(copy_bytes_with_owner(
+                    config,
+                    context,
+                    AllocationClass::Metadata,
+                    RetainedOwnerKind::RichMetadata,
+                    "av1C",
+                )?)
             }
-            ItemProperty::ColorInformation(color) => {
-                // When both descriptions are present, keep the CICP `nclx`
-                // property as the active AVIF colour description. The ICC
-                // profile remains a valid associated property, but applying
-                // it here would diverge from the decoder colour contract.
-                let replace = metadata.color_information.as_ref().is_none_or(|existing| {
-                    existing.icc_profile().is_some() && color.icc_profile().is_none()
-                });
-                if replace {
-                    metadata.color_information = Some(clone_color_with_context(color, context)?);
-                }
-            }
+            ItemProperty::ColorInformation(_) => {}
             ItemProperty::Premultiplied => metadata.alpha_premultiplied = true,
             ItemProperty::CleanAperture(clap) => metadata.clean_aperture = Some(*clap),
             ItemProperty::Rotation(rotation) => metadata.rotation = Some(*rotation),
@@ -3138,6 +3635,17 @@ fn item_metadata_with_context(
             | ItemProperty::LayerIndexing(_)
             | ItemProperty::Other(_) => {}
         }
+    }
+    if let Some(color) = selected_color {
+        metadata.color_information = Some(clone_color_with_owner(
+            color,
+            context,
+            if color.icc_profile().is_some() {
+                RetainedOwnerKind::IccSubset
+            } else {
+                RetainedOwnerKind::RichMetadata
+            },
+        )?);
     }
     Ok(metadata)
 }
@@ -3164,24 +3672,47 @@ fn item_color_information<'a>(
     }))
 }
 
-fn clone_pixi_with_context(
+fn clone_pixi_with_owner(
     pixi: &PixelInformation,
     context: &mut ParseContext<'_>,
+    owner_kind: RetainedOwnerKind,
+) -> Result<PixelInformation, DecoderError> {
+    clone_pixi_inner(pixi, context, Some(owner_kind))
+}
+
+fn clone_pixi_inner(
+    pixi: &PixelInformation,
+    context: &mut ParseContext<'_>,
+    owner_kind: Option<RetainedOwnerKind>,
 ) -> Result<PixelInformation, DecoderError> {
     let mut bits_per_channel = Vec::new();
-    context.try_reserve(
+    let mut bits_token = AllocationToken::new(AllocationClass::Metadata);
+    context.try_reserve_with_token(
         &mut bits_per_channel,
+        &mut bits_token,
         pixi.bits_per_channel.len(),
         "pixi channel depths",
     )?;
     bits_per_channel.extend_from_slice(&pixi.bits_per_channel);
+    if let Some(owner_kind) = owner_kind {
+        context.retain_native_token(owner_kind, bits_token)?;
+    }
     let extended_channels = pixi
         .extended_channels
         .as_ref()
         .map(|channels| {
             let mut copy = Vec::new();
-            context.try_reserve(&mut copy, channels.len(), "pixi channel descriptors")?;
+            let mut copy_token = AllocationToken::new(AllocationClass::Metadata);
+            context.try_reserve_with_token(
+                &mut copy,
+                &mut copy_token,
+                channels.len(),
+                "pixi channel descriptors",
+            )?;
             copy.extend_from_slice(channels);
+            if let Some(owner_kind) = owner_kind {
+                context.retain_native_token(owner_kind, copy_token)?;
+            }
             Ok(copy)
         })
         .transpose()?;
@@ -3191,20 +3722,31 @@ fn clone_pixi_with_context(
     })
 }
 
-fn clone_color_with_context(
+fn clone_color_with_owner(
     color: &ColorInformation,
     context: &mut ParseContext<'_>,
+    owner_kind: RetainedOwnerKind,
 ) -> Result<ColorInformation, DecoderError> {
+    clone_color_inner(color, context, Some(owner_kind))
+}
+
+fn clone_color_inner(
+    color: &ColorInformation,
+    context: &mut ParseContext<'_>,
+    owner_kind: Option<RetainedOwnerKind>,
+) -> Result<ColorInformation, DecoderError> {
+    let class = if color.icc_profile().is_some() {
+        AllocationClass::Icc
+    } else {
+        AllocationClass::Metadata
+    };
     Ok(ColorInformation {
         color_type: color.color_type,
-        payload: copy_bytes_with_class(
+        payload: copy_bytes_with_owner(
             &color.payload,
             context,
-            if color.icc_profile().is_some() {
-                AllocationClass::Icc
-            } else {
-                AllocationClass::Metadata
-            },
+            class,
+            owner_kind.expect("owner kind is required for retained color"),
             "color information",
         )?,
     })
@@ -3596,8 +4138,44 @@ pub fn parse_avif_sequence(data: &[u8]) -> Result<AvifSequence, DecoderError> {
 /// Parses AVIS samples and exposes exact timescale-based presentation timing.
 pub fn parse_avif_animation(data: &[u8]) -> Result<AvifAnimation, DecoderError> {
     let (major_brand, compatible_brands) = parse_ftyp(data)?;
-    if major_brand != *BRAND_AVIS && !compatible_brands.iter().any(|brand| brand == BRAND_AVIS) {
-        return Ok(AvifAnimation {
+    let parsed = parse_avif_animation_with_brands(data, &major_brand, &compatible_brands)?;
+    Ok(AvifAnimation {
+        sequence: parsed.sequence,
+        color_timing: parsed.color_timing,
+        alpha_timing: parsed.alpha_timing,
+        color_timescale: parsed.color_timescale,
+        duration_in_timescales: parsed.duration_in_timescales,
+        repetition_count: parsed.repetition_count,
+    })
+}
+
+#[derive(Debug)]
+struct ParsedAnimation {
+    sequence: AvifSequence,
+    color_timing: Vec<AvifFrameTiming>,
+    alpha_timing: Vec<AvifFrameTiming>,
+    color_timescale: u64,
+    duration_in_timescales: u64,
+    repetition_count: AvifRepetitionCount,
+}
+
+fn parse_avif_animation_with_brands(
+    data: &[u8],
+    major_brand: &[u8; 4],
+    compatible_brands: &[[u8; 4]],
+) -> Result<ParsedAnimation, DecoderError> {
+    let mut context = ParseContext::legacy();
+    parse_avif_animation_with_context(data, major_brand, compatible_brands, &mut context)
+}
+
+fn parse_avif_animation_with_context(
+    data: &[u8],
+    major_brand: &[u8; 4],
+    compatible_brands: &[[u8; 4]],
+    context: &mut ParseContext<'_>,
+) -> Result<ParsedAnimation, DecoderError> {
+    if *major_brand != *BRAND_AVIS && !compatible_brands.iter().any(|brand| brand == BRAND_AVIS) {
+        return Ok(ParsedAnimation {
             sequence: AvifSequence {
                 color_samples: Vec::new(),
                 color_durations_ms: Vec::new(),
@@ -3616,20 +4194,30 @@ pub fn parse_avif_animation(data: &[u8]) -> Result<AvifAnimation, DecoderError> 
     for_each_top_level_box(data, |header| {
         if header.box_type == *b"moov" {
             let payload = box_payload(data, header)?;
-            for track in parse_sequence_tracks(data, payload)? {
-                if track.is_alpha {
-                    if alpha.is_none() {
-                        alpha = Some(track);
+            if context.is_native_sequence() {
+                sequence_table::parse_sequence_tracks_native(
+                    data,
+                    payload,
+                    context,
+                    &mut color,
+                    &mut alpha,
+                )?;
+            } else {
+                for track in parse_sequence_tracks(data, payload, context)? {
+                    if track.is_alpha {
+                        if alpha.is_none() {
+                            alpha = Some(track);
+                        }
+                    } else if track.is_color && color.is_none() {
+                        color = Some(track);
                     }
-                } else if track.is_color && color.is_none() {
-                    color = Some(track);
                 }
             }
         }
         Ok(())
     })?;
-    let color = color.unwrap_or_default();
-    let alpha = alpha.unwrap_or_default();
+    let mut color = color.unwrap_or_default();
+    let mut alpha = alpha.unwrap_or_default();
     if !alpha.samples.is_empty() && alpha.samples.len() != color.samples.len() {
         return Err(DecoderError::Bitstream(format!(
             "AVIS alpha track has {} samples, expected {}",
@@ -3637,22 +4225,62 @@ pub fn parse_avif_animation(data: &[u8]) -> Result<AvifAnimation, DecoderError> 
             color.samples.len()
         )));
     }
-    let color_timing = make_frame_timings(
-        color.timescale,
-        &color.pts_in_timescales,
-        &color.durations_in_timescales,
-    )?;
-    let alpha_timing = make_frame_timings(
-        alpha.timescale,
-        &alpha.pts_in_timescales,
-        &alpha.durations_in_timescales,
-    )?;
+    let (color_timing, color_timing_token) = if context.is_native() {
+        make_frame_timings_native(
+            color.timescale,
+            &color.pts_in_timescales,
+            &color.durations_in_timescales,
+            context,
+        )?
+    } else {
+        (
+            make_frame_timings(
+                color.timescale,
+                &color.pts_in_timescales,
+                &color.durations_in_timescales,
+            )?,
+            AllocationToken::new(AllocationClass::Metadata),
+        )
+    };
+    let (alpha_timing, alpha_timing_token) = if context.is_native() {
+        make_frame_timings_native(
+            alpha.timescale,
+            &alpha.pts_in_timescales,
+            &alpha.durations_in_timescales,
+            context,
+        )?
+    } else {
+        (
+            make_frame_timings(
+                alpha.timescale,
+                &alpha.pts_in_timescales,
+                &alpha.durations_in_timescales,
+            )?,
+            AllocationToken::new(AllocationClass::Metadata),
+        )
+    };
     let duration_in_timescales = color
         .durations_in_timescales
         .iter()
         .try_fold(0_u64, |total, duration| total.checked_add(*duration))
         .ok_or_else(|| DecoderError::Bitstream("AVIS duration overflows u64".to_string()))?;
-    Ok(AvifAnimation {
+    if context.is_native() {
+        let color_durations_token = std::mem::take(&mut color.timing_owners.durations_ms);
+        let alpha_durations_token = std::mem::take(&mut alpha.timing_owners.durations_ms);
+        release_sequence_timing_inputs(&mut color, context)?;
+        release_sequence_timing_inputs(&mut alpha, context)?;
+        context.retain_native_token(RetainedOwnerKind::SequenceTiming, color_timing_token)?;
+        context.retain_native_token(RetainedOwnerKind::SequenceTiming, alpha_timing_token)?;
+        context.retain_native_token(
+            RetainedOwnerKind::SequenceTiming,
+            color_durations_token,
+        )?;
+        context.retain_native_token(
+            RetainedOwnerKind::SequenceTiming,
+            alpha_durations_token,
+        )?;
+    }
+    Ok(ParsedAnimation {
         sequence: AvifSequence {
             color_samples: color.samples,
             color_durations_ms: color.durations_ms,
@@ -3672,39 +4300,7 @@ fn parse_avif_sequence_with_brands(
     major_brand: &[u8; 4],
     compatible_brands: &[[u8; 4]],
 ) -> Result<AvifSequence, DecoderError> {
-    if major_brand != BRAND_AVIS && !compatible_brands.iter().any(|brand| brand == BRAND_AVIS) {
-        return Ok(AvifSequence {
-            color_samples: Vec::new(),
-            color_durations_ms: Vec::new(),
-            alpha_samples: Vec::new(),
-            alpha_durations_ms: Vec::new(),
-        });
-    }
-    let mut color = None;
-    let mut alpha = None;
-    for_each_top_level_box(data, |header| {
-        if header.box_type == *b"moov" {
-            let payload = box_payload(data, header)?;
-            for track in parse_sequence_tracks(data, payload)? {
-                if track.is_alpha {
-                    if alpha.is_none() {
-                        alpha = Some(track);
-                    }
-                } else if track.is_color && color.is_none() {
-                    color = Some(track);
-                }
-            }
-        }
-        Ok(())
-    })?;
-    let color = color.unwrap_or_default();
-    let alpha = alpha.unwrap_or_default();
-    Ok(AvifSequence {
-        color_samples: color.samples,
-        color_durations_ms: color.durations_ms,
-        alpha_samples: alpha.samples,
-        alpha_durations_ms: alpha.durations_ms,
-    })
+    Ok(parse_avif_animation_with_brands(data, major_brand, compatible_brands)?.sequence)
 }
 
 #[derive(Debug, Default)]
@@ -3714,20 +4310,68 @@ struct SequenceTrack {
     pts_in_timescales: Vec<u64>,
     durations_in_timescales: Vec<u64>,
     durations_ms: Vec<u64>,
+    timing_owners: SequenceTimingOwners,
     repetition_count: AvifRepetitionCount,
     is_alpha: bool,
     is_color: bool,
 }
 
+#[derive(Debug, Default)]
+struct SequenceTimingOwners {
+    pts: AllocationToken,
+    durations: AllocationToken,
+    durations_ms: AllocationToken,
+}
+
+/// Retains only the first track of each native sequence role.
+///
+/// This small ownership gate is deliberately separate from payload parsing:
+/// callers still validate every sibling's sample table and description, but
+/// only the selected track is allowed to move compressed samples into the
+/// native handoff.
+fn select_native_sequence_track(
+    selected_color: &mut Option<SequenceTrack>,
+    selected_alpha: &mut Option<SequenceTrack>,
+    track: SequenceTrack,
+) -> bool {
+    if track.is_alpha {
+        if selected_alpha.is_none() {
+            *selected_alpha = Some(track);
+            return true;
+        }
+    } else if track.is_color && selected_color.is_none() {
+        *selected_color = Some(track);
+        return true;
+    }
+    false
+}
+
 fn parse_sequence_tracks(
     data: &[u8],
     moov_payload: &[u8],
+    context: &mut ParseContext<'_>,
 ) -> Result<Vec<SequenceTrack>, DecoderError> {
-    let mut tracks = Vec::new();
-    for trak in child_boxes(moov_payload)?
-        .into_iter()
-        .filter(|header| header.box_type == *b"trak")
-    {
+    let native_sequence = context.is_native_sequence();
+    // Native sequence parsing keeps only the first selected color and alpha
+    // track.  In particular, this is an Option-based selector rather than a
+    // Vec of all parsed tracks: a sibling track which cannot be selected must
+    // not retain any sample payload or owner ticket.
+    let mut selected_color = None;
+    let mut selected_alpha = None;
+    let mut tracks = (!native_sequence).then(Vec::new);
+    // Native sequence parsing must not materialize a sibling-header Vec: the
+    // headers are parser temporaries and are not represented in the native
+    // allocation ledger.  Walk the movie once instead; the iterator also
+    // preserves the legacy parser's eager malformed-child diagnostics by
+    // validating the complete sibling stream before the second pass below.
+    for header in child_box_iter(moov_payload) {
+        header?;
+    }
+    for trak_result in child_box_iter(moov_payload) {
+        let trak = trak_result?;
+        if trak.box_type != *b"trak" {
+            continue;
+        }
         let trak_payload = box_payload(moov_payload, trak)?;
         let Some(mdia) = child_box(trak_payload, b"mdia")? else {
             continue;
@@ -3778,6 +4422,9 @@ fn parse_sequence_tracks(
         let is_alpha =
             !auxl_track_ids.is_empty() && auxiliary_type.as_deref() == Some(ALPHA_AUX_TYPE);
         let is_color = auxl_track_ids.is_empty() && auxiliary_type.is_none();
+        let retain_payload = !native_sequence
+            || (is_color && selected_color.is_none())
+            || (is_alpha && selected_alpha.is_none());
         let Some(stsc) = child_box(stbl_payload, b"stsc")? else {
             continue;
         };
@@ -3797,6 +4444,7 @@ fn parse_sequence_tracks(
         };
         let chunk_offsets = parse_chunk_offsets(chunk_offset_payload, chunk_offset_width)?;
         let sizes = parse_sample_sizes(box_payload(stbl_payload, stsz)?)?;
+        let sample_count = sizes.len();
         let samples_per_chunk = parse_samples_per_chunk(box_payload(stbl_payload, stsc)?)?;
         let (sample_offsets, sample_description_indices) = build_sample_offsets_with_descriptions(
             &chunk_offsets,
@@ -3804,7 +4452,30 @@ fn parse_sequence_tracks(
             &sizes,
             &sample_descriptions,
         )?;
-        let mut samples = Vec::with_capacity(sizes.len());
+        let mut samples = Vec::new();
+        // Alpha-track samples are transferred to ParsedAnimationTiming and
+        // therefore belong to the compressed-payload budget.  The outer
+        // Vec<Vec<u8>> must use the same class as its retained inner payloads;
+        // charging it as metadata makes the handoff owner class inconsistent.
+        let sample_outer_class = if is_alpha {
+            AllocationClass::Payload
+        } else {
+            AllocationClass::Metadata
+        };
+        let mut samples_token = AllocationToken::new(sample_outer_class);
+        if retain_payload && context.is_native() {
+            context.try_reserve_class_with_token(
+                &mut samples,
+                &mut samples_token,
+                sizes.len(),
+                sample_outer_class,
+                "AVIS sample list",
+            )?;
+        } else if retain_payload {
+            samples.try_reserve(sizes.len()).map_err(|_| {
+                DecoderError::InvalidParam("AVIS sample list allocation failed".to_string())
+            })?;
+        }
         for ((offset, size), description_index) in sample_offsets
             .into_iter()
             .zip(sizes)
@@ -3821,7 +4492,7 @@ fn parse_sequence_tracks(
                     "AVIS sample extends beyond the file".to_string(),
                 ));
             }
-            samples.push(data[start..end].to_vec());
+            let sample_source = &data[start..end];
             let description = sample_descriptions
                 .get(description_index)
                 .and_then(Option::as_ref)
@@ -3830,11 +4501,30 @@ fn parse_sequence_tracks(
                 .iter()
                 .find_map(Option::as_ref)
                 .expect("stsd AV1 presence checked by caller");
-            validate_sequence_sample_description(
-                description,
-                first_description,
-                samples.last().expect("sample was pushed"),
-            )?;
+            validate_sequence_sample_description(description, first_description, sample_source)?;
+            if !retain_payload {
+                continue;
+            }
+            let mut sample_payload = Vec::new();
+            let mut sample_token = AllocationToken::new(AllocationClass::Payload);
+            if context.is_native() {
+                context.try_reserve_class_with_token(
+                    &mut sample_payload,
+                    &mut sample_token,
+                    sample_source.len(),
+                    AllocationClass::Payload,
+                    "AVIS sample payload",
+                )?;
+            } else {
+                sample_payload.try_reserve(sample_source.len()).map_err(|_| {
+                    DecoderError::InvalidParam("AVIS sample payload allocation failed".to_string())
+                })?;
+            }
+            sample_payload.extend_from_slice(sample_source);
+            if context.is_native() {
+                context.retain_native_token(RetainedOwnerKind::SequencePayload, sample_token)?;
+            }
+            samples.push(sample_payload);
         }
         let timescale = child_box(mdia_payload, b"mdhd")?
             .map(|mdhd| box_payload(mdia_payload, mdhd))
@@ -3842,34 +4532,107 @@ fn parse_sequence_tracks(
             .map(parse_mdhd_timescale)
             .transpose()?
             .unwrap_or(1);
-        let (pts_in_timescales, durations_in_timescales) = child_box(stbl_payload, b"stts")?
-            .map(|stts| box_payload(stbl_payload, stts))
-            .transpose()?
-            .map(|payload| parse_sample_timing(payload, samples.len()))
-            .transpose()?
-            .unwrap_or_else(|| (vec![0; samples.len()], vec![0; samples.len()]));
-        let durations_ms = durations_in_timescales
-            .iter()
-            .map(|duration| scale_to_milliseconds(*duration, u64::from(timescale)))
-            .collect::<Result<Vec<_>, _>>()?;
+        // `samples` is intentionally empty for an unselected native sibling,
+        // but its sample table still has to be validated.  Use the parsed
+        // `stsz` count as the authority and keep the validation-only path
+        // allocation free; otherwise a valid duplicate track would be
+        // rejected as an `stts` table describing more than zero samples.
+        let (pts_in_timescales, durations_in_timescales, timing_owners) =
+            if let Some(stts) = child_box(stbl_payload, b"stts")? {
+                let timing_payload = box_payload(stbl_payload, stts)?;
+                if retain_payload {
+                    if context.is_native() {
+                        parse_sample_timing_native(timing_payload, sample_count, context)?
+                    } else {
+                        let (pts, durations) = parse_sample_timing(timing_payload, sample_count)?;
+                        (pts, durations, SequenceTimingOwners::default())
+                    }
+                } else {
+                    validate_sample_timing(timing_payload, sample_count)?;
+                    (Vec::new(), Vec::new(), SequenceTimingOwners::default())
+                }
+            } else if retain_payload {
+                if context.is_native() {
+                    zero_sample_timing_native(sample_count, context)?
+                } else {
+                    (
+                        vec![0; sample_count],
+                        vec![0; sample_count],
+                        SequenceTimingOwners::default(),
+                    )
+                }
+            } else {
+                (Vec::new(), Vec::new(), SequenceTimingOwners::default())
+            };
+        let (durations_ms, timing_owners) = if retain_payload {
+            if context.is_native() {
+                let (values, token) = make_durations_ms_native(
+                    &durations_in_timescales,
+                    u64::from(timescale),
+                    context,
+                )?;
+                (
+                    values,
+                    SequenceTimingOwners {
+                        durations_ms: token,
+                        ..timing_owners
+                    },
+                )
+            } else {
+                (
+                    durations_in_timescales
+                        .iter()
+                        .map(|duration| scale_to_milliseconds(*duration, u64::from(timescale)))
+                        .collect::<Result<Vec<_>, _>>()?,
+                    timing_owners,
+                )
+            }
+        } else {
+            (Vec::new(), timing_owners)
+        };
         let repetition_count = child_box(trak_payload, b"edts")?
             .map(|edts| box_payload(trak_payload, edts))
             .transpose()?
             .map(parse_edit_list_repetition)
             .transpose()?
             .unwrap_or(AvifRepetitionCount::Unknown);
-        tracks.push(SequenceTrack {
+        let track = SequenceTrack {
             samples,
             timescale: u64::from(timescale),
             pts_in_timescales,
             durations_in_timescales,
             durations_ms,
+            timing_owners,
             repetition_count,
             is_alpha,
             is_color,
-        });
+        };
+        if native_sequence {
+            let _selected =
+                select_native_sequence_track(&mut selected_color, &mut selected_alpha, track);
+        } else if let Some(tracks) = tracks.as_mut() {
+            tracks.push(track);
+        }
+        if retain_payload && context.is_native() {
+            let owner_kind = if is_alpha {
+                RetainedOwnerKind::SequencePayload
+            } else {
+                RetainedOwnerKind::RichMetadata
+            };
+            context.retain_native_token(owner_kind, samples_token)?;
+        }
     }
-    Ok(tracks)
+    if let Some(tracks) = tracks {
+        return Ok(tracks);
+    }
+    let mut selected_tracks = Vec::with_capacity(2);
+    if let Some(color) = selected_color {
+        selected_tracks.push(color);
+    }
+    if let Some(alpha) = selected_alpha {
+        selected_tracks.push(alpha);
+    }
+    Ok(selected_tracks)
 }
 
 fn parse_track_reference_ids(payload: &[u8]) -> Result<Vec<u32>, DecoderError> {
@@ -3926,6 +4689,81 @@ fn parse_sample_timing(
     payload: &[u8],
     sample_count: usize,
 ) -> Result<(Vec<u64>, Vec<u64>), DecoderError> {
+    let mut pts = Vec::with_capacity(sample_count);
+    let mut durations = Vec::with_capacity(sample_count);
+    parse_sample_timing_into(payload, sample_count, &mut pts, &mut durations)?;
+    Ok((pts, durations))
+}
+
+fn parse_sample_timing_native(
+    payload: &[u8],
+    sample_count: usize,
+    context: &mut ParseContext<'_>,
+) -> Result<(Vec<u64>, Vec<u64>, SequenceTimingOwners), DecoderError> {
+    let (mut pts, mut durations, owners) =
+        reserve_sample_timing_native(sample_count, context)?;
+    parse_sample_timing_into(payload, sample_count, &mut pts, &mut durations)?;
+    Ok((pts, durations, owners))
+}
+
+fn zero_sample_timing_native(
+    sample_count: usize,
+    context: &mut ParseContext<'_>,
+) -> Result<(Vec<u64>, Vec<u64>, SequenceTimingOwners), DecoderError> {
+    let (mut pts, mut durations, owners) = reserve_sample_timing_native(sample_count, context)?;
+    pts.resize(sample_count, 0);
+    durations.resize(sample_count, 0);
+    Ok((pts, durations, owners))
+}
+
+fn reserve_sample_timing_native(
+    sample_count: usize,
+    context: &mut ParseContext<'_>,
+) -> Result<(Vec<u64>, Vec<u64>, SequenceTimingOwners), DecoderError> {
+    let vector_bytes = sample_count
+        .checked_mul(std::mem::size_of::<u64>())
+        .and_then(|bytes| bytes.checked_mul(2))
+        .ok_or_else(|| DecoderError::InvalidParam("AVIS timing bytes overflow".to_string()))?;
+    context.check_additional_class_bytes(
+        AllocationClass::Metadata,
+        vector_bytes,
+        "AVIS timing vectors",
+    )?;
+    let mut pts = Vec::new();
+    let mut durations = Vec::new();
+    let mut pts_token = AllocationToken::new(AllocationClass::Metadata);
+    let mut durations_token = AllocationToken::new(AllocationClass::Metadata);
+    context.try_reserve_class_with_token(
+        &mut pts,
+        &mut pts_token,
+        sample_count,
+        AllocationClass::Metadata,
+        "AVIS presentation timestamps",
+    )?;
+    context.try_reserve_class_with_token(
+        &mut durations,
+        &mut durations_token,
+        sample_count,
+        AllocationClass::Metadata,
+        "AVIS sample durations",
+    )?;
+    Ok((
+        pts,
+        durations,
+        SequenceTimingOwners {
+            pts: pts_token,
+            durations: durations_token,
+            durations_ms: AllocationToken::new(AllocationClass::Metadata),
+        },
+    ))
+}
+
+fn parse_sample_timing_into(
+    payload: &[u8],
+    sample_count: usize,
+    pts: &mut Vec<u64>,
+    durations: &mut Vec<u64>,
+) -> Result<(), DecoderError> {
     if payload.len() < 8 {
         return Err(DecoderError::NotEnoughData(
             "stts payload is too short".to_string(),
@@ -3933,8 +4771,6 @@ fn parse_sample_timing(
     }
     let entry_count = usize::try_from(read_u32(payload, 4)?)
         .map_err(|_| DecoderError::Bitstream("stts entry count is too large".to_string()))?;
-    let mut pts = Vec::with_capacity(sample_count);
-    let mut durations = Vec::with_capacity(sample_count);
     let mut current_pts = 0_u64;
     let mut offset: usize = 8;
     for _ in 0..entry_count {
@@ -3972,7 +4808,86 @@ fn parse_sample_timing(
             durations.len()
         )));
     }
-    Ok((pts, durations))
+    Ok(())
+}
+
+/// Validates an `stts` table against the track's actual `stsz` sample count
+/// without materializing presentation arrays.  Native sequence parsing uses
+/// this for unselected sibling tracks: their payload and timing vectors must
+/// not become retained owners, but their table, overflow, and count errors
+/// must remain observable.
+pub(crate) fn validate_sample_timing(
+    payload: &[u8],
+    sample_count: usize,
+) -> Result<(), DecoderError> {
+    if payload.len() < 8 {
+        return Err(DecoderError::NotEnoughData(
+            "stts payload is too short".to_string(),
+        ));
+    }
+    let entry_count = usize::try_from(read_u32(payload, 4)?)
+        .map_err(|_| DecoderError::Bitstream("stts entry count is too large".to_string()))?;
+    let mut described = 0usize;
+    let mut current_pts = 0_u64;
+    let mut offset = 8usize;
+    for _ in 0..entry_count {
+        let end = offset.checked_add(8).ok_or_else(|| {
+            DecoderError::Bitstream("stts entry offset overflows usize".to_string())
+        })?;
+        if end > payload.len() {
+            return Err(DecoderError::NotEnoughData(
+                "stts entries are truncated".to_string(),
+            ));
+        }
+        let count = usize::try_from(read_u32(payload, offset)?)
+            .map_err(|_| DecoderError::Bitstream("stts sample count is too large".to_string()))?;
+        let duration = u64::from(read_u32(payload, offset + 4)?);
+        described = described.checked_add(count).ok_or_else(|| {
+            DecoderError::Bitstream("stts sample count overflows usize".to_string())
+        })?;
+        if described > sample_count {
+            return Err(DecoderError::Bitstream(format!(
+                "stts describes more than {sample_count} samples"
+            )));
+        }
+        let count_u64 = u64::try_from(count).map_err(|_| {
+            DecoderError::Bitstream("stts sample count is too large".to_string())
+        })?;
+        current_pts = current_pts
+            .checked_add(duration.checked_mul(count_u64).ok_or_else(|| {
+                DecoderError::Bitstream("stts presentation timestamp overflows u64".to_string())
+            })?)
+            .ok_or_else(|| {
+                DecoderError::Bitstream("stts presentation timestamp overflows u64".to_string())
+            })?;
+        offset = end;
+    }
+    if described != sample_count {
+        return Err(DecoderError::Bitstream(format!(
+            "stts describes {described} samples, expected {sample_count}"
+        )));
+    }
+    Ok(())
+}
+
+fn make_durations_ms_native(
+    durations: &[u64],
+    timescale: u64,
+    context: &mut ParseContext<'_>,
+) -> Result<(Vec<u64>, AllocationToken), DecoderError> {
+    let mut values = Vec::new();
+    let mut token = AllocationToken::new(AllocationClass::Metadata);
+    context.try_reserve_class_with_token(
+        &mut values,
+        &mut token,
+        durations.len(),
+        AllocationClass::Metadata,
+        "AVIS millisecond durations",
+    )?;
+    for duration in durations {
+        values.push(scale_to_milliseconds(*duration, timescale)?);
+    }
+    Ok((values, token))
 }
 
 fn scale_to_milliseconds(value: u64, timescale: u64) -> Result<u64, DecoderError> {
@@ -4013,6 +4928,51 @@ fn make_frame_timings(
             })
         })
         .collect()
+}
+
+fn make_frame_timings_native(
+    timescale: u64,
+    pts: &[u64],
+    durations: &[u64],
+    context: &mut ParseContext<'_>,
+) -> Result<(Vec<AvifFrameTiming>, AllocationToken), DecoderError> {
+    if pts.len() != durations.len() {
+        return Err(DecoderError::Bitstream(
+            "AVIS timing arrays have different lengths".to_string(),
+        ));
+    }
+    let mut values = Vec::new();
+    let mut token = AllocationToken::new(AllocationClass::Metadata);
+    context.try_reserve_class_with_token(
+        &mut values,
+        &mut token,
+        pts.len(),
+        AllocationClass::Metadata,
+        "AVIS frame timings",
+    )?;
+    for (pts_in_timescales, duration_in_timescales) in
+        pts.iter().copied().zip(durations.iter().copied())
+    {
+        values.push(AvifFrameTiming {
+            timescale,
+            pts_in_timescales,
+            duration_in_timescales,
+            pts_ms: scale_to_milliseconds(pts_in_timescales, timescale)?,
+            duration_ms: scale_to_milliseconds(duration_in_timescales, timescale)?,
+        });
+    }
+    Ok((values, token))
+}
+
+fn release_sequence_timing_inputs(
+    track: &mut SequenceTrack,
+    context: &mut ParseContext<'_>,
+) -> Result<(), DecoderError> {
+    drop(std::mem::take(&mut track.pts_in_timescales));
+    context.release_token(&mut track.timing_owners.pts)?;
+    drop(std::mem::take(&mut track.durations_in_timescales));
+    context.release_token(&mut track.timing_owners.durations)?;
+    Ok(())
 }
 
 fn parse_edit_list_repetition(payload: &[u8]) -> Result<AvifRepetitionCount, DecoderError> {
@@ -4111,21 +5071,49 @@ fn validate_sequence_sample_description(
     Ok(())
 }
 
-fn child_boxes(payload: &[u8]) -> Result<Vec<BoxHeader>, DecoderError> {
-    let mut headers = Vec::new();
-    let mut offset = 0;
-    while offset < payload.len() {
-        let header = read_box_header(payload, offset, payload.len())?;
-        offset = checked_add(header.offset, header.size, "child box end")?;
-        headers.push(header);
+struct ChildBoxIter<'a> {
+    payload: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> Iterator for ChildBoxIter<'a> {
+    type Item = Result<BoxHeader, DecoderError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.offset >= self.payload.len() {
+            return None;
+        }
+        let header = match read_box_header(self.payload, self.offset, self.payload.len()) {
+            Ok(header) => header,
+            Err(error) => {
+                self.offset = self.payload.len();
+                return Some(Err(error));
+            }
+        };
+        self.offset = match checked_add(header.offset, header.size, "child box end") {
+            Ok(offset) => offset,
+            Err(error) => {
+                self.offset = self.payload.len();
+                return Some(Err(error));
+            }
+        };
+        Some(Ok(header))
     }
-    Ok(headers)
+}
+
+fn child_box_iter(payload: &[u8]) -> ChildBoxIter<'_> {
+    ChildBoxIter { payload, offset: 0 }
 }
 
 fn child_box(payload: &[u8], box_type: &[u8; 4]) -> Result<Option<BoxHeader>, DecoderError> {
-    Ok(child_boxes(payload)?
-        .into_iter()
-        .find(|header| header.box_type == *box_type))
+    let mut found = None;
+    for header in child_box_iter(payload) {
+        let header = header?;
+        if found.is_none() && header.box_type == *box_type {
+            found = Some(header);
+        }
+    }
+    Ok(found)
 }
 
 fn stsd_av01_descriptions(payload: &[u8]) -> Result<Vec<Option<Vec<u8>>>, DecoderError> {
@@ -4327,9 +5315,9 @@ fn alpha_auxiliary_items_for_with_context(
     owner_item_id: Option<u32>,
     context: &mut ParseContext<'_>,
 ) -> Result<Vec<AuxiliaryImage>, DecoderError> {
-    let mut item_ids: Vec<(u32, String)> = Vec::new();
+    let mut item_ids: Vec<(u32, String, AllocationToken)> = Vec::new();
     let mut item_ids_token = AllocationToken::new(AllocationClass::Metadata);
-    if context.is_native_still() {
+    if context.is_native() {
         if let Some(owner_item_id) = owner_item_id {
             for_each_native_selected_alpha_item(state, owner_item_id, |item_id| {
                 context.try_reserve_with_token(
@@ -4338,7 +5326,8 @@ fn alpha_auxiliary_items_for_with_context(
                     1,
                     "alpha item ids",
                 )?;
-                item_ids.push((item_id, copy_string_with_context(ALPHA_AUX_TYPE, context)?));
+                let (aux_type, aux_type_token) = copy_string_owned(ALPHA_AUX_TYPE, context)?;
+                item_ids.push((item_id, aux_type, aux_type_token));
                 Ok(())
             })?;
         }
@@ -4353,7 +5342,12 @@ fn alpha_auxiliary_items_for_with_context(
                     1,
                     "alpha item ids",
                 )?;
-                item_ids.push((*item_id, copy_string_with_context(ALPHA_AUX_TYPE, context)?));
+                let aux_type = copy_string_with_context(ALPHA_AUX_TYPE, context)?;
+                item_ids.push((
+                    *item_id,
+                    aux_type,
+                    AllocationToken::new(AllocationClass::Metadata),
+                ));
             }
         }
     }
@@ -4378,51 +5372,66 @@ fn alpha_auxiliary_items_for_with_context(
                 1,
                 "alpha item ids",
             )?;
-            item_ids.push((
-                association.item_id,
-                copy_string_with_context(aux_type, context)?,
-            ));
+            let (aux_type, aux_type_token) = if context.is_native() {
+                copy_string_owned(aux_type, context)?
+            } else {
+                (
+                    copy_string_with_context(aux_type, context)?,
+                    AllocationToken::new(AllocationClass::Metadata),
+                )
+            };
+            item_ids.push((association.item_id, aux_type, aux_type_token));
         }
     }
 
-    if context.is_native_still() {
+    if context.is_native() {
         // `for_each_native_selected_alpha_item` establishes uniqueness while
         // walking auxl/property fallback associations. An unstable in-place
         // ordering therefore avoids the stable-sort scratch allocation.
-        item_ids.sort_unstable_by_key(|(item_id, _)| *item_id);
+        item_ids.sort_unstable_by_key(|(item_id, _, _)| *item_id);
     } else {
         // Preserve Legacy's historical stable ordering and first-duplicate
         // selection semantics.
-        item_ids.sort_by_key(|(item_id, _)| *item_id);
-        item_ids.dedup_by_key(|(item_id, _)| *item_id);
+        item_ids.sort_by_key(|(item_id, _, _)| *item_id);
+        item_ids.dedup_by_key(|(item_id, _, _)| *item_id);
     }
     let mut auxiliary_items = Vec::new();
-    context.try_reserve(
+    let mut auxiliary_items_token = AllocationToken::new(AllocationClass::Metadata);
+    context.try_reserve_with_token(
         &mut auxiliary_items,
+        &mut auxiliary_items_token,
         item_ids.len(),
         "alpha auxiliary items",
     )?;
-    for (item_id, aux_type) in item_ids {
+    for (item_id, aux_type, aux_type_token) in item_ids {
         let item_type = state
             .item_infos
             .iter()
             .find(|item| item.item_id == item_id)
             .map(|item| item.item_type);
-        if context.is_native_still() && item_type != Some(*b"av01") {
+        if context.is_native() && item_type != Some(*b"av01") {
             return Err(DecoderError::Unsupported(
                 "bounded native decode accepts only an av01 alpha item".to_string(),
             ));
         }
+        context.retain_native_token(RetainedOwnerKind::RichMetadata, aux_type_token)?;
         auxiliary_items.push(AuxiliaryImage {
             item_id,
             aux_type,
-            payload: item_payload_with_context(data, state, item_id, context)?,
+            payload: item_payload_with_owner_context(
+                data,
+                state,
+                item_id,
+                context,
+                RetainedOwnerKind::AlphaPayload,
+            )?,
         });
     }
     // The selected IDs are only a temporary planning vector. Release its
     // charge after IntoIter has dropped the Vec; the auxiliary records below
     // own the moved strings and payloads.
     context.release_token(&mut item_ids_token)?;
+    context.retain_native_token(RetainedOwnerKind::RichMetadata, auxiliary_items_token)?;
     Ok(auxiliary_items)
 }
 
@@ -4743,8 +5752,24 @@ fn item_payload_with_context(
     item_id: u32,
     context: &mut ParseContext<'_>,
 ) -> Result<Vec<u8>, DecoderError> {
-    if context.is_native_still() {
-        return native_direct_item_payload(data, state, item_id, context);
+    item_payload_with_owner_context(
+        data,
+        state,
+        item_id,
+        context,
+        RetainedOwnerKind::SequencePayload,
+    )
+}
+
+fn item_payload_with_owner_context(
+    data: &[u8],
+    state: &MetaState,
+    item_id: u32,
+    context: &mut ParseContext<'_>,
+    owner_kind: RetainedOwnerKind,
+) -> Result<Vec<u8>, DecoderError> {
+    if context.is_native() {
+        return native_direct_item_payload_with_owner(data, state, item_id, context, owner_kind);
     }
     item_payload_with_stack_context(data, state, item_id, &mut Vec::new(), context)
 }
@@ -5064,6 +6089,14 @@ fn read_c_string_with_context(
     offset: usize,
     context: &mut ParseContext<'_>,
 ) -> Result<String, DecoderError> {
+    read_c_string_owned_with_context(data, offset, context).map(|(value, _)| value)
+}
+
+fn read_c_string_owned_with_context(
+    data: &[u8],
+    offset: usize,
+    context: &mut ParseContext<'_>,
+) -> Result<(String, AllocationToken), DecoderError> {
     let bytes = data
         .get(offset..)
         .ok_or_else(|| DecoderError::NotEnoughData("string offset exceeds input".to_string()))?;
@@ -5073,7 +6106,7 @@ fn read_c_string_with_context(
         .unwrap_or(bytes.len());
     let value = std::str::from_utf8(&bytes[..end])
         .map_err(|_| DecoderError::Bitstream("box string is not UTF-8".to_string()))?;
-    copy_string_with_context(value, context)
+    copy_string_owned(value, context)
 }
 
 fn read_u8(data: &[u8], offset: usize) -> Result<u8, DecoderError> {

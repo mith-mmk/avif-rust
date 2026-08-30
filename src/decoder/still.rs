@@ -1028,6 +1028,31 @@ pub(super) fn decode_alpha_auxiliary_frame_with_prefix(
     decode_still_frame(&headers, None)
 }
 
+/// Bounded counterpart of `decode_alpha_auxiliary_frame_with_prefix`.  It is
+/// intentionally strict-native only, so the historical alpha decoder keeps
+/// its established allocation and clone behaviour.
+pub(super) fn decode_alpha_auxiliary_frame_with_prefix_and_budget(
+    info: &AvifInfo,
+    parts: super::ItemHeaderParts<'_>,
+    frame_prefix: crate::av1::FramePrefix<'_, '_>,
+    budget: &mut crate::container::DecodeBudget,
+    limits: &crate::limits::NativeDecodeLimits,
+) -> Result<(DecodedFrame, crate::av1::NativeFrameAllocation), DecoderError> {
+    let auxiliary = info.alpha_auxiliary_items.first().ok_or_else(|| {
+        DecoderError::Bitstream("AVIF alpha auxiliary item is missing".to_string())
+    })?;
+    let source = super::ItemHeaderSource::from_auxiliary(auxiliary);
+    let headers = super::parse_av1_headers_for_item_with_prefix_and_budget(
+        &source,
+        parts,
+        frame_prefix,
+        budget,
+    )?;
+    let result = super::decode_still_frame_with_native_budget(&headers, None, budget, limits);
+    super::drop_native_headers_and_release(headers, budget)?;
+    result
+}
+
 pub(super) struct NativeAlphaHeader<'a> {
     pub(super) prefix: crate::av1::FramePrefix<'a, 'static>,
     pub(super) parts: super::ItemHeaderParts<'a>,
@@ -1047,11 +1072,7 @@ pub(super) fn validate_alpha_auxiliary_header_limits<'a>(
     let auxiliary = info.alpha_auxiliary_items.first().ok_or_else(|| {
         DecoderError::Bitstream("AVIF alpha auxiliary item is missing".to_string())
     })?;
-    let sequence_payload =
-        crate::obu::find_obu_payload(&auxiliary.payload, crate::obu::ObuType::SequenceHeader)?
-            .ok_or_else(|| {
-                DecoderError::Bitstream("AV1 sequence header OBU is missing".to_string())
-            })?;
+    let sequence_payload = super::select_strict_native_sequence_header(&auxiliary.payload)?;
     let sequence = crate::av1::parse_sequence_header(sequence_payload)?;
     limits.check_dimensions(
         usize::try_from(sequence.max_frame_width).map_err(|_| {
@@ -1066,16 +1087,26 @@ pub(super) fn validate_alpha_auxiliary_header_limits<'a>(
             "bounded native decode does not yet budget AV1 super-resolution".to_string(),
         ));
     }
-    let frame_payload =
-        crate::obu::find_obu_payload(&auxiliary.payload, crate::obu::ObuType::Frame)?;
-    let frame_header_payload = if frame_payload.is_none() {
-        crate::obu::find_obu_payload(&auxiliary.payload, crate::obu::ObuType::FrameHeader)?
-    } else {
-        None
+    let alpha_route =
+        super::select_strict_native_frame_route(&auxiliary.payload).map_err(|error| {
+            // Keep the strict classifier shared with the master path, while making
+            // the failing auxiliary item unambiguous to callers.  In particular,
+            // a duplicate alpha frame must not look like a primary-frame failure.
+            match error {
+                DecoderError::Unsupported(message) => {
+                    DecoderError::Unsupported(format!("AVIF alpha auxiliary item: {message}"))
+                }
+                error => error,
+            }
+        })?;
+    let (frame_payload, frame_header_payload, frame_payload_for_prefix) = match alpha_route {
+        super::StrictNativeFrameRoute::Normal { frame_payload } => {
+            (Some(frame_payload), None, frame_payload)
+        }
+        super::StrictNativeFrameRoute::Split {
+            frame_header_payload,
+        } => (None, Some(frame_header_payload), frame_header_payload),
     };
-    let frame_payload_for_prefix = frame_payload
-        .or(frame_header_payload)
-        .ok_or_else(|| DecoderError::Bitstream("AV1 frame header OBU is missing".to_string()))?;
     let (_, sequence_metadata) = crate::av1::parse_sequence_header_with_metadata(sequence_payload)?;
     let frame_prefix = crate::av1::parse_frame_prefix(
         frame_payload_for_prefix,

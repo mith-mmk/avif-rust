@@ -123,6 +123,14 @@ pub fn plan_transform_blocks_with_tx_size(
 }
 
 pub fn zig_zag_scan(tx_size: TxSize) -> Vec<usize> {
+    let scan_width = tx_size.width().min(32);
+    let scan_height = tx_size.height().min(32);
+    let mut scan = Vec::with_capacity(scan_width * scan_height);
+    zig_zag_scan_into(tx_size, &mut scan);
+    scan
+}
+
+pub(crate) fn zig_zag_scan_into(tx_size: TxSize, scan: &mut Vec<usize>) {
     let full_width = tx_size.width();
     let scan_width = full_width.min(32);
     let scan_height = tx_size.height().min(32);
@@ -131,13 +139,12 @@ pub fn zig_zag_scan(tx_size: TxSize) -> Vec<usize> {
         // coded coefficient region is limited to the lower-dimensional
         // 32x32 area.  The inverse-storage remap expands that scan into the
         // rectangular column-major layout used by the transform kernel.
-        return zig_zag_scan(TxSize::Tx32x32);
+        return zig_zag_scan_into(TxSize::Tx32x32, scan);
     }
     if tx_size.is_rectangular() {
         // AOM stores rectangular transform coefficients column-major.  Its
         // default scan follows diagonals, reversing each diagonal when the
         // transform is wider than tall.
-        let mut scan = Vec::with_capacity(scan_width * scan_height);
         for diagonal in 0..=(scan_width + scan_height - 2) {
             let first = (diagonal + 1).saturating_sub(scan_width);
             let last = diagonal.min(scan_height - 1);
@@ -153,9 +160,8 @@ pub fn zig_zag_scan(tx_size: TxSize) -> Vec<usize> {
                 }
             }
         }
-        return scan;
+        return;
     }
-    let mut scan = Vec::with_capacity(scan_width * scan_height);
     for diagonal in 0..=(scan_width + scan_height - 2) {
         if diagonal % 2 == 1 {
             let mut y = diagonal.min(scan_height - 1);
@@ -185,10 +191,19 @@ pub fn zig_zag_scan(tx_size: TxSize) -> Vec<usize> {
             }
         }
     }
-    scan
 }
 
 pub fn coefficient_scan(tx_size: TxSize, tx_type: TxType) -> Vec<usize> {
+    let mut scan = Vec::with_capacity(tx_size.width().min(32) * tx_size.height().min(32));
+    coefficient_scan_into(tx_size, tx_type, &mut scan);
+    scan
+}
+
+pub(crate) fn coefficient_scan_into(
+    tx_size: TxSize,
+    tx_type: TxType,
+    scan: &mut Vec<usize>,
+) {
     let width = tx_size.width();
     let scan_width = width.min(32);
     let scan_height = tx_size.height().min(32);
@@ -196,23 +211,32 @@ pub fn coefficient_scan(tx_size: TxSize, tx_type: TxType) -> Vec<usize> {
         TxType::VerticalDct | TxType::VerticalAdst | TxType::VerticalFlipAdst
             if tx_size.is_rectangular() =>
         {
-            (0..scan_height)
-                .flat_map(|row| (0..scan_width).map(move |column| column * tx_size.height() + row))
-                .collect()
+            for row in 0..scan_height {
+                for column in 0..scan_width {
+                    scan.push(column * tx_size.height() + row);
+                }
+            }
         }
         TxType::HorizontalDct | TxType::HorizontalAdst | TxType::HorizontalFlipAdst
             if tx_size.is_rectangular() =>
         {
-            (0..scan_width * scan_height).collect()
+            scan.extend(0..scan_width * scan_height);
         }
-        TxType::VerticalDct | TxType::VerticalAdst | TxType::VerticalFlipAdst => (0..scan_width)
-            .flat_map(|column| (0..scan_height).map(move |row| row * width + column))
-            .collect(),
-        TxType::HorizontalDct | TxType::HorizontalAdst | TxType::HorizontalFlipAdst => (0
-            ..scan_height)
-            .flat_map(|row| (0..scan_width).map(move |column| row * width + column))
-            .collect(),
-        _ => zig_zag_scan(tx_size),
+        TxType::VerticalDct | TxType::VerticalAdst | TxType::VerticalFlipAdst => {
+            for column in 0..scan_width {
+                for row in 0..scan_height {
+                    scan.push(row * width + column);
+                }
+            }
+        }
+        TxType::HorizontalDct | TxType::HorizontalAdst | TxType::HorizontalFlipAdst => {
+            for row in 0..scan_height {
+                for column in 0..scan_width {
+                    scan.push(row * width + column);
+                }
+            }
+        }
+        _ => zig_zag_scan_into(tx_size, scan),
     }
 }
 

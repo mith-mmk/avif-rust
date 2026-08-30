@@ -10,17 +10,123 @@ use super::{
 };
 use crate::av1::cdf::CdfContext;
 use crate::av1::syntax::TX_TYPES;
-use crate::av1::transform::coefficient_scan;
+use crate::av1::transform::{coefficient_scan, coefficient_scan_into};
+use crate::allocation::{capacity_bytes, fresh_replacement};
 
+const COEFFICIENT_SCAN_ENTRY_COUNT: usize = 19 * TX_TYPES;
+
+fn coefficient_scan_len(tx_size: TxSize) -> usize {
+    tx_size.width().min(32) * tx_size.height().min(32)
+}
+
+const ALL_TX_SIZES: [TxSize; 19] = [
+    TxSize::Tx4x4,
+    TxSize::Tx8x8,
+    TxSize::Tx16x16,
+    TxSize::Tx32x32,
+    TxSize::Tx64x64,
+    TxSize::Tx4x8,
+    TxSize::Tx8x4,
+    TxSize::Tx8x16,
+    TxSize::Tx16x8,
+    TxSize::Tx16x32,
+    TxSize::Tx32x16,
+    TxSize::Tx32x64,
+    TxSize::Tx64x32,
+    TxSize::Tx4x16,
+    TxSize::Tx16x4,
+    TxSize::Tx8x32,
+    TxSize::Tx32x8,
+    TxSize::Tx16x64,
+    TxSize::Tx64x16,
+];
+
+#[derive(Debug)]
 pub(super) struct CoefficientScanCache {
     entries: Vec<Option<Vec<usize>>>,
+    strict_lazy_limit: Option<usize>,
+    strict_lazy_bytes: usize,
 }
 
 impl CoefficientScanCache {
     pub(super) fn new() -> Self {
         Self {
-            entries: (0..19 * TX_TYPES).map(|_| None).collect(),
+            entries: (0..COEFFICIENT_SCAN_ENTRY_COUNT).map(|_| None).collect(),
+            strict_lazy_limit: None,
+            strict_lazy_bytes: 0,
         }
+    }
+
+    /// Constructs the cache for the bounded decoder.  The outer entry table is
+    /// admitted before it becomes reachable; transform scans remain lazy.
+    /// `strict_lazy_limit` is a pre-admitted byte allowance for those later
+    /// entries, not a request to materialize every transform.
+    pub(super) fn new_strict(strict_lazy_limit: usize) -> Result<Self, DecoderError> {
+        let replacement = fresh_replacement::<Option<Vec<usize>>>(
+            COEFFICIENT_SCAN_ENTRY_COUNT,
+            "native AV1 coefficient scan cache",
+        )?;
+        let mut entries = replacement.into_vec();
+        if entries.capacity() < COEFFICIENT_SCAN_ENTRY_COUNT {
+            return Err(DecoderError::InvalidParam(
+                "native AV1 coefficient scan cache allocation is too small".to_string(),
+            ));
+        }
+        if entries.capacity() > COEFFICIENT_SCAN_ENTRY_COUNT {
+            return Err(DecoderError::InvalidParam(
+                "native AV1 coefficient scan cache allocation exceeds plan".to_string(),
+            ));
+        }
+        entries.resize(COEFFICIENT_SCAN_ENTRY_COUNT, None);
+        Ok(Self {
+            entries,
+            strict_lazy_limit: Some(strict_lazy_limit),
+            strict_lazy_bytes: 0,
+        })
+    }
+
+    pub(super) fn strict_lazy_bytes() -> Result<usize, DecoderError> {
+        ALL_TX_SIZES.iter().try_fold(0usize, |total, &tx_size| {
+            let entry = coefficient_scan_len(tx_size)
+                .checked_mul(std::mem::size_of::<usize>())
+                .and_then(|bytes| bytes.checked_mul(TX_TYPES))
+                .ok_or_else(|| {
+                    DecoderError::InvalidParam(
+                        "native AV1 coefficient scan cache size overflows".to_string(),
+                    )
+                })?;
+            total.checked_add(entry).ok_or_else(|| {
+                DecoderError::InvalidParam(
+                    "native AV1 coefficient scan cache size overflows".to_string(),
+                )
+            })
+        })
+    }
+
+    pub(super) fn strict_outer_bytes() -> Result<usize, DecoderError> {
+        capacity_bytes::<Option<Vec<usize>>>(
+            COEFFICIENT_SCAN_ENTRY_COUNT,
+            "coefficient scan cache",
+        )
+    }
+
+    pub(super) fn actual_bytes(&self) -> Result<usize, DecoderError> {
+        let outer = capacity_bytes::<Option<Vec<usize>>>(
+            self.entries.capacity(),
+            "coefficient scan cache",
+        )?;
+        self.entries.iter().try_fold(outer, |total, entry| {
+            let inner = entry.as_ref().map_or(0, |scan| {
+                scan.capacity()
+                    .checked_mul(std::mem::size_of::<usize>())
+                    .unwrap_or(usize::MAX)
+            });
+            total.checked_add(inner).ok_or_else(|| {
+                DecoderError::InvalidParam(
+                    "native AV1 coefficient scan cache size overflows".to_string(),
+                )
+            })
+        })
     }
 
     pub(super) fn get(&mut self, tx_size: TxSize, tx_type: TxType) -> &[usize] {
@@ -31,6 +137,126 @@ impl CoefficientScanCache {
         self.entries[index]
             .as_deref()
             .expect("scan cache entry was just inserted")
+    }
+
+    pub(super) fn get_strict(
+        &mut self,
+        tx_size: TxSize,
+        tx_type: TxType,
+    ) -> Result<&[usize], DecoderError> {
+        let index = usize::from(tx_size as u8) * TX_TYPES + usize::from(tx_type as u8);
+        if self.entries[index].is_none() {
+            let requested = coefficient_scan_len(tx_size)
+                .checked_mul(std::mem::size_of::<usize>())
+                .ok_or_else(|| {
+                    DecoderError::InvalidParam(
+                        "native AV1 coefficient scan entry size overflows".to_string(),
+                    )
+                })?;
+            let limit = self.strict_lazy_limit.ok_or_else(|| {
+                DecoderError::InvalidParam(
+                    "native AV1 strict coefficient scan cache is not configured".to_string(),
+                )
+            })?;
+            let requested_total = self.strict_lazy_bytes.checked_add(requested).ok_or_else(|| {
+                DecoderError::InvalidParam(
+                    "native AV1 coefficient scan cache size overflows".to_string(),
+                )
+            })?;
+            if requested_total > limit {
+                return Err(DecoderError::InvalidParam(
+                    "native AV1 coefficient scan entry exceeds admitted budget".to_string(),
+                ));
+            }
+            let replacement = fresh_replacement::<usize>(
+                coefficient_scan_len(tx_size),
+                "native AV1 coefficient scan entry",
+            )?;
+            let actual = replacement.actual_bytes();
+            let actual_total = self.strict_lazy_bytes.checked_add(actual).ok_or_else(|| {
+                DecoderError::InvalidParam(
+                    "native AV1 coefficient scan cache size overflows".to_string(),
+                )
+            })?;
+            if actual_total > limit {
+                return Err(DecoderError::InvalidParam(
+                    "native AV1 coefficient scan entry capacity exceeds admitted budget".to_string(),
+                ));
+            }
+            let mut scan = replacement.into_vec();
+            coefficient_scan_into(tx_size, tx_type, &mut scan);
+            self.strict_lazy_bytes = actual_total;
+            self.entries[index] = Some(scan);
+        }
+        Ok(self.entries[index]
+            .as_deref()
+            .expect("strict scan cache entry was just inserted"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strict_cache_keeps_scan_entries_lazy_and_reconciles_actual_bytes() {
+        let outer = CoefficientScanCache::strict_outer_bytes().unwrap();
+        let entry = coefficient_scan_len(TxSize::Tx4x4) * std::mem::size_of::<usize>();
+        let mut cache = CoefficientScanCache::new_strict(entry).unwrap();
+        assert_eq!(cache.actual_bytes().unwrap(), outer);
+
+        let scan = cache
+            .get_strict(TxSize::Tx4x4, TxType::DctDct)
+            .unwrap();
+        assert_eq!(scan.len(), coefficient_scan_len(TxSize::Tx4x4));
+        assert_eq!(cache.actual_bytes().unwrap(), outer + entry);
+    }
+
+    #[test]
+    fn strict_cache_rejects_one_byte_under_and_allows_retry() {
+        let entry = coefficient_scan_len(TxSize::Tx4x4) * std::mem::size_of::<usize>();
+        let mut under = CoefficientScanCache::new_strict(entry - 1).unwrap();
+        assert!(under
+            .get_strict(TxSize::Tx4x4, TxType::DctDct)
+            .is_err());
+        assert_eq!(under.strict_lazy_bytes, 0);
+
+        let mut retry = CoefficientScanCache::new_strict(entry).unwrap();
+        assert!(retry
+            .get_strict(TxSize::Tx4x4, TxType::DctDct)
+            .is_ok());
+        assert_eq!(retry.strict_lazy_bytes, entry);
+    }
+
+    #[test]
+    fn strict_cache_requires_each_lazy_entry_to_fit_remaining_allowance() {
+        let first = coefficient_scan_len(TxSize::Tx4x4) * std::mem::size_of::<usize>();
+        let second = coefficient_scan_len(TxSize::Tx8x8) * std::mem::size_of::<usize>();
+        let mut cache = CoefficientScanCache::new_strict(first + second - 1).unwrap();
+        cache
+            .get_strict(TxSize::Tx4x4, TxType::DctDct)
+            .unwrap();
+        assert!(cache
+            .get_strict(TxSize::Tx8x8, TxType::DctDct)
+            .is_err());
+        assert_eq!(cache.strict_lazy_bytes, first);
+    }
+
+    #[test]
+    fn strict_cache_rejects_actual_outer_overcapacity_and_retries() {
+        let _observation = crate::test_allocation_observer::Observation::begin(1, false);
+        let _extra = crate::test_allocation_observer::force_fresh_capacity_extra(
+            "native AV1 coefficient scan cache",
+            1 << 20,
+        );
+        let lazy = CoefficientScanCache::strict_lazy_bytes().unwrap();
+        assert!(CoefficientScanCache::new_strict(lazy).is_err());
+        drop(_extra);
+        let cache = CoefficientScanCache::new_strict(lazy).unwrap();
+        assert_eq!(
+            cache.actual_bytes().unwrap(),
+            CoefficientScanCache::strict_outer_bytes().unwrap()
+        );
     }
 }
 

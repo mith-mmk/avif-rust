@@ -197,8 +197,13 @@ impl<'a> TileDecoder<'a> {
         plane_type: usize,
         dc_sign_context: usize,
     ) -> Result<CoefficientRead, DecoderError> {
+        let strict_dynamic = self.strict_dynamic_enabled();
         let mut source = EntropyCoefficientSource::new(&mut self.reader, &mut self.cdf);
-        let scan = self.coefficient_scan_cache.get(tx_size, tx_type);
+        let scan = if strict_dynamic {
+            self.coefficient_scan_cache.get_strict(tx_size, tx_type)?
+        } else {
+            self.coefficient_scan_cache.get(tx_size, tx_type)
+        };
         decode_coefficients_with_scan(
             &mut source,
             tx_size,
