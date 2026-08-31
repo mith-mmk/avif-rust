@@ -11,7 +11,7 @@ decoder. It provides direct RGBA helpers, access to decoded AV1 source planes,
 and a callback interface compatible with [`wml2`](https://github.com/mith-mmk/wml2-on-rust).
 
 The current release is
-[`avif-rust 0.0.6`](https://crates.io/crates/avif-rust/0.0.6).
+[`avif-rust 0.0.7`](https://crates.io/crates/avif-rust/0.0.7).
 
 The crate does not call FFmpeg, libaom, or another native codec at runtime.
 Those implementations are used only to generate and verify test oracles.
@@ -28,7 +28,7 @@ passes the FFmpeg RGB oracle (average absolute error about 0.075, maximum 6).
 | --- | --- |
 | AVIF primary item containing one AV1 still frame | Supported |
 | 8-bit, 10-bit, and 12-bit source planes | Supported (12-bit RGB oracle passes) |
-| Native decoded planes, optional alpha plane, RGBA8, and RGBA16 | Supported (alpha is `buffers.planes[3]` when present) |
+| Native decoded planes, optional alpha plane, RGBA8, and RGBA16 | Supported (alpha is `buffers.planes[3]` when present); bounded still decode also accepts direct-input Sample Transform output up to 16 bits |
 | Premultiplied alpha (`prem`) | Supported (RGBA8/RGBA16 outputs are unpremultiplied; native planes remain unchanged) |
 | Deblock, CDEF, and loop restoration used by supported streams | Supported |
 | Monochrome, 4:2:0, and 4:2:2 | Supported |
@@ -64,7 +64,7 @@ Or add the dependency manually:
 
 ```toml
 [dependencies]
-avif-rust = "0.0.6"
+avif-rust = "0.0.7"
 ```
 
 The minimum supported Rust version (MSRV) is Rust 1.88.

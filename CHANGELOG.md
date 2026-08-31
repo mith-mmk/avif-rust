@@ -2,6 +2,22 @@
 
 All notable changes to this crate are documented in this file.
 
+## 0.0.7 - 2026-08-31
+
+### Added
+
+- Bounded native still decoding for Sample Transform (`sato`) output up to
+  16 bits.
+- Direct Sample Transform AV1 inputs use the existing checked native AV1
+  decode path; unsupported grid-derived inputs fail explicitly.
+
+### Compatibility
+
+- Ordinary native 8/10/12-bit planes, legacy RGBA8/RGBA16 helpers, AVIS
+  sequence APIs, and callback behavior remain unchanged.
+- Geometry metadata remains metadata on the native path and is not applied to
+  decoded source planes.
+
 ## 0.0.6 - 2026-08-02
 
 ### Changed

@@ -12,7 +12,7 @@
 インターフェースを提供します。
 
 現在のreleaseは
-[`avif-rust 0.0.6`](https://crates.io/crates/avif-rust/0.0.6)です。
+[`avif-rust 0.0.7`](https://crates.io/crates/avif-rust/0.0.7)です。
 
 実行時にFFmpeg、libaom、その他のネイティブcodecは呼び出しません。これらは
 テスト用oracleの生成と検証にのみ使用します。
@@ -64,7 +64,7 @@ cargo add avif-rust
 
 ```toml
 [dependencies]
-avif-rust = "0.0.6"
+avif-rust = "0.0.7"
 ```
 
 最小サポートRustバージョン（MSRV）はRust 1.88です。
