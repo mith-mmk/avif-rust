@@ -1918,7 +1918,7 @@ pub(super) fn unpremultiply_rgba16(rgba: &mut [u16]) {
 pub fn decode_frame_bytes(data: &[u8]) -> Result<DecodedFrame, DecoderError> {
     let info = parse_avif(data)?;
     validate_public_container_preflight(&info, false)?;
-    if let Some(frame) = decode_sample_transform_frame(data, &info)? {
+    if let Some(frame) = decode_sample_transform_frame(data, &info, None)? {
         return Ok(frame);
     }
     if info.primary_grid.is_some() {
@@ -1954,10 +1954,12 @@ pub fn decode_frame_bytes_strict(data: &[u8]) -> Result<DecodedFrame, DecoderErr
 ///
 /// At this stage the limits cover the container/metadata projection and the
 /// pre-tile geometry/header checks for one ordinary still `av01` item and its
-/// selected auxiliary alpha. AVIS sequences and derived images are rejected
-/// by this entry point. Deep tile/entropy traversal, reference-frame state,
-/// post-filter scratch, and a total-live-allocation guarantee are not covered
-/// yet; those are the planned C2/C3 bounded-decoding stages.
+/// selected auxiliary alpha. A bounded Sample Transform still is also
+/// accepted; its direct AV1 inputs are checked before the derived expression
+/// is evaluated. AVIS sequences and grid-derived stills remain unsupported.
+/// Deep tile/entropy traversal, reference-frame state, post-filter scratch,
+/// and a total-live-allocation guarantee are not covered yet; those are the
+/// planned C2/C3 bounded-decoding stages.
 pub fn decode_frame_bytes_strict_with_limits(
     data: &[u8],
     limits: &crate::limits::NativeDecodeLimits,
@@ -1971,16 +1973,29 @@ pub fn decode_frame_bytes_strict_with_limits(
             "bounded native decode accepts one still av01 item, not an AVIS sequence".to_string(),
         ));
     }
-    if information.primary_item_type() != Some(*b"av01") {
-        return Err(DecoderError::Unsupported(
-            "bounded native decode accepts only a primary av01 item".to_string(),
-        ));
-    }
     let derived = information.primary_item_type() == Some(*b"sato") || info.primary_grid.is_some();
     if derived {
         limits.check_count(1, limits.max_derived_depth(), "derived image depth")?;
+        reject_strict_derived_alpha(
+            "sato",
+            info.alpha_grid.is_some(),
+            !info.alpha_auxiliary_items.is_empty(),
+        )?;
+        if info.primary_grid.is_some() {
+            return Err(DecoderError::Unsupported(
+                "bounded native decode does not yet support grid-derived images".to_string(),
+            ));
+        }
+        validate_native_derived_limits(data, info, limits)?;
+        let frame = super::decode_sample_transform_frame(data, info, Some(limits))?.ok_or_else(
+            || DecoderError::Bitstream("sato primary item could not be decoded".to_string()),
+        )?;
+        validate_native_frame_limits(&frame, limits)?;
+        return Ok(crate::native::NativeDecodedFrame::new(frame, information));
+    }
+    if information.primary_item_type() != Some(*b"av01") {
         return Err(DecoderError::Unsupported(
-            "bounded native decode does not yet support derived images".to_string(),
+            "bounded native decode accepts only a primary av01 item".to_string(),
         ));
     }
     let frame =
@@ -1990,8 +2005,8 @@ pub fn decode_frame_bytes_strict_with_limits(
 }
 
 /// Strict bounded decode after the container parser has transferred its
-/// retained-owner budget.  Only the ordinary still plus selected alpha route
-/// enters this function; AVIS and derived formats were rejected by the caller.
+/// retained-owner budget. Only the ordinary still plus selected alpha route
+/// enters this function; Sample Transform uses its checked direct-input path.
 fn decode_frame_bytes_strict_with_budget_from_info(
     _data: &[u8],
     info: &AvifInfo,
@@ -2077,7 +2092,7 @@ fn decode_frame_bytes_strict_from_info(
     limits: Option<&crate::limits::NativeDecodeLimits>,
 ) -> Result<DecodedFrame, DecoderError> {
     if limits.is_none() {
-        if let Some(frame) = decode_sample_transform_frame(data, info)? {
+        if let Some(frame) = decode_sample_transform_frame(data, info, None)? {
             reject_strict_derived_alpha(
                 "sato",
                 info.alpha_grid.is_some(),
@@ -2164,6 +2179,17 @@ fn decode_frame_bytes_strict_from_info(
         }
     }
     Ok(frame)
+}
+
+/// Bounded direct-input decode used by the Sample Transform adapter. The
+/// input has already been projected into an `AvifInfo`, so no container bytes
+/// are needed; passing limits keeps the AV1 prefix, plan, and materializer on
+/// the bounded path.
+pub(super) fn decode_frame_bytes_strict_from_info_for_derived(
+    info: &AvifInfo,
+    limits: &crate::limits::NativeDecodeLimits,
+) -> Result<DecodedFrame, DecoderError> {
+    decode_frame_bytes_strict_from_info(&[], info, Some(limits))
 }
 
 /// Attaches the already-decoded alpha owner on the strict native path.
@@ -2424,6 +2450,62 @@ fn validate_native_frame_limits(
             .checked_mul(std::mem::size_of::<u16>())
             .ok_or_else(|| DecoderError::InvalidParam("native plane size overflows".to_string()))?;
         limits.check_plane_bytes(bytes)?;
+    }
+    Ok(())
+}
+
+fn validate_native_derived_limits(
+    data: &[u8],
+    info: &AvifInfo,
+    limits: &crate::limits::NativeDecodeLimits,
+) -> Result<(), DecoderError> {
+    let transform = super::parse_sample_transform(data)?.ok_or_else(|| {
+        DecoderError::Bitstream("sato primary item could not be parsed".to_string())
+    })?;
+    if !(8..=16).contains(&transform.output_bit_depth) {
+        return Err(DecoderError::Unsupported(format!(
+            "bounded native decode supports Sample Transform output up to 16 bits, got {}",
+            transform.output_bit_depth
+        )));
+    }
+    limits.check_dimensions(
+        usize::try_from(transform.output_width)
+            .map_err(|_| DecoderError::InvalidParam("sato output width is too large".into()))?,
+        usize::try_from(transform.output_height)
+            .map_err(|_| DecoderError::InvalidParam("sato output height is too large".into()))?,
+    )?;
+    limits.check_count(transform.inputs.len(), limits.max_items(), "sato input")?;
+    let plane_count = info
+        .pixel_information
+        .as_ref()
+        .map_or(3, |pixel| pixel.bits_per_channel.len());
+    let output_samples = usize::try_from(transform.output_width)
+        .ok()
+        .and_then(|width| {
+            usize::try_from(transform.output_height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        })
+        .and_then(|pixels| pixels.checked_mul(plane_count))
+        .ok_or_else(|| DecoderError::InvalidParam("sato output plane size overflows".into()))?;
+    limits.check_plane_bytes(
+        output_samples
+            .checked_mul(std::mem::size_of::<u16>())
+            .ok_or_else(|| DecoderError::InvalidParam("sato output plane bytes overflow".into()))?,
+    )?;
+    for input in &transform.inputs {
+        limits.check_dimensions(
+            usize::try_from(input.width)
+                .map_err(|_| DecoderError::InvalidParam("sato input width is too large".into()))?,
+            usize::try_from(input.height)
+                .map_err(|_| DecoderError::InvalidParam("sato input height is too large".into()))?,
+        )?;
+        if input.grid.is_some() {
+            return Err(DecoderError::Unsupported(
+                "bounded native decode does not yet support grid inputs to Sample Transform"
+                    .to_string(),
+            ));
+        }
     }
     Ok(())
 }

@@ -714,7 +714,7 @@ fn parse_avif_with_context_inner(
             // The primary still image item remains independently decodable in
             // an AVIS file. The movie box describes later frames; the public
             // still-image API intentionally selects the primary item.
-            b"moov" if context.is_native_still() => context.reject_native(
+            b"moov" if context.is_native_still_like() => context.reject_native(
                 "bounded native decode does not support AVIS movie containers yet",
             )?,
             _ => {}
@@ -739,7 +739,9 @@ fn parse_avif_with_context_inner(
         .iter()
         .find(|item| item.item_id == decode_primary_item_id)
         .map(|item| item.item_type);
-    if matches!(primary_type, Some(item_type) if item_type == *b"grid" || item_type == *b"sato") {
+    if context.is_native_still()
+        && matches!(primary_type, Some(item_type) if item_type == *b"grid" || item_type == *b"sato")
+    {
         context.reject_native(
             "bounded native decode does not support derived image construction yet",
         )?;
@@ -759,6 +761,34 @@ fn parse_avif_with_context_inner(
             decode_primary_item_id,
             context,
             RetainedOwnerKind::PrimaryPayload,
+        )?;
+        (
+            alpha_auxiliary_items,
+            primary_item_payload,
+            AvifSequence {
+                color_samples: Vec::new(),
+                color_durations_ms: Vec::new(),
+                alpha_samples: Vec::new(),
+                alpha_durations_ms: Vec::new(),
+            },
+            None,
+        )
+    } else if context.is_native_derived_still() {
+        // Derived stills use the checked item resolver but do not enter the
+        // AVIS animation parser. Their grid or Sample Transform inputs are
+        // projected below and decoded by the strict path.
+        validate_primary_item_metadata(&meta)?;
+        let primary_item_payload = item_payload_with_context(
+            data,
+            &meta,
+            decode_primary_item_id,
+            context,
+        )?;
+        let alpha_auxiliary_items = alpha_auxiliary_items_for_with_context(
+            data,
+            &meta,
+            Some(decode_primary_item_id),
+            context,
         )?;
         (
             alpha_auxiliary_items,
@@ -929,6 +959,11 @@ fn parse_rich_info_with_limits_and_budget_mode(
     let mut stats = scan_native_limits(data, limits)?;
     let mut context = if sequence_mode {
         ParseContext::native_sequence(limits)
+    } else if matches!(
+        stats.primary_item_type,
+        Some(item_type) if item_type == *b"grid" || item_type == *b"sato"
+    ) {
+        ParseContext::native_derived_still(limits)
     } else {
         ParseContext::native_still(limits)
     };
@@ -7771,6 +7806,24 @@ mod tests {
         let frame = crate::decode_frame_bytes(&data).expect("primary sato frame should decode");
         assert_eq!((frame.width, frame.height), (1024, 684));
         assert_eq!(frame.bit_depth, 16);
+        let limits = crate::limits::NativeDecodeLimits::new(
+            data.len(),
+            2048,
+            2048,
+            2048 * 2048,
+            2048 * 2048 * 3 * std::mem::size_of::<u16>(),
+            1 << 20,
+            1 << 20,
+            32,
+            64,
+            64,
+            1,
+            1,
+        );
+        let bounded = crate::decode_frame_bytes_strict_with_limits(&data, &limits)
+            .expect("bounded primary sato frame should decode");
+        assert_eq!((bounded.frame().width, bounded.frame().height), (1024, 684));
+        assert_eq!(bounded.frame().bit_depth, 16);
         let image = crate::image_from_bytes(&data).expect("primary sato RGBA should decode");
         assert_eq!((image.width, image.height), (1024, 684));
         assert_eq!(image.rgba.len(), 1024 * 684 * 4);

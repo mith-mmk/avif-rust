@@ -14,6 +14,7 @@ pub(crate) use crate::allocation::{AllocationClass, AllocationTicket as Allocati
 pub(crate) enum ParseMode<'a> {
     Legacy,
     NativeStill(&'a NativeDecodeLimits),
+    NativeDerivedStill(&'a NativeDecodeLimits),
     NativeSequence(&'a NativeDecodeLimits),
 }
 
@@ -666,8 +667,31 @@ impl<'a> ParseContext<'a> {
         }
     }
 
+    pub(crate) const fn native_derived_still(limits: &'a NativeDecodeLimits) -> Self {
+        Self {
+            mode: ParseMode::NativeDerivedStill(limits),
+            budget: DecodeBudget::new(limits.max_live_allocation_bytes()),
+            counts: ParseCounts {
+                iinf_entries: 0,
+                iloc_entries: 0,
+                ipma_entries: 0,
+                properties: 0,
+                associations: 0,
+            },
+            native_owners: None,
+        }
+    }
+
     pub(crate) const fn is_native_still(&self) -> bool {
         matches!(self.mode, ParseMode::NativeStill(_))
+    }
+
+    pub(crate) const fn is_native_derived_still(&self) -> bool {
+        matches!(self.mode, ParseMode::NativeDerivedStill(_))
+    }
+
+    pub(crate) const fn is_native_still_like(&self) -> bool {
+        self.is_native_still() || self.is_native_derived_still()
     }
 
     pub(crate) const fn is_native_sequence(&self) -> bool {
@@ -677,14 +701,18 @@ impl<'a> ParseContext<'a> {
     pub(crate) const fn is_native(&self) -> bool {
         matches!(
             self.mode,
-            ParseMode::NativeStill(_) | ParseMode::NativeSequence(_)
+            ParseMode::NativeStill(_)
+                | ParseMode::NativeDerivedStill(_)
+                | ParseMode::NativeSequence(_)
         )
     }
 
     pub(crate) const fn limits(&self) -> Option<&'a NativeDecodeLimits> {
         match self.mode {
             ParseMode::Legacy => None,
-            ParseMode::NativeStill(limits) | ParseMode::NativeSequence(limits) => Some(limits),
+            ParseMode::NativeStill(limits)
+            | ParseMode::NativeDerivedStill(limits)
+            | ParseMode::NativeSequence(limits) => Some(limits),
         }
     }
 
@@ -696,7 +724,7 @@ impl<'a> ParseContext<'a> {
     }
 
     pub(crate) fn reject_native(&self, description: &str) -> Result<(), DecoderError> {
-        if self.is_native_still() {
+        if self.is_native_still_like() {
             return Err(DecoderError::Unsupported(description.to_string()));
         }
         Ok(())

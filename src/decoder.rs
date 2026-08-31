@@ -93,7 +93,7 @@ pub fn decode<B: BinaryReader>(
     let data = read_to_end(reader)?;
     let info = parse_avif(&data)?;
     validate_public_container_preflight(&info, true)?;
-    if let Some(frame) = decode_sample_transform_frame(&data, &info)? {
+    if let Some(frame) = decode_sample_transform_frame(&data, &info, None)? {
         let mut image = frame.to_rgba8()?;
         composition::apply_image_transforms(
             &mut image,
@@ -152,7 +152,7 @@ pub fn decode<B: BinaryReader>(
 pub fn decode_bytes(data: &[u8]) -> Result<ImageBuffer, DecoderError> {
     let info = parse_avif(data)?;
     validate_public_container_preflight(&info, true)?;
-    if let Some(frame) = decode_sample_transform_frame(data, &info)? {
+    if let Some(frame) = decode_sample_transform_frame(data, &info, None)? {
         let mut image = frame.to_rgba8()?;
         composition::apply_image_transforms(
             &mut image,
@@ -2030,6 +2030,7 @@ fn decode_still_frame_with_native_budget_and_state(
 fn decode_sample_transform_frame(
     data: &[u8],
     info: &AvifInfo,
+    limits: Option<&crate::limits::NativeDecodeLimits>,
 ) -> Result<Option<DecodedFrame>, DecoderError> {
     let Some(transform) = parse_sample_transform(data)? else {
         return Ok(None);
@@ -2043,7 +2044,7 @@ fn decode_sample_transform_frame(
     }
     let mut frames = Vec::with_capacity(transform.inputs.len());
     for input in &transform.inputs {
-        frames.push(decode_sample_transform_input(input)?);
+        frames.push(decode_sample_transform_input(input, limits)?);
     }
     let first = frames
         .first()
@@ -2125,6 +2126,7 @@ fn decode_sample_transform_frame(
 
 fn decode_sample_transform_input(
     input: &SampleTransformInput,
+    limits: Option<&crate::limits::NativeDecodeLimits>,
 ) -> Result<DecodedFrame, DecoderError> {
     let mut input_info = AvifInfo {
         major_brand: *b"avif",
@@ -2146,8 +2148,16 @@ fn decode_sample_transform_input(
         sequence_sample_payloads: Vec::new(),
     };
     if let Some(grid) = input.grid.as_ref() {
+        if limits.is_some() {
+            return Err(DecoderError::Unsupported(
+                "bounded native decode does not yet support grid inputs to Sample Transform"
+                    .to_string(),
+            ));
+        }
         input_info.primary_grid = Some(grid.clone());
         decode_grid_frame(&input_info)
+    } else if let Some(limits) = limits {
+        frame::decode_frame_bytes_strict_from_info_for_derived(&input_info, limits)
     } else {
         let headers = parse_av1_headers(&input_info)?;
         decode_still_frame(&headers, Some(&input_info))

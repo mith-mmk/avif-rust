@@ -1828,7 +1828,7 @@ mod reference_frame_tests {
                 cells: Vec::new(),
             }),
         };
-        let error = decode_sample_transform_input(&input).unwrap_err();
+        let error = decode_sample_transform_input(&input, None).unwrap_err();
         assert!(matches!(
             error,
             DecoderError::Bitstream(message) if message.contains("grid has 0 cells")
