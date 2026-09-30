@@ -1375,8 +1375,10 @@ fn apply_alpha_grid(
     let alpha = compose_grid_images(grid, &decoded_cells, &column_widths, &row_heights)?;
     for (pixel, alpha_pixel) in image
         .rgba
-        .chunks_exact_mut(4)
-        .zip(alpha.rgba.chunks_exact(4))
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .zip(alpha.rgba.as_chunks::<4>().0.iter())
     {
         pixel[3] = alpha_pixel[0];
     }
@@ -1512,7 +1514,7 @@ pub(super) fn apply_alpha_rows(
         let y = first_row + local_y;
         let alpha_y = (y >> usize::from(alpha_subsampling_y)).min(alpha_height.saturating_sub(1));
         let row = &mut rgba[local_y * width * 4..(local_y + 1) * width * 4];
-        for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+        for (x, pixel) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let alpha_x =
                 (x >> usize::from(alpha_subsampling_x)).min(alpha_width.saturating_sub(1));
             pixel[3] =

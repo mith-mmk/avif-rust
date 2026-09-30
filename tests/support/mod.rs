@@ -99,7 +99,9 @@ pub fn read_u16le_samples(path: &Path, sample_count: usize) -> Vec<u16> {
         path.display()
     );
     bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
         .collect()
 }

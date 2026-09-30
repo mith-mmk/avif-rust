@@ -114,9 +114,7 @@ impl CoefficientScanCache {
         )?;
         self.entries.iter().try_fold(outer, |total, entry| {
             let inner = entry.as_ref().map_or(0, |scan| {
-                scan.capacity()
-                    .checked_mul(std::mem::size_of::<usize>())
-                    .unwrap_or(usize::MAX)
+                scan.capacity().saturating_mul(std::mem::size_of::<usize>())
             });
             total.checked_add(inner).ok_or_else(|| {
                 DecoderError::InvalidParam(

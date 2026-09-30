@@ -719,8 +719,10 @@ fn strict_cdef_snapshot_plan_checks_shapes_and_overflow_without_candidates() {
 #[test]
 fn strict_cdef_active_planes_validate_used_strength_indices() {
     let blocks = [(0, 0, 0, 0, 0)];
-    let mut cdef = CdefParams::default();
-    cdef.bits = 1;
+    let mut cdef = CdefParams {
+        bits: 1,
+        ..CdefParams::default()
+    };
     cdef.strengths[0].y_pri = 1;
     assert_eq!(
         super::strict_cdef_active_planes(&blocks, &cdef, 3).unwrap(),
@@ -830,7 +832,7 @@ fn strict_cdef_snapshot_combined_under_and_each_plane_overcapacity_are_retryable
         let baseline = budget.accounting().frame_live;
         budget.set_max_live_bytes_for_test(baseline + plan.requested_bytes);
         let observation = crate::test_allocation_observer::Observation::begin(1, false);
-        let extra = crate::test_allocation_observer::force_fresh_capacity_extra(*label, 1 << 20);
+        let extra = crate::test_allocation_observer::force_fresh_capacity_extra(label, 1 << 20);
         assert!(
             StrictCdefSnapshotOwner::admit(direction_owner, plan, &frame, &mut budget,).is_err()
         );
@@ -905,11 +907,11 @@ fn strict_restoration_boundary_owner_matches_legacy_for_420_422_444() {
         assert!(plan.requested_bytes > 0);
         let mut budget = DecodeBudget::new(Some(plan.requested_bytes));
         let owner = StrictRestorationBoundaryOwner::admit(plan, &frame, &mut budget).unwrap();
-        for plane_index in 0..case.len() {
+        for (plane_index, legacy_plane) in legacy.iter().enumerate().take(case.len()) {
             let metadata = owner.metadata[plane_index].as_ref().unwrap();
             let samples = owner.samples[plane_index].as_ref().unwrap();
-            assert_eq!(metadata.len(), legacy[plane_index].rows.len());
-            for (entry, &(row, ref expected)) in metadata.iter().zip(&legacy[plane_index].rows) {
+            assert_eq!(metadata.len(), legacy_plane.rows.len());
+            for (entry, &(row, ref expected)) in metadata.iter().zip(&legacy_plane.rows) {
                 assert_eq!(entry.row, row);
                 assert_eq!(entry.len, expected.len());
                 assert_eq!(&samples[entry.offset..entry.offset + entry.len], expected);

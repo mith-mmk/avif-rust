@@ -5,15 +5,7 @@ use avif_rust::{NativeDecodeLimits, decode_frame_bytes_strict_with_limits};
 
 fn sample_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("test/images/external/avif/unsupported")
-        .join(name)
-}
-
-fn bundled_sample_path(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("samples")
+        .join("tests")
         .join(name)
 }
 
@@ -36,7 +28,7 @@ fn native_limits(input_len: usize) -> NativeDecodeLimits {
 
 #[test]
 fn native_still_retains_a_displayed_master_frame() {
-    let data = std::fs::read(bundled_sample_path("WML2Viewer.avif"))
+    let data = std::fs::read(sample_path("WML2Viewer.avif"))
         .expect("native hookup fixture must be present");
     let info = parse_avif(&data).expect("native hookup fixture must parse");
     assert!(info.alpha_auxiliary_items.is_empty());

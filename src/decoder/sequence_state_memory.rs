@@ -468,7 +468,7 @@ mod tests {
 
     fn sample_with_sequence_prefix(payload_len: usize, frame_count: usize) -> Vec<u8> {
         let mut sample = vec![0x0a, payload_len as u8];
-        sample.extend(std::iter::repeat(0x55).take(payload_len));
+        sample.extend(std::iter::repeat_n(0x55, payload_len));
         for _ in 0..frame_count {
             sample.extend([0x32, 1, 0]);
         }

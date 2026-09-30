@@ -1025,7 +1025,7 @@ pub(crate) fn sgrproj_filter_unit_into_with_scratch_bit_depth_visible(
         })
         .unwrap_or(0);
     let index = usize::from(sgr_index.min(15));
-    let first_radius = index < 10 || index >= 14;
+    let first_radius = !(10..14).contains(&index);
     let second_radius = index < 14;
     if first_radius {
         scratch[0].resize(scratch_len, 0);
@@ -1233,13 +1233,13 @@ pub(crate) fn sgrproj_filter_unit_into_with_fixed_scratch_bit_depth_visible(
         0
     } else {
         let (a, b) = scratch.split_at_mut(1);
-        intermediate(RADII[index][0], S[index][0], &mut a[0], &mut b[0])
+        intermediate(RADII[index][0], S[index][0], a[0], b[0])
     };
     let stride1 = if RADII[index][1] == 0 {
         0
     } else {
         let (a, b) = scratch.split_at_mut(3);
-        intermediate(RADII[index][1], S[index][1], &mut a[2], &mut b[0])
+        intermediate(RADII[index][1], S[index][1], a[2], b[0])
     };
     let xq0 = if RADII[index][0] == 0 {
         0
@@ -2442,14 +2442,14 @@ mod tests {
     #[test]
     fn deblock_strength_vectors_match_aom_for_8bit_and_highbit_depth() {
         let mut lowbd = vec![0u16; 16 * 4];
-        for row in lowbd.chunks_exact_mut(16) {
+        for row in lowbd.as_chunks_mut::<16>().0.iter_mut() {
             row[0..4].copy_from_slice(&[100, 100, 125, 125]);
         }
         deblock_filter_edge_with_visible_bounds(&mut lowbd, 16, 4, 16, 4, 2, 0, true, 20, 0, 8, 4);
         assert_eq!(&lowbd[0..4], &[105, 109, 116, 120]);
 
         let mut highbd = vec![0u16; 16 * 4];
-        for row in highbd.chunks_exact_mut(16) {
+        for row in highbd.as_chunks_mut::<16>().0.iter_mut() {
             row[0..4].copy_from_slice(&[400, 400, 500, 500]);
         }
         deblock_filter_edge_with_visible_bounds(
@@ -2469,7 +2469,7 @@ mod tests {
         assert_eq!(&highbd[0..4], &[419, 437, 462, 481]);
 
         let mut sharp = vec![0u16; 16 * 4];
-        for row in sharp.chunks_exact_mut(16) {
+        for row in sharp.as_chunks_mut::<16>().0.iter_mut() {
             row[0..4].copy_from_slice(&[100, 100, 125, 125]);
         }
         let before = sharp.clone();

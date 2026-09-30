@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 
+pub(crate) fn fixture_path(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join(name)
+}
+
 pub(crate) fn wml2viewer_avif() -> Option<Vec<u8>> {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut paths = vec![manifest.join("test_data/images/WML2Viewer.avif")];
-    if let Some(parent) = manifest.parent() {
-        paths.push(parent.join("samples/WML2Viewer.avif"));
-    }
-    paths.into_iter().find_map(|path| std::fs::read(path).ok())
+    std::fs::read(fixture_path("WML2Viewer.avif")).ok()
 }

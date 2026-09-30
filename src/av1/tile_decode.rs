@@ -701,6 +701,9 @@ impl TileScratch {
         }
     }
 
+    // The failure owns partial scratch and tickets for allocation-free rollback.
+    // Boxing it would introduce an unbudgeted allocation on the error path.
+    #[allow(clippy::result_large_err)]
     fn strict(
         budget: &mut DecodeBudget,
     ) -> Result<(Self, [AllocationTicket; 5]), TileScratchFailure> {

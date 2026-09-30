@@ -14,6 +14,9 @@ include = [
     "/README.md",
     "/README.ja.md",
     "/LICENSE",
+    "/tests/WML2Viewer.avif",
+    "/tests/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
+    "/tests/FIXTURES.md",
 ]
 
 [dependencies]

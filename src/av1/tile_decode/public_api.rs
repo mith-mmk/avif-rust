@@ -2003,6 +2003,8 @@ mod tests {
     }
 
     #[test]
+    // Preserve the explicit capacity used by this owner-accounting fixture.
+    #[allow(clippy::vec_init_then_push)]
     fn budgeted_post_filter_merge_releases_partial_destination_on_failure() {
         let mut destination_units = Vec::with_capacity(1);
         destination_units.push(super::super::post_filter_state::CdefUnit {

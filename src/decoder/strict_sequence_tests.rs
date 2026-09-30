@@ -767,8 +767,8 @@ fn strict_prepare_rgb_alpha_preflights_and_commits_both_tracks_once() {
             decoder.prepare_next_frame()
         });
         assert!(result.is_err(), "one-under alpha prepare must fail");
-        let phases = crate::test_allocation_observer::phase_allocation_requests();
-        phases
+
+        crate::test_allocation_observer::phase_allocation_requests()
     };
     assert_eq!(phases[1], 0, "one-under alpha rejection must precede clone");
     assert_eq!(
@@ -944,7 +944,7 @@ fn strict_prepare_split_overcapacity_rolls_back_guard_and_retries() {
         1,
     );
     let (result, requests) = crate::test_allocation_observer::count_allocation_requests(|| {
-        decoder.prepare_next_frame().map(|prepared| drop(prepared))
+        decoder.prepare_next_frame().map(drop)
     });
     drop(extra);
     let phases = crate::test_allocation_observer::phase_allocation_requests();

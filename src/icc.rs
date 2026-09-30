@@ -55,7 +55,7 @@ pub(crate) fn apply_to_rgba16(rgba: &mut [u16], profile: &[u8]) -> Result<(), De
     if profile.get(16..20) == Some(b"GRAY") {
         let profile = GrayProfile::parse(profile)?;
         for_each_rgba16_chunk(rgba, |chunk| {
-            for pixel in chunk.chunks_exact_mut(4) {
+            for pixel in chunk.as_chunks_mut::<4>().0.iter_mut() {
                 let source = f64::from(pixel[0]) / f64::from(u16::MAX);
                 let linear = profile.curve.decode(source);
                 let xyz = [
@@ -84,7 +84,7 @@ pub(crate) fn apply_to_rgba16(rgba: &mut [u16], profile: &[u8]) -> Result<(), De
         if signature == b"mft1" || signature == b"mft2" {
             let profile = LutProfile::parse(profile, tag)?;
             for_each_rgba16_chunk(rgba, |chunk| {
-                for pixel in chunk.chunks_exact_mut(4) {
+                for pixel in chunk.as_chunks_mut::<4>().0.iter_mut() {
                     profile.apply(pixel);
                 }
             });
@@ -93,7 +93,7 @@ pub(crate) fn apply_to_rgba16(rgba: &mut [u16], profile: &[u8]) -> Result<(), De
         if signature == b"mAB " || signature == b"mBA " {
             let profile = MabProfile::parse(profile, tag, signature == b"mBA ")?;
             for_each_rgba16_chunk(rgba, |chunk| {
-                for pixel in chunk.chunks_exact_mut(4) {
+                for pixel in chunk.as_chunks_mut::<4>().0.iter_mut() {
                     profile.apply(pixel);
                 }
             });
@@ -117,7 +117,7 @@ pub(crate) fn apply_to_rgba16(rgba: &mut [u16], profile: &[u8]) -> Result<(), De
         }
         let profile = MabProfile::parse(profile, tag, true)?;
         for_each_rgba16_chunk(rgba, |chunk| {
-            for pixel in chunk.chunks_exact_mut(4) {
+            for pixel in chunk.as_chunks_mut::<4>().0.iter_mut() {
                 profile.apply_to_display(pixel);
             }
         });
@@ -125,7 +125,7 @@ pub(crate) fn apply_to_rgba16(rgba: &mut [u16], profile: &[u8]) -> Result<(), De
     }
     let profile = MatrixShaperProfile::parse(profile)?;
     for_each_rgba16_chunk(rgba, |chunk| {
-        for pixel in chunk.chunks_exact_mut(4) {
+        for pixel in chunk.as_chunks_mut::<4>().0.iter_mut() {
             let source = [
                 f64::from(pixel[0]) / f64::from(u16::MAX),
                 f64::from(pixel[1]) / f64::from(u16::MAX),
@@ -1455,14 +1455,14 @@ mod tests {
             *sample = (index as u16).wrapping_mul(257);
         }
         let mut expected = actual.clone();
-        for pixel in expected.chunks_exact_mut(4) {
+        for pixel in expected.as_chunks_mut::<4>().0.iter_mut() {
             pixel[0] = pixel[0].wrapping_add(1);
             pixel[1] = pixel[1].wrapping_mul(3);
             pixel[2] ^= 0x55aa;
             pixel[3] = u16::MAX;
         }
         for_each_rgba16_chunk(&mut actual, |chunk| {
-            for pixel in chunk.chunks_exact_mut(4) {
+            for pixel in chunk.as_chunks_mut::<4>().0.iter_mut() {
                 pixel[0] = pixel[0].wrapping_add(1);
                 pixel[1] = pixel[1].wrapping_mul(3);
                 pixel[2] ^= 0x55aa;

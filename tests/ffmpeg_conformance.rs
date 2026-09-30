@@ -1849,7 +1849,9 @@ fn generated_filter_intra_sample_matches_ffmpeg_impl(
         } else {
             assert_eq!(expected.len(), plane_size * 3 * 2);
             let expected: Vec<u16> = expected
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]) & ((1 << bit_depth) - 1))
                 .collect();
             for plane_index in 0..3 {
@@ -2924,7 +2926,9 @@ fn generated_10bit_alpha_sample_decodes_native_and_rgba_when_encoder_present() {
     assert_eq!((image.width, image.height), (128, 128));
     if let Some(expected_planes) = ffmpeg_decode_raw_stream(&output_path, Some(0), "yuv444p10le") {
         let expected: Vec<u16> = expected_planes
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]) & 0x03ff)
             .collect();
         let plane_len = 128 * 128;
@@ -2945,7 +2949,9 @@ fn generated_10bit_alpha_sample_decodes_native_and_rgba_when_encoder_present() {
     if let Some(expected_alpha_bytes) = ffmpeg_decode_raw_stream(&output_path, Some(1), "gray10le")
     {
         let expected_alpha: Vec<u16> = expected_alpha_bytes
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]) & 0x03ff)
             .collect();
         let max_native_error = frame.buffers.planes[3]
@@ -2965,7 +2971,9 @@ fn generated_10bit_alpha_sample_decodes_native_and_rgba_when_encoder_present() {
             .collect::<Vec<_>>();
         let max_error = image
             .rgba
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|rgba| rgba[3])
             .zip(expected_alpha8)
             .map(|(actual, expected)| actual.abs_diff(expected))
@@ -3066,7 +3074,9 @@ fn generated_8bit_yuv420_alpha_sample_decodes_native_and_rgba_when_encoder_prese
         );
         let max_rgba_error = image
             .rgba
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|rgba| rgba[3])
             .zip(expected_alpha)
             .map(|(actual, expected)| actual.abs_diff(expected))
@@ -3165,7 +3175,9 @@ fn generated_8bit_yuv422_alpha_sample_decodes_native_and_rgba_when_encoder_prese
         );
         let max_rgba_error = image
             .rgba
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|rgba| rgba[3])
             .zip(expected_alpha)
             .map(|(actual, expected)| actual.abs_diff(expected))
@@ -4076,7 +4088,9 @@ fn public_10bit_sample_matches_ffmpeg_when_present() {
     };
     assert_eq!(expected_bytes.len(), 1204 * 800 * 3 * 2);
     let expected: Vec<u16> = expected_bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]) & 0x03ff)
         .collect();
     let plane_samples = 1204 * 800;
@@ -4330,7 +4344,9 @@ fn public_alpha_sample_matches_ffmpeg_rgba_when_present() {
     let metrics = diff_rgb_dynamic(&actual.rgba, &expected_rgb);
     let alpha_max = actual
         .rgba
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .zip(expected_alpha)
         .map(|(actual, expected)| actual[3].abs_diff(expected))
         .max()
@@ -4386,7 +4402,9 @@ fn public_alpha_sample_exposes_native_alpha_plane_when_present() {
     let expected = ffmpeg_decode_alpha_plane(&path, 128, 128).expect("alpha oracle should exist");
     let converted_max_error = converted
         .rgba
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .zip(expected)
         .map(|(pixel, expected)| pixel[3].abs_diff(expected))
         .max()
@@ -4524,8 +4542,10 @@ fn public_icc_matrix_shaper_sample_applies_profile_when_present() {
         .expect("source RGB conversion should succeed");
     let changed_pixels = actual
         .rgba
-        .chunks_exact(4)
-        .zip(source.rgba.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(source.rgba.as_chunks::<4>().0.iter())
         .filter(|(actual, source)| actual[..3] != source[..3])
         .count();
     assert!(
@@ -4767,7 +4787,9 @@ fn public_irot_alpha_sample_matches_ffmpeg_when_present() {
     };
     let max_alpha = actual
         .rgba
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .zip(expected_alpha)
         .map(|(pixel, expected)| pixel[3].abs_diff(expected))
         .max()
@@ -4802,7 +4824,9 @@ fn public_nonrotated_alpha_sample_matches_ffmpeg_when_present() {
     }
     let max_alpha = actual
         .rgba
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .zip(rotated_alpha)
         .map(|(pixel, expected)| pixel[3].abs_diff(expected))
         .max()

@@ -303,7 +303,7 @@ fn frame_buffers_to_identity_rgba_8_fast(
             buffers.width,
             buffers.height,
             |first_row, chunk| {
-                for (local_index, pixel) in chunk.chunks_exact_mut(4).enumerate() {
+                for (local_index, pixel) in chunk.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                     let index = first_row * buffers.width + local_index;
                     pixel[0] = plane_r[index] as u8;
                     pixel[1] = plane_g[index] as u8;
@@ -318,7 +318,7 @@ fn frame_buffers_to_identity_rgba_8_fast(
             buffers.width,
             buffers.height,
             |first_row, chunk| {
-                for (local_index, pixel) in chunk.chunks_exact_mut(4).enumerate() {
+                for (local_index, pixel) in chunk.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                     let index = first_row * buffers.width + local_index;
                     pixel[0] = plane_r[index] as u8;
                     pixel[1] = plane_g[index] as u8;
@@ -401,7 +401,7 @@ fn frame_buffers_to_rgba_8_high_bit_sdr(
             |first_row, chunk| {
                 for (row_offset, row) in chunk.chunks_exact_mut(buffers.width * 4).enumerate() {
                     let y = first_row + row_offset;
-                    for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                    for (x, pixel) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                         let value =
                             u16_to_u8(scale_sample_to_u16(sample_plane(luma, x, y), max_source));
                         pixel[..3].fill(value);
@@ -438,7 +438,7 @@ fn frame_buffers_to_rgba_8_high_bit_sdr(
             |first_row, chunk| {
                 for (row_offset, row) in chunk.chunks_exact_mut(buffers.width * 4).enumerate() {
                     let y = first_row + row_offset;
-                    for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                    for (x, pixel) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                         let index = y * buffers.width + x;
                         pixel[0] =
                             scale_sample_to_rgba8(plane_r[index], max_source, scale_table.as_ref());
@@ -515,7 +515,8 @@ fn frame_buffers_to_rgba_8_high_bit_sdr(
                 buffers.width,
                 buffers.height,
                 |first_row, chunk| {
-                    for (local_index, pixel) in chunk.chunks_exact_mut(4).enumerate() {
+                    for (local_index, pixel) in chunk.as_chunks_mut::<4>().0.iter_mut().enumerate()
+                    {
                         let index = first_row * buffers.width + local_index;
                         let rgb = yuv_to_rgb_u16_fast(
                             plane_y.samples[index],
@@ -538,7 +539,8 @@ fn frame_buffers_to_rgba_8_high_bit_sdr(
                 buffers.width,
                 buffers.height,
                 |first_row, chunk| {
-                    for (local_index, pixel) in chunk.chunks_exact_mut(4).enumerate() {
+                    for (local_index, pixel) in chunk.as_chunks_mut::<4>().0.iter_mut().enumerate()
+                    {
                         let index = first_row * buffers.width + local_index;
                         let rgb = yuv_to_rgb_u16_fast(
                             plane_y.samples[index],
@@ -569,7 +571,7 @@ fn frame_buffers_to_rgba_8_high_bit_sdr(
         |first_row, chunk| {
             for (row_offset, row) in chunk.chunks_exact_mut(buffers.width * 4).enumerate() {
                 let y = first_row + row_offset;
-                for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                for (x, pixel) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                     let y_sample = sample_plane(plane_y, x, y);
                     let u_sample = plane_u
                         .map(|plane| {
@@ -743,7 +745,8 @@ fn frame_buffers_to_rgba_8_sdr(
                 buffers.width,
                 buffers.height,
                 |first_row, chunk| {
-                    for (local_index, pixel) in chunk.chunks_exact_mut(4).enumerate() {
+                    for (local_index, pixel) in chunk.as_chunks_mut::<4>().0.iter_mut().enumerate()
+                    {
                         let index = first_row * buffers.width + local_index;
                         let rgb = yuv_to_rgb_u16_fast(
                             plane_y.samples[index],
@@ -766,7 +769,8 @@ fn frame_buffers_to_rgba_8_sdr(
                 buffers.width,
                 buffers.height,
                 |first_row, chunk| {
-                    for (local_index, pixel) in chunk.chunks_exact_mut(4).enumerate() {
+                    for (local_index, pixel) in chunk.as_chunks_mut::<4>().0.iter_mut().enumerate()
+                    {
                         let index = first_row * buffers.width + local_index;
                         let rgb = yuv_to_rgb_u16_fast(
                             plane_y.samples[index],
@@ -797,7 +801,7 @@ fn frame_buffers_to_rgba_8_sdr(
         |first_row, chunk| {
             for (row_offset, row) in chunk.chunks_exact_mut(buffers.width * 4).enumerate() {
                 let y = first_row + row_offset;
-                for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                for (x, pixel) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                     let y_sample = sample_plane(plane_y, x, y);
                     let u_sample = plane_u
                         .map(|plane| {
@@ -848,7 +852,7 @@ fn frame_buffers_to_rgba_8_monochrome_sdr(
         |first_row, chunk| {
             for (row_offset, row) in chunk.chunks_exact_mut(buffers.width * 4).enumerate() {
                 let y = first_row + row_offset;
-                for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                for (x, pixel) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                     let value = sample_plane(luma, x, y) as u8;
                     let alpha = buffers
                         .planes
@@ -895,7 +899,7 @@ pub fn frame_buffers_to_rgba_16(
             |first_row, chunk| {
                 for (row_offset, row) in chunk.chunks_exact_mut(buffers.width * 4).enumerate() {
                     let y = first_row + row_offset;
-                    for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                    for (x, pixel) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                         let source_x = (x >> usize::from(luma.layout.subsampling_x))
                             .min(luma.layout.width.saturating_sub(1));
                         let source_y = (y >> usize::from(luma.layout.subsampling_y))
@@ -935,7 +939,7 @@ pub fn frame_buffers_to_rgba_16(
             |first_row, chunk| {
                 for (row_offset, row) in chunk.chunks_exact_mut(buffers.width * 4).enumerate() {
                     let y = first_row + row_offset;
-                    for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                    for (x, pixel) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                         let index = y * buffers.width + x;
                         pixel[0] = scale_sample_to_u16(plane_r[index], max_source);
                         pixel[1] = scale_sample_to_u16(plane_g[index], max_source);
@@ -1053,7 +1057,8 @@ pub fn frame_buffers_to_rgba_16(
                 buffers.width,
                 buffers.height,
                 |first_row, chunk| {
-                    for (local_index, pixel) in chunk.chunks_exact_mut(4).enumerate() {
+                    for (local_index, pixel) in chunk.as_chunks_mut::<4>().0.iter_mut().enumerate()
+                    {
                         let index = first_row * buffers.width + local_index;
                         let rgb = yuv_to_rgb_u16_fast(
                             plane_y.samples[index],
@@ -1076,7 +1081,7 @@ pub fn frame_buffers_to_rgba_16(
                 |first_row, chunk| {
                     for (row_offset, row) in chunk.chunks_exact_mut(buffers.width * 4).enumerate() {
                         let y = first_row + row_offset;
-                        for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                        for (x, pixel) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                             let y_sample = sample_plane(plane_y, x, y);
                             let u_sample = plane_u
                                 .map(|plane| {
@@ -1436,7 +1441,7 @@ fn convert_yuv422_to_rgba<T, F>(
             let y = first_row + row_offset;
             let luma_row = y * plane_y.layout.width;
             let chroma_row = y.min(chroma_height - 1) * chroma_width;
-            for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+            for (x, pixel) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 let chroma_x = (x >> 1).min(chroma_width - 1);
                 let chroma_index = chroma_row + chroma_x;
                 write_pixel(
@@ -1478,7 +1483,7 @@ fn convert_yuv420_row<T, F>(
     let chroma_y = (y >> 1).min(chroma_height - 1);
     let chroma_next_y = (chroma_y + 1).min(chroma_height - 1);
     if interpolate {
-        for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+        for (x, pixel) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let luma = plane_y.samples[luma_row + x];
             let chroma_x = (x >> 1).min(chroma_width - 1);
             let top = chroma_y * chroma_width + chroma_x;
@@ -1490,7 +1495,7 @@ fn convert_yuv420_row<T, F>(
             write_pixel(pixel, yuv_to_rgb_u16_fast(luma, u, v, range, kr, kb), x, y);
         }
     } else {
-        for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+        for (x, pixel) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let luma = plane_y.samples[luma_row + x];
             let chroma_x = (x >> 1).min(chroma_width - 1);
             let top = chroma_y * chroma_width + chroma_x;
@@ -1646,7 +1651,7 @@ fn transfer_characteristics(
 }
 
 fn apply_transfer_function(rgba: &mut [u16], transfer: TransferFunction) {
-    for pixel in rgba.chunks_exact_mut(4) {
+    for pixel in rgba.as_chunks_mut::<4>().0.iter_mut() {
         pixel[0] = transfer_to_sdr(pixel[0], transfer);
         pixel[1] = transfer_to_sdr(pixel[1], transfer);
         pixel[2] = transfer_to_sdr(pixel[2], transfer);
@@ -1680,7 +1685,7 @@ fn apply_hdr_transfer_function_rows(
         Some(rgb_primary_matrix(source_primaries, 1)?)
     };
     for_each_rgba_row_chunk(rgba, width, height, |_, chunk| {
-        for pixel in chunk.chunks_exact_mut(4) {
+        for pixel in chunk.as_chunks_mut::<4>().0.iter_mut() {
             let encoded_channels = [pixel[0], pixel[1], pixel[2]];
             let mut linear = encoded_channels.map(|sample| {
                 let encoded = f64::from(sample) / f64::from(u16::MAX);
@@ -2301,7 +2306,7 @@ mod tests {
         let height = 512;
         let mut actual = vec![0u16; width * height * 4];
         for_each_rgba_row_chunk(&mut actual, width, height, |first_row, chunk| {
-            for (local_index, pixel) in chunk.chunks_exact_mut(4).enumerate() {
+            for (local_index, pixel) in chunk.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 let index = first_row * width + local_index;
                 pixel[0] = (index & 0xffff) as u16;
                 pixel[1] = (index >> 4) as u16;
@@ -2311,7 +2316,7 @@ mod tests {
         });
 
         let mut expected = vec![0u16; width * height * 4];
-        for (index, pixel) in expected.chunks_exact_mut(4).enumerate() {
+        for (index, pixel) in expected.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             pixel[0] = (index & 0xffff) as u16;
             pixel[1] = (index >> 4) as u16;
             pixel[2] = (index >> 8) as u16;

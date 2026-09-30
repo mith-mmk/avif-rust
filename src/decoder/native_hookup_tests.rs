@@ -4,12 +4,7 @@ use super::frame::{
 use crate::container::{DecodeBudget, parse_avif};
 use crate::limits::NativeDecodeLimits;
 use crate::obu::{ObuType, find_obu_payload};
-
-fn sample_path(relative: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(relative)
-}
+use crate::test_support::fixture_path as sample_path;
 
 fn limits(input_len: usize) -> NativeDecodeLimits {
     NativeDecodeLimits::new(
@@ -43,7 +38,7 @@ fn hide_first_frame(payload: &mut [u8]) {
 
 #[test]
 fn native_primary_prefix_rejects_hidden_frame_before_finish() {
-    let data = std::fs::read(sample_path("samples/WML2Viewer.avif"))
+    let data = std::fs::read(sample_path("WML2Viewer.avif"))
         .expect("native hookup fixture must be present");
     let mut info = parse_avif(&data).expect("native hookup fixture must parse");
     hide_first_frame(&mut info.primary_item_payload);
@@ -61,7 +56,7 @@ fn native_primary_prefix_rejects_hidden_frame_before_finish() {
 #[test]
 fn native_alpha_prefix_is_checked_before_primary_decode() {
     let data = std::fs::read(sample_path(
-        "test/images/external/avif/unsupported/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
+        "plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
     ))
     .expect("native alpha hookup fixture must be present");
     let info = parse_avif(&data).expect("native alpha hookup fixture must parse");
@@ -80,7 +75,7 @@ fn native_alpha_prefix_is_checked_before_primary_decode() {
 #[test]
 fn native_selected_alpha_split_obus_use_the_bounded_merge_route() {
     let data = std::fs::read(sample_path(
-        "test/images/external/avif/unsupported/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
+        "plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
     ))
     .expect("native alpha hookup fixture must be present");
     let info = parse_avif(&data).expect("native alpha hookup fixture must parse");
@@ -127,7 +122,7 @@ fn native_selected_alpha_split_obus_use_the_bounded_merge_route() {
 #[test]
 fn native_alpha_attachment_moves_the_decoded_plane_owner() {
     let data = std::fs::read(sample_path(
-        "test/images/external/avif/unsupported/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
+        "plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
     ))
     .expect("native alpha hookup fixture must be present");
     let info = parse_avif(&data).expect("native alpha hookup fixture must parse");
@@ -191,7 +186,7 @@ fn normal_frame_components() -> (
     crate::av1::TileGroup,
     Vec<u8>,
 ) {
-    let data = std::fs::read(sample_path("samples/WML2Viewer.avif"))
+    let data = std::fs::read(sample_path("WML2Viewer.avif"))
         .expect("native hookup fixture must be present");
     let info = parse_avif(&data).expect("native header fixture must parse");
     let source = info.primary_item_payload.clone();
@@ -204,7 +199,7 @@ fn normal_frame_components() -> (
     let headers = super::parse_av1_headers_with_frame_prefix_and_budget(&info, prefix, &mut budget)
         .expect("normal OBU_FRAME must use the strict native header path");
     assert!(headers.tile_group.from_frame_obu);
-    let sequence = headers.sequence.clone();
+    let sequence = headers.sequence;
     let frame = headers.frame.clone();
     let group = headers.tile_group.group.clone();
     super::drop_native_headers_and_release(headers, &mut budget)
@@ -274,7 +269,7 @@ fn split_primary_item_payload(payload: &[u8]) -> Vec<u8> {
 }
 
 fn split_master_fixture() -> crate::container::AvifInfo {
-    let data = std::fs::read(sample_path("samples/WML2Viewer.avif"))
+    let data = std::fs::read(sample_path("WML2Viewer.avif"))
         .expect("native split master fixture must be present");
     let mut info = parse_avif(&data).expect("native split master fixture must parse");
     info.primary_item_payload = split_primary_item_payload(&info.primary_item_payload);
@@ -427,7 +422,7 @@ where
 
 #[test]
 fn native_header_materialization_charges_actual_owners_and_releases_before_alpha() {
-    let data = std::fs::read(sample_path("samples/WML2Viewer.avif"))
+    let data = std::fs::read(sample_path("WML2Viewer.avif"))
         .expect("native header fixture must be present");
     let info = parse_avif(&data).expect("native header fixture must parse");
     let resource_limits = limits(data.len());
@@ -506,7 +501,7 @@ fn native_header_materialization_uses_the_same_owners_for_split_frame_header_and
         result
     }
 
-    let data = std::fs::read(sample_path("samples/WML2Viewer.avif"))
+    let data = std::fs::read(sample_path("WML2Viewer.avif"))
         .expect("native header fixture must be present");
     let mut info = parse_avif(&data).expect("native header fixture must parse");
     let sequence = find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
@@ -544,7 +539,7 @@ fn native_header_materialization_uses_the_same_owners_for_split_frame_header_and
 
 #[test]
 fn native_header_drops_tile_vectors_before_releasing_their_tickets() {
-    let data = std::fs::read(sample_path("samples/WML2Viewer.avif"))
+    let data = std::fs::read(sample_path("WML2Viewer.avif"))
         .expect("native header fixture must be present");
     let info = parse_avif(&data).expect("native header fixture must parse");
     let resource_limits = limits(data.len());
@@ -574,7 +569,7 @@ fn native_header_drops_tile_vectors_before_releasing_their_tickets() {
 
 #[test]
 fn native_normal_frame_tile_copy_rejects_actual_capacity_then_retries() {
-    let data = std::fs::read(sample_path("samples/WML2Viewer.avif"))
+    let data = std::fs::read(sample_path("WML2Viewer.avif"))
         .expect("native hookup fixture must be present");
     let info = parse_avif(&data).expect("native header fixture must parse");
     let source_snapshot = info.primary_item_payload.clone();
@@ -633,7 +628,7 @@ fn native_normal_frame_tile_copy_rejects_actual_capacity_then_retries() {
 
 #[test]
 fn native_normal_frame_selector_is_borrowed_and_uses_the_frame_route() {
-    let data = std::fs::read(sample_path("samples/WML2Viewer.avif"))
+    let data = std::fs::read(sample_path("WML2Viewer.avif"))
         .expect("native hookup fixture must be present");
     let info = parse_avif(&data).expect("native header fixture must parse");
 
@@ -745,7 +740,7 @@ fn strict_split_selector_is_borrowed_and_fail_closed() {
 
 #[test]
 fn legacy_frame_prefix_wrapper_remains_outside_native_selector_budget_route() {
-    let data = std::fs::read(sample_path("samples/WML2Viewer.avif"))
+    let data = std::fs::read(sample_path("WML2Viewer.avif"))
         .expect("native hookup fixture must be present");
     let info = parse_avif(&data).expect("native header fixture must parse");
     let resource_limits = limits(data.len());
@@ -976,7 +971,7 @@ fn native_split_master_tile_owners_use_actual_capacity_and_retry() {
 #[test]
 fn native_selected_alpha_split_tile_owners_use_actual_capacity_and_retry() {
     let data = std::fs::read(sample_path(
-        "test/images/external/avif/unsupported/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
+        "plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
     ))
     .expect("native split alpha fixture must be present");
     let info = parse_avif(&data).expect("native split alpha fixture must parse");
@@ -1011,7 +1006,7 @@ fn native_split_master_and_alpha_drop_final_owners_before_ticket_release() {
     let master = split_master_fixture();
     let master_limits = limits(master.primary_item_payload.len().saturating_mul(2));
     let alpha_data = std::fs::read(sample_path(
-        "test/images/external/avif/unsupported/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
+        "plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
     ))
     .expect("native split alpha fixture must be present");
     let alpha = parse_avif(&alpha_data).expect("native split alpha fixture must parse");

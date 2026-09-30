@@ -656,13 +656,10 @@ pub(super) fn select_strict_native_sequence_header(payload: &[u8]) -> Result<&[u
     let mut sequence = None;
     for obu in crate::obu::ObuIter::new(payload) {
         let obu = obu?;
-        if obu.obu_type == ObuType::SequenceHeader {
-            if sequence.replace(obu.payload).is_some() {
-                return Err(DecoderError::Unsupported(
-                    "bounded native decode does not accept multiple AV1 sequence headers"
-                        .to_string(),
-                ));
-            }
+        if obu.obu_type == ObuType::SequenceHeader && sequence.replace(obu.payload).is_some() {
+            return Err(DecoderError::Unsupported(
+                "bounded native decode does not accept multiple AV1 sequence headers".to_string(),
+            ));
         }
     }
     sequence
@@ -2594,10 +2591,10 @@ impl StrictDeblockBoundaryOrderOwner {
         drop(self.previous_horizontal);
         let mut first_error = None;
         for ticket in &mut self.tickets {
-            if let Err(error) = budget.release_token(ticket) {
-                if first_error.is_none() {
-                    first_error = Some(error);
-                }
+            if let Err(error) = budget.release_token(ticket)
+                && first_error.is_none()
+            {
+                first_error = Some(error);
             }
         }
         first_error.map_or(Ok(()), Err)
@@ -3508,9 +3505,7 @@ impl StrictCdefIndexOwner {
         {
             drop(indices);
             let mut ticket = ticket;
-            if let Err(release_error) = budget.release_token(&mut ticket) {
-                return Err(release_error);
-            }
+            budget.release_token(&mut ticket)?;
             return Err(error);
         }
         Ok(Self { indices, ticket })
@@ -3602,7 +3597,6 @@ impl StrictCdefScratchOwner {
         if plan.blocks_width != visible_width.div_ceil(8)
             || plan.blocks_height != visible_height.div_ceil(8)
         {
-            let index_owner = index_owner;
             index_owner.release(budget)?;
             return Err(DecoderError::InvalidParam(
                 "native AV1 CDEF scratch plan is stale".to_string(),
@@ -3611,12 +3605,10 @@ impl StrictCdefScratchOwner {
         if let Err(error) =
             validate_strict_cdef_filter_endpoints(state, visible_width, visible_height)
         {
-            let index_owner = index_owner;
             index_owner.release(budget)?;
             return Err(error);
         }
         if let Err(error) = budget.check_additional_frame(plan.requested_bytes) {
-            let index_owner = index_owner;
             index_owner.release(budget)?;
             return Err(error);
         }
@@ -3630,7 +3622,6 @@ impl StrictCdefScratchOwner {
         ) {
             Ok(result) => result,
             Err(error) => {
-                let index_owner = index_owner;
                 return match index_owner.release(budget) {
                     Ok(()) => Err(error),
                     Err(release_error) => Err(release_error),
@@ -3649,7 +3640,7 @@ impl StrictCdefScratchOwner {
                 drop(mask_candidate);
                 let mut ticket = mask_ticket;
                 let release_result = budget.release_token(&mut ticket);
-                let index_owner = index_owner;
+
                 let index_release_result = index_owner.release(budget);
                 return match (release_result, index_release_result) {
                     (Err(release_error), _) | (_, Err(release_error)) => Err(release_error),
@@ -3681,7 +3672,7 @@ impl StrictCdefScratchOwner {
             if let Err(release_error) = budget.release_token(&mut mask_ticket) {
                 first_error.get_or_insert(release_error);
             }
-            let index_owner = index_owner;
+
             if let Err(release_error) = index_owner.release(budget) {
                 first_error.get_or_insert(release_error);
             }
@@ -3689,15 +3680,13 @@ impl StrictCdefScratchOwner {
         }
         drop(mask);
         let mut first_error = budget.release_token(&mut mask_ticket).err();
-        let index_owner = index_owner;
+
         if let Err(error) = index_owner.release(budget) {
             first_error.get_or_insert(error);
         }
         if let Some(error) = first_error {
             drop(origins);
-            if let Err(release_error) = budget.release_token(&mut origins_ticket) {
-                return Err(release_error);
-            }
+            budget.release_token(&mut origins_ticket)?;
             return Err(error);
         }
         Ok(Self {
@@ -4016,9 +4005,7 @@ impl StrictCdefSnapshotOwner {
         }
         match first_error {
             Some(error) => {
-                if let Err(release_error) = self.direction_owner.release(budget) {
-                    return Err(release_error);
-                }
+                self.direction_owner.release(budget)?;
                 Err(error)
             }
             None => self.direction_owner.release(budget),
@@ -4295,7 +4282,6 @@ fn apply_cdef_stage_with_budget(
     ) {
         Ok(plan) => plan,
         Err(error) => {
-            let index_owner = index_owner;
             index_owner.release(budget)?;
             return Err(error);
         }
@@ -4345,10 +4331,7 @@ fn apply_cdef_stage_with_budget(
         }
     };
     let snapshot_owner =
-        match StrictCdefSnapshotOwner::admit(direction_owner, snapshot_plan, frame, budget) {
-            Ok(owner) => owner,
-            Err(error) => return Err(error),
-        };
+        StrictCdefSnapshotOwner::admit(direction_owner, snapshot_plan, frame, budget)?;
     apply_cdef_stage_with_optional_indices(
         frame,
         frame_header,
@@ -4798,7 +4781,7 @@ fn apply_cdef_plane_from_source(
         // post-filter crop. Limit writes to the visible plane, but retain the
         // coded padding taps used by the existing AV1 reconstruction path.
         cdef_filter_block_region_with_edge_mode_into_bit_depth_visible_scaled(
-            &source,
+            source,
             width,
             height,
             width,
@@ -5803,7 +5786,7 @@ impl StrictRestorationExecutionScratchPlan {
                                 "native AV1 restoration SGR index is out of range".to_string(),
                             ));
                         }
-                        let first_radius = index < 10 || index >= 14;
+                        let first_radius = !(10..14).contains(&index);
                         let second_radius = index < 14;
                         if first_radius {
                             sgr_lengths[unit.plane][0] = sgr_lengths[unit.plane][0].max(length);
@@ -7042,10 +7025,10 @@ fn restore_restoration_stripe_boundaries_strict(
 ) {
     for entry in metadata.iter().take(count) {
         let start = entry.row * width + entry.start_x;
-        if let Some(destination) = source.get_mut(start..start + entry.len) {
-            if let Some(saved) = samples.get(entry.offset..entry.offset + entry.len) {
-                destination.copy_from_slice(saved);
-            }
+        if let Some(destination) = source.get_mut(start..start + entry.len)
+            && let Some(saved) = samples.get(entry.offset..entry.offset + entry.len)
+        {
+            destination.copy_from_slice(saved);
         }
     }
 }
@@ -8510,7 +8493,9 @@ mod prefilter_diagnostic_tests {
         for (plane_index, path) in plane_paths.iter().enumerate() {
             let expected = std::fs::read(path).unwrap();
             let expected = expected
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|sample| u16::from_le_bytes([sample[0], sample[1]]));
             let actual = &decoded.buffers.planes[plane_index].samples;
             let mut first = None;
@@ -8529,7 +8514,9 @@ mod prefilter_diagnostic_tests {
                 let end = (index + 12).min(row_start + width);
                 let expected = std::fs::read(path).unwrap();
                 let expected = expected
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|sample| u16::from_le_bytes([sample[0], sample[1]]))
                     .collect::<Vec<_>>();
                 eprintln!(
@@ -8705,7 +8692,9 @@ mod prefilter_diagnostic_tests {
             assert_eq!(output.stdout.len(), sample_count * 3 * 2);
             output
                 .stdout
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|sample| u16::from_le_bytes([sample[0], sample[1]]))
                 .collect::<Vec<_>>()
         };
@@ -8868,7 +8857,9 @@ mod prefilter_diagnostic_tests {
             let expected = std::fs::read(&path)
                 .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
             let expected = expected
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|sample| u16::from_le_bytes([sample[0], sample[1]]))
                 .collect::<Vec<_>>();
             assert_eq!(
@@ -9632,7 +9623,7 @@ mod gain_map_tests {
         };
         let output = resample_gain_map(&input, 3, 2).unwrap();
         assert_eq!((output.width, output.height), (3, 2));
-        for pixel in output.rgba.chunks_exact(4) {
+        for pixel in output.rgba.as_chunks::<4>().0.iter() {
             assert_eq!(pixel, &[1234, 2345, 3456, u16::MAX]);
         }
     }

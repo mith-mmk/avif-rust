@@ -614,7 +614,7 @@ impl SequenceDecodeState {
         samples: &[Vec<u8>],
         strict_split: bool,
         strict_limits: Option<&crate::limits::NativeDecodeLimits>,
-        mut strict_budget: Option<&mut crate::container::DecodeBudget>,
+        strict_budget: Option<&mut crate::container::DecodeBudget>,
     ) -> Result<Option<DecodedFrame>, DecoderError> {
         let Some(sample) = samples.get(self.next_sample_index) else {
             return Ok(None);
@@ -627,7 +627,7 @@ impl SequenceDecodeState {
             index,
             strict_split,
             strict_limits,
-            strict_budget.as_deref_mut(),
+            strict_budget,
         )?;
         next.next_sample_index += 1;
         #[cfg(test)]

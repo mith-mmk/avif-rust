@@ -776,9 +776,7 @@ impl SequenceTracksDecoder {
         {
             let alpha_frame = if self.strict_alpha {
                 let limits = strict_limits.expect("strict track requires native limits");
-                let budget = strict_budget
-                    .as_deref_mut()
-                    .expect("strict track requires a decode budget");
+                let budget = strict_budget.expect("strict track requires a decode budget");
                 alpha_state.next_sample_strict(
                     alpha_info,
                     &sequence.alpha_samples,
@@ -1101,22 +1099,15 @@ impl StrictAvifSequenceDecoder {
             }
         };
         let after_decode = candidate_tracks.storage_bytes_for_clone()?;
-        if let Err(error) = allocation_guard.reconcile_storage(before_decode, after_decode) {
-            return Err(error);
-        }
+        allocation_guard.reconcile_storage(before_decode, after_decode)?;
         // The candidate starts by sharing every state Arc with the committed
         // track.  Only owners introduced by decoding this sample are new
         // physical allocations; charge that union delta separately so the
         // clone itself remains a zero-delta operation.
         let state_delta = candidate_tracks.additional_state_memory_bytes(&self.tracks)?;
         allocation_guard.reconcile_state_delta(state_delta)?;
-        if let Err(error) = validate_native_frame_limits(&frame, &self.limits) {
-            return Err(error);
-        }
-        let frame_storage = match decoded_frame_storage_bytes(&frame) {
-            Ok(bytes) => bytes,
-            Err(error) => return Err(error),
-        };
+        validate_native_frame_limits(&frame, &self.limits)?;
+        let frame_storage = decoded_frame_storage_bytes(&frame)?;
         let retained_live_bytes = allocation_guard.budget.aggregate_live_bytes();
         let additional_live_bytes =
             retained_live_bytes
@@ -1777,7 +1768,13 @@ impl DecodedFrame {
             alternate_offset[channel] =
                 rational_to_f64(metadata.alternate_offset, "alternate offset")?;
         }
-        for (base_pixel, map_pixel) in base.rgba.chunks_exact_mut(4).zip(map.rgba.chunks_exact(4)) {
+        for (base_pixel, map_pixel) in base
+            .rgba
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(map.rgba.as_chunks::<4>().0.iter())
+        {
             let mut base_linear = [
                 srgb_to_linear(f64::from(base_pixel[0]) / f64::from(u16::MAX)),
                 srgb_to_linear(f64::from(base_pixel[1]) / f64::from(u16::MAX)),
@@ -1937,7 +1934,7 @@ pub(super) fn resample_gain_map(
 }
 
 pub(super) fn unpremultiply_rgba8(rgba: &mut [u8]) {
-    for pixel in rgba.chunks_exact_mut(4) {
+    for pixel in rgba.as_chunks_mut::<4>().0.iter_mut() {
         let alpha = u32::from(pixel[3]);
         if alpha == 0 {
             pixel[..3].fill(0);
@@ -1950,7 +1947,7 @@ pub(super) fn unpremultiply_rgba8(rgba: &mut [u8]) {
 }
 
 pub(super) fn unpremultiply_rgba16(rgba: &mut [u16]) {
-    for pixel in rgba.chunks_exact_mut(4) {
+    for pixel in rgba.as_chunks_mut::<4>().0.iter_mut() {
         let alpha = u64::from(pixel[3]);
         if alpha == 0 {
             pixel[..3].fill(0);
