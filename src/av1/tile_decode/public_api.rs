@@ -92,7 +92,9 @@ impl BudgetedPostFilterState {
                 .state
                 .transform_boundaries
                 .capacity()
-                .checked_mul(std::mem::size_of::<super::post_filter_state::TransformBoundary>())
+                .checked_mul(std::mem::size_of::<
+                    super::post_filter_state::TransformBoundary,
+                >())
                 .is_some_and(|bytes| bytes == destination.tickets[2].charged_capacity_bytes)
             && destination
                 .state
@@ -104,18 +106,20 @@ impl BudgetedPostFilterState {
                 .state
                 .block_filter_states
                 .capacity()
-                .checked_mul(std::mem::size_of::<super::post_filter_state::BlockFilterState>())
+                .checked_mul(std::mem::size_of::<
+                    super::post_filter_state::BlockFilterState,
+                >())
                 .is_some_and(|bytes| bytes == destination.tickets[4].charged_capacity_bytes)
-            && destination.tickets.iter().all(|ticket| ticket.charged_capacity_bytes == 0);
+            && destination
+                .tickets
+                .iter()
+                .all(|ticket| ticket.charged_capacity_bytes == 0);
         if destination_empty {
             destination.state = self.state;
             destination.tickets = self.tickets;
             return Ok(());
         }
-        let BudgetedPostFilterState {
-            state,
-            mut tickets,
-        } = self;
+        let BudgetedPostFilterState { state, mut tickets } = self;
         let lengths = [
             state.cdef_units.len(),
             state.cdef_blocks.len(),
@@ -336,10 +340,7 @@ impl<'a, 'b> TileDecoderOwner<'a, 'b> {
 
     fn take_budgeted_post_filter_state(mut self) -> Result<BudgetedPostFilterState, DecoderError> {
         self.reconcile_dynamic_ticket()?;
-        let decoder = self
-            .decoder
-            .take()
-            .expect("tile decoder owner is live");
+        let decoder = self.decoder.take().expect("tile decoder owner is live");
         let state = decoder.take_post_filter_state();
         let mut result = BudgetedPostFilterState::empty();
         result.state = state;
@@ -1076,12 +1077,7 @@ fn decode_luma_root_block_prefix_with_budget(
                         initial_cdf,
                         native_budget,
                     )?;
-                TileDecoderOwner::strict_with_memory(
-                    decoder,
-                    tickets,
-                    memory_ticket,
-                    native_budget,
-                )
+                TileDecoderOwner::strict_with_memory(decoder, tickets, memory_ticket, native_budget)
             } else {
                 let (decoder, tickets) = TileDecoder::new_with_references_and_cdf_with_budget(
                     payload,
@@ -1124,7 +1120,11 @@ fn decode_luma_root_block_prefix_with_budget(
                             }),
                         }
                     };
-                    merge_post_filter_state(&mut post_filter_state, tile_state, budget.as_deref_mut())?;
+                    merge_post_filter_state(
+                        &mut post_filter_state,
+                        tile_state,
+                        budget.as_deref_mut(),
+                    )?;
                     return Ok((
                         DecodedBlockPrefix {
                             blocks,
@@ -1174,7 +1174,11 @@ fn decode_luma_root_block_prefix_with_budget(
                                 }),
                             }
                         };
-                        merge_post_filter_state(&mut post_filter_state, tile_state, budget.as_deref_mut())?;
+                        merge_post_filter_state(
+                            &mut post_filter_state,
+                            tile_state,
+                            budget.as_deref_mut(),
+                        )?;
                         return Ok((
                             DecodedBlockPrefix {
                                 blocks,
@@ -1912,18 +1916,23 @@ mod tests {
         assert!(memory_plan.tile_mi_cols > 0);
         assert!(memory_plan.tile_mi_rows > 0);
         let mut budget = DecodeBudget::new(Some(memory_plan.requested_bytes - 1));
-        let error = match super::super::TileDecoder::new_with_references_and_cdf_with_budget_for_tile(
-            &[],
-            &frame,
-            tile,
-            std::array::from_fn(|_| None),
-            None,
-            &mut budget,
-        ) {
-            Ok(_) => panic!("one byte below the complete tile plan must fail before allocation"),
-            Err(error) => error,
-        };
-        assert!(matches!(error, DecoderError::InvalidParam(message) if message.contains("live allocation")));
+        let error =
+            match super::super::TileDecoder::new_with_references_and_cdf_with_budget_for_tile(
+                &[],
+                &frame,
+                tile,
+                std::array::from_fn(|_| None),
+                None,
+                &mut budget,
+            ) {
+                Ok(_) => {
+                    panic!("one byte below the complete tile plan must fail before allocation")
+                }
+                Err(error) => error,
+            };
+        assert!(
+            matches!(error, DecoderError::InvalidParam(message) if message.contains("live allocation"))
+        );
         assert_eq!(budget.accounting().aggregate_live, 0);
     }
 
@@ -1947,18 +1956,21 @@ mod tests {
             "native AV1 y mode grid",
             forced_extra,
         );
-        let error = match super::super::TileDecoder::new_with_references_and_cdf_with_budget_for_tile(
-            &payload,
-            &frame,
-            tile,
-            std::array::from_fn(|_| None),
-            None,
-            &mut budget,
-        ) {
-            Ok(_) => panic!("actual capacity above the plan must fail transactionally"),
-            Err(error) => error,
-        };
-        assert!(matches!(error, DecoderError::InvalidParam(message) if message.contains("live allocation")));
+        let error =
+            match super::super::TileDecoder::new_with_references_and_cdf_with_budget_for_tile(
+                &payload,
+                &frame,
+                tile,
+                std::array::from_fn(|_| None),
+                None,
+                &mut budget,
+            ) {
+                Ok(_) => panic!("actual capacity above the plan must fail transactionally"),
+                Err(error) => error,
+            };
+        assert!(
+            matches!(error, DecoderError::InvalidParam(message) if message.contains("live allocation"))
+        );
         assert_eq!(budget.accounting().aggregate_live, 0);
         assert!(observation.drops() >= 1);
         drop(observation);
@@ -2042,7 +2054,9 @@ mod tests {
         );
         let error = merge_post_filter_state(&mut destination, source, Some(&mut budget))
             .expect_err("second destination replacement must fail");
-        assert!(matches!(error, DecoderError::InvalidParam(message) if message.contains("live allocation")));
+        assert!(
+            matches!(error, DecoderError::InvalidParam(message) if message.contains("live allocation"))
+        );
         assert_eq!(budget.accounting().aggregate_live, 0);
         assert!(observation.drops() >= 1);
         drop(observation);

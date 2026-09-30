@@ -9,13 +9,12 @@ use crate::container::{
 };
 
 const COLOR_16X16_AV1: &[u8] = &[
-    0x0a, 0x06, 0x18, 0x0c, 0xff, 0xdb, 0x00, 0x80, 0x32, 0x13, 0x18, 0x00, 0x00, 0x00,
-    0x50, 0x00, 0x00, 0x00, 0x00, 0xa9, 0x8e, 0x6c, 0xb6, 0xaa, 0xb1, 0xc6, 0xb6, 0x85,
-    0x40,
+    0x0a, 0x06, 0x18, 0x0c, 0xff, 0xdb, 0x00, 0x80, 0x32, 0x13, 0x18, 0x00, 0x00, 0x00, 0x50, 0x00,
+    0x00, 0x00, 0x00, 0xa9, 0x8e, 0x6c, 0xb6, 0xaa, 0xb1, 0xc6, 0xb6, 0x85, 0x40,
 ];
 const ALPHA_16X16_AV1: &[u8] = &[
-    0x0a, 0x05, 0x18, 0x0c, 0xff, 0xdb, 0x54, 0x32, 0x0b, 0x18, 0x00, 0x00, 0x01, 0x40,
-    0x00, 0x01, 0xfd, 0x65, 0xe3, 0xd0,
+    0x0a, 0x05, 0x18, 0x0c, 0xff, 0xdb, 0x54, 0x32, 0x0b, 0x18, 0x00, 0x00, 0x01, 0x40, 0x00, 0x01,
+    0xfd, 0x65, 0xe3, 0xd0,
 ];
 
 fn synthetic_info(primary: &[u8]) -> AvifInfo {
@@ -47,11 +46,12 @@ fn synthetic_info(primary: &[u8]) -> AvifInfo {
 
 fn synthetic_static_alpha_info(primary: &[u8]) -> AvifInfo {
     let mut info = synthetic_info(primary);
-    info.alpha_auxiliary_items.push(crate::container::AuxiliaryImage {
-        item_id: 2,
-        aux_type: "urn:mpeg:mpegB:cicp:systems:auxiliary:alpha".to_string(),
-        payload: ALPHA_16X16_AV1.to_vec(),
-    });
+    info.alpha_auxiliary_items
+        .push(crate::container::AuxiliaryImage {
+            item_id: 2,
+            aux_type: "urn:mpeg:mpegB:cicp:systems:auxiliary:alpha".to_string(),
+            payload: ALPHA_16X16_AV1.to_vec(),
+        });
     info
 }
 
@@ -309,9 +309,12 @@ fn native_timing_handoff_counts_final_vec_capacities() {
         repetition_count: Default::default(),
         alpha_samples: Vec::new(),
     };
-    let expected = (5 + 3) * std::mem::size_of::<AvifFrameTiming>()
-        + (7 + 2) * std::mem::size_of::<u64>();
-    assert_eq!(parsed_animation_timing_metadata_bytes(&timing).unwrap(), expected);
+    let expected =
+        (5 + 3) * std::mem::size_of::<AvifFrameTiming>() + (7 + 2) * std::mem::size_of::<u64>();
+    assert_eq!(
+        parsed_animation_timing_metadata_bytes(&timing).unwrap(),
+        expected
+    );
 }
 
 fn empty_info_with_capacity(capacity: usize) -> crate::container::AvifInfo {
@@ -348,13 +351,15 @@ fn strict_sequence_clone_storage_uses_checked_actual_capacities() {
         7 * std::mem::size_of::<[u8; 4]>() + 7 * std::mem::size_of::<u8>()
     );
     assert!(checked_capacity_bytes::<u16>(usize::MAX, "overflow").is_err());
-    assert!(SequenceTracksStorage {
-        metadata: usize::MAX,
-        frame: 1,
-        state: 0,
-    }
-    .total()
-    .is_err());
+    assert!(
+        SequenceTracksStorage {
+            metadata: usize::MAX,
+            frame: 1,
+            state: 0,
+        }
+        .total()
+        .is_err()
+    );
 }
 
 #[test]
@@ -480,18 +485,10 @@ fn strict_sequence_refresh_underestimate_rejects_without_late_reserve() {
 fn strict_sequence_existing_owner_overflow_rolls_back_the_charge() {
     let mut budget = crate::container::DecodeBudget::new(None);
     let mut metadata = budget
-        .reserve_existing_bytes(
-            super::AllocationClass::Metadata,
-            1,
-            "metadata owner",
-        )
+        .reserve_existing_bytes(super::AllocationClass::Metadata, 1, "metadata owner")
         .unwrap();
     let error = budget
-        .reserve_existing_bytes(
-            super::AllocationClass::Payload,
-            usize::MAX,
-            "payload owner",
-        )
+        .reserve_existing_bytes(super::AllocationClass::Payload, usize::MAX, "payload owner")
         .expect_err("aggregate overflow must be rejected");
     assert!(matches!(error, DecoderError::InvalidParam(message) if message.contains("overflows")));
     assert_eq!(budget.accounting().aggregate_live, 1);
@@ -575,11 +572,8 @@ fn synthetic_frame_limit_rejects_before_retained_candidate_allocation() {
     let animation = synthetic_two_frame_animation(COLOR_16X16_AV1);
     let observation = crate::test_allocation_observer::Observation::begin(1, false);
     let all_candidates = crate::test_allocation_observer::track_all_candidates();
-    let result = super::StrictAvifSequenceDecoder::from_test_parts(
-        info,
-        animation,
-        synthetic_limits(None),
-    );
+    let result =
+        super::StrictAvifSequenceDecoder::from_test_parts(info, animation, synthetic_limits(None));
     assert!(matches!(result, Err(DecoderError::InvalidParam(_))));
     assert_eq!(
         observation.registered_candidate_count(),
@@ -627,12 +621,9 @@ fn parsed_frame_limit_rejects_before_retained_candidate_allocation() {
 fn strict_prepared_frame_exposes_clone_free_views_and_retained_bytes() {
     let animation = synthetic_animation(COLOR_16X16_AV1, None);
     let info = synthetic_info(COLOR_16X16_AV1);
-    let mut decoder = super::StrictAvifSequenceDecoder::from_test_parts(
-        info,
-        animation,
-        synthetic_limits(None),
-    )
-    .expect("synthetic strict decoder should construct");
+    let mut decoder =
+        super::StrictAvifSequenceDecoder::from_test_parts(info, animation, synthetic_limits(None))
+            .expect("synthetic strict decoder should construct");
     let information = decoder.information() as *const _;
     let prepared = decoder
         .prepare_next_frame()
@@ -656,7 +647,9 @@ fn strict_prepared_frame_exposes_clone_free_views_and_retained_bytes() {
             .expect("prepared live bytes should not overflow")
     );
     assert!(prepared.retained_live_bytes() < prepared.additional_live_bytes());
-    let ready = prepared.prepare_commit().expect("commit preflight should succeed");
+    let ready = prepared
+        .prepare_commit()
+        .expect("commit preflight should succeed");
     let observed = ready
         .try_map_and_commit(|frame, rich, _, index| {
             Ok::<_, DecoderError>((
@@ -674,12 +667,9 @@ fn strict_prepared_frame_exposes_clone_free_views_and_retained_bytes() {
 fn strict_prepared_information_callback_panic_rolls_back_and_retries() {
     let animation = synthetic_animation(COLOR_16X16_AV1, None);
     let info = synthetic_info(COLOR_16X16_AV1);
-    let mut decoder = super::StrictAvifSequenceDecoder::from_test_parts(
-        info,
-        animation,
-        synthetic_limits(None),
-    )
-    .expect("synthetic strict decoder should construct");
+    let mut decoder =
+        super::StrictAvifSequenceDecoder::from_test_parts(info, animation, synthetic_limits(None))
+            .expect("synthetic strict decoder should construct");
     let baseline = decoder.budget.accounting();
     let panic_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let prepared = decoder
@@ -689,9 +679,8 @@ fn strict_prepared_information_callback_panic_rolls_back_and_retries() {
         let ready = prepared
             .prepare_commit()
             .expect("commit token preflight should succeed");
-        let _: Result<(), DecoderError> = ready.try_map_and_commit(|_, _, _, _| {
-            panic!("synthetic mapping panic")
-        });
+        let _: Result<(), DecoderError> =
+            ready.try_map_and_commit(|_, _, _, _| panic!("synthetic mapping panic"));
     }));
     assert!(panic_result.is_err(), "consumer panic must propagate");
     assert_live_accounting_eq!(decoder.budget.accounting(), baseline);
@@ -709,19 +698,18 @@ fn strict_prepared_information_callback_panic_rolls_back_and_retries() {
 fn strict_prepared_information_callback_error_rolls_back_and_retries() {
     let animation = synthetic_animation(COLOR_16X16_AV1, None);
     let info = synthetic_info(COLOR_16X16_AV1);
-    let mut decoder = super::StrictAvifSequenceDecoder::from_test_parts(
-        info,
-        animation,
-        synthetic_limits(None),
-    )
-    .expect("synthetic strict decoder should construct");
+    let mut decoder =
+        super::StrictAvifSequenceDecoder::from_test_parts(info, animation, synthetic_limits(None))
+            .expect("synthetic strict decoder should construct");
     let baseline = decoder.budget.accounting();
     let prepared = decoder
         .prepare_next_frame()
         .expect("strict preparation should succeed")
         .expect("first frame should be present");
     let retained = prepared.retained_live_bytes();
-    let ready = prepared.prepare_commit().expect("commit preflight should succeed");
+    let ready = prepared
+        .prepare_commit()
+        .expect("commit preflight should succeed");
     let result = ready.try_map_and_commit(|frame, _, _, _| {
         assert_eq!(frame.buffers.planes.len(), 3);
         Err::<(), _>(DecoderError::InvalidParam("consumer rejected frame".into()))
@@ -743,12 +731,9 @@ fn strict_prepared_information_callback_error_rolls_back_and_retries() {
 fn strict_prepared_commit_token_drop_rolls_back_without_advancing() {
     let animation = synthetic_animation(COLOR_16X16_AV1, None);
     let info = synthetic_info(COLOR_16X16_AV1);
-    let mut decoder = super::StrictAvifSequenceDecoder::from_test_parts(
-        info,
-        animation,
-        synthetic_limits(None),
-    )
-    .expect("synthetic strict decoder should construct");
+    let mut decoder =
+        super::StrictAvifSequenceDecoder::from_test_parts(info, animation, synthetic_limits(None))
+            .expect("synthetic strict decoder should construct");
     let baseline = decoder.budget.accounting();
     let prepared = decoder
         .prepare_next_frame()
@@ -790,7 +775,10 @@ fn strict_prepare_rgb_alpha_preflights_and_commits_both_tracks_once() {
         phases[2], 0,
         "one-under alpha rejection must precede decode"
     );
-    assert_eq!(phases[3], 0, "one-under alpha rejection must precede decode");
+    assert_eq!(
+        phases[3], 0,
+        "one-under alpha rejection must precede decode"
+    );
     assert_eq!(decoder.next_index, 0);
     assert_eq!(decoder.tracks.decoded_sample_counts(), (0, Some(0)));
     assert_live_accounting_eq!(decoder.budget.accounting(), baseline);
@@ -872,7 +860,9 @@ fn strict_static_alpha_frame_ticket_is_not_double_counted_on_continuation() {
         first_frame_storage,
         "static-alpha candidate frame ticket must match storage"
     );
-    first.commit().expect("first static-alpha commit should succeed");
+    first
+        .commit()
+        .expect("first static-alpha commit should succeed");
     assert_eq!(decoder.next_index, 1);
     let committed_storage = decoder
         .tracks
@@ -880,7 +870,10 @@ fn strict_static_alpha_frame_ticket_is_not_double_counted_on_continuation() {
         .expect("committed storage should be measurable");
     assert_eq!(committed_storage.frame, first_frame_storage);
     let after_first = decoder.budget.accounting();
-    assert_eq!(after_first.frame_live, committed_storage.frame + committed_storage.state);
+    assert_eq!(
+        after_first.frame_live,
+        committed_storage.frame + committed_storage.state
+    );
     assert_eq!(
         decoder.tracks_allocation.frame.charged_capacity_bytes,
         committed_storage.frame
@@ -907,7 +900,9 @@ fn strict_static_alpha_frame_ticket_is_not_double_counted_on_continuation() {
         first_frame_storage,
         "continuation must not charge a second static-alpha frame"
     );
-    second.commit().expect("second static-alpha commit should succeed");
+    second
+        .commit()
+        .expect("second static-alpha commit should succeed");
     assert_eq!(decoder.next_index, 2);
     let final_storage = decoder
         .tracks
@@ -921,7 +916,9 @@ fn strict_static_alpha_frame_ticket_is_not_double_counted_on_continuation() {
     );
     assert_eq!(
         final_accounting.aggregate_live,
-        final_accounting.metadata_live + final_accounting.payload_live + final_accounting.frame_live
+        final_accounting.metadata_live
+            + final_accounting.payload_live
+            + final_accounting.frame_live
     );
     assert!(final_accounting.aggregate_live > baseline.aggregate_live);
 }
@@ -952,9 +949,7 @@ fn strict_prepare_split_overcapacity_rolls_back_guard_and_retries() {
     drop(extra);
     let phases = crate::test_allocation_observer::phase_allocation_requests();
     let error = result.expect_err("overcapacity must be rejected by strict prepare");
-    assert!(
-        matches!(error, DecoderError::InvalidParam(message) if message.contains("exceeded"))
-    );
+    assert!(matches!(error, DecoderError::InvalidParam(message) if message.contains("exceeded")));
     assert!(
         requests > 0,
         "overcapacity path must make real candidate requests"

@@ -272,14 +272,16 @@ mod tests {
 
     #[test]
     fn native_limit_intersection_never_relaxes_or_drops_live_ceiling() {
-        let native = limits()
-            .tighten_max_live_allocation_bytes(64)
-            .unwrap();
-        let outer = limits()
-            .tighten_max_live_allocation_bytes(1024)
-            .unwrap();
-        assert_eq!(native.intersect(outer).max_live_allocation_bytes(), Some(64));
-        assert_eq!(outer.intersect(native).max_live_allocation_bytes(), Some(64));
+        let native = limits().tighten_max_live_allocation_bytes(64).unwrap();
+        let outer = limits().tighten_max_live_allocation_bytes(1024).unwrap();
+        assert_eq!(
+            native.intersect(outer).max_live_allocation_bytes(),
+            Some(64)
+        );
+        assert_eq!(
+            outer.intersect(native).max_live_allocation_bytes(),
+            Some(64)
+        );
 
         let unbounded = limits();
         assert_eq!(

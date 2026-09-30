@@ -264,9 +264,8 @@ fn split_av1_sequence_sample_strict(
     sample: &[u8],
 ) -> Result<(StrictSequenceSplitPlan<'_>, StrictSequenceSplit), DecoderError> {
     #[cfg(test)]
-    let capacity_extra = crate::test_allocation_observer::fresh_capacity_extra(
-        "AVIS strict sequence split",
-    );
+    let capacity_extra =
+        crate::test_allocation_observer::fresh_capacity_extra("AVIS strict sequence split");
     #[cfg(not(test))]
     let capacity_extra = 0;
     split_av1_sequence_sample_strict_with_capacity_extra(sample, capacity_extra)
@@ -711,16 +710,14 @@ impl SequenceDecodeState {
         mut strict_budget: Option<&mut crate::container::DecodeBudget>,
     ) -> Result<DecodedFrame, DecoderError> {
         #[cfg(test)]
-        let _split_phase =
-            strict_split.then(|| crate::test_allocation_observer::begin_phase(2));
+        let _split_phase = strict_split.then(|| crate::test_allocation_observer::begin_phase(2));
         let strict_split_result = strict_split
             .then(|| split_av1_sequence_sample_strict(sample))
             .transpose()?;
         #[cfg(test)]
         drop(_split_phase);
         #[cfg(test)]
-        let _decode_phase =
-            strict_split.then(|| crate::test_allocation_observer::begin_phase(3));
+        let _decode_phase = strict_split.then(|| crate::test_allocation_observer::begin_phase(3));
         let units = if let Some(split) = strict_split_result {
             let (plan, split) = split;
             let actual_bytes = split.actual_bytes;

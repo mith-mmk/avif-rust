@@ -20,10 +20,8 @@ fn limits() -> NativeDecodeLimits {
 }
 
 fn generated_avis() -> Option<Vec<u8>> {
-    let root = std::env::temp_dir().join(format!(
-        ".test-avif-strict-sequence-{}",
-        std::process::id()
-    ));
+    let root =
+        std::env::temp_dir().join(format!(".test-avif-strict-sequence-{}", std::process::id()));
     std::fs::create_dir_all(&root).expect("strict sequence temporary directory should exist");
     let output = root.join("sequence.avifs");
     let status = Command::new("ffmpeg")
@@ -73,12 +71,17 @@ fn strict_sequence_prepare_drop_retry_and_commit() {
     drop(dropped);
 
     let mut prepared = decoder.prepare_next_frame().unwrap().unwrap();
-    let frame = prepared.take_frame().expect("prepared frame should be present");
+    let frame = prepared
+        .take_frame()
+        .expect("prepared frame should be present");
     assert_eq!(frame.width, 64);
     assert_eq!(frame.height, 64);
     prepared.commit().unwrap();
 
     let second = decoder.prepare_next_frame().unwrap().unwrap();
-    assert_eq!(second.timing().pts_in_timescales, first_timing.duration_in_timescales);
+    assert_eq!(
+        second.timing().pts_in_timescales,
+        first_timing.duration_in_timescales
+    );
     second.commit().unwrap();
 }

@@ -17,9 +17,13 @@ fn child_box_iter_walks_without_materializing_sibling_headers() {
 
 #[test]
 fn child_box_and_iterator_keep_malformed_child_diagnostics() {
-    let payload = [0, 0, 0, 8, b'f', b't', b'y', b'p', 0, 0, 0, 4, b'b', b'a', b'd', b'!'];
+    let payload = [
+        0, 0, 0, 8, b'f', b't', b'y', b'p', 0, 0, 0, 4, b'b', b'a', b'd', b'!',
+    ];
     let error = child_box(&payload, b"ftyp").expect_err("malformed trailing child must be checked");
-    assert!(matches!(error, DecoderError::Bitstream(message) if message.contains("smaller than its header")));
+    assert!(
+        matches!(error, DecoderError::Bitstream(message) if message.contains("smaller than its header"))
+    );
 }
 
 fn boxed(box_type: &[u8; 4], payload: &[u8]) -> Vec<u8> {
@@ -59,18 +63,32 @@ fn avis_fixture_with_invalid_and_empty_tracks() -> (Vec<u8>, Vec<u8>) {
 fn native_sequence_preflight_reports_trailing_malformed_sibling_before_track_processing() {
     let (data, moov_payload) = avis_fixture_with_invalid_and_empty_tracks();
     let limits = NativeDecodeLimits::new(
-        data.len(), 4096, 4096, 4096 * 4096, usize::MAX, usize::MAX, usize::MAX, 64, 64, 64,
-        8, 64,
+        data.len(),
+        4096,
+        4096,
+        4096 * 4096,
+        usize::MAX,
+        usize::MAX,
+        usize::MAX,
+        64,
+        64,
+        64,
+        8,
+        64,
     );
     let mut context = ParseContext::native_sequence(&limits);
     let error = parse_sequence_tracks(&data, &moov_payload, &mut context)
         .expect_err("trailing malformed sibling must be rejected");
-    assert!(matches!(error, DecoderError::Bitstream(message) if message.contains("smaller than its header")));
+    assert!(
+        matches!(error, DecoderError::Bitstream(message) if message.contains("smaller than its header"))
+    );
 }
 
 #[test]
 fn public_legacy_animation_keeps_trailing_malformed_sibling_diagnostic() {
     let (data, _) = avis_fixture_with_invalid_and_empty_tracks();
     let error = parse_avif_animation(&data).expect_err("malformed sibling must be rejected");
-    assert!(matches!(error, DecoderError::Bitstream(message) if message.contains("smaller than its header")));
+    assert!(
+        matches!(error, DecoderError::Bitstream(message) if message.contains("smaller than its header"))
+    );
 }

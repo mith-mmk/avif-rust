@@ -55,28 +55,36 @@ fn observe_palette_allocation_label(label: &str) {
 /// the inventory so the strict plan remains stable if the merge implementation
 /// changes to use an owned workspace later.
 pub(super) fn palette_transient_bytes() -> Result<usize, DecoderError> {
-    let map = 64usize.checked_mul(64).ok_or_else(|| {
-        DecoderError::InvalidParam("AV1 palette map size overflows".to_string())
-    })?;
+    let map = 64usize
+        .checked_mul(64)
+        .ok_or_else(|| DecoderError::InvalidParam("AV1 palette map size overflows".to_string()))?;
     let maps = map.checked_mul(2).ok_or_else(|| {
         DecoderError::InvalidParam("AV1 palette map inventory overflows".to_string())
     })?;
     let y_values = PALETTE_MAX_SIZE
         .checked_mul(2)
         .and_then(|count| count.checked_mul(std::mem::size_of::<u16>()))
-        .ok_or_else(|| DecoderError::InvalidParam("AV1 palette Y inventory overflows".to_string()))?;
+        .ok_or_else(|| {
+            DecoderError::InvalidParam("AV1 palette Y inventory overflows".to_string())
+        })?;
     let uv_values = PALETTE_MAX_SIZE
         .checked_mul(4)
         .and_then(|count| count.checked_mul(std::mem::size_of::<u16>()))
-        .ok_or_else(|| DecoderError::InvalidParam("AV1 palette UV inventory overflows".to_string()))?;
+        .ok_or_else(|| {
+            DecoderError::InvalidParam("AV1 palette UV inventory overflows".to_string())
+        })?;
     let cache_workspace = PALETTE_MAX_SIZE
         .checked_mul(2)
         .and_then(|count| count.checked_mul(std::mem::size_of::<u16>()))
-        .ok_or_else(|| DecoderError::InvalidParam("AV1 palette cache inventory overflows".to_string()))?;
+        .ok_or_else(|| {
+            DecoderError::InvalidParam("AV1 palette cache inventory overflows".to_string())
+        })?;
     maps.checked_add(y_values)
         .and_then(|bytes| bytes.checked_add(uv_values))
         .and_then(|bytes| bytes.checked_add(cache_workspace))
-        .ok_or_else(|| DecoderError::InvalidParam("AV1 palette transient inventory overflows".to_string()))
+        .ok_or_else(|| {
+            DecoderError::InvalidParam("AV1 palette transient inventory overflows".to_string())
+        })
 }
 
 const PALETTE_COLOR_CONTEXT_LOOKUP: [usize; 9] = [0, 0, 0, 0, 0, 4, 3, 2, 1];
@@ -249,8 +257,7 @@ pub(super) fn merge_cached_palette_colors(
     cached_colors[..cached_count].copy_from_slice(&colors[..cached_count]);
     let transmitted_count = palette_size - cached_count;
     let mut transmitted_colors = [0u16; PALETTE_MAX_SIZE];
-    transmitted_colors[..transmitted_count]
-        .copy_from_slice(&colors[cached_count..]);
+    transmitted_colors[..transmitted_count].copy_from_slice(&colors[cached_count..]);
     let mut cache_index = 0usize;
     let mut transmitted_index = 0usize;
     for color in colors.iter_mut().take(palette_size) {
@@ -304,10 +311,7 @@ impl<'a> TileDecoder<'a> {
         uv_mode: Option<UvPredictionMode>,
     ) -> Result<PaletteBlockInfo, DecoderError> {
         self.palette_scratch.reset();
-        self.strict_dynamic_headroom(
-            palette_transient_bytes()?,
-            "tile palette temporary vectors",
-        )?;
+        self.strict_dynamic_headroom(palette_transient_bytes()?, "tile palette temporary vectors")?;
         let mut palette = PaletteBlockInfo { y: None, uv: None };
         if !frame.allow_screen_content_tools
             || matches!(
@@ -550,10 +554,7 @@ impl<'a> TileDecoder<'a> {
         y: usize,
         palette: &mut PaletteBlockInfo,
     ) -> Result<(), DecoderError> {
-        self.strict_dynamic_headroom(
-            palette_transient_bytes()?,
-            "tile palette color maps",
-        )?;
+        self.strict_dynamic_headroom(palette_transient_bytes()?, "tile palette color maps")?;
         if let Some(y_palette) = palette.y.as_mut() {
             let (color_map, map_width, map_height) = self.read_palette_color_map_tokens(
                 0,
@@ -611,7 +612,9 @@ impl<'a> TileDecoder<'a> {
 
         let map_len = plane_block_width
             .checked_mul(plane_block_height)
-            .ok_or_else(|| DecoderError::InvalidParam("AV1 palette color map overflows".to_string()))?;
+            .ok_or_else(|| {
+                DecoderError::InvalidParam("AV1 palette color map overflows".to_string())
+            })?;
         let mut color_map = if self.strict_dynamic_enabled() {
             #[cfg(test)]
             observe_palette_allocation_label("native AV1 palette color map");
@@ -802,21 +805,21 @@ fn palette_grid_clone_bytes(
     block_size: BlockSize,
     palette: &PaletteBlockInfo,
 ) -> Result<usize, DecoderError> {
-    let frame_width = decoder
-        .mi_cols
-        .checked_mul(4)
-        .ok_or_else(|| DecoderError::InvalidParam("AV1 palette frame width overflows".to_string()))?;
-    let frame_height = decoder
-        .mi_rows
-        .checked_mul(4)
-        .ok_or_else(|| DecoderError::InvalidParam("AV1 palette frame height overflows".to_string()))?;
+    let frame_width = decoder.mi_cols.checked_mul(4).ok_or_else(|| {
+        DecoderError::InvalidParam("AV1 palette frame width overflows".to_string())
+    })?;
+    let frame_height = decoder.mi_rows.checked_mul(4).ok_or_else(|| {
+        DecoderError::InvalidParam("AV1 palette frame height overflows".to_string())
+    })?;
     let end_x = x
         .checked_add(block_size.width())
         .ok_or_else(|| DecoderError::InvalidParam("AV1 palette block width overflows".to_string()))?
         .min(frame_width);
     let end_y = y
         .checked_add(block_size.height())
-        .ok_or_else(|| DecoderError::InvalidParam("AV1 palette block height overflows".to_string()))?
+        .ok_or_else(|| {
+            DecoderError::InvalidParam("AV1 palette block height overflows".to_string())
+        })?
         .min(frame_height);
     let cells = end_x
         .saturating_add(3)
@@ -839,13 +842,17 @@ fn palette_grid_clone_bytes(
         cells
             .checked_mul(plane.colors.capacity())
             .and_then(|count| count.checked_mul(std::mem::size_of::<u16>()))
-            .ok_or_else(|| DecoderError::InvalidParam("AV1 Y palette clone size overflows".to_string()))
+            .ok_or_else(|| {
+                DecoderError::InvalidParam("AV1 Y palette clone size overflows".to_string())
+            })
     })?;
     let uv_bytes = palette.uv.as_ref().map_or(Ok(0), |plane| {
         cells
             .checked_mul(plane.colors.len() / 2)
             .and_then(|count| count.checked_mul(std::mem::size_of::<u16>()))
-            .ok_or_else(|| DecoderError::InvalidParam("AV1 UV palette clone size overflows".to_string()))
+            .ok_or_else(|| {
+                DecoderError::InvalidParam("AV1 UV palette clone size overflows".to_string())
+            })
     })?;
     y_bytes
         .checked_add(uv_bytes)
@@ -870,12 +877,22 @@ fn palette_grid_bounds(
         .min(frame_width);
     let end_y = y
         .checked_add(block_size.height())
-        .ok_or_else(|| DecoderError::InvalidParam("AV1 palette block height overflows".to_string()))?
+        .ok_or_else(|| {
+            DecoderError::InvalidParam("AV1 palette block height overflows".to_string())
+        })?
         .min(frame_height);
     let start_col = (x / 4).min(decoder.mi_cols);
     let start_row = (y / 4).min(decoder.mi_rows);
-    let end_col = end_x.saturating_add(3).checked_div(4).unwrap_or(decoder.mi_cols).min(decoder.mi_cols);
-    let end_row = end_y.saturating_add(3).checked_div(4).unwrap_or(decoder.mi_rows).min(decoder.mi_rows);
+    let end_col = end_x
+        .saturating_add(3)
+        .checked_div(4)
+        .unwrap_or(decoder.mi_cols)
+        .min(decoder.mi_cols);
+    let end_row = end_y
+        .saturating_add(3)
+        .checked_div(4)
+        .unwrap_or(decoder.mi_rows)
+        .min(decoder.mi_rows);
     Ok((start_col, start_row, end_col, end_row))
 }
 

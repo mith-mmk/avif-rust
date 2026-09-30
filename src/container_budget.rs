@@ -410,9 +410,7 @@ impl DecodeBudget {
         label: &str,
     ) -> Result<(), DecoderError> {
         let available = match class {
-            AllocationClass::Metadata | AllocationClass::Icc => {
-                self.accounting.metadata_live
-            }
+            AllocationClass::Metadata | AllocationClass::Icc => self.accounting.metadata_live,
             AllocationClass::Payload => self.accounting.payload_live,
             AllocationClass::Frame => self.accounting.frame_live,
         };

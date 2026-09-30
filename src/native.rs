@@ -1,9 +1,9 @@
 //! Additive native decode result wrappers.
 
 use crate::container::{
-    AvifAnimation, AvifSequence, ColorInformationSet,
-    DecodeBudget, NativePropertyRecord, RichAvifInfo, parse_rich_info_with_limits,
-    parse_rich_info_with_limits_and_budget, parse_rich_info_with_limits_and_budget_sequence,
+    AvifAnimation, AvifSequence, ColorInformationSet, DecodeBudget, NativePropertyRecord,
+    RichAvifInfo, parse_rich_info_with_limits, parse_rich_info_with_limits_and_budget,
+    parse_rich_info_with_limits_and_budget_sequence,
 };
 use crate::decoder::DecodedFrame;
 use crate::limits::NativeDecodeLimits;

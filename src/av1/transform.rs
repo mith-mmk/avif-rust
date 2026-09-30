@@ -199,11 +199,7 @@ pub fn coefficient_scan(tx_size: TxSize, tx_type: TxType) -> Vec<usize> {
     scan
 }
 
-pub(crate) fn coefficient_scan_into(
-    tx_size: TxSize,
-    tx_type: TxType,
-    scan: &mut Vec<usize>,
-) {
+pub(crate) fn coefficient_scan_into(tx_size: TxSize, tx_type: TxType, scan: &mut Vec<usize>) {
     let width = tx_size.width();
     let scan_width = width.min(32);
     let scan_height = tx_size.height().min(32);

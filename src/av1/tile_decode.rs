@@ -10,8 +10,8 @@ use crate::allocation::{
     AllocationClass, AllocationTicket, admit_fresh_with, capacity_bytes, fresh_replacement,
 };
 use crate::container::DecodeBudget;
-use std::sync::Arc;
 use std::cell::Cell;
+use std::sync::Arc;
 
 mod block_syntax;
 mod coefficient;
@@ -29,8 +29,6 @@ mod partition_syntax;
 mod post_filter_state;
 #[cfg(test)]
 pub(crate) use post_filter_state::RestorationUnit;
-#[cfg(test)]
-pub(crate) use post_filter_state::{CdefBlockIndex, CdefUnit};
 pub(crate) use post_filter_state::TransformBoundary;
 #[cfg(test)]
 pub(crate) use post_filter_state::wiener_filter_unit;
@@ -43,6 +41,8 @@ pub(crate) use post_filter_state::{
     wiener_filter_unit_into_with_fixed_scratch_bit_depth_visible,
     wiener_filter_unit_into_with_scratch_bit_depth_visible,
 };
+#[cfg(test)]
+pub(crate) use post_filter_state::{CdefBlockIndex, CdefUnit};
 mod public_api;
 mod reconstruction;
 mod reconstruction_coverage;
@@ -130,14 +130,14 @@ impl TileDecoderMemoryPlan {
         let frame_mi_rows = usize::try_from(mi_dimension(frame.frame_height))
             .map_err(|_| DecoderError::InvalidParam("AV1 frame height is too large".to_string()))?;
         let (tile_mi_cols, tile_mi_rows) = if let Some(tile) = tile {
-            let tile_mi_cols =
-                usize::try_from(tile.mi_col_end.saturating_sub(tile.mi_col_start)).map_err(
-                    |_| DecoderError::InvalidParam("AV1 tile columns are too large".to_string()),
-                )?;
-            let tile_mi_rows =
-                usize::try_from(tile.mi_row_end.saturating_sub(tile.mi_row_start)).map_err(
-                    |_| DecoderError::InvalidParam("AV1 tile rows are too large".to_string()),
-                )?;
+            let tile_mi_cols = usize::try_from(tile.mi_col_end.saturating_sub(tile.mi_col_start))
+                .map_err(|_| {
+                DecoderError::InvalidParam("AV1 tile columns are too large".to_string())
+            })?;
+            let tile_mi_rows = usize::try_from(tile.mi_row_end.saturating_sub(tile.mi_row_start))
+                .map_err(|_| {
+                DecoderError::InvalidParam("AV1 tile rows are too large".to_string())
+            })?;
             if tile.mi_col_end > u32::try_from(frame_mi_cols).unwrap_or(u32::MAX)
                 || tile.mi_row_end > u32::try_from(frame_mi_rows).unwrap_or(u32::MAX)
             {
@@ -162,26 +162,18 @@ impl TileDecoderMemoryPlan {
         let mi_count = mi_cols.checked_mul(mi_rows).ok_or_else(|| {
             DecoderError::InvalidParam("AV1 tile context grid size overflows".to_string())
         })?;
-        let block_filter_capacity = mi_count
-            .checked_add(3)
-            .ok_or_else(|| {
-                DecoderError::InvalidParam("AV1 block filter capacity overflows".to_string())
-            })?
-            / 4;
+        let block_filter_capacity = mi_count.checked_add(3).ok_or_else(|| {
+            DecoderError::InvalidParam("AV1 block filter capacity overflows".to_string())
+        })? / 4;
         let block_filter_capacity = block_filter_capacity.min(32_768);
         let cdef_capacity = mi_count
             .checked_add(255)
-            .ok_or_else(|| {
-                DecoderError::InvalidParam("AV1 CDEF capacity overflows".to_string())
-            })?
+            .ok_or_else(|| DecoderError::InvalidParam("AV1 CDEF capacity overflows".to_string()))?
             / 256;
         let cdef_capacity = cdef_capacity.min(4_096);
-        let tile_superblocks = block_filter_capacity
-            .checked_add(3)
-            .ok_or_else(|| {
-                DecoderError::InvalidParam("AV1 restoration capacity overflows".to_string())
-            })?
-            / 4;
+        let tile_superblocks = block_filter_capacity.checked_add(3).ok_or_else(|| {
+            DecoderError::InvalidParam("AV1 restoration capacity overflows".to_string())
+        })? / 4;
         let restoration_capacity = tile_superblocks.checked_mul(3).ok_or_else(|| {
             DecoderError::InvalidParam("AV1 restoration capacity overflows".to_string())
         })?;
@@ -196,7 +188,8 @@ impl TileDecoderMemoryPlan {
             restoration_capacity,
         )?;
         let dynamic_bytes = Self::dynamic_bytes(mi_count)?;
-        let coefficient_bytes = Self::bytes::<i32>(coefficient_samples, "tile coefficient scratch")?;
+        let coefficient_bytes =
+            Self::bytes::<i32>(coefficient_samples, "tile coefficient scratch")?;
         let fixed_i32_bytes = Self::bytes::<i32>(
             fixed_scratch_samples.checked_mul(2).ok_or_else(|| {
                 DecoderError::InvalidParam("AV1 fixed scratch size overflows".to_string())
@@ -242,9 +235,9 @@ impl TileDecoderMemoryPlan {
         I: IntoIterator<Item = Result<usize, DecoderError>>,
     {
         items.into_iter().try_fold(0usize, |total, item| {
-            total
-                .checked_add(item?)
-                .ok_or_else(|| DecoderError::InvalidParam("AV1 tile memory plan overflows".to_string()))
+            total.checked_add(item?).ok_or_else(|| {
+                DecoderError::InvalidParam("AV1 tile memory plan overflows".to_string())
+            })
         })
     }
 
@@ -260,7 +253,10 @@ impl TileDecoderMemoryPlan {
         let option_bool = Self::bytes::<Option<bool>>(mi_count, "tile boolean grid")?;
         let option_u8 = Self::bytes::<Option<u8>>(mi_count, "tile reference grid")?;
         let option_mv = Self::bytes::<Option<(i32, i32)>>(mi_count, "tile motion grid")?;
-        let option_filter = Self::bytes::<Option<(InterpolationFilter, InterpolationFilter)>>(mi_count, "tile interpolation grid")?;
+        let option_filter = Self::bytes::<Option<(InterpolationFilter, InterpolationFilter)>>(
+            mi_count,
+            "tile interpolation grid",
+        )?;
         let option_block = Self::bytes::<Option<BlockSize>>(mi_count, "tile block grid")?;
         let option_palette = Self::bytes::<Option<Vec<u16>>>(mi_count, "tile palette grid")?;
         let option_compound = Self::bytes::<Option<u8>>(mi_count, "tile compound grid")?;
@@ -272,10 +268,20 @@ impl TileDecoderMemoryPlan {
         let context_u8 = Self::bytes::<u8>(mi_cols, "tile entropy context")?;
         let context_u8_rows = Self::bytes::<u8>(mi_rows, "tile entropy context")?;
         let cdef = Self::bytes::<post_filter_state::CdefUnit>(cdef_capacity, "tile CDEF units")?;
-        let cdef_block = Self::bytes::<post_filter_state::CdefBlockIndex>(cdef_capacity, "tile CDEF blocks")?;
-        let boundary = Self::bytes::<post_filter_state::TransformBoundary>(block_filter_capacity, "tile transform boundaries")?;
-        let restoration = Self::bytes::<post_filter_state::RestorationUnit>(restoration_capacity, "tile restoration units")?;
-        let block_filter = Self::bytes::<post_filter_state::BlockFilterState>(block_filter_capacity, "tile block filter states")?;
+        let cdef_block =
+            Self::bytes::<post_filter_state::CdefBlockIndex>(cdef_capacity, "tile CDEF blocks")?;
+        let boundary = Self::bytes::<post_filter_state::TransformBoundary>(
+            block_filter_capacity,
+            "tile transform boundaries",
+        )?;
+        let restoration = Self::bytes::<post_filter_state::RestorationUnit>(
+            restoration_capacity,
+            "tile restoration units",
+        )?;
+        let block_filter = Self::bytes::<post_filter_state::BlockFilterState>(
+            block_filter_capacity,
+            "tile block filter states",
+        )?;
         // There are 23 MI grids in TileDecoder.  Keep this list explicit so a
         // new grid cannot silently escape the plan during review.
         Self::sum_bytes([
@@ -296,10 +302,10 @@ impl TileDecoderMemoryPlan {
             Ok(option_usize), // uv_palette_size
             Ok(option_palette),
             Ok(option_palette),
-            Ok(option_bool),  // y_smooth
-            Ok(option_bool),  // uv_smooth
-            Ok(option_bool),  // skip
-            Ok(option_bool),  // skip_mode
+            Ok(option_bool), // y_smooth
+            Ok(option_bool), // uv_smooth
+            Ok(option_bool), // skip
+            Ok(option_bool), // skip_mode
             Ok(option_compound),
             Ok(option_compound),
             Ok(plain_u8),
@@ -307,10 +313,16 @@ impl TileDecoderMemoryPlan {
             Ok(Self::bytes::<u8>(mi_rows, "tile partition context")?),
             Ok(plain_usize),
             Ok(plain_usize_rows),
-            Ok(plain_bool.checked_mul(3).ok_or_else(|| DecoderError::InvalidParam("tile reconstruction grids overflow".to_string()))?),
+            Ok(plain_bool.checked_mul(3).ok_or_else(|| {
+                DecoderError::InvalidParam("tile reconstruction grids overflow".to_string())
+            })?),
             Ok(plain_tx),
-            Ok(context_u8.checked_mul(3).ok_or_else(|| DecoderError::InvalidParam("tile entropy contexts overflow".to_string()))?),
-            Ok(context_u8_rows.checked_mul(3).ok_or_else(|| DecoderError::InvalidParam("tile entropy contexts overflow".to_string()))?),
+            Ok(context_u8.checked_mul(3).ok_or_else(|| {
+                DecoderError::InvalidParam("tile entropy contexts overflow".to_string())
+            })?),
+            Ok(context_u8_rows.checked_mul(3).ok_or_else(|| {
+                DecoderError::InvalidParam("tile entropy contexts overflow".to_string())
+            })?),
             Ok(cdef),
             Ok(cdef_block),
             Ok(boundary),
@@ -343,7 +355,9 @@ impl TileDecoderMemoryPlan {
         palette_grid
             .checked_add(scan_cache)
             .and_then(|bytes| bytes.checked_add(transient))
-            .ok_or_else(|| DecoderError::InvalidParam("AV1 dynamic tile storage overflows".to_string()))
+            .ok_or_else(|| {
+                DecoderError::InvalidParam("AV1 dynamic tile storage overflows".to_string())
+            })
     }
 
     pub(crate) fn storage_bytes_checked(&self) -> usize {
@@ -396,10 +410,7 @@ struct TileDecoderStorage {
 }
 
 impl TileDecoderStorage {
-    fn fresh_vec<T: Default + Clone>(
-        count: usize,
-        label: &str,
-    ) -> Result<Vec<T>, DecoderError> {
+    fn fresh_vec<T: Default + Clone>(count: usize, label: &str) -> Result<Vec<T>, DecoderError> {
         let replacement = fresh_replacement::<T>(count, label)?;
         let mut values = replacement.into_vec();
         values.resize(count, T::default());
@@ -417,7 +428,13 @@ impl TileDecoderStorage {
         Ok(values)
     }
 
-    fn legacy(mi_cols: usize, mi_rows: usize, mi_count: usize, cdef_capacity: usize, block_filter_capacity: usize) -> Self {
+    fn legacy(
+        mi_cols: usize,
+        mi_rows: usize,
+        mi_count: usize,
+        cdef_capacity: usize,
+        block_filter_capacity: usize,
+    ) -> Self {
         Self {
             y_mode_grid: vec![None; mi_count],
             is_inter_grid: vec![None; mi_count],
@@ -489,39 +506,87 @@ impl TileDecoderStorage {
             y_mode_grid: Self::fresh_vec(plan.mi_count, "native AV1 y mode grid")?,
             is_inter_grid: Self::fresh_vec(plan.mi_count, "native AV1 inter grid")?,
             reference_frame_grid: Self::fresh_vec(plan.mi_count, "native AV1 reference grid")?,
-            reference_frame_type_grid: Self::fresh_vec(plan.mi_count, "native AV1 reference type grid")?,
+            reference_frame_type_grid: Self::fresh_vec(
+                plan.mi_count,
+                "native AV1 reference type grid",
+            )?,
             inter_new_mv_grid: Self::fresh_vec(plan.mi_count, "native AV1 new MV grid")?,
             motion_vector_grid: Self::fresh_vec(plan.mi_count, "native AV1 motion grid")?,
-            interpolation_filter_grid: Self::fresh_vec(plan.mi_count, "native AV1 interpolation grid")?,
+            interpolation_filter_grid: Self::fresh_vec(
+                plan.mi_count,
+                "native AV1 interpolation grid",
+            )?,
             motion_block_size_grid: Self::fresh_vec(plan.mi_count, "native AV1 block size grid")?,
             interintra_grid: Self::fresh_vec(plan.mi_count, "native AV1 inter-intra grid")?,
-            reference_frame_secondary_grid: Self::fresh_vec(plan.mi_count, "native AV1 secondary reference grid")?,
-            reference_frame_secondary_type_grid: Self::fresh_vec(plan.mi_count, "native AV1 secondary reference type grid")?,
-            motion_vector_secondary_grid: Self::fresh_vec(plan.mi_count, "native AV1 secondary motion grid")?,
+            reference_frame_secondary_grid: Self::fresh_vec(
+                plan.mi_count,
+                "native AV1 secondary reference grid",
+            )?,
+            reference_frame_secondary_type_grid: Self::fresh_vec(
+                plan.mi_count,
+                "native AV1 secondary reference type grid",
+            )?,
+            motion_vector_secondary_grid: Self::fresh_vec(
+                plan.mi_count,
+                "native AV1 secondary motion grid",
+            )?,
             intra_bc_mv_grid: Self::fresh_vec(plan.mi_count, "native AV1 intra BC grid")?,
             y_palette_size_grid: Self::fresh_vec(plan.mi_count, "native AV1 Y palette size grid")?,
-            uv_palette_size_grid: Self::fresh_vec(plan.mi_count, "native AV1 UV palette size grid")?,
-            y_palette_colors_grid: Self::fresh_vec(plan.mi_count, "native AV1 Y palette colors grid")?,
-            u_palette_colors_grid: Self::fresh_vec(plan.mi_count, "native AV1 U palette colors grid")?,
+            uv_palette_size_grid: Self::fresh_vec(
+                plan.mi_count,
+                "native AV1 UV palette size grid",
+            )?,
+            y_palette_colors_grid: Self::fresh_vec(
+                plan.mi_count,
+                "native AV1 Y palette colors grid",
+            )?,
+            u_palette_colors_grid: Self::fresh_vec(
+                plan.mi_count,
+                "native AV1 U palette colors grid",
+            )?,
             y_smooth_grid: Self::fresh_vec(plan.mi_count, "native AV1 Y smooth grid")?,
             uv_smooth_grid: Self::fresh_vec(plan.mi_count, "native AV1 UV smooth grid")?,
             skip_grid: Self::fresh_vec(plan.mi_count, "native AV1 skip grid")?,
             skip_mode_grid: Self::fresh_vec(plan.mi_count, "native AV1 skip mode grid")?,
-            compound_group_idx_grid: Self::fresh_vec(plan.mi_count, "native AV1 compound group grid")?,
+            compound_group_idx_grid: Self::fresh_vec(
+                plan.mi_count,
+                "native AV1 compound group grid",
+            )?,
             compound_idx_grid: Self::fresh_vec(plan.mi_count, "native AV1 compound grid")?,
             segmentation_map: Self::fresh_vec(plan.mi_count, "native AV1 segmentation map")?,
-            above_partition_context: Self::fresh_vec(plan.mi_cols, "native AV1 above partition context")?,
-            left_partition_context: Self::fresh_vec(plan.mi_rows, "native AV1 left partition context")?,
-            above_txfm_context: Self::fresh_vec(plan.mi_cols, "native AV1 above transform context")?,
+            above_partition_context: Self::fresh_vec(
+                plan.mi_cols,
+                "native AV1 above partition context",
+            )?,
+            left_partition_context: Self::fresh_vec(
+                plan.mi_rows,
+                "native AV1 left partition context",
+            )?,
+            above_txfm_context: Self::fresh_vec(
+                plan.mi_cols,
+                "native AV1 above transform context",
+            )?,
             left_txfm_context: Self::fresh_vec(plan.mi_rows, "native AV1 left transform context")?,
             reconstructed_mi_grid,
-            luma_tx_type_grid: Self::fresh_tx_types(plan.mi_count, "native AV1 transform type grid")?,
+            luma_tx_type_grid: Self::fresh_tx_types(
+                plan.mi_count,
+                "native AV1 transform type grid",
+            )?,
             plane_entropy_contexts,
             cdef_units: Self::fresh_capacity(plan.cdef_capacity, "native AV1 CDEF units")?,
             cdef_blocks: Self::fresh_capacity(plan.cdef_capacity, "native AV1 CDEF blocks")?,
-            transform_boundaries: Self::fresh_capacity(plan.block_filter_capacity, "native AV1 transform boundaries")?,
-            restoration_units: Self::fresh_capacity(plan.restoration_capacity, "native AV1 restoration units")?,
-            block_filter_states: Self::fresh_capacity(plan.block_filter_capacity, "native AV1 block filter states")?,
+            transform_boundaries: Self::fresh_capacity(
+                plan.block_filter_capacity,
+                "native AV1 transform boundaries",
+            )?,
+            restoration_units: Self::fresh_capacity(
+                plan.restoration_capacity,
+                "native AV1 restoration units",
+            )?,
+            block_filter_states: Self::fresh_capacity(
+                plan.block_filter_capacity,
+                "native AV1 block filter states",
+            )?,
         };
         let actual_bytes = storage.actual_bytes()?;
         let ticket = budget.reserve_existing_bytes(
@@ -541,7 +606,9 @@ impl TileDecoderStorage {
             ($value:expr, $label:literal) => {
                 total = total
                     .checked_add(vec_bytes(&$value, $label)?)
-                    .ok_or_else(|| DecoderError::InvalidParam("AV1 tile state capacity overflows".to_string()))?;
+                    .ok_or_else(|| {
+                        DecoderError::InvalidParam("AV1 tile state capacity overflows".to_string())
+                    })?;
             };
         }
         add!(self.y_mode_grid, "tile y mode grid");
@@ -553,9 +620,18 @@ impl TileDecoderStorage {
         add!(self.interpolation_filter_grid, "tile interpolation grid");
         add!(self.motion_block_size_grid, "tile block grid");
         add!(self.interintra_grid, "tile inter-intra grid");
-        add!(self.reference_frame_secondary_grid, "tile secondary reference grid");
-        add!(self.reference_frame_secondary_type_grid, "tile secondary reference type grid");
-        add!(self.motion_vector_secondary_grid, "tile secondary motion grid");
+        add!(
+            self.reference_frame_secondary_grid,
+            "tile secondary reference grid"
+        );
+        add!(
+            self.reference_frame_secondary_type_grid,
+            "tile secondary reference type grid"
+        );
+        add!(
+            self.motion_vector_secondary_grid,
+            "tile secondary motion grid"
+        );
         add!(self.intra_bc_mv_grid, "tile intra BC grid");
         add!(self.y_palette_size_grid, "tile Y palette size grid");
         add!(self.uv_palette_size_grid, "tile UV palette size grid");
@@ -1448,7 +1524,9 @@ impl<'a> TileDecoder<'a> {
             .strict_dynamic_bytes()?
             .checked_add(scratch.bytes())
             .and_then(|bytes| bytes.checked_add(requested))
-            .ok_or_else(|| DecoderError::InvalidParam(format!("native AV1 {label} size overflows")))?;
+            .ok_or_else(|| {
+                DecoderError::InvalidParam(format!("native AV1 {label} size overflows"))
+            })?;
         if current > self.strict_dynamic_reserved_bytes {
             return Err(DecoderError::InvalidParam(format!(
                 "native AV1 {label} exceeds admitted budget"
@@ -1460,7 +1538,9 @@ impl<'a> TileDecoder<'a> {
             .strict_dynamic_bytes()?
             .checked_add(scratch.bytes())
             .and_then(|bytes| bytes.checked_add(actual))
-            .ok_or_else(|| DecoderError::InvalidParam(format!("native AV1 {label} size overflows")))?;
+            .ok_or_else(|| {
+                DecoderError::InvalidParam(format!("native AV1 {label} size overflows"))
+            })?;
         if actual_total > self.strict_dynamic_reserved_bytes {
             return Err(DecoderError::InvalidParam(format!(
                 "native AV1 {label} actual capacity exceeds admitted budget"
@@ -1488,7 +1568,9 @@ impl<'a> TileDecoder<'a> {
             .strict_dynamic_bytes()?
             .checked_add(scratch.bytes())
             .and_then(|bytes| bytes.checked_add(requested))
-            .ok_or_else(|| DecoderError::InvalidParam(format!("native AV1 {label} size overflows")))?;
+            .ok_or_else(|| {
+                DecoderError::InvalidParam(format!("native AV1 {label} size overflows"))
+            })?;
         if current > self.strict_dynamic_reserved_bytes {
             return Err(DecoderError::InvalidParam(format!(
                 "native AV1 {label} exceeds admitted budget"
@@ -1500,7 +1582,9 @@ impl<'a> TileDecoder<'a> {
             .strict_dynamic_bytes()?
             .checked_add(scratch.bytes())
             .and_then(|bytes| bytes.checked_add(actual))
-            .ok_or_else(|| DecoderError::InvalidParam(format!("native AV1 {label} size overflows")))?;
+            .ok_or_else(|| {
+                DecoderError::InvalidParam(format!("native AV1 {label} size overflows"))
+            })?;
         if actual_total > self.strict_dynamic_reserved_bytes {
             return Err(DecoderError::InvalidParam(format!(
                 "native AV1 {label} actual capacity exceeds admitted budget"

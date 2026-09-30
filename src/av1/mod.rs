@@ -61,8 +61,6 @@ pub use syntax::{BlockSize, Partition, PredictionMode, TxSize, TxType};
 pub(crate) use tile::NativeTileInfoAllocation;
 pub use tile::TileInfo;
 pub(crate) use tile_decode::BlockFilterState;
-#[cfg(test)]
-pub(crate) use tile_decode::{CdefBlockIndex, CdefUnit};
 pub(crate) use tile_decode::MotionField;
 pub(crate) use tile_decode::PostFilterState;
 #[cfg(test)]
@@ -83,6 +81,8 @@ pub use tile_decode::{
     decode_luma_root_block_prefix, decode_luma_root_blocks, prepare_tile_entropy,
     probe_first_block_residuals, probe_tile_block_modes, probe_tile_partitions,
 };
+#[cfg(test)]
+pub(crate) use tile_decode::{CdefBlockIndex, CdefUnit};
 pub(crate) use tile_decode::{
     cdef_adjust_primary_strength, cdef_chroma_direction,
     cdef_filter_block_region_with_edge_mode_into_bit_depth_visible_scaled,

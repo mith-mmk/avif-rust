@@ -8,10 +8,10 @@ use super::{
     CoeffBaseProbe, CoeffBaseRead, CoeffBrProbe, CoeffSignRead, DecoderError, EntropyDecoder,
     TxSize, TxType,
 };
+use crate::allocation::{capacity_bytes, fresh_replacement};
 use crate::av1::cdf::CdfContext;
 use crate::av1::syntax::TX_TYPES;
 use crate::av1::transform::{coefficient_scan, coefficient_scan_into};
-use crate::allocation::{capacity_bytes, fresh_replacement};
 
 const COEFFICIENT_SCAN_ENTRY_COUNT: usize = 19 * TX_TYPES;
 
@@ -104,10 +104,7 @@ impl CoefficientScanCache {
     }
 
     pub(super) fn strict_outer_bytes() -> Result<usize, DecoderError> {
-        capacity_bytes::<Option<Vec<usize>>>(
-            COEFFICIENT_SCAN_ENTRY_COUNT,
-            "coefficient scan cache",
-        )
+        capacity_bytes::<Option<Vec<usize>>>(COEFFICIENT_SCAN_ENTRY_COUNT, "coefficient scan cache")
     }
 
     pub(super) fn actual_bytes(&self) -> Result<usize, DecoderError> {
@@ -158,11 +155,14 @@ impl CoefficientScanCache {
                     "native AV1 strict coefficient scan cache is not configured".to_string(),
                 )
             })?;
-            let requested_total = self.strict_lazy_bytes.checked_add(requested).ok_or_else(|| {
-                DecoderError::InvalidParam(
-                    "native AV1 coefficient scan cache size overflows".to_string(),
-                )
-            })?;
+            let requested_total =
+                self.strict_lazy_bytes
+                    .checked_add(requested)
+                    .ok_or_else(|| {
+                        DecoderError::InvalidParam(
+                            "native AV1 coefficient scan cache size overflows".to_string(),
+                        )
+                    })?;
             if requested_total > limit {
                 return Err(DecoderError::InvalidParam(
                     "native AV1 coefficient scan entry exceeds admitted budget".to_string(),
@@ -180,7 +180,8 @@ impl CoefficientScanCache {
             })?;
             if actual_total > limit {
                 return Err(DecoderError::InvalidParam(
-                    "native AV1 coefficient scan entry capacity exceeds admitted budget".to_string(),
+                    "native AV1 coefficient scan entry capacity exceeds admitted budget"
+                        .to_string(),
                 ));
             }
             let mut scan = replacement.into_vec();
@@ -205,9 +206,7 @@ mod tests {
         let mut cache = CoefficientScanCache::new_strict(entry).unwrap();
         assert_eq!(cache.actual_bytes().unwrap(), outer);
 
-        let scan = cache
-            .get_strict(TxSize::Tx4x4, TxType::DctDct)
-            .unwrap();
+        let scan = cache.get_strict(TxSize::Tx4x4, TxType::DctDct).unwrap();
         assert_eq!(scan.len(), coefficient_scan_len(TxSize::Tx4x4));
         assert_eq!(cache.actual_bytes().unwrap(), outer + entry);
     }
@@ -216,15 +215,11 @@ mod tests {
     fn strict_cache_rejects_one_byte_under_and_allows_retry() {
         let entry = coefficient_scan_len(TxSize::Tx4x4) * std::mem::size_of::<usize>();
         let mut under = CoefficientScanCache::new_strict(entry - 1).unwrap();
-        assert!(under
-            .get_strict(TxSize::Tx4x4, TxType::DctDct)
-            .is_err());
+        assert!(under.get_strict(TxSize::Tx4x4, TxType::DctDct).is_err());
         assert_eq!(under.strict_lazy_bytes, 0);
 
         let mut retry = CoefficientScanCache::new_strict(entry).unwrap();
-        assert!(retry
-            .get_strict(TxSize::Tx4x4, TxType::DctDct)
-            .is_ok());
+        assert!(retry.get_strict(TxSize::Tx4x4, TxType::DctDct).is_ok());
         assert_eq!(retry.strict_lazy_bytes, entry);
     }
 
@@ -233,12 +228,8 @@ mod tests {
         let first = coefficient_scan_len(TxSize::Tx4x4) * std::mem::size_of::<usize>();
         let second = coefficient_scan_len(TxSize::Tx8x8) * std::mem::size_of::<usize>();
         let mut cache = CoefficientScanCache::new_strict(first + second - 1).unwrap();
-        cache
-            .get_strict(TxSize::Tx4x4, TxType::DctDct)
-            .unwrap();
-        assert!(cache
-            .get_strict(TxSize::Tx8x8, TxType::DctDct)
-            .is_err());
+        cache.get_strict(TxSize::Tx4x4, TxType::DctDct).unwrap();
+        assert!(cache.get_strict(TxSize::Tx8x8, TxType::DctDct).is_err());
         assert_eq!(cache.strict_lazy_bytes, first);
     }
 

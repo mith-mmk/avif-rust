@@ -14,8 +14,8 @@ mod iloc_owners;
 mod native_plan;
 #[path = "container_sequence_table.rs"]
 mod sequence_table;
-pub(crate) use container_budget::{DecodeBudget, ParseAccounting};
 use container_budget::{AllocationClass, AllocationToken, ParseContext, RetainedOwnerKind};
+pub(crate) use container_budget::{DecodeBudget, ParseAccounting};
 use iinf_owners::{NativeItemNameOwners, OwnedItemInfos};
 use iloc_owners::{NativeIlocOwners, OwnedItemLocations};
 #[cfg(test)]
@@ -27,6 +27,9 @@ use native_plan::{
 };
 
 #[cfg(test)]
+#[path = "container_box_iter_tests.rs"]
+mod container_box_iter_tests;
+#[cfg(test)]
 #[path = "container_budget_handoff_tests.rs"]
 mod container_budget_handoff_tests;
 #[cfg(test)]
@@ -36,20 +39,17 @@ mod container_budget_tests;
 #[path = "container_counter_tests.rs"]
 mod container_counter_tests;
 #[cfg(test)]
-#[path = "container_box_iter_tests.rs"]
-mod container_box_iter_tests;
-#[cfg(test)]
 #[path = "container_direct_payload_tests.rs"]
 mod container_direct_payload_tests;
 #[cfg(test)]
 #[path = "container_iloc_owner_tests.rs"]
 mod container_iloc_owner_tests;
 #[cfg(test)]
-#[path = "container_sort_tests.rs"]
-mod container_sort_tests;
-#[cfg(test)]
 #[path = "container_sequence_selection_tests.rs"]
 mod container_sequence_selection_tests;
+#[cfg(test)]
+#[path = "container_sort_tests.rs"]
+mod container_sort_tests;
 
 const BRAND_AVIF: &[u8; 4] = b"avif";
 const BRAND_AVIS: &[u8; 4] = b"avis";
@@ -748,112 +748,104 @@ fn parse_avif_with_context_inner(
     }
     let (alpha_auxiliary_items, primary_item_payload, sequence, animation_timing) =
         if context.is_native_still() {
-        validate_native_selected_plan(data, &meta, decode_primary_item_id, context)?;
-        let alpha_auxiliary_items = alpha_auxiliary_items_for_with_context(
-            data,
-            &meta,
-            Some(decode_primary_item_id),
-            context,
-        )?;
-        let primary_item_payload = item_payload_with_owner_context(
-            data,
-            &meta,
-            decode_primary_item_id,
-            context,
-            RetainedOwnerKind::PrimaryPayload,
-        )?;
-        (
-            alpha_auxiliary_items,
-            primary_item_payload,
-            AvifSequence {
-                color_samples: Vec::new(),
-                color_durations_ms: Vec::new(),
-                alpha_samples: Vec::new(),
-                alpha_durations_ms: Vec::new(),
-            },
-            None,
-        )
-    } else if context.is_native_derived_still() {
-        // Derived stills use the checked item resolver but do not enter the
-        // AVIS animation parser. Their grid or Sample Transform inputs are
-        // projected below and decoded by the strict path.
-        validate_primary_item_metadata(&meta)?;
-        let primary_item_payload = item_payload_with_context(
-            data,
-            &meta,
-            decode_primary_item_id,
-            context,
-        )?;
-        let alpha_auxiliary_items = alpha_auxiliary_items_for_with_context(
-            data,
-            &meta,
-            Some(decode_primary_item_id),
-            context,
-        )?;
-        (
-            alpha_auxiliary_items,
-            primary_item_payload,
-            AvifSequence {
-                color_samples: Vec::new(),
-                color_durations_ms: Vec::new(),
-                alpha_samples: Vec::new(),
-                alpha_durations_ms: Vec::new(),
-            },
-            None,
-        )
-    } else {
-        // Keep the established compatibility order: primary payload, sequence
-        // parsing, metadata validation, and only then alpha materialization.
-        let primary_item_payload =
-            item_payload_with_context(data, &meta, decode_primary_item_id, context)?;
-        let parsed_animation = parse_avif_animation_with_context(
-            data,
-            &major_brand,
-            &compatible_brands,
-            context,
-        )?;
-        let ParsedAnimation {
-            sequence:
+            validate_native_selected_plan(data, &meta, decode_primary_item_id, context)?;
+            let alpha_auxiliary_items = alpha_auxiliary_items_for_with_context(
+                data,
+                &meta,
+                Some(decode_primary_item_id),
+                context,
+            )?;
+            let primary_item_payload = item_payload_with_owner_context(
+                data,
+                &meta,
+                decode_primary_item_id,
+                context,
+                RetainedOwnerKind::PrimaryPayload,
+            )?;
+            (
+                alpha_auxiliary_items,
+                primary_item_payload,
                 AvifSequence {
-                    color_samples,
-                    color_durations_ms,
-                    alpha_samples,
-                    alpha_durations_ms,
+                    color_samples: Vec::new(),
+                    color_durations_ms: Vec::new(),
+                    alpha_samples: Vec::new(),
+                    alpha_durations_ms: Vec::new(),
                 },
-            color_timing,
-            alpha_timing,
-            color_timescale,
-            duration_in_timescales,
-            repetition_count,
-        } = parsed_animation;
-        validate_primary_item_metadata(&meta)?;
-        let alpha_auxiliary_items = alpha_auxiliary_items_for_with_context(
-            data,
-            &meta,
-            Some(decode_primary_item_id),
-            context,
-        )?;
-        (
-            alpha_auxiliary_items,
-            primary_item_payload,
-            AvifSequence {
-                color_samples,
-                color_durations_ms: Vec::new(),
-                alpha_samples: Vec::new(),
-                alpha_durations_ms: Vec::new(),
-            },
-            Some(ParsedAnimationTiming {
+                None,
+            )
+        } else if context.is_native_derived_still() {
+            // Derived stills use the checked item resolver but do not enter the
+            // AVIS animation parser. Their grid or Sample Transform inputs are
+            // projected below and decoded by the strict path.
+            validate_primary_item_metadata(&meta)?;
+            let primary_item_payload =
+                item_payload_with_context(data, &meta, decode_primary_item_id, context)?;
+            let alpha_auxiliary_items = alpha_auxiliary_items_for_with_context(
+                data,
+                &meta,
+                Some(decode_primary_item_id),
+                context,
+            )?;
+            (
+                alpha_auxiliary_items,
+                primary_item_payload,
+                AvifSequence {
+                    color_samples: Vec::new(),
+                    color_durations_ms: Vec::new(),
+                    alpha_samples: Vec::new(),
+                    alpha_durations_ms: Vec::new(),
+                },
+                None,
+            )
+        } else {
+            // Keep the established compatibility order: primary payload, sequence
+            // parsing, metadata validation, and only then alpha materialization.
+            let primary_item_payload =
+                item_payload_with_context(data, &meta, decode_primary_item_id, context)?;
+            let parsed_animation =
+                parse_avif_animation_with_context(data, &major_brand, &compatible_brands, context)?;
+            let ParsedAnimation {
+                sequence:
+                    AvifSequence {
+                        color_samples,
+                        color_durations_ms,
+                        alpha_samples,
+                        alpha_durations_ms,
+                    },
                 color_timing,
                 alpha_timing,
-                color_durations_ms,
-                alpha_durations_ms,
                 color_timescale,
                 duration_in_timescales,
                 repetition_count,
-                alpha_samples,
-            }),
-        )
-    };
+            } = parsed_animation;
+            validate_primary_item_metadata(&meta)?;
+            let alpha_auxiliary_items = alpha_auxiliary_items_for_with_context(
+                data,
+                &meta,
+                Some(decode_primary_item_id),
+                context,
+            )?;
+            (
+                alpha_auxiliary_items,
+                primary_item_payload,
+                AvifSequence {
+                    color_samples,
+                    color_durations_ms: Vec::new(),
+                    alpha_samples: Vec::new(),
+                    alpha_durations_ms: Vec::new(),
+                },
+                Some(ParsedAnimationTiming {
+                    color_timing,
+                    alpha_timing,
+                    color_durations_ms,
+                    alpha_durations_ms,
+                    color_timescale,
+                    duration_in_timescales,
+                    repetition_count,
+                    alpha_samples,
+                }),
+            )
+        };
     let primary_grid = if context.is_native_still() {
         None
     } else {
@@ -1049,11 +1041,9 @@ fn parse_rich_info_with_limits_and_budget_mode(
                 DecoderError::InvalidParam("retained AVIS payload capacity overflows".to_string())
             })?;
         for sample in &timing.alpha_samples {
-            payload = payload
-                .checked_add(sample.capacity())
-                .ok_or_else(|| {
-                    DecoderError::InvalidParam("retained AVIS payload capacity overflows".to_string())
-                })?;
+            payload = payload.checked_add(sample.capacity()).ok_or_else(|| {
+                DecoderError::InvalidParam("retained AVIS payload capacity overflows".to_string())
+            })?;
         }
     }
     let owner_handoff = context
@@ -1092,10 +1082,8 @@ pub(crate) fn parsed_animation_timing_metadata_bytes(
         .ok_or_else(|| {
             DecoderError::InvalidParam("AVIS timing metadata capacity overflows".to_string())
         })?;
-    let timing_bytes = crate::allocation::capacity_bytes::<AvifFrameTiming>(
-        timing_entries,
-        "AVIS frame timing",
-    )?;
+    let timing_bytes =
+        crate::allocation::capacity_bytes::<AvifFrameTiming>(timing_entries, "AVIS frame timing")?;
     let duration_bytes =
         crate::allocation::capacity_bytes::<u64>(duration_entries, "AVIS durations")?;
     timing_bytes.checked_add(duration_bytes).ok_or_else(|| {
@@ -4231,11 +4219,7 @@ fn parse_avif_animation_with_context(
             let payload = box_payload(data, header)?;
             if context.is_native_sequence() {
                 sequence_table::parse_sequence_tracks_native(
-                    data,
-                    payload,
-                    context,
-                    &mut color,
-                    &mut alpha,
+                    data, payload, context, &mut color, &mut alpha,
                 )?;
             } else {
                 for track in parse_sequence_tracks(data, payload, context)? {
@@ -4306,14 +4290,8 @@ fn parse_avif_animation_with_context(
         release_sequence_timing_inputs(&mut alpha, context)?;
         context.retain_native_token(RetainedOwnerKind::SequenceTiming, color_timing_token)?;
         context.retain_native_token(RetainedOwnerKind::SequenceTiming, alpha_timing_token)?;
-        context.retain_native_token(
-            RetainedOwnerKind::SequenceTiming,
-            color_durations_token,
-        )?;
-        context.retain_native_token(
-            RetainedOwnerKind::SequenceTiming,
-            alpha_durations_token,
-        )?;
+        context.retain_native_token(RetainedOwnerKind::SequenceTiming, color_durations_token)?;
+        context.retain_native_token(RetainedOwnerKind::SequenceTiming, alpha_durations_token)?;
     }
     Ok(ParsedAnimation {
         sequence: AvifSequence {
@@ -4551,9 +4529,13 @@ fn parse_sequence_tracks(
                     "AVIS sample payload",
                 )?;
             } else {
-                sample_payload.try_reserve(sample_source.len()).map_err(|_| {
-                    DecoderError::InvalidParam("AVIS sample payload allocation failed".to_string())
-                })?;
+                sample_payload
+                    .try_reserve(sample_source.len())
+                    .map_err(|_| {
+                        DecoderError::InvalidParam(
+                            "AVIS sample payload allocation failed".to_string(),
+                        )
+                    })?;
             }
             sample_payload.extend_from_slice(sample_source);
             if context.is_native() {
@@ -4735,8 +4717,7 @@ fn parse_sample_timing_native(
     sample_count: usize,
     context: &mut ParseContext<'_>,
 ) -> Result<(Vec<u64>, Vec<u64>, SequenceTimingOwners), DecoderError> {
-    let (mut pts, mut durations, owners) =
-        reserve_sample_timing_native(sample_count, context)?;
+    let (mut pts, mut durations, owners) = reserve_sample_timing_native(sample_count, context)?;
     parse_sample_timing_into(payload, sample_count, &mut pts, &mut durations)?;
     Ok((pts, durations, owners))
 }
@@ -4885,9 +4866,8 @@ pub(crate) fn validate_sample_timing(
                 "stts describes more than {sample_count} samples"
             )));
         }
-        let count_u64 = u64::try_from(count).map_err(|_| {
-            DecoderError::Bitstream("stts sample count is too large".to_string())
-        })?;
+        let count_u64 = u64::try_from(count)
+            .map_err(|_| DecoderError::Bitstream("stts sample count is too large".to_string()))?;
         current_pts = current_pts
             .checked_add(duration.checked_mul(count_u64).ok_or_else(|| {
                 DecoderError::Bitstream("stts presentation timestamp overflows u64".to_string())

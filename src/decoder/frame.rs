@@ -192,10 +192,7 @@ impl SequenceTracksAllocation {
         }
     }
 
-    fn release(
-        &mut self,
-        budget: &mut crate::container::DecodeBudget,
-    ) -> Result<(), DecoderError> {
+    fn release(&mut self, budget: &mut crate::container::DecodeBudget) -> Result<(), DecoderError> {
         // Attempt both classes even if the first release reports an
         // accounting error.  This is used by the rollback guard, so one
         // broken ticket must not strand the other ticket in the budget.
@@ -221,7 +218,6 @@ impl SequenceTracksAllocation {
         }
         Ok(())
     }
-
 }
 
 #[derive(Clone, Copy, Default)]
@@ -236,9 +232,10 @@ impl SequenceTracksStorage {
         self.metadata
             .checked_add(self.frame)
             .and_then(|bytes| bytes.checked_add(self.state))
-            .ok_or_else(|| DecoderError::InvalidParam("AVIS track clone size overflows".to_string()))
+            .ok_or_else(|| {
+                DecoderError::InvalidParam("AVIS track clone size overflows".to_string())
+            })
     }
-
 }
 
 fn checked_capacity_bytes<T>(capacity: usize, label: &str) -> Result<usize, DecoderError> {
@@ -247,11 +244,7 @@ fn checked_capacity_bytes<T>(capacity: usize, label: &str) -> Result<usize, Deco
         .ok_or_else(|| DecoderError::InvalidParam(format!("AVIS {label} size overflows")))
 }
 
-fn add_capacity<T>(
-    total: &mut usize,
-    capacity: usize,
-    label: &str,
-) -> Result<(), DecoderError> {
+fn add_capacity<T>(total: &mut usize, capacity: usize, label: &str) -> Result<(), DecoderError> {
     *total = total
         .checked_add(checked_capacity_bytes::<T>(capacity, label)?)
         .ok_or_else(|| DecoderError::InvalidParam(format!("AVIS {label} size overflows")))?;
@@ -273,7 +266,11 @@ fn pixel_information_storage_bytes(
         return Ok(0);
     };
     let mut bytes = 0;
-    add_capacity::<u8>(&mut bytes, pixel.bits_per_channel.capacity(), "pixi channels")?;
+    add_capacity::<u8>(
+        &mut bytes,
+        pixel.bits_per_channel.capacity(),
+        "pixi channels",
+    )?;
     if let Some(channels) = &pixel.extended_channels {
         add_capacity::<crate::container::PixelChannelInformation>(
             &mut bytes,
@@ -288,15 +285,27 @@ fn grid_cell_storage_bytes(cell: &crate::container::GridCell) -> Result<usize, D
     let mut bytes = pixel_information_storage_bytes(&cell.pixel_information)?;
     bytes = bytes
         .checked_add(color_information_storage_bytes(&cell.color_information)?)
-        .ok_or_else(|| DecoderError::InvalidParam("AVIS grid cell storage overflows".to_string()))?;
+        .ok_or_else(|| {
+            DecoderError::InvalidParam("AVIS grid cell storage overflows".to_string())
+        })?;
     if let Some(config) = &cell.av1_config {
         bytes = bytes
-            .checked_add(checked_capacity_bytes::<u8>(config.capacity(), "grid AV1 config")?)
-            .ok_or_else(|| DecoderError::InvalidParam("AVIS grid cell storage overflows".to_string()))?;
+            .checked_add(checked_capacity_bytes::<u8>(
+                config.capacity(),
+                "grid AV1 config",
+            )?)
+            .ok_or_else(|| {
+                DecoderError::InvalidParam("AVIS grid cell storage overflows".to_string())
+            })?;
     }
     bytes = bytes
-        .checked_add(checked_capacity_bytes::<u8>(cell.payload.capacity(), "grid cell payload")?)
-        .ok_or_else(|| DecoderError::InvalidParam("AVIS grid cell storage overflows".to_string()))?;
+        .checked_add(checked_capacity_bytes::<u8>(
+            cell.payload.capacity(),
+            "grid cell payload",
+        )?)
+        .ok_or_else(|| {
+            DecoderError::InvalidParam("AVIS grid cell storage overflows".to_string())
+        })?;
     Ok(bytes)
 }
 
@@ -306,7 +315,10 @@ fn grid_storage_bytes(grid: &Option<crate::container::GridImage>) -> Result<usiz
     };
     let mut bytes = checked_capacity_bytes::<u8>(grid.payload.capacity(), "grid payload")?;
     bytes = bytes
-        .checked_add(checked_capacity_bytes::<crate::container::GridCell>(grid.cells.capacity(), "grid cells")?)
+        .checked_add(checked_capacity_bytes::<crate::container::GridCell>(
+            grid.cells.capacity(),
+            "grid cells",
+        )?)
         .ok_or_else(|| DecoderError::InvalidParam("AVIS grid storage overflows".to_string()))?;
     for cell in &grid.cells {
         bytes = bytes
@@ -321,10 +333,8 @@ fn grid_storage_bytes(grid: &Option<crate::container::GridImage>) -> Result<usiz
 /// parser handoff vectors can retain spare capacity after their payloads are
 /// cleared.
 fn avif_info_storage_bytes(info: &AvifInfo) -> Result<usize, DecoderError> {
-    let mut bytes = checked_capacity_bytes::<[u8; 4]>(
-        info.compatible_brands.capacity(),
-        "compatible brands",
-    )?;
+    let mut bytes =
+        checked_capacity_bytes::<[u8; 4]>(info.compatible_brands.capacity(), "compatible brands")?;
     bytes = bytes
         .checked_add(checked_capacity_bytes::<crate::container::AuxiliaryImage>(
             info.alpha_auxiliary_items.capacity(),
@@ -333,7 +343,10 @@ fn avif_info_storage_bytes(info: &AvifInfo) -> Result<usize, DecoderError> {
         .ok_or_else(|| DecoderError::InvalidParam("AVIS info storage overflows".to_string()))?;
     for alpha in &info.alpha_auxiliary_items {
         bytes = bytes
-            .checked_add(checked_capacity_bytes::<u8>(alpha.aux_type.capacity(), "alpha type")?)
+            .checked_add(checked_capacity_bytes::<u8>(
+                alpha.aux_type.capacity(),
+                "alpha type",
+            )?)
             .ok_or_else(|| DecoderError::InvalidParam("AVIS info storage overflows".to_string()))?;
         bytes = bytes
             .checked_add(checked_capacity_bytes::<u8>(
@@ -356,7 +369,10 @@ fn avif_info_storage_bytes(info: &AvifInfo) -> Result<usize, DecoderError> {
         .ok_or_else(|| DecoderError::InvalidParam("AVIS info storage overflows".to_string()))?;
     if let Some(config) = &info.av1_config {
         bytes = bytes
-            .checked_add(checked_capacity_bytes::<u8>(config.capacity(), "AV1 config")?)
+            .checked_add(checked_capacity_bytes::<u8>(
+                config.capacity(),
+                "AV1 config",
+            )?)
             .ok_or_else(|| DecoderError::InvalidParam("AVIS info storage overflows".to_string()))?;
     }
     bytes = bytes
@@ -373,16 +389,21 @@ fn avif_info_storage_bytes(info: &AvifInfo) -> Result<usize, DecoderError> {
         .ok_or_else(|| DecoderError::InvalidParam("AVIS info storage overflows".to_string()))?;
     for sample in &info.sequence_sample_payloads {
         bytes = bytes
-            .checked_add(checked_capacity_bytes::<u8>(sample.capacity(), "sequence sample")?)
+            .checked_add(checked_capacity_bytes::<u8>(
+                sample.capacity(),
+                "sequence sample",
+            )?)
             .ok_or_else(|| DecoderError::InvalidParam("AVIS info storage overflows".to_string()))?;
     }
     Ok(bytes)
 }
 
 fn decoded_frame_storage_bytes(frame: &DecodedFrame) -> Result<usize, DecoderError> {
-    frame_storage_bytes(frame)?.checked_add(color_information_storage_bytes(
-        &frame.color_information,
-    )?).ok_or_else(|| DecoderError::InvalidParam("AVIS frame metadata storage overflows".to_string()))
+    frame_storage_bytes(frame)?
+        .checked_add(color_information_storage_bytes(&frame.color_information)?)
+        .ok_or_else(|| {
+            DecoderError::InvalidParam("AVIS frame metadata storage overflows".to_string())
+        })
 }
 
 /// Returns the peak metadata-side storage needed while constructing strict
@@ -396,20 +417,17 @@ fn sequence_tracks_clone_peak_bytes(
     let info_clone_bytes = avif_info_storage_bytes(info)?;
     let mut peak = info_clone_bytes;
     peak = peak
-        .checked_add(
-            SequenceDecodeState::sequence_prefix_upper_bound(info.primary_item_payload.len())?,
-        )
+        .checked_add(SequenceDecodeState::sequence_prefix_upper_bound(
+            info.primary_item_payload.len(),
+        )?)
         .ok_or_else(|| DecoderError::InvalidParam("AVIS track clone peak overflows".to_string()))?;
     let Some(alpha_sample) = alpha_samples.first() else {
         return Ok(peak);
     };
-    let alpha_sample_bytes = checked_capacity_bytes::<u8>(
-        alpha_sample.capacity(),
-        "alpha sample temporary",
-    )?;
+    let alpha_sample_bytes =
+        checked_capacity_bytes::<u8>(alpha_sample.capacity(), "alpha sample temporary")?;
     let alpha_prefix_bound = SequenceDecodeState::sequence_prefix_upper_bound(alpha_sample.len())?;
-    peak
-        .checked_add(info_clone_bytes)
+    peak.checked_add(info_clone_bytes)
         .and_then(|bytes| bytes.checked_add(alpha_prefix_bound))
         .and_then(|bytes| bytes.checked_add(alpha_sample_bytes))
         .ok_or_else(|| DecoderError::InvalidParam("AVIS track clone peak overflows".to_string()))
@@ -426,7 +444,9 @@ impl SequenceTracksDecoder {
             storage.metadata = storage
                 .metadata
                 .checked_add(avif_info_storage_bytes(alpha_info)?)
-                .ok_or_else(|| DecoderError::InvalidParam("AVIS track metadata storage overflows".to_string()))?;
+                .ok_or_else(|| {
+                    DecoderError::InvalidParam("AVIS track metadata storage overflows".to_string())
+                })?;
         }
         if let Some(frame) = &self.static_alpha_frame {
             storage.frame = decoded_frame_storage_bytes(frame)?;
@@ -445,16 +465,10 @@ impl SequenceTracksDecoder {
     }
 
     fn state_memory_bytes(&self) -> Result<usize, DecoderError> {
-        SequenceDecodeState::memory_bytes_for_tracks(
-            &self.color_state,
-            self.alpha_state.as_ref(),
-        )
+        SequenceDecodeState::memory_bytes_for_tracks(&self.color_state, self.alpha_state.as_ref())
     }
 
-    fn additional_state_memory_bytes(
-        &self,
-        baseline: &Self,
-    ) -> Result<usize, DecoderError> {
+    fn additional_state_memory_bytes(&self, baseline: &Self) -> Result<usize, DecoderError> {
         SequenceDecodeState::additional_memory_bytes_for_tracks(
             &baseline.color_state,
             baseline.alpha_state.as_ref(),
@@ -469,8 +483,7 @@ impl SequenceTracksDecoder {
         alpha_sample: Option<&[u8]>,
         limits: &crate::limits::NativeDecodeLimits,
     ) -> Result<usize, DecoderError> {
-        let mut bytes =
-            SequenceDecodeState::refresh_plan_bytes(&self.info, color_sample, limits)?;
+        let mut bytes = SequenceDecodeState::refresh_plan_bytes(&self.info, color_sample, limits)?;
         if let Some(alpha_info) = &self.alpha_info {
             let alpha_sample = alpha_sample.ok_or_else(|| {
                 DecoderError::Bitstream("AVIS alpha sample is missing for state plan".to_string())
@@ -593,22 +606,24 @@ impl SequenceTracksDecoder {
             allocation.frame.charged_capacity_bytes = target.frame;
         }
 
-        let metadata_delta = target.metadata.saturating_sub(
-            allocation.metadata.charged_capacity_bytes,
-        );
+        let metadata_delta = target
+            .metadata
+            .saturating_sub(allocation.metadata.charged_capacity_bytes);
         let frame_delta = target
             .frame
             .saturating_sub(allocation.frame.charged_capacity_bytes);
-        let total_delta = metadata_delta
-            .checked_add(frame_delta)
-            .ok_or_else(|| DecoderError::InvalidParam("AVIS track clone size overflows".to_string()))?;
+        let total_delta = metadata_delta.checked_add(frame_delta).ok_or_else(|| {
+            DecoderError::InvalidParam("AVIS track clone size overflows".to_string())
+        })?;
         budget.check_additional_frame(total_delta)?;
         if metadata_delta != 0 {
             let new_charge = allocation
                 .metadata
                 .charged_capacity_bytes
                 .checked_add(metadata_delta)
-                .ok_or_else(|| DecoderError::InvalidParam("AVIS metadata ticket overflows".to_string()))?;
+                .ok_or_else(|| {
+                    DecoderError::InvalidParam("AVIS metadata ticket overflows".to_string())
+                })?;
             let token = budget.reserve_existing_bytes(
                 AllocationClass::Metadata,
                 metadata_delta,
@@ -622,7 +637,9 @@ impl SequenceTracksDecoder {
                 .frame
                 .charged_capacity_bytes
                 .checked_add(frame_delta)
-                .ok_or_else(|| DecoderError::InvalidParam("AVIS frame ticket overflows".to_string()))?;
+                .ok_or_else(|| {
+                    DecoderError::InvalidParam("AVIS frame ticket overflows".to_string())
+                })?;
             match budget.reserve_existing_bytes(
                 AllocationClass::Frame,
                 frame_delta,
@@ -748,12 +765,12 @@ impl SequenceTracksDecoder {
         } else {
             color_state.next_sample(&self.info, &sequence.color_samples)?
         }
-            .ok_or_else(|| {
-                DecoderError::Bitstream(format!(
-                    "AVIS color track ended before sample {}",
-                    next_index
-                ))
-            })?;
+        .ok_or_else(|| {
+            DecoderError::Bitstream(format!(
+                "AVIS color track ended before sample {}",
+                next_index
+            ))
+        })?;
         if let (Some(alpha_info), Some(alpha_state)) =
             (self.alpha_info.as_ref(), alpha_state.as_mut())
         {
@@ -771,12 +788,12 @@ impl SequenceTracksDecoder {
             } else {
                 alpha_state.next_sample(alpha_info, &sequence.alpha_samples)?
             }
-                .ok_or_else(|| {
-                    DecoderError::Bitstream(format!(
-                        "AVIS alpha track ended before sample {}",
-                        next_index
-                    ))
-                })?;
+            .ok_or_else(|| {
+                DecoderError::Bitstream(format!(
+                    "AVIS alpha track ended before sample {}",
+                    next_index
+                ))
+            })?;
             if self.strict_alpha {
                 validate_strict_alpha(&frame, &alpha_frame)?;
             }
@@ -1101,11 +1118,12 @@ impl StrictAvifSequenceDecoder {
             Err(error) => return Err(error),
         };
         let retained_live_bytes = allocation_guard.budget.aggregate_live_bytes();
-        let additional_live_bytes = retained_live_bytes
-            .checked_add(frame_storage)
-            .ok_or_else(|| {
-                DecoderError::InvalidParam("AVIS prepared live bytes overflow".to_string())
-            })?;
+        let additional_live_bytes =
+            retained_live_bytes
+                .checked_add(frame_storage)
+                .ok_or_else(|| {
+                    DecoderError::InvalidParam("AVIS prepared live bytes overflow".to_string())
+                })?;
         // Track clone storage is already charged by `clone_with_budget`; only
         // the newly decoded frame is additional to the current ledger state.
         allocation_guard
@@ -1132,15 +1150,23 @@ impl StrictAvifSequenceDecoder {
         let refresh_plan =
             self.tracks
                 .state_refresh_plan(color_sample, alpha_sample, &self.limits)?;
-        let header_peak = self
-            .tracks
-            .strict_header_peak_plan(color_sample, alpha_sample, &self.limits)?;
+        let header_peak =
+            self.tracks
+                .strict_header_peak_plan(color_sample, alpha_sample, &self.limits)?;
         let clone_bytes = self.tracks.storage_bytes_for_clone()?.total()?;
-        clone_bytes.checked_add(refresh_plan).ok_or_else(|| {
-            DecoderError::InvalidParam("AVIS strict preparation preflight overflows".to_string())
-        })?.checked_add(header_peak).ok_or_else(|| {
-            DecoderError::InvalidParam("AVIS strict preparation preflight overflows".to_string())
-        })
+        clone_bytes
+            .checked_add(refresh_plan)
+            .ok_or_else(|| {
+                DecoderError::InvalidParam(
+                    "AVIS strict preparation preflight overflows".to_string(),
+                )
+            })?
+            .checked_add(header_peak)
+            .ok_or_else(|| {
+                DecoderError::InvalidParam(
+                    "AVIS strict preparation preflight overflows".to_string(),
+                )
+            })
     }
 }
 
@@ -1171,9 +1197,10 @@ impl SequenceCommitPlan {
                 "AVIS prepared frame is already taken".to_string(),
             ));
         }
-        let next_index = prepared.decoder.next_index.checked_add(1).ok_or_else(|| {
-            DecoderError::InvalidParam("AVIS frame index overflows".to_string())
-        })?;
+        let next_index =
+            prepared.decoder.next_index.checked_add(1).ok_or_else(|| {
+                DecoderError::InvalidParam("AVIS frame index overflows".to_string())
+            })?;
         let candidate = prepared.candidate_tracks.as_ref().ok_or_else(|| {
             DecoderError::InvalidParam("AVIS prepared frame was already committed".to_string())
         })?;
@@ -1221,18 +1248,15 @@ impl SequenceCommitPlan {
             .frame
             .charged_capacity_bytes
             .checked_add(old.state.charged_capacity_bytes)
-            .and_then(|bytes| {
-                bytes.checked_add(candidate_allocation.frame.charged_capacity_bytes)
-            })
-            .and_then(|bytes| {
-                bytes.checked_add(candidate_allocation.state.charged_capacity_bytes)
-            })
+            .and_then(|bytes| bytes.checked_add(candidate_allocation.frame.charged_capacity_bytes))
+            .and_then(|bytes| bytes.checked_add(candidate_allocation.state.charged_capacity_bytes))
             .ok_or_else(|| {
                 DecoderError::InvalidParam("AVIS sequence frame accounting overflows".to_string())
             })?;
-        let frame_without_owners = before.frame_live.checked_sub(remove_frame).ok_or_else(|| {
-            DecoderError::InvalidParam("AVIS sequence frame accounting underflows".to_string())
-        })?;
+        let frame_without_owners =
+            before.frame_live.checked_sub(remove_frame).ok_or_else(|| {
+                DecoderError::InvalidParam("AVIS sequence frame accounting underflows".to_string())
+            })?;
         let final_frame = frame_without_owners
             .checked_add(candidate_allocation.frame.charged_capacity_bytes)
             .and_then(|bytes| bytes.checked_add(target_state_bytes))
@@ -1243,13 +1267,17 @@ impl SequenceCommitPlan {
             .metadata_live
             .checked_sub(old.metadata.charged_capacity_bytes)
             .ok_or_else(|| {
-                DecoderError::InvalidParam("AVIS sequence metadata accounting underflows".to_string())
+                DecoderError::InvalidParam(
+                    "AVIS sequence metadata accounting underflows".to_string(),
+                )
             })?;
         let aggregate = final_metadata
             .checked_add(before.payload_live)
             .and_then(|bytes| bytes.checked_add(final_frame))
             .ok_or_else(|| {
-                DecoderError::InvalidParam("AVIS sequence aggregate accounting overflows".to_string())
+                DecoderError::InvalidParam(
+                    "AVIS sequence aggregate accounting overflows".to_string(),
+                )
             })?;
         let mut after = before;
         after.metadata_live = final_metadata;
@@ -1348,9 +1376,10 @@ impl<'a> PreparedSequenceFrame<'a> {
     fn commit_legacy(mut self) -> Result<(), DecoderError> {
         // Validate the cursor before taking or replacing either owner.  This
         // keeps an overflow failure fully transactional (P2 contract).
-        let next_index = self.decoder.next_index.checked_add(1).ok_or_else(|| {
-            DecoderError::InvalidParam("AVIS frame index overflows".to_string())
-        })?;
+        let next_index =
+            self.decoder.next_index.checked_add(1).ok_or_else(|| {
+                DecoderError::InvalidParam("AVIS frame index overflows".to_string())
+            })?;
         let candidate_ref = self.candidate_tracks.as_ref().ok_or_else(|| {
             DecoderError::InvalidParam("AVIS prepared frame was already committed".to_string())
         })?;
@@ -1376,7 +1405,9 @@ impl<'a> PreparedSequenceFrame<'a> {
                 "AVIS committed sequence state owners",
             )?;
         }
-        self.decoder.tracks_allocation.validate_release(&self.decoder.budget)?;
+        self.decoder
+            .tracks_allocation
+            .validate_release(&self.decoder.budget)?;
         if candidate_state_bytes > current_state_bytes {
             let state_delta = candidate_state_bytes - current_state_bytes;
             let token = self.decoder.budget.reserve_existing_bytes(
@@ -1407,7 +1438,11 @@ impl<'a> PreparedSequenceFrame<'a> {
         // is restored if an accounting authority reports an unexpected error.
         let old_state_ticket = self.decoder.tracks_allocation.state.charged_capacity_bytes;
         self.decoder.tracks_allocation.state.charged_capacity_bytes = 0;
-        if let Err(error) = self.decoder.tracks_allocation.release(&mut self.decoder.budget) {
+        if let Err(error) = self
+            .decoder
+            .tracks_allocation
+            .release(&mut self.decoder.budget)
+        {
             self.decoder.tracks_allocation.state.charged_capacity_bytes = old_state_ticket;
             return Err(error);
         }
@@ -1511,13 +1546,25 @@ impl PreparedSequenceCommit<'_> {
             .candidate_tracks
             .take()
             .expect("sequence commit token tracks must remain present");
-        prepared.decoder.tracks_allocation.metadata.charged_capacity_bytes = 0;
-        prepared.decoder.tracks_allocation.frame.charged_capacity_bytes = 0;
-        prepared.decoder.tracks_allocation.state.charged_capacity_bytes = 0;
-        prepared.decoder.budget.apply_prevalidated_sequence_commit(
-            self.plan.before,
-            self.plan.after,
-        );
+        prepared
+            .decoder
+            .tracks_allocation
+            .metadata
+            .charged_capacity_bytes = 0;
+        prepared
+            .decoder
+            .tracks_allocation
+            .frame
+            .charged_capacity_bytes = 0;
+        prepared
+            .decoder
+            .tracks_allocation
+            .state
+            .charged_capacity_bytes = 0;
+        prepared
+            .decoder
+            .budget
+            .apply_prevalidated_sequence_commit(self.plan.before, self.plan.after);
         prepared.decoder.tracks_allocation = candidate_allocation;
         prepared.decoder.tracks = candidate;
         prepared.decoder.next_index = self.plan.next_index;
@@ -1587,7 +1634,9 @@ fn frame_storage_bytes(frame: &DecodedFrame) -> Result<usize, DecoderError> {
                         DecoderError::InvalidParam("AVIS plane storage overflows".to_string())
                     })?,
             )
-            .ok_or_else(|| DecoderError::InvalidParam("AVIS frame storage overflows".to_string()))?;
+            .ok_or_else(|| {
+                DecoderError::InvalidParam("AVIS frame storage overflows".to_string())
+            })?;
     }
     Ok(bytes)
 }
@@ -1987,9 +2036,10 @@ pub fn decode_frame_bytes_strict_with_limits(
             ));
         }
         validate_native_derived_limits(data, info, limits)?;
-        let frame = super::decode_sample_transform_frame(data, info, Some(limits))?.ok_or_else(
-            || DecoderError::Bitstream("sato primary item could not be decoded".to_string()),
-        )?;
+        let frame =
+            super::decode_sample_transform_frame(data, info, Some(limits))?.ok_or_else(|| {
+                DecoderError::Bitstream("sato primary item could not be decoded".to_string())
+            })?;
         validate_native_frame_limits(&frame, limits)?;
         return Ok(crate::native::NativeDecodedFrame::new(frame, information));
     }

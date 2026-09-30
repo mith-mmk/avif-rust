@@ -10,13 +10,12 @@ use crate::av1::decode_luma_root_block_prefix_with_post_filter_state_and_entropy
 use crate::av1::{
     Av1CodecConfiguration, BlockFilterState, BlockModeProbe, CdfContext, ChromaSamplePosition,
     ColorConfig, FilmGrainParams, FrameBuffers, FrameDecodePlan, FrameHeader, FrameType,
-    GlobalMotionParams,
-    LoopFilterParams, MotionField, NativeDecodePlanAllocation, NativeFrameAllocation,
-    NativeTileGroupAllocation, PartitionProbe, PlaneBuffer, PlaneLayout, QuantState,
-    ReferenceFrameState, ResidualProbe, SegmentationParams, SequenceHeader, TileEntropyState,
-    TileGroup, alloc_coded_frame_buffers, alloc_coded_frame_buffers_with_budget, apply_film_grain,
-    apply_superres_horizontal, build_still_decode_plan, build_still_decode_plan_with_budget,
-    cdef_adjust_primary_strength, cdef_chroma_direction,
+    GlobalMotionParams, LoopFilterParams, MotionField, NativeDecodePlanAllocation,
+    NativeFrameAllocation, NativeTileGroupAllocation, PartitionProbe, PlaneBuffer, PlaneLayout,
+    QuantState, ReferenceFrameState, ResidualProbe, SegmentationParams, SequenceHeader,
+    TileEntropyState, TileGroup, alloc_coded_frame_buffers, alloc_coded_frame_buffers_with_budget,
+    apply_film_grain, apply_superres_horizontal, build_still_decode_plan,
+    build_still_decode_plan_with_budget, cdef_adjust_primary_strength, cdef_chroma_direction,
     cdef_filter_block_region_with_edge_mode_into_bit_depth_visible_scaled,
     cdef_find_direction_with_variance_visible, crop_frame_buffers_to_plan,
     crop_native_frame_buffers_to_plan, deblock_filter_edge_with_visible_bounds,
@@ -63,9 +62,9 @@ mod strict_grid_tests;
 
 pub use frame::{
     AvifSequenceDecoder, DecodedFrame, DecodedGainMapFrame, DecodedSequenceFrame,
-    PreparedSequenceCommit, PreparedSequenceFrame, StrictAvifSequenceDecoder,
-    decode_frame_bytes, decode_frame_bytes_strict, decode_frame_bytes_strict_with_limits,
-    decode_gain_map_frame_bytes, decode_sequence_frame_bytes, decode_sequence_frames_bytes,
+    PreparedSequenceCommit, PreparedSequenceFrame, StrictAvifSequenceDecoder, decode_frame_bytes,
+    decode_frame_bytes_strict, decode_frame_bytes_strict_with_limits, decode_gain_map_frame_bytes,
+    decode_sequence_frame_bytes, decode_sequence_frames_bytes,
 };
 #[cfg(test)]
 use frame::{resample_gain_map, unpremultiply_rgba8, unpremultiply_rgba16};
@@ -916,12 +915,8 @@ fn parse_av1_sequence_sample_headers_with_budget(
             frame_header_payload,
         } => (frame_header_payload, true),
     };
-    let prefix = crate::av1::parse_frame_prefix(
-        frame_payload,
-        &sequence,
-        &sequence_metadata,
-        references,
-    )?;
+    let prefix =
+        crate::av1::parse_frame_prefix(frame_payload, &sequence, &sequence_metadata, references)?;
     frame::validate_native_frame_prefix_geometry_limits(&sequence, &prefix, limits)?;
 
     if split {
@@ -983,12 +978,8 @@ pub(super) fn strict_sequence_header_peak_bytes(
             frame_header_payload: frame_payload,
         } => frame_payload,
     };
-    let prefix = crate::av1::parse_frame_prefix(
-        frame_payload,
-        &sequence,
-        &sequence_metadata,
-        references,
-    )?;
+    let prefix =
+        crate::av1::parse_frame_prefix(frame_payload, &sequence, &sequence_metadata, references)?;
     frame::validate_native_frame_prefix_geometry_limits(&sequence, &prefix, limits)?;
     let (width, height, _, _, _) = prefix.geometry();
     let width = usize::try_from(width)
@@ -1047,7 +1038,9 @@ pub(super) fn strict_sequence_header_peak_bytes(
                 .and_then(|tiles| value.checked_add(tiles))
         })
         .and_then(|value| value.checked_add(sample.len()))
-        .ok_or_else(|| DecoderError::InvalidParam("AVIS strict header peak overflows".to_string()))?;
+        .ok_or_else(|| {
+            DecoderError::InvalidParam("AVIS strict header peak overflows".to_string())
+        })?;
     // A split unit's final tile-data owner is no larger than the complete
     // sample.  A normal unit's copied OBU_FRAME is covered by the same bound.
     bytes = bytes.max(sample.len());
@@ -1511,7 +1504,9 @@ fn strict_motion_field_bytes(headers: &Av1Headers) -> Result<usize, DecoderError
             .frame_width
             .div_ceil(8)
             .checked_mul(2)
-            .ok_or_else(|| DecoderError::InvalidParam("AVIS motion columns overflow".to_string()))?,
+            .ok_or_else(|| {
+                DecoderError::InvalidParam("AVIS motion columns overflow".to_string())
+            })?,
     )
     .map_err(|_| DecoderError::InvalidParam("AVIS motion columns overflow".to_string()))?;
     let mi_rows = usize::try_from(
@@ -1616,13 +1611,16 @@ fn decode_still_frame_with_native_budget_and_state(
     collect_motion: bool,
     budget: &mut crate::container::DecodeBudget,
     limits: &crate::limits::NativeDecodeLimits,
-) -> Result<(
-    DecodedFrame,
-    Vec<CdfContext>,
-    Option<MotionField>,
-    NativeFrameAllocation,
-    NativeSequenceUnitAllocation,
-), DecoderError> {
+) -> Result<
+    (
+        DecodedFrame,
+        Vec<CdfContext>,
+        Option<MotionField>,
+        NativeFrameAllocation,
+        NativeSequenceUnitAllocation,
+    ),
+    DecoderError,
+> {
     validate_public_decode_tools(headers)?;
     let planned_cdf_bytes = if collect_cdf {
         headers
@@ -1631,7 +1629,9 @@ fn decode_still_frame_with_native_budget_and_state(
             .tiles
             .len()
             .checked_mul(std::mem::size_of::<CdfContext>())
-            .ok_or_else(|| DecoderError::InvalidParam("AVIS CDF allocation overflows".to_string()))?
+            .ok_or_else(|| {
+                DecoderError::InvalidParam("AVIS CDF allocation overflows".to_string())
+            })?
     } else {
         0
     };
@@ -1817,10 +1817,8 @@ fn decode_still_frame_with_native_budget_and_state(
             "AVIS decoded colour metadata exceeded its strict preflight".to_string(),
         ));
     }
-    let color_delta = entropy_allocation
-        .color_information
-        .charged_capacity_bytes
-        - actual_color_bytes;
+    let color_delta =
+        entropy_allocation.color_information.charged_capacity_bytes - actual_color_bytes;
     budget.release_class_bytes(crate::allocation::AllocationClass::Frame, color_delta)?;
     entropy_allocation.color_information.charged_capacity_bytes = actual_color_bytes;
     if let Err(error) =
@@ -1877,23 +1875,20 @@ fn decode_still_frame_with_native_budget_and_state(
         return Err(error);
     }
     let mut strict_restoration_workspace = if let Some(boundary) = strict_restoration_owner.take() {
-        let snapshot_plan = match StrictRestorationSnapshotPlan::for_frame(
-            &frame,
-            &post_filter_state,
-            &[1, 2],
-        ) {
-            Ok(plan) => plan,
-            Err(error) => {
-                drop(frame);
-                boundary.release(budget)?;
-                post_filter_state.release(budget)?;
-                drop(final_cdfs);
-                drop(motion_field);
-                entropy_allocation.release(budget)?;
-                allocation.release(budget)?;
-                return Err(error);
-            }
-        };
+        let snapshot_plan =
+            match StrictRestorationSnapshotPlan::for_frame(&frame, &post_filter_state, &[1, 2]) {
+                Ok(plan) => plan,
+                Err(error) => {
+                    drop(frame);
+                    boundary.release(budget)?;
+                    post_filter_state.release(budget)?;
+                    drop(final_cdfs);
+                    drop(motion_field);
+                    entropy_allocation.release(budget)?;
+                    allocation.release(budget)?;
+                    return Err(error);
+                }
+            };
         match StrictRestorationWorkspaceOwner::admit(boundary, snapshot_plan, &frame, budget) {
             Ok(owner) => Some(owner),
             Err(error) => {
@@ -1909,77 +1904,76 @@ fn decode_still_frame_with_native_budget_and_state(
     } else {
         None
     };
-    let restoration_unit_size = headers.decode_plan.superblock_size.checked_shl(u32::from(
-        headers.frame.restoration.unit_shift,
-    ));
-    let mut strict_restoration_execution =
-        if let Some(workspace) = strict_restoration_workspace.take() {
-            let restoration_unit_size = match restoration_unit_size {
-                    Some(size) => size,
-                    None => {
-                        let error = release_strict_restoration_workspace_on_error(
-                            workspace,
-                            budget,
-                            DecoderError::InvalidParam(
-                                "native AV1 restoration unit size overflows".to_string(),
-                            ),
-                        );
-                        drop(frame);
-                        post_filter_state.release(budget)?;
-                        drop(final_cdfs);
-                        drop(motion_field);
-                        entropy_allocation.release(budget)?;
-                        allocation.release(budget)?;
-                        return Err(error);
-                    }
-                };
-            let execution_plan =
-                match StrictRestorationExecutionScratchPlan::for_frame(
-                    &frame,
-                    &post_filter_state,
-                    &[1, 2],
-                    restoration_unit_size,
-                ) {
-                    Ok(plan) => plan,
-                    Err(error) => {
-                        let error = release_strict_restoration_workspace_on_error(
-                            workspace, budget, error,
-                        );
-                        drop(frame);
-                        post_filter_state.release(budget)?;
-                        drop(final_cdfs);
-                        drop(motion_field);
-                        entropy_allocation.release(budget)?;
-                        allocation.release(budget)?;
-                        return Err(error);
-                    }
-                };
-            match StrictRestorationExecutionScratchOwner::admit(
-                workspace,
-                execution_plan,
-                &frame,
-                &post_filter_state,
-                &[1, 2],
-                restoration_unit_size,
-                budget,
-            ) {
-                Ok(owner) => Some(owner),
-                Err(error) => {
-                    drop(frame);
-                    post_filter_state.release(budget)?;
-                    drop(final_cdfs);
-                    drop(motion_field);
-                    entropy_allocation.release(budget)?;
-                    allocation.release(budget)?;
-                    return Err(error);
-                }
+    let restoration_unit_size = headers
+        .decode_plan
+        .superblock_size
+        .checked_shl(u32::from(headers.frame.restoration.unit_shift));
+    let mut strict_restoration_execution = if let Some(workspace) =
+        strict_restoration_workspace.take()
+    {
+        let restoration_unit_size = match restoration_unit_size {
+            Some(size) => size,
+            None => {
+                let error = release_strict_restoration_workspace_on_error(
+                    workspace,
+                    budget,
+                    DecoderError::InvalidParam(
+                        "native AV1 restoration unit size overflows".to_string(),
+                    ),
+                );
+                drop(frame);
+                post_filter_state.release(budget)?;
+                drop(final_cdfs);
+                drop(motion_field);
+                entropy_allocation.release(budget)?;
+                allocation.release(budget)?;
+                return Err(error);
             }
-        } else {
-            None
         };
+        let execution_plan = match StrictRestorationExecutionScratchPlan::for_frame(
+            &frame,
+            &post_filter_state,
+            &[1, 2],
+            restoration_unit_size,
+        ) {
+            Ok(plan) => plan,
+            Err(error) => {
+                let error = release_strict_restoration_workspace_on_error(workspace, budget, error);
+                drop(frame);
+                post_filter_state.release(budget)?;
+                drop(final_cdfs);
+                drop(motion_field);
+                entropy_allocation.release(budget)?;
+                allocation.release(budget)?;
+                return Err(error);
+            }
+        };
+        match StrictRestorationExecutionScratchOwner::admit(
+            workspace,
+            execution_plan,
+            &frame,
+            &post_filter_state,
+            &[1, 2],
+            restoration_unit_size,
+            budget,
+        ) {
+            Ok(owner) => Some(owner),
+            Err(error) => {
+                drop(frame);
+                post_filter_state.release(budget)?;
+                drop(final_cdfs);
+                drop(motion_field);
+                entropy_allocation.release(budget)?;
+                allocation.release(budget)?;
+                return Err(error);
+            }
+        }
+    } else {
+        None
+    };
     if let Some(owner) = strict_restoration_execution.as_mut() {
-        let restoration_unit_size = restoration_unit_size
-            .expect("strict restoration owner requires a valid unit size");
+        let restoration_unit_size =
+            restoration_unit_size.expect("strict restoration owner requires a valid unit size");
         apply_loop_restoration_stage_with_strict_workspace(
             &mut frame,
             &post_filter_state,
@@ -3465,7 +3459,8 @@ impl StrictCdefIndexPlan {
         let len = units_width.checked_mul(units_height).ok_or_else(|| {
             DecoderError::InvalidParam("native AV1 CDEF index count overflows".to_string())
         })?;
-        let requested_bytes = crate::allocation::capacity_bytes::<u8>(len, STRICT_CDEF_INDEX_LABEL)?;
+        let requested_bytes =
+            crate::allocation::capacity_bytes::<u8>(len, STRICT_CDEF_INDEX_LABEL)?;
         Ok(Self {
             units_width,
             units_height,
@@ -3496,7 +3491,9 @@ impl StrictCdefIndexOwner {
             DecoderError::InvalidParam("native AV1 CDEF strength mask overflows".to_string())
         })?)
         .checked_sub(1)
-        .ok_or_else(|| DecoderError::InvalidParam("native AV1 CDEF strength mask underflows".to_string()))?;
+        .ok_or_else(|| {
+            DecoderError::InvalidParam("native AV1 CDEF strength mask underflows".to_string())
+        })?;
         let (candidate, ticket) = admit_fresh_with(
             budget,
             plan.len,
@@ -3506,12 +3503,9 @@ impl StrictCdefIndexOwner {
         )?;
         let mut indices = candidate.into_vec();
         indices.resize(plan.len, u8::MAX);
-        if let Err(error) = populate_strict_cdef_indices(
-            &mut indices,
-            plan.units_width,
-            unit_mask,
-            state,
-        ) {
+        if let Err(error) =
+            populate_strict_cdef_indices(&mut indices, plan.units_width, unit_mask, state)
+        {
             drop(indices);
             let mut ticket = ticket;
             if let Err(release_error) = budget.release_token(&mut ticket) {
@@ -3551,12 +3545,9 @@ impl StrictCdefScratchPlan {
                 "native AV1 CDEF scratch dimensions must be nonzero".to_string(),
             ));
         }
-        let blocks_width = width
-            .checked_add(7)
-            .map(|value| value / 8)
-            .ok_or_else(|| {
-                DecoderError::InvalidParam("native AV1 CDEF block width overflows".to_string())
-            })?;
+        let blocks_width = width.checked_add(7).map(|value| value / 8).ok_or_else(|| {
+            DecoderError::InvalidParam("native AV1 CDEF block width overflows".to_string())
+        })?;
         let blocks_height = height
             .checked_add(7)
             .map(|value| value / 8)
@@ -3572,10 +3563,8 @@ impl StrictCdefScratchPlan {
             .ok_or_else(|| {
                 DecoderError::InvalidParam("native AV1 CDEF mask count overflows".to_string())
             })?;
-        let mask_bytes = crate::allocation::capacity_bytes::<u64>(
-            mask_words,
-            STRICT_CDEF_MASK_LABEL,
-        )?;
+        let mask_bytes =
+            crate::allocation::capacity_bytes::<u64>(mask_words, STRICT_CDEF_MASK_LABEL)?;
         let origins_bytes = crate::allocation::capacity_bytes::<StrictCdefOrigin>(
             total_blocks,
             STRICT_CDEF_ORIGINS_LABEL,
@@ -3619,7 +3608,8 @@ impl StrictCdefScratchOwner {
                 "native AV1 CDEF scratch plan is stale".to_string(),
             ));
         }
-        if let Err(error) = validate_strict_cdef_filter_endpoints(state, visible_width, visible_height)
+        if let Err(error) =
+            validate_strict_cdef_filter_endpoints(state, visible_width, visible_height)
         {
             let index_owner = index_owner;
             index_owner.release(budget)?;
@@ -3803,10 +3793,7 @@ struct StrictCdefSnapshotPlan {
 }
 
 impl StrictCdefSnapshotPlan {
-    fn for_frame(
-        frame: &DecodedFrame,
-        active_planes: [bool; 4],
-    ) -> Result<Self, DecoderError> {
+    fn for_frame(frame: &DecodedFrame, active_planes: [bool; 4]) -> Result<Self, DecoderError> {
         if frame.buffers.planes.len() > 4 {
             return Err(DecoderError::InvalidParam(
                 "native AV1 CDEF snapshot plane count exceeds owner width".to_string(),
@@ -3980,11 +3967,8 @@ impl StrictCdefSnapshotOwner {
                 .expect("CDEF snapshot candidate must be present");
             let source = &frame.buffers.planes[plane_index].samples;
             if candidate.values_mut().capacity() < source.len() {
-                let cleanup = release_strict_cdef_snapshot_candidates(
-                    &mut candidates,
-                    &mut tickets,
-                    budget,
-                );
+                let cleanup =
+                    release_strict_cdef_snapshot_candidates(&mut candidates, &mut tickets, budget);
                 let block_cleanup = direction_owner.release(budget);
                 let error = DecoderError::InvalidParam(
                     "native AV1 CDEF snapshot candidate is too small".to_string(),
@@ -4136,12 +4120,18 @@ fn validate_strict_cdef_filter_endpoints(
     visible_height: usize,
 ) -> Result<(), DecoderError> {
     for block in &state.block_filter_states {
-        let end_x = block.x.checked_add(block.block_size.width()).ok_or_else(|| {
-            DecoderError::InvalidParam("native AV1 CDEF block x endpoint overflows".to_string())
-        })?;
-        let end_y = block.y.checked_add(block.block_size.height()).ok_or_else(|| {
-            DecoderError::InvalidParam("native AV1 CDEF block y endpoint overflows".to_string())
-        })?;
+        let end_x = block
+            .x
+            .checked_add(block.block_size.width())
+            .ok_or_else(|| {
+                DecoderError::InvalidParam("native AV1 CDEF block x endpoint overflows".to_string())
+            })?;
+        let end_y = block
+            .y
+            .checked_add(block.block_size.height())
+            .ok_or_else(|| {
+                DecoderError::InvalidParam("native AV1 CDEF block y endpoint overflows".to_string())
+            })?;
         if block.x > visible_width || block.y > visible_height {
             return Err(DecoderError::InvalidParam(
                 "native AV1 CDEF block origin exceeds visible frame".to_string(),
@@ -4198,7 +4188,9 @@ fn populate_strict_cdef_scratch(
                 let word = bit / 64;
                 let offset = bit % 64;
                 let slot = mask.get_mut(word).ok_or_else(|| {
-                    DecoderError::InvalidParam("native AV1 CDEF mask index is out of range".to_string())
+                    DecoderError::InvalidParam(
+                        "native AV1 CDEF mask index is out of range".to_string(),
+                    )
                 })?;
                 *slot |= 1u64 << offset;
             }
@@ -4224,7 +4216,15 @@ fn populate_strict_cdef_scratch(
             let value = indices.get(index).copied().ok_or_else(|| {
                 DecoderError::InvalidParam("native AV1 CDEF unit index is out of range".to_string())
             })?;
-            origins.push((x, y, if value == u8::MAX { 0 } else { usize::from(value) }));
+            origins.push((
+                x,
+                y,
+                if value == u8::MAX {
+                    0
+                } else {
+                    usize::from(value)
+                },
+            ));
         }
     }
     Ok(())
@@ -4283,7 +4283,8 @@ fn apply_cdef_stage_with_budget(
     })?;
     let visible_luma_width = frame.width.min(luma.layout.width);
     let visible_luma_height = frame.height.min(luma.layout.height);
-    let plan = StrictCdefIndexPlan::for_visible_dimensions(visible_luma_width, visible_luma_height)?;
+    let plan =
+        StrictCdefIndexPlan::for_visible_dimensions(visible_luma_width, visible_luma_height)?;
     let index_owner = StrictCdefIndexOwner::admit(plan, frame_header.cdef.bits, state, budget)?;
     if !cdef_indices_have_active_strengths(&frame_header.cdef, &index_owner.indices) {
         return index_owner.release(budget);
@@ -4343,15 +4344,11 @@ fn apply_cdef_stage_with_budget(
             return Err(error);
         }
     };
-    let snapshot_owner = match StrictCdefSnapshotOwner::admit(
-        direction_owner,
-        snapshot_plan,
-        frame,
-        budget,
-    ) {
-        Ok(owner) => owner,
-        Err(error) => return Err(error),
-    };
+    let snapshot_owner =
+        match StrictCdefSnapshotOwner::admit(direction_owner, snapshot_plan, frame, budget) {
+            Ok(owner) => owner,
+            Err(error) => return Err(error),
+        };
     apply_cdef_stage_with_optional_indices(
         frame,
         frame_header,
@@ -4444,49 +4441,62 @@ fn apply_cdef_stage_with_optional_indices(
         }
         origins
     });
-    let cdef_block_origins: &[StrictCdefOrigin] = owned_cdef_origins
-        .as_deref()
-        .unwrap_or(&[]);
+    let cdef_block_origins: &[StrictCdefOrigin] = owned_cdef_origins.as_deref().unwrap_or(&[]);
     let owned_cdef_blocks = strict_blocks.is_none().then(|| {
         let mut cdef_blocks = Vec::with_capacity(cdef_block_origins.len());
-    #[cfg(not(target_family = "wasm"))]
-    if post_filter_parallel_work_is_large_enough(frame)
-        && cdef_block_origins.len() >= PARALLEL_CDEF_DIRECTION_MIN_BLOCKS
-    {
-        let worker_count = std::thread::available_parallelism()
-            .map(usize::from)
-            .unwrap_or(1)
-            .min(MAX_CDEF_DIRECTION_WORKERS)
-            .min(cdef_block_origins.len());
-        let chunk_size = cdef_block_origins.len().div_ceil(worker_count);
-        let luma_samples = &frame.buffers.planes[0].samples;
-        std::thread::scope(|scope| {
-            let mut workers = Vec::with_capacity(worker_count);
-            for origins in cdef_block_origins.chunks(chunk_size) {
-                workers.push(scope.spawn(move || {
-                    origins
-                        .iter()
-                        .map(|&(x, y, index)| {
-                            cdef_direction_block(
-                                luma_samples,
-                                luma_width,
-                                luma_height,
-                                luma_width,
-                                luma_height,
-                                cdef_coeff_shift,
-                                x,
-                                y,
-                                index,
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                }));
+        #[cfg(not(target_family = "wasm"))]
+        if post_filter_parallel_work_is_large_enough(frame)
+            && cdef_block_origins.len() >= PARALLEL_CDEF_DIRECTION_MIN_BLOCKS
+        {
+            let worker_count = std::thread::available_parallelism()
+                .map(usize::from)
+                .unwrap_or(1)
+                .min(MAX_CDEF_DIRECTION_WORKERS)
+                .min(cdef_block_origins.len());
+            let chunk_size = cdef_block_origins.len().div_ceil(worker_count);
+            let luma_samples = &frame.buffers.planes[0].samples;
+            std::thread::scope(|scope| {
+                let mut workers = Vec::with_capacity(worker_count);
+                for origins in cdef_block_origins.chunks(chunk_size) {
+                    workers.push(scope.spawn(move || {
+                        origins
+                            .iter()
+                            .map(|&(x, y, index)| {
+                                cdef_direction_block(
+                                    luma_samples,
+                                    luma_width,
+                                    luma_height,
+                                    luma_width,
+                                    luma_height,
+                                    cdef_coeff_shift,
+                                    x,
+                                    y,
+                                    index,
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    }));
+                }
+                for worker in workers {
+                    cdef_blocks.extend(worker.join().expect("CDEF direction worker panicked"));
+                }
+            });
+        } else {
+            for &(x, y, index) in cdef_block_origins {
+                cdef_blocks.push(cdef_direction_block(
+                    &frame.buffers.planes[0].samples,
+                    luma_width,
+                    luma_height,
+                    luma_width,
+                    luma_height,
+                    cdef_coeff_shift,
+                    x,
+                    y,
+                    index,
+                ));
             }
-            for worker in workers {
-                cdef_blocks.extend(worker.join().expect("CDEF direction worker panicked"));
-            }
-        });
-    } else {
+        }
+        #[cfg(target_family = "wasm")]
         for &(x, y, index) in cdef_block_origins {
             cdef_blocks.push(cdef_direction_block(
                 &frame.buffers.planes[0].samples,
@@ -4500,21 +4510,6 @@ fn apply_cdef_stage_with_optional_indices(
                 index,
             ));
         }
-    }
-    #[cfg(target_family = "wasm")]
-    for &(x, y, index) in cdef_block_origins {
-        cdef_blocks.push(cdef_direction_block(
-            &frame.buffers.planes[0].samples,
-            luma_width,
-            luma_height,
-            luma_width,
-            luma_height,
-            cdef_coeff_shift,
-            x,
-            y,
-            index,
-        ));
-    }
         cdef_blocks
     });
     let cdef_blocks: &[StrictCdefDirectionBlock] = strict_blocks
@@ -4994,7 +4989,8 @@ fn apply_loop_restoration_stage_with_source(
     if post_filter_parallel_work_is_large_enough(frame) {
         std::thread::scope(|scope| {
             for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
-                let boundaries = boundaries.and_then(|boundaries| boundaries.for_plane(plane_index));
+                let boundaries =
+                    boundaries.and_then(|boundaries| boundaries.for_plane(plane_index));
                 let visible_width = frame
                     .width
                     .div_ceil(1usize << usize::from(plane.layout.subsampling_x));
@@ -5121,8 +5117,7 @@ impl StrictRestorationBoundaryPlan {
         let mut sample_bytes = [0; 4];
         let mut requested_bytes = 0usize;
         for (plane_index, plane) in frame.buffers.planes.iter().enumerate() {
-            let (metadata_len, sample_len) =
-                strict_restoration_boundary_lengths(frame, plane)?;
+            let (metadata_len, sample_len) = strict_restoration_boundary_lengths(frame, plane)?;
             let metadata = crate::allocation::capacity_bytes::<StrictRestorationBoundaryMeta>(
                 metadata_len,
                 STRICT_RESTORATION_BOUNDARY_META_LABEL,
@@ -5856,12 +5851,11 @@ impl StrictRestorationExecutionScratchPlan {
                         )
                     })?;
             }
-            let patch_metadata_bytes = crate::allocation::capacity_bytes::<
-                StrictRestorationPatchMeta,
-            >(
-                patch_metadata_lengths[plane_index],
-                STRICT_RESTORATION_SCRATCH_LABELS[plane_index][5],
-            )?;
+            let patch_metadata_bytes =
+                crate::allocation::capacity_bytes::<StrictRestorationPatchMeta>(
+                    patch_metadata_lengths[plane_index],
+                    STRICT_RESTORATION_SCRATCH_LABELS[plane_index][5],
+                )?;
             let patch_sample_bytes = crate::allocation::capacity_bytes::<u16>(
                 patch_sample_lengths[plane_index],
                 STRICT_RESTORATION_SCRATCH_LABELS[plane_index][6],
@@ -6104,9 +6098,9 @@ impl StrictRestorationExecutionScratchOwner {
                         budget,
                         error,
                     );
-                        return Err(release_strict_restoration_workspace_on_error(
-                            workspace, budget, error,
-                        ));
+                    return Err(release_strict_restoration_workspace_on_error(
+                        workspace, budget, error,
+                    ));
                 }
                 candidate.values_mut().resize(lengths[scratch_index], 0);
             }
@@ -6134,12 +6128,15 @@ impl StrictRestorationExecutionScratchOwner {
                         workspace, budget, error,
                     ));
                 }
-                candidate.values_mut().resize(patch_lengths[0], StrictRestorationPatchMeta {
-                    row: 0,
-                    start_x: 0,
-                    offset: 0,
-                    len: 0,
-                });
+                candidate.values_mut().resize(
+                    patch_lengths[0],
+                    StrictRestorationPatchMeta {
+                        row: 0,
+                        start_x: 0,
+                        offset: 0,
+                        len: 0,
+                    },
+                );
             }
             if patch_lengths[1] > 0 {
                 let candidate = patch_samples_candidates[plane_index]
@@ -6231,10 +6228,8 @@ impl StrictRestorationExecutionScratchOwner {
 fn release_strict_restoration_scratch_candidates(
     candidates: &mut [[Option<crate::allocation::FreshReplacement<i32>>; 5]; 4],
     tickets: &mut [[Option<AllocationTicket>; 7]; 4],
-    patch_metadata_candidates: &mut [
-        Option<crate::allocation::FreshReplacement<StrictRestorationPatchMeta>>;
-        4
-    ],
+    patch_metadata_candidates: &mut [Option<crate::allocation::FreshReplacement<StrictRestorationPatchMeta>>;
+             4],
     patch_samples_candidates: &mut [Option<crate::allocation::FreshReplacement<u16>>; 4],
     budget: &mut crate::container::DecodeBudget,
     error: DecoderError,
@@ -6302,13 +6297,12 @@ impl StrictRestorationBoundaryOwner {
             ));
         }
         budget.check_additional_frame(plan.requested_bytes)?;
-        let mut metadata_candidates: [Option<crate::allocation::FreshReplacement<
-            StrictRestorationBoundaryMeta,
-        >>; 4] = std::array::from_fn(|_| None);
+        let mut metadata_candidates: [Option<
+            crate::allocation::FreshReplacement<StrictRestorationBoundaryMeta>,
+        >; 4] = std::array::from_fn(|_| None);
         let mut sample_candidates: [Option<crate::allocation::FreshReplacement<u16>>; 4] =
             std::array::from_fn(|_| None);
-        let mut metadata_tickets: [Option<AllocationTicket>; 4] =
-            std::array::from_fn(|_| None);
+        let mut metadata_tickets: [Option<AllocationTicket>; 4] = std::array::from_fn(|_| None);
         let mut sample_tickets: [Option<AllocationTicket>; 4] = std::array::from_fn(|_| None);
         for plane_index in 0..plan.plane_count {
             let metadata = match admit_fresh_with(
@@ -6434,7 +6428,12 @@ fn release_strict_restoration_candidates(
         drop(metadata[plane_index].take());
     }
     let mut first_error = None;
-    for ticket in sample_tickets.iter_mut().rev().chain(metadata_tickets.iter_mut().rev()).flatten() {
+    for ticket in sample_tickets
+        .iter_mut()
+        .rev()
+        .chain(metadata_tickets.iter_mut().rev())
+        .flatten()
+    {
         if let Err(release_error) = budget.release_token(ticket) {
             first_error.get_or_insert(release_error);
         }
@@ -6654,8 +6653,7 @@ fn patch_restoration_stripe_boundaries_source(
         if target_row >= height {
             return;
         }
-        let Some(samples) = restoration_boundary_samples(boundaries, boundary_row)
-        else {
+        let Some(samples) = restoration_boundary_samples(boundaries, boundary_row) else {
             return;
         };
         let start = target_row * width + start_x;
@@ -6737,14 +6735,10 @@ fn apply_loop_restoration_stage_with_strict_workspace(
                     .metadata
                     .get(plane_index)
                     .and_then(Option::as_deref)
-                    .zip(
-                        boundary
-                            .samples
-                            .get(plane_index)
-                            .and_then(Option::as_deref),
-                    )
-                    .map(|(metadata, samples)| {
-                        RestorationBoundaryInput::Flat { metadata, samples }
+                    .zip(boundary.samples.get(plane_index).and_then(Option::as_deref))
+                    .map(|(metadata, samples)| RestorationBoundaryInput::Flat {
+                        metadata,
+                        samples,
                     });
                 let visible_width =
                     width.div_ceil(1usize << usize::from(plane.layout.subsampling_x));
@@ -6791,8 +6785,12 @@ fn apply_loop_restoration_stage_with_strict_workspace(
                     .and_then(Option::as_deref),
             )
             .map(|(metadata, samples)| RestorationBoundaryInput::Flat { metadata, samples });
-        let visible_width = frame.width.div_ceil(1usize << usize::from(plane.layout.subsampling_x));
-        let visible_height = frame.height.div_ceil(1usize << usize::from(plane.layout.subsampling_y));
+        let visible_width = frame
+            .width
+            .div_ceil(1usize << usize::from(plane.layout.subsampling_x));
+        let visible_height = frame
+            .height
+            .div_ceil(1usize << usize::from(plane.layout.subsampling_y));
         apply_loop_restoration_plane_strict(
             plane,
             plane_index,
@@ -6880,7 +6878,9 @@ fn apply_loop_restoration_plane_strict(
                 let chunk_width = 64.min(unit_width - chunk_x);
                 match unit.restoration_type {
                     1 => {
-                        let Some(mut filters) = unit.wiener else { break };
+                        let Some(mut filters) = unit.wiener else {
+                            break;
+                        };
                         if plane_index > 0 {
                             filters[0][0] = 0;
                             filters[1][0] = 0;
@@ -6952,8 +6952,14 @@ fn apply_loop_restoration_plane_strict(
                 restore_restoration_stripe_boundaries_strict(
                     source,
                     plane.layout.width,
-                    scratch.patch_metadata.as_ref().expect("strict patch metadata"),
-                    scratch.patch_samples.as_ref().expect("strict patch samples"),
+                    scratch
+                        .patch_metadata
+                        .as_ref()
+                        .expect("strict patch metadata"),
+                    scratch
+                        .patch_samples
+                        .as_ref()
+                        .expect("strict patch samples"),
                     patch_count,
                 );
             }
