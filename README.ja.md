@@ -12,7 +12,7 @@
 インターフェースを提供します。
 
 現在のreleaseは
-[`avif-rust 0.0.7`](https://crates.io/crates/avif-rust/0.0.7)です。
+[`avif-rust 0.0.8`](https://crates.io/crates/avif-rust/0.0.8)です。
 
 実行時にFFmpeg、libaom、その他のネイティブcodecは呼び出しません。これらは
 テスト用oracleの生成と検証にのみ使用します。
@@ -64,7 +64,7 @@ cargo add avif-rust
 
 ```toml
 [dependencies]
-avif-rust = "0.0.7"
+avif-rust = "0.0.8"
 ```
 
 最小サポートRustバージョン（MSRV）はRust 1.88です。
@@ -125,7 +125,9 @@ itemと`GainMapMetadata`を取得できます。既定のbase画像デコード�
 
 ## 検証
 
-開発者向けの検証ファイルは公開crate archiveに含まれません。独立した
+公開crate archiveには、ライブラリの単体テストに必要な画像と、その出典・
+ライセンス情報を記録した`tests/FIXTURES.md`を含みます。結合テスト、外部oracle
+データ、開発者向けツールはrepositoryのみで提供します。独立した
 [`avif-rust` repository](https://github.com/mith-mmk/avif-rust)をcloneし、通常の
 crate gateはそのrootから実行します。
 

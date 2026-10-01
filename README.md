@@ -11,7 +11,7 @@ decoder. It provides direct RGBA helpers, access to decoded AV1 source planes,
 and a callback interface compatible with [`wml2`](https://github.com/mith-mmk/wml2-on-rust).
 
 The current release is
-[`avif-rust 0.0.7`](https://crates.io/crates/avif-rust/0.0.7).
+[`avif-rust 0.0.8`](https://crates.io/crates/avif-rust/0.0.8).
 
 The crate does not call FFmpeg, libaom, or another native codec at runtime.
 Those implementations are used only to generate and verify test oracles.
@@ -64,7 +64,7 @@ Or add the dependency manually:
 
 ```toml
 [dependencies]
-avif-rust = "0.0.7"
+avif-rust = "0.0.8"
 ```
 
 The minimum supported Rust version (MSRV) is Rust 1.88.
@@ -132,8 +132,10 @@ scalar gain samples.
 
 ## Validation
 
-The contributor validation files are not included in the published crate
-archive. Clone the independent
+The published crate archive includes the fixtures needed by library unit tests
+and their source and license information in `tests/FIXTURES.md`. Integration
+tests, external oracle data, and contributor tools remain repository-only.
+Clone the independent
 [`avif-rust` repository](https://github.com/mith-mmk/avif-rust) and run the
 normal crate gates from its root:
 

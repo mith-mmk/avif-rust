@@ -2,6 +2,22 @@
 
 All notable changes to this crate are documented in this file.
 
+## 0.0.8 - 2026-10-01
+
+### Fixed
+
+- Library and integration tests use bundled AVIF fixtures instead of requiring
+  a sibling WML2 checkout. Library test fixtures and their source and license
+  information are included in the published crate archive.
+- Updated formatting and equivalent implementation patterns to pass current
+  Clippy checks while retaining Rust 1.88 compatibility.
+
+### Compatibility
+
+- Public APIs and supported decoding profiles remain unchanged.
+- Native planes and RGBA output remain byte-identical for the bundled fixtures;
+  decoding benchmarks showed no performance regression.
+
 ## 0.0.7 - 2026-08-31
 
 ### Added
