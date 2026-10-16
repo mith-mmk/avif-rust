@@ -62,6 +62,6 @@ a path copy and a Git copy are different Rust types even at the same version.
 A consumer mixing registry and Git codecs must consistently patch all uses of
 the shared package, or use a complete registry or complete Git dependency graph.
 
-The initial publication order is avif-image-buffer 0.1.0, avifenc-rust 0.0.8,
-then avif-rust 0.0.9. Publication requires separate authorization; packaging and
+The initial publication order is avif-image-buffer 0.1.0, avifenc-rust 0.1.0,
+then avif-rust 0.1.0. Publication requires separate authorization; packaging and
 `cargo publish --dry-run` do not create a release or reserve the crate name.
