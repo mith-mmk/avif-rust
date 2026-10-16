@@ -1,0 +1,10 @@
+[package]
+name = "avif-image-buffer"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "Codec-independent checked integer image buffers and immutable views"
+publish = false
+
+[dependencies]

@@ -21,6 +21,7 @@ include = [
 
 [dependencies]
 bin-rs = { version = "0.0.10", features = ["stream", "util"] }
+avif-image-buffer = { version = "0.1.0", path = "crates/avif-image-buffer" }
 
 [lints.clippy]
 # AV1 syntax and reconstruction functions intentionally mirror normative
@@ -31,6 +32,8 @@ type_complexity = "allow"
 
 # Keep this nested repository independent when it is checked out inside WML2.
 [workspace]
+members = ["crates/avif-image-buffer"]
+resolver = "2"
 
 [[bench]]
 name = "decode"

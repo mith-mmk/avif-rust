@@ -12,6 +12,10 @@ pub mod decoder;
 mod error;
 mod icc;
 mod image;
+pub mod image_ex;
+/// Codec-independent shared pixel model; identical to the encoder's buffer API.
+pub use avif_image_buffer as buffer;
+pub use image_ex::{AvifSourceContext, NativeImageEx, decode_native_ex};
 pub mod limits;
 mod native;
 pub mod obu;
