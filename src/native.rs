@@ -184,6 +184,21 @@ impl NativeDecodedFrame {
         self.frame
     }
 
+    /// Transfers the native frame and the complete bounded source context.
+    ///
+    /// Unlike [`Self::into_frame_and_rich`], this retains the accounting,
+    /// primary item type and ordered primary properties in addition to rich
+    /// metadata. It moves the existing owners without parsing, decoding,
+    /// copying samples or applying color/alpha/precision conversions.
+    ///
+    /// Retaining this context does not establish that an encoder can preserve
+    /// it. Callers must separately check preservation requirements and writer
+    /// capabilities before encoding; unknown property records do not imply
+    /// that their original payloads are available.
+    pub fn into_parts(self) -> (DecodedFrame, NativeAvifInformation) {
+        (self.frame, self.information)
+    }
+
     /// Transfers the decoded frame and its rich container metadata to a
     /// consumer which needs to build a typed native representation.  The
     /// bounded decoder has already performed the parse and validation; this

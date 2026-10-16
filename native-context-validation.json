@@ -1,0 +1,26 @@
+{
+  "baseline": "ecc37b220daf37b24134aacac0bc12723aadc357",
+  "scope": "Additive NativeDecodedFrame::into_parts plus native/public API compatibility checks. Not shared-buffer integration or preservation preflight.",
+  "native_test_harness_passed": 33,
+  "failed": 0,
+  "ignored": 0,
+  "conditional_early_return_not_verified": [
+    "native_prefix::normal_prefix_resumes_with_the_same_public_frame_geometry: optional /workspace/samples/WML2Viewer.avif missing"
+  ],
+  "new_native_context_tests_executed": 3,
+  "strict_clippy": "Three inherited warnings fail -Dwarnings on both baseline and checkpoint",
+  "materialization": "Both official transfers failed with download failed; no local spec files. Official Library read returned complete551/170-line documents.",
+  "source_sha256": {
+    "src/native.rs": "6c5de4d56435b7c8905f620ced3c7246a76462a4f511b315f8d8e78d0c61f185",
+    "tests/native_context.rs": "d6c8f2609ef34b40bc57d2e902d370ad84a1b199d74ee325e7da949449d7aeca"
+  },
+  "log_sha256": {
+    "native-context-tests.log": "c17d93692154554413dbefc20a7d674ce828e7c5841e9de7db0af3bab5c9fe78",
+    "native-context-wasm-check.log": "faa1228376d2ea34074df856749bb561305af3e1395be92d37873393e2523734",
+    "native-context-clippy.log": "48def75347a3ebaf368f2bf7e63bfc4175df6aaaffd8999b787ea4d9d109ca39",
+    "native-context-baseline-clippy.log": "7ebb895c2e357b9198a8507213a6aa85f852c718695c3d25fc47aa96eaf1faf2",
+    "native-context-clippy-warnings.log": "b0d6c0d4af562347efa9bca66dcc41b646c5cd9341334644ccc3db8fa19ccb90",
+    "native-context-rustdoc.log": "a32141e308e0a3f17f499dc4c90176b13b5dcceccb91da70d7615ee7a153af7f",
+    "native-context-no-default-check.log": "d7731b8dfe24efa67579473b929a0ef663aa53b2faf0f9d33ac88bb12553d0a4"
+  }
+}
