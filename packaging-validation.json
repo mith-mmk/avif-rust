@@ -1,0 +1,435 @@
+{
+  "checked_at_utc": "2026-10-16T21:43:22.999982+00:00",
+  "scope": "Unpublished distribution candidates only; no registry upload, credentials, release/tag or main merge",
+  "environment": {
+    "rust": "1.91.0",
+    "cargo": "1.91.0",
+    "host": "x86_64-unknown-linux-gnu",
+    "wasm_target": "wasm32-unknown-unknown",
+    "node": "v24.19.0"
+  },
+  "publication_order": [
+    {
+      "crate": "avif-image-buffer",
+      "version": "0.1.0",
+      "published_at_initial_check": false,
+      "requires": [],
+      "content": "std-only shared model source, contracts, README and MIT license; no codec, fixture image or backend"
+    },
+    {
+      "crate": "avifenc-rust",
+      "version": "0.0.8",
+      "published_at_initial_check": false,
+      "requires": [
+        "avif-image-buffer 0.1.0"
+      ],
+      "content": "encoder plus additive shared-buffer input/preflight and alpha auxl correction"
+    },
+    {
+      "crate": "avif-rust",
+      "version": "0.0.9",
+      "published_at_initial_check": false,
+      "requires": [
+        "avif-image-buffer 0.1.0",
+        "avifenc-rust 0.0.8"
+      ],
+      "content": "decoder plus native context/preflight, shared adapters, optional encoder delegation and Q3 CfL correction"
+    }
+  ],
+  "registry_lookup": {
+    "shared": "HTTP404: crate does not exist",
+    "published_encoder_latest": "0.0.7",
+    "published_decoder_latest": "0.0.8",
+    "name_reserved": false,
+    "server_side_ownership_and_publication_acceptance": "not tested; dry run is not authorization or reservation"
+  },
+  "source_checkpoints": {
+    "packaged_decoder_snapshot": "7befb8ec4a85d23ded04b28056bab50fc0c10826",
+    "packaged_encoder_snapshot": "195c7450d7e638868ddf8887b3fc7b6844335768",
+    "shared_git_source": "05eec504cb9edc68bee99b47b83ef9796b45ec97",
+    "source_shared_content_matches_git_pin": true
+  },
+  "dependency_model": {
+    "shared_requirement": "0.1.0",
+    "encoder_requirement": "0.0.8",
+    "development_sources": "same immutable Git revision for shared in both codecs; optional encoder pinned by Git revision",
+    "normalized_archive_manifests": "registry version requirements; Git/path omitted from Cargo.toml, preserved in Cargo.toml.orig",
+    "production_path_patches_installed": false,
+    "workspace_shared_directory": "excluded intentionally to avoid path/Git type duplication"
+  },
+  "real_common_package": {
+    "verified": true,
+    "archive_sha256": "1c58a6ae14f0e2068ae4d8c4e6dfddde04eaffeb655bf735d0c5711c332f8de9",
+    "files": [
+      "avif-image-buffer-0.1.0/.cargo_vcs_info.json",
+      "avif-image-buffer-0.1.0/Cargo.lock",
+      "avif-image-buffer-0.1.0/Cargo.toml",
+      "avif-image-buffer-0.1.0/Cargo.toml.orig",
+      "avif-image-buffer-0.1.0/LICENSE",
+      "avif-image-buffer-0.1.0/README.md",
+      "avif-image-buffer-0.1.0/src/convert.rs",
+      "avif-image-buffer-0.1.0/src/lib.rs",
+      "avif-image-buffer-0.1.0/tests/contracts.rs"
+    ],
+    "publish_dry_run": "exit0; upload aborted due to dry run; no upload performed"
+  },
+  "local_staged_chain": {
+    "scope": "LOCAL ARCHIVE SUBSTITUTION ONLY; not a crates.io publication check",
+    "archives": [
+      {
+        "name": "avif-image-buffer",
+        "version": "0.1.0",
+        "archive": "/workspace/.test-avif-packaging-20261016/.test-archive-chain/.test-target/package/avif-image-buffer-0.1.0.crate",
+        "sha256": "f186ea1b3f628be80655e956daf9aa1f6fea599645404071fb3a35f4f031b85d",
+        "files": [
+          "avif-image-buffer-0.1.0/Cargo.lock",
+          "avif-image-buffer-0.1.0/Cargo.toml",
+          "avif-image-buffer-0.1.0/Cargo.toml.orig",
+          "avif-image-buffer-0.1.0/LICENSE",
+          "avif-image-buffer-0.1.0/README.md",
+          "avif-image-buffer-0.1.0/src/convert.rs",
+          "avif-image-buffer-0.1.0/src/lib.rs",
+          "avif-image-buffer-0.1.0/tests/contracts.rs"
+        ],
+        "normalized_dependencies": {},
+        "size_bytes": 11226
+      },
+      {
+        "name": "avifenc-rust",
+        "version": "0.0.8",
+        "archive": "/workspace/.test-avif-packaging-20261016/.test-archive-chain/.test-target/package/avifenc-rust-0.0.8.crate",
+        "sha256": "28e9713bee56c98bafd2d79c09418c036c34a46831d052f90119456464cd62ad",
+        "files": [
+          "avifenc-rust-0.0.8/API_COMPATIBILITY.md",
+          "avifenc-rust-0.0.8/CHANGELOG.md",
+          "avifenc-rust-0.0.8/Cargo.lock",
+          "avifenc-rust-0.0.8/Cargo.toml",
+          "avifenc-rust-0.0.8/Cargo.toml.orig",
+          "avifenc-rust-0.0.8/LICENSE",
+          "avifenc-rust-0.0.8/README.ja.md",
+          "avifenc-rust-0.0.8/README.md",
+          "avifenc-rust-0.0.8/SHARED_BUFFER.md",
+          "avifenc-rust-0.0.8/THIRD_PARTY_LICENSES.md",
+          "avifenc-rust-0.0.8/examples/benchmark.rs",
+          "avifenc-rust-0.0.8/examples/encode.rs",
+          "avifenc-rust-0.0.8/src/backend_capabilities.rs",
+          "avifenc-rust-0.0.8/src/compat.rs",
+          "avifenc-rust-0.0.8/src/container.rs",
+          "avifenc-rust-0.0.8/src/encoder.rs",
+          "avifenc-rust-0.0.8/src/encoder_backend_tests.rs",
+          "avifenc-rust-0.0.8/src/error.rs",
+          "avifenc-rust-0.0.8/src/image.rs",
+          "avifenc-rust-0.0.8/src/image_ex.rs",
+          "avifenc-rust-0.0.8/src/lib.rs",
+          "avifenc-rust-0.0.8/src/lossless_backend.rs",
+          "avifenc-rust-0.0.8/src/lossless_cdf.rs",
+          "avifenc-rust-0.0.8/src/lossless_headers.rs",
+          "avifenc-rust-0.0.8/src/lossless_tile.rs",
+          "avifenc-rust-0.0.8/src/lossless_tile_cfl_tests.rs",
+          "avifenc-rust-0.0.8/src/lossless_types.rs",
+          "avifenc-rust-0.0.8/src/native_color_plan.rs",
+          "avifenc-rust-0.0.8/src/native_plan.rs",
+          "avifenc-rust-0.0.8/src/profile.rs",
+          "avifenc-rust-0.0.8/tests/container_properties.rs",
+          "avifenc-rust-0.0.8/tests/encode.rs",
+          "avifenc-rust-0.0.8/tests/ffmpeg.rs",
+          "avifenc-rust-0.0.8/tests/native_backend_controls.rs",
+          "avifenc-rust-0.0.8/tests/native_color_plan.rs",
+          "avifenc-rust-0.0.8/tests/native_headers.rs",
+          "avifenc-rust-0.0.8/tests/native_validation.rs",
+          "avifenc-rust-0.0.8/tests/shared_buffer.rs"
+        ],
+        "normalized_dependencies": {
+          "avif-image-buffer": {
+            "version": "0.1.0"
+          },
+          "gamut-bitstream": {
+            "version": "=0.2.1"
+          },
+          "gamut-core": {
+            "version": "=0.1.0"
+          },
+          "gamut-dsp": {
+            "version": "=0.2.1"
+          },
+          "rav1e": {
+            "version": "0.8.1",
+            "default-features": false
+          }
+        },
+        "size_bytes": 114739
+      },
+      {
+        "name": "avif-rust",
+        "version": "0.0.9",
+        "archive": "/workspace/.test-avif-packaging-20261016/.test-archive-chain/.test-target/package/avif-rust-0.0.9.crate",
+        "sha256": "cf6be134f29eadddea8cd769bd3cbf634b28d2bab47350c18b00d033a7de7bc1",
+        "files": [
+          "avif-rust-0.0.9/CHANGELOG.md",
+          "avif-rust-0.0.9/Cargo.lock",
+          "avif-rust-0.0.9/Cargo.toml",
+          "avif-rust-0.0.9/Cargo.toml.orig",
+          "avif-rust-0.0.9/LICENSE",
+          "avif-rust-0.0.9/PACKAGING.md",
+          "avif-rust-0.0.9/README.ja.md",
+          "avif-rust-0.0.9/README.md",
+          "avif-rust-0.0.9/SHARED_BUFFER.md",
+          "avif-rust-0.0.9/benches/decode.rs",
+          "avif-rust-0.0.9/scripts/verify-packages.py",
+          "avif-rust-0.0.9/src/allocation.rs",
+          "avif-rust-0.0.9/src/av1/bitstream.rs",
+          "avif-rust-0.0.9/src/av1/cdf.rs",
+          "avif-rust-0.0.9/src/av1/coeff_cdfs.rs",
+          "avif-rust-0.0.9/src/av1/config.rs",
+          "avif-rust-0.0.9/src/av1/decode.rs",
+          "avif-rust-0.0.9/src/av1/entropy.rs",
+          "avif-rust-0.0.9/src/av1/film_grain.rs",
+          "avif-rust-0.0.9/src/av1/frame.rs",
+          "avif-rust-0.0.9/src/av1/frame_prefix_tests.rs",
+          "avif-rust-0.0.9/src/av1/mod.rs",
+          "avif-rust-0.0.9/src/av1/predict.rs",
+          "avif-rust-0.0.9/src/av1/qmatrix.rs",
+          "avif-rust-0.0.9/src/av1/qmatrix_data.rs",
+          "avif-rust-0.0.9/src/av1/quant.rs",
+          "avif-rust-0.0.9/src/av1/reconstruct.rs",
+          "avif-rust-0.0.9/src/av1/sequence.rs",
+          "avif-rust-0.0.9/src/av1/syntax.rs",
+          "avif-rust-0.0.9/src/av1/tests/tile_decode_coeff.rs",
+          "avif-rust-0.0.9/src/av1/tile.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/block_syntax.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/coefficient.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/coefficient_context.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/context_grid.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/context_state.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/decode_flow.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/diagnostic.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/palette.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/partition_syntax.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/post_filter_state.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/public_api.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/reconstruction.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/reconstruction_coverage.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/residual_decode.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/residual_preview.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/residual_probe.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/residual_state.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/restoration_syntax.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/syntax_helpers.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/tests/tile_decode_block_syntax.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/tests/tile_decode_context_grid.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/tests/tile_decode_palette_diagnostic.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/tests/tile_decode_palette_strict.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/tests/tile_decode_partition.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/tests/tile_decode_reconstruction.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/tests/tile_decode_reconstruction_coverage.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/tests/tile_decode_residual.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/tests/tile_decode_tx_type_syntax.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/tx_type_syntax.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode/warped_filter.rs",
+          "avif-rust-0.0.9/src/av1/tile_decode.rs",
+          "avif-rust-0.0.9/src/av1/tile_group.rs",
+          "avif-rust-0.0.9/src/av1/transform/dct64.rs",
+          "avif-rust-0.0.9/src/av1/transform.rs",
+          "avif-rust-0.0.9/src/compat.rs",
+          "avif-rust-0.0.9/src/container.rs",
+          "avif-rust-0.0.9/src/container_box_iter_tests.rs",
+          "avif-rust-0.0.9/src/container_budget.rs",
+          "avif-rust-0.0.9/src/container_budget_handoff_tests.rs",
+          "avif-rust-0.0.9/src/container_budget_tests.rs",
+          "avif-rust-0.0.9/src/container_counter_tests.rs",
+          "avif-rust-0.0.9/src/container_direct_payload_tests.rs",
+          "avif-rust-0.0.9/src/container_iinf_owners.rs",
+          "avif-rust-0.0.9/src/container_iloc_owner_tests.rs",
+          "avif-rust-0.0.9/src/container_iloc_owners.rs",
+          "avif-rust-0.0.9/src/container_native_plan.rs",
+          "avif-rust-0.0.9/src/container_sequence_selection_tests.rs",
+          "avif-rust-0.0.9/src/container_sequence_table.rs",
+          "avif-rust-0.0.9/src/container_sort_tests.rs",
+          "avif-rust-0.0.9/src/decoder/callback.rs",
+          "avif-rust-0.0.9/src/decoder/composition.rs",
+          "avif-rust-0.0.9/src/decoder/deblock_budget_tests.rs",
+          "avif-rust-0.0.9/src/decoder/frame.rs",
+          "avif-rust-0.0.9/src/decoder/native_hookup_tests.rs",
+          "avif-rust-0.0.9/src/decoder/sequence.rs",
+          "avif-rust-0.0.9/src/decoder/sequence_state_memory.rs",
+          "avif-rust-0.0.9/src/decoder/still.rs",
+          "avif-rust-0.0.9/src/decoder/strict_alpha_tests.rs",
+          "avif-rust-0.0.9/src/decoder/strict_grid_tests.rs",
+          "avif-rust-0.0.9/src/decoder/strict_sequence_tests.rs",
+          "avif-rust-0.0.9/src/decoder.rs",
+          "avif-rust-0.0.9/src/decoder_post_filter_tests.rs",
+          "avif-rust-0.0.9/src/error.rs",
+          "avif-rust-0.0.9/src/icc.rs",
+          "avif-rust-0.0.9/src/image.rs",
+          "avif-rust-0.0.9/src/image_ex.rs",
+          "avif-rust-0.0.9/src/lib.rs",
+          "avif-rust-0.0.9/src/limits.rs",
+          "avif-rust-0.0.9/src/native.rs",
+          "avif-rust-0.0.9/src/obu.rs",
+          "avif-rust-0.0.9/src/obu_iter_tests.rs",
+          "avif-rust-0.0.9/src/test_allocation_observer.rs",
+          "avif-rust-0.0.9/src/test_support.rs",
+          "avif-rust-0.0.9/src/transcode.rs",
+          "avif-rust-0.0.9/tests/FIXTURES.md",
+          "avif-rust-0.0.9/tests/WML2Viewer.avif",
+          "avif-rust-0.0.9/tests/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
+          "avif-rust-0.0.9/tests/shared_buffer.rs",
+          "avif-rust-0.0.9/tests/shared_oracles.py",
+          "avif-rust-0.0.9/tests/shared_transcode.rs"
+        ],
+        "normalized_dependencies": {
+          "avif-image-buffer": {
+            "version": "0.1.0"
+          },
+          "avifenc_codec": {
+            "version": "0.0.8",
+            "optional": true,
+            "default-features": false,
+            "package": "avifenc-rust"
+          },
+          "bin-rs": {
+            "version": "0.0.10",
+            "features": [
+              "stream",
+              "util"
+            ]
+          }
+        },
+        "size_bytes": 652468
+      }
+    ],
+    "consumer_type_identity_and_lossless_transparent_pixel_roundtrip": true,
+    "one_shared_source": true,
+    "encoder_has_no_decoder_dependency": true,
+    "encode_off_excludes_encoder_backends": true,
+    "command_scoped_substitution_only": true,
+    "source_worktrees_and_user_Cargo_configuration_untouched_by_staging": true,
+    "report_sha256": "d2e5c77c1b9f7b7b7ce5f41057abef0f6d0e598b08e4ae087624a1f332c0daf7"
+  },
+  "real_registry_gates": {
+    "shared_package_and_publish_dry_run": "passed",
+    "encoder_cargo_package": "exit101: no matching avif-image-buffer package in crates.io; requires shared publication",
+    "decoder_cargo_package": "exit101: no matching avif-image-buffer package in crates.io; requires shared and then encoder publication",
+    "missing_version_manifest_error": "fixed; registry absence remains a separate prerequisite",
+    "encoder_and_decoder_publish_dry_run": "not separately executed; ordinary registry package prerequisite fails",
+    "upload_performed": false,
+    "default_CI_registry_gate_retained": true
+  },
+  "tests": {
+    "shared-tests.log": {
+      "runner_passed": 10,
+      "runner_failed": 0,
+      "runner_ignored": 0
+    },
+    "encoder-tests.log": {
+      "runner_passed": 90,
+      "runner_failed": 0,
+      "runner_ignored": 0
+    },
+    "decoder-tests.log": {
+      "runner_passed": 864,
+      "runner_failed": 1,
+      "runner_ignored": 9
+    }
+  },
+  "full_decoder_failure": {
+    "test": "generated_avis_exposes_inter_and_show_existing_reference_samples",
+    "error": "AV1 entropy trailing one bit is missing",
+    "baseline": "reproduced previously on unmodified ecc37b2; packaging follow-up changes no runtime source",
+    "other_targets": "finished with --no-fail-fast",
+    "counts_note": "external corpus tests may return early and nine tests are ignored; not full external corpus conformance"
+  },
+  "independent_pixels": {
+    "oracle": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "files": 60,
+    "samples": 2430,
+    "all_exact": true
+  },
+  "wasm_runtime": {
+    "runtime": "v24.19.0",
+    "cases": 5,
+    "all_passed": true,
+    "host_imports": [
+      {
+        "module": "./verify_bg.js",
+        "name": "__wbindgen_init_externref_table",
+        "kind": "function"
+      }
+    ],
+    "bindings": "wasm-bindgen nodejs; no mocked imports"
+  },
+  "git_dependency_graph": {
+    "one_shared_source": "git+https://github.com/mith-mmk/avif-rust.git?rev=05eec504cb9edc68bee99b47b83ef9796b45ec97#05eec504cb9edc68bee99b47b83ef9796b45ec97",
+    "shared_version": "0.1.0",
+    "encoder_source": "git+https://github.com/mith-mmk/avifenc.git?rev=195c7450d7e638868ddf8887b3fc7b6844335768#195c7450d7e638868ddf8887b3fc7b6844335768",
+    "encoder_version": "0.0.8",
+    "encode_off_excludes_encoder_backends": true,
+    "encoder_does_not_depend_on_decoder": true,
+    "shared_has_no_dependencies": true
+  },
+  "other_checks": {
+    "encode_on_and_off_build": "passed",
+    "wasm_compile": "passed after fetching uncached registry dependencies normally",
+    "format": "passed root/core/WASM harness",
+    "rustdoc_with_warnings_denied": "passed",
+    "ordinary_clippy": "passed; five baseline warnings with Rust1.91",
+    "strict_shared_clippy": "passed",
+    "runtime_source_changed": "no decoder/common Rust source changes relative to 043d21c, no encoder Rust source changes relative to e8eec23"
+  },
+  "prior_remote_ci": {
+    "url": "https://github.com/mith-mmk/avif-rust/actions/runs/38919741568",
+    "checkpoint": "043d21cf12fac4ed071cd7209a4f9124a089f6d9",
+    "job_steps_read": true,
+    "successful": [
+      "three OS tests",
+      "Rust1.88",
+      "WASM",
+      "Clippy",
+      "rustdoc",
+      "fuzz targets and four smoke jobs"
+    ],
+    "failed": "cargo package missing dependency version",
+    "not_a_new_candidate_ci_claim": true
+  },
+  "not_performed": [
+    "registry publication",
+    "new authentication or credential setup",
+    "main merges",
+    "tags or releases",
+    "registry-only consumer with candidates (requires publication)",
+    "new local Rust1.88 or non-Linux run",
+    "CI waiting",
+    "WML2 PR13 or JPEG2000 changes"
+  ],
+  "evidence_directory": "/workspace/.test-avif-packaging-20261016",
+  "source_sha256": {
+    "Cargo.toml": "bf73d6d03d81e6a6d95b716df37e8062d1edc7a9d415cc80c0a721bfddb8857c",
+    "Cargo.lock": "711a69e435e4dc15c8fb08a7db5970f8a6f8ad8f6ee411ef51db1175ad54e362",
+    "PACKAGING.md": "3b523a1f9bd3005f2faf67ec5bccf1fb888b57cd114b959b4e0778338f99544b",
+    "scripts/verify-packages.py": "6b83f0d9ec7bb53a4cd46197faa3aa4e16b98552824532b791434827a666ca75",
+    "tests/wasm_shared/Cargo.lock": "1ea1e69b59764e4d253a20f844cbc930e2012898319ffec6f2e4e40daa632e9f",
+    "crates/avif-image-buffer/Cargo.toml": "03b280a3223dc07c9e15ceb221d37a6f4c3d9045518cb596636af50ec334998e",
+    "crates/avif-image-buffer/LICENSE": "167f5c13559fb76a77327a6e0c5d4c46b5ad565ce9969fd9530d69014bc44c40",
+    "crates/avif-image-buffer/README.md": "e94702a8c9a25babb1a3c7ab418c0e04fe85a13575498dc1c3dff71c2a30d39d"
+  },
+  "evidence_sha256": {
+    "shared-tests.log": "40ae6adadb91434456dfe2156c2c9c77bfcf5b6ed2e9c6cffab4c5e992a1c9b7",
+    "shared-package.log": "4a9fb2b49cc330bdc455243ef709704daeca49f82e93989a0347aeae5025fe15",
+    "shared-publish-dry-run.log": "c2cf4f4e29fb81f8a7ecc43b58044e97ef19f316ac10b1fb605d19c0db95eeaf",
+    "shared-clippy.log": "28de3af508d4c5f5d08da05cc3e980549ac29ca3730a223d7c4620db4181b0ca",
+    "encoder-tests.log": "abb6909dedab7d16bf04a18025114a0eec823d5c7a284d3f8b4e8864e3fcde91",
+    "decoder-tests.log": "bd1723d5af25ae85d436e275dd9e03555d6255d60bb918e132afb2233e43d80e",
+    "decoder-check.log": "931de87fcdad9e392b9cb0aad849904ecfd3d116657dab9445f47e9887d23046",
+    "decoder-encode-off.log": "404dbea701532bf994e57ff15d484ee6b1f848d320f770b409bb730f39502f0b",
+    "decoder-wasm.log": "b41d4b3119c18572af85e7306221ee015032303165e4b267af1826c46e824609",
+    "wasm-harness-build.log": "618270684311b9c6154d02857d0e6f7cafb7f3d6063e7071115cd2ed87653536",
+    "wasm-runtime.json": "f7af4832cce7ae312b093e09fd7da4443eadd63e26bb4a905faec7130997cb0b",
+    "clippy.log": "6e0c5b0c36237891d075dc860db99fde6766b074badecc5ab598bebb5285c068",
+    "rustdoc.log": "516e0b1189ef19b9c89eae31edb685cef66fb6bd69e16c8690471f559b963579",
+    "encoder-registry-package-online.log": "ed20ad33c7759a40ff0808aa86618e9e5ab626e61e857d0c60cdbd10cd6fda91",
+    "decoder-registry-package-online.log": "bf2817b146b4685f43f13f8b0525bbcdac74cce4ad31a78104506db5c2bf89cc",
+    "git-dependency-report.json": "c8631c0e269ca0a733838f1fffc48a9b1a4e27acea84917a491ff656700ea6c6",
+    "independent-native-oracles.json": "245d975f13197222e6ed93cd716cd9d408458a385e41f51a5b23653a89874456",
+    "staged-chain.log": "8f489ec56b1708c305ea8f1ce307ddb6d7da8e8e5911455e952830b0ee075e05"
+  }
+}

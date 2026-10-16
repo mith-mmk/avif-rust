@@ -120,8 +120,8 @@ registry readiness from Git tests, local patches, `--no-verify`, or package list
 
 ## Evidence and compatibility
 
-See `packaging-validation.json` for local gate results, source pins and evidence
-hashes. Shared implementation and codec behavior were not changed in this
+See the repository [packaging-validation.json](https://github.com/mith-mmk/avif-rust/blob/codex/avif-native-context-20261016/packaging-validation.json)
+for local gate results, source pins and evidence hashes. Shared implementation and codec behavior were not changed in this
 packaging follow-up. Tests from the earlier integration checkpoint remain
 historical evidence; new candidate-version and archive checks are recorded
 separately.
