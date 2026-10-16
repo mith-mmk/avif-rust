@@ -13,6 +13,10 @@ and a callback interface compatible with [`wml2`](https://github.com/mith-mmk/wm
 The current release is
 [`avif-rust 0.0.8`](https://crates.io/crates/avif-rust/0.0.8).
 
+This branch prepares the unpublished 0.0.9 shared-buffer candidate; see
+[packaging and publication order](PACKAGING.md). The published release above
+remains unchanged.
+
 The crate does not call FFmpeg, libaom, or another native codec at runtime.
 Those implementations are used only to generate and verify test oracles.
 

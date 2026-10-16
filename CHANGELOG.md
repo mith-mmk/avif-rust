@@ -2,6 +2,13 @@
 
 All notable changes to this crate are documented in this file.
 
+## 0.0.9 - Unreleased
+
+- Add the shared pixel model, native source context/preservation preflight and optional encode delegation.
+- Preserve fractional Q3 luma precision in subsampled AV1 CfL prediction.
+- Prepare versioned shared/encoder registry dependencies and self-contained package contents.
+- This candidate is not published. Publish shared 0.1.0, then encoder 0.0.8, before decoder 0.0.9.
+
 ## 0.0.8 - 2026-10-01
 
 ### Fixed

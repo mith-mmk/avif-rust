@@ -164,3 +164,6 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/verify_oracle_sources.ps1
 ## ライセンス
 
 [MIT](https://github.com/mith-mmk/avif-rust/blob/main/LICENSE)
+
+
+このブランチは共有バッファ対応の未公開候補 0.0.9 を準備しています。公開済み版は 0.0.8 のままです。配布検証と公開順は [PACKAGING.md](PACKAGING.md) を参照してください。

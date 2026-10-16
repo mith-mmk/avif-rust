@@ -8,14 +8,15 @@ release versions and decoder/encoder defaults are unchanged.
 ## Dependency and distribution boundary
 
 The shared package lives in `crates/avif-image-buffer`, has no dependencies
-and forbids unsafe code. It is unpublished (`publish = false`). Both codecs
+and forbids unsafe code. Its initial 0.1.0 registry package is prepared but
+not published. Both codecs
 select that package from the same immutable avif-rust Git commit
-`9ed4ad242582c3375c8d8ee1365ef7d6ddc5b53a`, preserving Rust type identity.
+`05eec504cb9edc68bee99b47b83ef9796b45ec97`, preserving Rust type identity.
 The local copy is excluded from the root workspace and tested independently;
 it is not a second model package in the codec dependency graph.
 
 The encoder implementation is pinned to avifenc commit
-`e8eec232ef9ef61f99df9ecdb5c7f8a4685d5bac`:
+`195c7450d7e638868ddf8887b3fc7b6844335768`:
 
 ```text
 avif-rust ------------------------> avif-image-buffer
@@ -25,10 +26,14 @@ avif-rust -- feature encode ------> avifenc-rust --> avif-image-buffer
 The encoder selects only the shared package from the decoder repository; it
 has no dependency on the decoder package. `encode` is optional and does not
 change defaults. Encode-off selects neither encoder nor encoder backends.
-These are Git development dependencies, not a crates.io distribution solution.
-`cargo package` currently fails because the unpublished Git dependency has no
-registry version. The existing CI packaging check consequently remains blocked;
-no release or publication was performed or implied.
+These Git development dependencies now include registry version requirements:
+shared `0.1.0` and optional encoder `0.0.8`. Cargo checks the selected Git
+package versions locally and removes Git coordinates from packaged manifests.
+The existing published encoder 0.0.7 has no shared API and is intentionally
+excluded. This branch prepares decoder 0.0.9, not a replacement of published
+0.0.8. See [PACKAGING.md](PACKAGING.md) for archive checks and publication order.
+Normal registry packaging remains blocked until the new dependencies have been
+published. No release or publication has been performed.
 
 ## Shared model and compatibility
 
@@ -154,5 +159,6 @@ The ordinary full decoder runner has one AVIS inter-frame entropy failure,
 reproduced on unmodified ecc37b2. Conditional external corpus tests can return
 early when fixtures are absent; runner pass counts are not a full corpus claim.
 Strict Clippy also fails on baseline warnings. MSRV1.88, non-Linux runtime and
-a full external corpus were not tested. WML2 core integration and release-ready
-registry packaging remain separate work.
+a full external corpus were not tested locally. WML2 core integration and
+registry publication remain separate work. The subsequent packaging checkpoint
+in PACKAGING.md separates local archive verification from real registry checks.
