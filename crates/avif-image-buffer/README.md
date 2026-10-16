@@ -1,7 +1,7 @@
 # avif-image-buffer
 
-An unpublished, codec-independent pixel model shared by avif-rust and
-avifenc-rust. This is not a wmlcore/paintcore extraction. It depends only on
+A codec-independent pixel model shared by avif-rust and avifenc-rust.
+Version 0.1.0 is prepared for an initial release; it has not been published. This is not a wmlcore/paintcore extraction. It depends only on
 the Rust standard library and forbids unsafe code.
 
 - Packed Gray/RGBA and native planar monochrome, identity GBR or YUV are tagged
@@ -43,8 +43,25 @@ assert_eq!(owned.view()?.width(), 4);
 # Ok::<(), BufferError>(())
 ```
 
-`cargo test -p avif-image-buffer` checks precision/storage combinations,
+`cargo test --manifest-path crates/avif-image-buffer/Cargo.toml` checks precision/storage combinations,
 odd/padded byte layouts, no final padding, native odd dimensions and alpha,
 allocation adoption, overflow rejection, explicit scaling and opaque metadata.
 The inline fixed plane descriptors avoid allocating a view; this is not a claim
 that codecs perform no allocations/copies internally.
+
+
+## Distribution
+
+The package contains the pixel-model source, contract tests, this README and
+its MIT license. It includes no codec, C/C++ build, fixture image, AVIF container
+context, or encoder backend. Rust 1.88 or later is required.
+
+Both codec crates must depend on this same package and compatible version.
+Git development consumers must additionally use the same URL and revision:
+a path copy and a Git copy are different Rust types even at the same version.
+A consumer mixing registry and Git codecs must consistently patch all uses of
+the shared package, or use a complete registry or complete Git dependency graph.
+
+The initial publication order is avif-image-buffer 0.1.0, avifenc-rust 0.0.8,
+then avif-rust 0.0.9. Publication requires separate authorization; packaging and
+`cargo publish --dry-run` do not create a release or reserve the crate name.

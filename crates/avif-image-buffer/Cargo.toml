@@ -5,6 +5,11 @@ edition = "2024"
 rust-version = "1.88"
 license = "MIT"
 description = "Codec-independent checked integer image buffers and immutable views"
-publish = false
+repository = "https://github.com/mith-mmk/avif-rust"
+readme = "README.md"
+keywords = ["image", "buffer", "pixels", "planar"]
+categories = ["multimedia::images", "data-structures"]
+publish = ["crates-io"]
+include = ["/src/**", "/tests/**", "/README.md", "/LICENSE", "/Cargo.toml", "/Cargo.lock"]
 
 [dependencies]
