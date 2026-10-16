@@ -64,6 +64,9 @@ impl NativeImageEx {
 
 fn descriptor(frame: &DecodedFrame) -> Result<NativeDescriptor, BufferError> {
     let c = frame.color_config;
+    if c.bit_depth != frame.bit_depth {
+        return Err(BufferError::Layout("frame and AV1 bit depth disagree"));
+    }
     let matrix = c.color_description.map(|v| v.matrix_coefficients);
     let model = if c.monochrome {
         NativeModel::Monochrome
@@ -89,6 +92,11 @@ fn descriptor(frame: &DecodedFrame) -> Result<NativeDescriptor, BufferError> {
         .planes
         .iter()
         .any(|p| p.layout.plane == 3 && !p.samples.is_empty());
+    if frame.alpha_premultiplied && !has_alpha {
+        return Err(BufferError::Layout(
+            "premultiplied source has no alpha plane",
+        ));
+    }
     Ok(NativeDescriptor {
         width: frame.width,
         height: frame.height,
@@ -126,7 +134,13 @@ fn color<'a>(frame: &DecodedFrame, icc: Option<&'a [u8]>) -> ColorMetadataRef<'a
     }
 }
 fn layout(p: &crate::av1::PlaneBuffer, bits: u8) -> Result<PlaneLayoutEx, BufferError> {
-    if p.layout.sample_count != p.samples.len() {
+    if p.layout.sample_count != p.samples.len()
+        || p.layout.sample_count
+            != p.layout
+                .width
+                .checked_mul(p.layout.height)
+                .ok_or(BufferError::Overflow)?
+    {
         return Err(BufferError::Layout("legacy native sample_count"));
     }
     Ok(PlaneLayoutEx {
@@ -314,6 +328,22 @@ impl NativeDecodedFrame {
             image: crate::buffer::ImageBufferEx::native(d, storage, planes, metadata)?,
             context,
         })
+    }
+}
+
+impl DecodedFrame {
+    /// Pixel-only native view. For complete source context use NativeDecodedFrame.
+    pub fn view_ex(&self) -> Result<ImageViewEx<'_>, BufferError> {
+        self.buffers.view_ex(
+            descriptor(self)?,
+            self.bit_depth,
+            color(
+                self,
+                self.color_information
+                    .as_ref()
+                    .and_then(|c| c.icc_profile()),
+            ),
+        )
     }
 }
 

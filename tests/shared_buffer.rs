@@ -114,3 +114,20 @@ fn malformed_native_context_is_rejected_without_guessing_planes_or_depth() {
             .is_err()
     );
 }
+
+#[test]
+fn legacy_frame_view_revalidates_public_descriptor_mutations() {
+    let data = include_bytes!("WML2Viewer.avif");
+    let (mut frame, _) = decode_frame_bytes_strict_with_limits(data, &limits(data))
+        .unwrap()
+        .into_parts();
+    frame.view_ex().unwrap();
+    frame.buffers.planes[0].layout.sample_count -= 1;
+    assert!(frame.view_ex().is_err());
+    frame.buffers.planes[0].layout.sample_count += 1;
+    frame.color_config.bit_depth = 10;
+    assert!(frame.view_ex().is_err());
+    frame.color_config.bit_depth = frame.bit_depth;
+    frame.alpha_premultiplied = true;
+    assert!(frame.view_ex().is_err());
+}

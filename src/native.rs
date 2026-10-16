@@ -11,6 +11,7 @@ use crate::limits::NativeDecodeLimits;
 /// Rich metadata and accounting from one bounded native parse.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeAvifInformation {
+    source_inventory: crate::container::SourceStructureInventory,
     rich: RichAvifInfo,
     input_bytes: usize,
     metadata_bytes: usize,
@@ -31,6 +32,7 @@ impl NativeAvifInformation {
         ordered_primary_properties: Vec<NativePropertyRecord>,
     ) -> Self {
         Self {
+            source_inventory: Default::default(),
             rich,
             input_bytes,
             metadata_bytes,
@@ -43,6 +45,17 @@ impl NativeAvifInformation {
 
     pub fn rich(&self) -> &RichAvifInfo {
         &self.rich
+    }
+    /// Presence flags for source structures which the native projection cannot forward.
+    pub fn source_inventory(&self) -> &crate::container::SourceStructureInventory {
+        &self.source_inventory
+    }
+    pub(crate) fn with_source_inventory(
+        mut self,
+        inventory: crate::container::SourceStructureInventory,
+    ) -> Self {
+        self.source_inventory = inventory;
+        self
     }
     pub fn info(&self) -> &crate::container::AvifInfo {
         &self.rich.info
@@ -96,7 +109,8 @@ pub fn parse_native_info(
         stats.property_count,
         stats.primary_item_type,
         stats.ordered_primary_properties,
-    ))
+    )
+    .with_source_inventory(stats.source_inventory))
 }
 
 /// Internal native parse handoff. The public parse API deliberately drops the
@@ -116,7 +130,8 @@ pub(crate) fn parse_native_info_with_budget(
             stats.property_count,
             stats.primary_item_type,
             stats.ordered_primary_properties,
-        ),
+        )
+        .with_source_inventory(stats.source_inventory),
         budget,
     ))
 }
@@ -161,7 +176,8 @@ pub(crate) fn parse_native_sequence_info_with_budget(
         stats.property_count,
         stats.primary_item_type,
         stats.ordered_primary_properties,
-    );
+    )
+    .with_source_inventory(stats.source_inventory);
     Ok((information, budget, animation))
 }
 

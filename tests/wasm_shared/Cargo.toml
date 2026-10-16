@@ -1,0 +1,14 @@
+[package]
+name = "avif-shared-wasm-verify"
+version = "0.0.0"
+edition = "2024"
+publish = false
+[workspace]
+[lib]
+crate-type = ["cdylib"]
+path = "lib.rs"
+[dependencies]
+wasm-bindgen = "=0.2.126"
+avif-rust = { path = "../..", features = ["encode"] }
+[profile.release]
+panic = "abort"

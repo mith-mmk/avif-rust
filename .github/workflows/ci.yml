@@ -20,7 +20,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test
-      - run: cargo test -p avif-image-buffer
+      - run: cargo test --locked --manifest-path crates/avif-image-buffer/Cargo.toml
+      - run: cargo test --features encode --test shared_transcode
 
   quality:
     runs-on: ubuntu-latest
@@ -52,6 +53,7 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --target wasm32-unknown-unknown
+      - run: cargo check --target wasm32-unknown-unknown --features encode
 
   fuzz-targets:
     runs-on: ubuntu-latest

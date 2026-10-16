@@ -21,7 +21,11 @@ include = [
 
 [dependencies]
 bin-rs = { version = "0.0.10", features = ["stream", "util"] }
-avif-image-buffer = { version = "0.1.0", path = "crates/avif-image-buffer" }
+avif-image-buffer = { git = "https://github.com/mith-mmk/avif-rust.git", rev = "9ed4ad242582c3375c8d8ee1365ef7d6ddc5b53a" }
+avifenc_codec = { package = "avifenc-rust", git = "https://github.com/mith-mmk/avifenc.git", rev = "e8eec232ef9ef61f99df9ecdb5c7f8a4685d5bac", optional = true, default-features = false }
+
+[features]
+encode = ["dep:avifenc_codec"]
 
 [lints.clippy]
 # AV1 syntax and reconstruction functions intentionally mirror normative
@@ -32,7 +36,7 @@ type_complexity = "allow"
 
 # Keep this nested repository independent when it is checked out inside WML2.
 [workspace]
-members = ["crates/avif-image-buffer"]
+exclude = ["crates/avif-image-buffer", "tests/wasm_shared"]
 resolver = "2"
 
 [[bench]]
