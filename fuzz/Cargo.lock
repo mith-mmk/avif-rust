@@ -9,9 +9,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
 
 [[package]]
+name = "avif-image-buffer"
+version = "0.1.0"
+source = "git+https://github.com/mith-mmk/avif-rust.git?rev=5c73c7f26c276098ddd761fb20b956302a462001#5c73c7f26c276098ddd761fb20b956302a462001"
+
+[[package]]
 name = "avif-rust"
-version = "0.0.8"
+version = "0.1.0"
 dependencies = [
+ "avif-image-buffer",
  "bin-rs",
 ]
 
