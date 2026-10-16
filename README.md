@@ -13,7 +13,7 @@ and a callback interface compatible with [`wml2`](https://github.com/mith-mmk/wm
 The current release is
 [`avif-rust 0.0.8`](https://crates.io/crates/avif-rust/0.0.8).
 
-This branch prepares the unpublished 0.0.9 shared-buffer candidate; see
+This branch prepares the unpublished 0.1.0 shared-buffer candidate; see
 [packaging and publication order](PACKAGING.md). The published release above
 remains unchanged.
 
@@ -61,14 +61,15 @@ and arithmetic-reader overread are rejected as bitstream errors.
 ## Installation
 
 ```console
-cargo add avif-rust
+cargo add avif-rust --git https://github.com/mith-mmk/avif-rust.git --branch codex/avif-native-context-20261016
 ```
 
-Or add the dependency manually:
+After separately authorized publication of 0.1.0, add the registry dependency
+manually (0.1.0 is not published yet):
 
 ```toml
 [dependencies]
-avif-rust = "0.0.8"
+avif-rust = "0.1.0"
 ```
 
 The minimum supported Rust version (MSRV) is Rust 1.88.

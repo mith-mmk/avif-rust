@@ -28,8 +28,8 @@ commands = []
 
 def run(command, cwd, name):
     result = subprocess.run(command, cwd=cwd, env=env, text=True,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    (output / (name + '.log')).write_text(result.stdout)
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    (output / (name + '.log')).write_text(result.stdout + result.stderr)
     commands.append({'name': name, 'command': command, 'exit_code': result.returncode})
     if result.returncode:
         raise RuntimeError(f'{name} failed; see {output / (name + ".log")}')
@@ -53,7 +53,10 @@ avif, avif_sha = snapshot(repo, '.test-avif')
 encoder, encoder_sha = snapshot(args.encoder.resolve(), '.test-encoder')
 avif_manifest = tomllib.loads((avif / 'Cargo.toml').read_text())
 encoder_manifest = tomllib.loads((encoder / 'Cargo.toml').read_text())
+candidate_version = '0.1.0'
+assert avif_manifest['package']['version'] == encoder_manifest['package']['version'] == candidate_version
 shared_source = avif_manifest['dependencies']['avif-image-buffer']
+assert shared_source['version'] == avif_manifest['dependencies']['avifenc_codec']['version'] == candidate_version
 assert shared_source == encoder_manifest['dependencies']['avif-image-buffer']
 assert avif_manifest['dependencies']['avifenc_codec']['rev'] == encoder_sha
 for source in (avif / 'crates/avif-image-buffer/src').glob('*.rs'):
@@ -84,9 +87,9 @@ def package(manifest, name, version, patches):
 core, core_report = package(avif / 'crates/avif-image-buffer/Cargo.toml',
                             'avif-image-buffer', '0.1.0', {})
 patches = {'avif-image-buffer': core}
-encoded, encoder_report = package(encoder / 'Cargo.toml', 'avifenc-rust', '0.0.8', patches)
+encoded, encoder_report = package(encoder / 'Cargo.toml', 'avifenc-rust', candidate_version, patches)
 patches['avifenc-rust'] = encoded
-decoded, decoder_report = package(avif / 'Cargo.toml', 'avif-rust', '0.0.9', patches)
+decoded, decoder_report = package(avif / 'Cargo.toml', 'avif-rust', candidate_version, patches)
 config = []
 for key, path in patches.items():
     config += ['--config', 'patch.crates-io.' + key + '.path=' + json.dumps(str(path))]
@@ -134,8 +137,10 @@ fn main() {
 ''')
 run(['cargo', 'run', '--manifest-path', str(consumer / 'Cargo.toml'), *flags, *config],
     consumer, 'packaged-consumer')
+host = next(line.removeprefix('host: ') for line in subprocess.check_output(
+    ['rustc', '-vV'], text=True).splitlines() if line.startswith('host: '))
 metadata = json.loads(run(['cargo', 'metadata', '--format-version', '1', '--filter-platform',
-    'x86_64-unknown-linux-gnu', '--manifest-path', str(consumer / 'Cargo.toml'), *flags, *config],
+    host, '--manifest-path', str(consumer / 'Cargo.toml'), *flags, *config],
     consumer, 'packaged-metadata'))
 nodes = {node['id']: node for node in metadata['resolve']['nodes']}
 packages = {package['id']: package for package in metadata['packages']}
@@ -155,6 +160,7 @@ off_tree = run(['cargo', 'tree', '--manifest-path', str(decoded / 'Cargo.toml'),
 assert all(name not in off_tree for name in ['avifenc-rust', 'rav1e', 'gamut-'])
 report = {'kind': 'LOCAL ARCHIVE SUBSTITUTION ONLY; not a crates.io publication check',
     'source_heads': {'avif': avif_sha, 'encoder': encoder_sha},
+    'candidate_version': candidate_version, 'metadata_host': host,
     'canonical_shared_git_revision': shared_source['rev'],
     'archives': [core_report, encoder_report, decoder_report],
     'one_shared_type_source': True, 'encoder_has_no_decoder_dependency': True,

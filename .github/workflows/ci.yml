@@ -35,7 +35,7 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo rustdoc --lib -- -D warnings
       - run: cargo package --locked --manifest-path crates/avif-image-buffer/Cargo.toml
-      - name: Registry package (requires shared 0.1.0 and encoder 0.0.8 publication)
+      - name: Registry package (requires shared 0.1.0 and encoder 0.1.0 publication)
         run: cargo package
 
   msrv:

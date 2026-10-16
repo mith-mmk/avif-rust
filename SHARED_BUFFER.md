@@ -11,12 +11,12 @@ The shared package lives in `crates/avif-image-buffer`, has no dependencies
 and forbids unsafe code. Its initial 0.1.0 registry package is prepared but
 not published. Both codecs
 select that package from the same immutable avif-rust Git commit
-`05eec504cb9edc68bee99b47b83ef9796b45ec97`, preserving Rust type identity.
+`5c73c7f26c276098ddd761fb20b956302a462001`, preserving Rust type identity.
 The local copy is excluded from the root workspace and tested independently;
 it is not a second model package in the codec dependency graph.
 
 The encoder implementation is pinned to avifenc commit
-`195c7450d7e638868ddf8887b3fc7b6844335768`:
+`c9a333b04ee5fdccabfc66104c7463ea9a1ed244`:
 
 ```text
 avif-rust ------------------------> avif-image-buffer
@@ -27,10 +27,10 @@ The encoder selects only the shared package from the decoder repository; it
 has no dependency on the decoder package. `encode` is optional and does not
 change defaults. Encode-off selects neither encoder nor encoder backends.
 These Git development dependencies now include registry version requirements:
-shared `0.1.0` and optional encoder `0.0.8`. Cargo checks the selected Git
+shared `0.1.0` and optional encoder `0.1.0`. Cargo checks the selected Git
 package versions locally and removes Git coordinates from packaged manifests.
 The existing published encoder 0.0.7 has no shared API and is intentionally
-excluded. This branch prepares decoder 0.0.9, not a replacement of published
+excluded. This branch prepares decoder 0.1.0, not a replacement of published
 0.0.8. See [PACKAGING.md](PACKAGING.md) for archive checks and publication order.
 Normal registry packaging remains blocked until the new dependencies have been
 published. No release or publication has been performed.

@@ -57,14 +57,15 @@ trailing-one欠落、非ゼロpadding、切り詰め、算術readerの過剰read
 ## インストール
 
 ```console
-cargo add avif-rust
+cargo add avif-rust --git https://github.com/mith-mmk/avif-rust.git --branch codex/avif-native-context-20261016
 ```
 
 または`Cargo.toml`へ直接追加します。
 
 ```toml
 [dependencies]
-avif-rust = "0.0.8"
+# 0.1.0 の公開後に使う registry 指定です。現在は未公開です。
+avif-rust = "0.1.0"
 ```
 
 最小サポートRustバージョン（MSRV）はRust 1.88です。
@@ -166,4 +167,4 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/verify_oracle_sources.ps1
 [MIT](https://github.com/mith-mmk/avif-rust/blob/main/LICENSE)
 
 
-このブランチは共有バッファ対応の未公開候補 0.0.9 を準備しています。公開済み版は 0.0.8 のままです。配布検証と公開順は [PACKAGING.md](PACKAGING.md) を参照してください。
+このブランチは共有バッファ対応の未公開候補 0.1.0 を準備しています。公開済み版は 0.0.8 のままです。配布検証と公開順は [PACKAGING.md](PACKAGING.md) を参照してください。

@@ -11,8 +11,8 @@ Read-only crates.io API checks on 2026-10-16 returned:
 | Package | Registry result | Prepared candidate | Publication prerequisite |
 | --- | --- | --- | --- |
 | avif-image-buffer | HTTP404: crate does not exist | 0.1.0 | None; std-only |
-| avifenc-rust | Latest published 0.0.7 | 0.0.8 | avif-image-buffer 0.1.0 |
-| avif-rust | Latest published 0.0.8 | 0.0.9 | shared 0.1.0 and encoder 0.0.8 |
+| avifenc-rust | Latest published 0.0.7 | 0.1.0 | avif-image-buffer 0.1.0 |
+| avif-rust | Latest published 0.0.8 | 0.1.0 | shared 0.1.0 and encoder 0.1.0 |
 
 The new encoder API is not in the already published 0.0.7, so a version fallback
 to that release is incorrect. A registry version cannot be overwritten.
@@ -20,7 +20,7 @@ The shared name was unregistered at lookup time; it was not reserved. A dry run
 does not check every server-side publication/ownership rule or create a package.
 Actual publication requires separate authorization and server acceptance.
 
-The intended order is **shared -> encoder -> decoder**. The final decoder
+All three candidate versions are 0.1.0. The intended order is **shared -> encoder -> decoder**. The final decoder
 package includes an optional encoder dependency; registry package resolution
 still needs that candidate to exist even when encode is disabled for the build.
 
@@ -36,13 +36,13 @@ metadata now names the actual `mith-mmk/avifenc` repository.
 Both development manifests select the same immutable model source:
 
 ```toml
-avif-image-buffer = { version = "0.1.0", git = "https://github.com/mith-mmk/avif-rust.git", rev = "05eec504cb9edc68bee99b47b83ef9796b45ec97" }
+avif-image-buffer = { version = "0.1.0", git = "https://github.com/mith-mmk/avif-rust.git", rev = "5c73c7f26c276098ddd761fb20b956302a462001" }
 ```
 
 The optional decoder-to-encoder dependency is:
 
 ```toml
-avifenc_codec = { package = "avifenc-rust", version = "0.0.8", git = "https://github.com/mith-mmk/avifenc.git", rev = "195c7450d7e638868ddf8887b3fc7b6844335768", optional = true, default-features = false }
+avifenc_codec = { package = "avifenc-rust", version = "0.1.0", git = "https://github.com/mith-mmk/avifenc.git", rev = "c9a333b04ee5fdccabfc66104c7463ea9a1ed244", optional = true, default-features = false }
 ```
 
 Cargo uses the Git source during development and checks its package version.
@@ -108,7 +108,7 @@ or that crates.io accepted these archives.
 ## Checks still requiring publication
 
 Unmodified `cargo package` / `cargo publish --dry-run` for the encoder needs
-shared 0.1.0 in the registry. The decoder needs shared 0.1.0 and encoder 0.0.8.
+shared 0.1.0 in the registry. The decoder needs shared 0.1.0 and encoder 0.1.0.
 These checks remain blocked before publication; the earlier missing-version
 manifest error is fixed. CI retains the real decoder registry package gate,
 and separately checks the dependency-free shared archive before it. The gate
@@ -126,11 +126,12 @@ packaging follow-up. Tests from the earlier integration checkpoint remain
 historical evidence; new candidate-version and archive checks are recorded
 separately.
 
-[CI run38919741568](https://github.com/mith-mmk/avif-rust/actions/runs/38919741568)
-verified the earlier 043d21c checkpoint on three OSes, Rust1.88, WASM, Clippy,
-rustdoc and fuzz smoke. Its registry package step failed on the missing shared
-version. Those successful remote checks are not claimed as a new CI run for
-this packaging candidate. Local full decoder regression can still encounter
+[CI run38971277889](https://github.com/mith-mmk/avif-rust/actions/runs/38971277889/job/117209969190)
+verified the preceding 2dc2d43 checkpoint: 10 of 11 jobs succeeded, including
+three OSes, Rust1.88, WASM, strict Clippy, rustdoc and shared package/compile.
+The sole failing step was downstream registry packaging because shared 0.1.0
+was unpublished. That known publication prerequisite is not a new regression,
+and those checks are not claimed as a new CI run for the uniform candidates. Local full decoder regression can still encounter
 the previously reproduced baseline FFmpeg-generated AVIS entropy failure.
 
 WML2 PR13 and JPEG2000 source worktrees remain unchanged.

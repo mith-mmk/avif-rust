@@ -101,11 +101,11 @@ dependencies = [
 [[package]]
 name = "avif-image-buffer"
 version = "0.1.0"
-source = "git+https://github.com/mith-mmk/avif-rust.git?rev=05eec504cb9edc68bee99b47b83ef9796b45ec97#05eec504cb9edc68bee99b47b83ef9796b45ec97"
+source = "git+https://github.com/mith-mmk/avif-rust.git?rev=5c73c7f26c276098ddd761fb20b956302a462001#5c73c7f26c276098ddd761fb20b956302a462001"
 
 [[package]]
 name = "avif-rust"
-version = "0.0.9"
+version = "0.1.0"
 dependencies = [
  "avif-image-buffer",
  "avifenc-rust",
@@ -122,8 +122,8 @@ dependencies = [
 
 [[package]]
 name = "avifenc-rust"
-version = "0.0.8"
-source = "git+https://github.com/mith-mmk/avifenc.git?rev=195c7450d7e638868ddf8887b3fc7b6844335768#195c7450d7e638868ddf8887b3fc7b6844335768"
+version = "0.1.0"
+source = "git+https://github.com/mith-mmk/avifenc.git?rev=c9a333b04ee5fdccabfc66104c7463ea9a1ed244#c9a333b04ee5fdccabfc66104c7463ea9a1ed244"
 dependencies = [
  "avif-image-buffer",
  "gamut-bitstream",
