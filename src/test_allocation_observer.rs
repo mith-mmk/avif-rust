@@ -5,8 +5,6 @@
 //! test creates and verifies that it is really deallocated before accounting is
 //! restored.
 
-#![cfg(test)]
-
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::marker::PhantomData;

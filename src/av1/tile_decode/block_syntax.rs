@@ -840,35 +840,33 @@ impl<'a> TileDecoder<'a> {
                     secondary_predictor.unwrap_or((0, 0))
                 };
                 self.read_new_mv(predictor, frame)?
+            } else if mode == 6 {
+                frame.global_motion.motion_vector(
+                    reference_type_secondary.unwrap_or(reference_type),
+                    block_size,
+                    x,
+                    y,
+                    frame.allow_high_precision_mv,
+                    frame.force_integer_mv == 1,
+                )?
             } else {
-                if mode == 6 {
-                    frame.global_motion.motion_vector(
-                        reference_type_secondary.unwrap_or(reference_type),
-                        block_size,
-                        x,
-                        y,
-                        frame.allow_high_precision_mv,
-                        frame.force_integer_mv == 1,
-                    )?
-                } else {
-                    compound_candidates
-                        .as_ref()
-                        .and_then(|(_, secondary, _, _)| secondary.get(ref_mv_index).copied())
-                        .flatten()
-                        .or_else(|| {
-                            secondary_predictor.map(|_| {
-                                self.inter_mv_candidate(
-                                    x,
-                                    y,
-                                    block_size,
-                                    reference_type_secondary.unwrap_or(reference_type) as u8,
-                                    ref_mv_index,
-                                    true,
-                                )
-                            })
+                compound_candidates
+                    .as_ref()
+                    .and_then(|(_, secondary, _, _)| secondary.get(ref_mv_index).copied())
+                    .flatten()
+                    .or_else(|| {
+                        secondary_predictor.map(|_| {
+                            self.inter_mv_candidate(
+                                x,
+                                y,
+                                block_size,
+                                reference_type_secondary.unwrap_or(reference_type) as u8,
+                                ref_mv_index,
+                                true,
+                            )
                         })
-                        .unwrap_or((0, 0))
-                }
+                    })
+                    .unwrap_or((0, 0))
             };
             let first = if mode == 6 {
                 global_motion_index = Some(reference_type);
@@ -1070,7 +1068,9 @@ impl<'a> TileDecoder<'a> {
         let mut compound_weight = None;
         let mut compound_mask = None;
         let mut compound_group_idx = None;
-        let mut decoded_compound_idx = None;
+        // AV1 initializes compound_idx to 1 even when masked compound or
+        // skip_mode omits the symbol; later neighbors still use that value.
+        let mut decoded_compound_idx = is_compound.then_some(1);
         if is_compound && !skip_mode {
             let masked_compound_used = sequence.enable_masked_compound
                 && block_size.width() >= 8

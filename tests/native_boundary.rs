@@ -174,10 +174,12 @@ fn reduced_still_disable_cdf_is_not_show_existing() {
     payload.extend_from_slice(&frame);
     let data = avif_container(properties(), &payload, 1);
     let result = avif_rust::decode_frame_bytes_strict_with_limits(&data, &limits(1 << 20, 8, 1));
+    // One-byte tiles are allowed; this synthetic payload now reaches strict
+    // entropy termination instead of failing a minimum-length check.
     assert!(matches!(
         result,
-        Err(avif_rust::DecoderError::NotEnoughData(message))
-            if message.contains("entropy tile payload is too short")
+        Err(avif_rust::DecoderError::Bitstream(message))
+            if message.contains("entropy decoder exited after too many padding bits")
     ));
 }
 

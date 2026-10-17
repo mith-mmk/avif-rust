@@ -2,12 +2,21 @@
 
 All notable changes to this crate are documented in this file.
 
-## 0.1.0 - Unreleased
+## Unreleased
+
+- Fix AVIS entropy desynchronization for shared sub-8x8 chroma palette maps
+  and inferred compound indices; accept valid one-byte entropy tiles while
+  retaining strict trailing-bit validation.
+- Add bundled AVIS regressions that execute without FFmpeg, including an
+  exact independent YUV oracle for a lossless palette key frame.
+- These fixes require a later release; the published 0.1.0 archives are unchanged.
+
+## 0.1.0 - 2026-10-17
 
 - Add the shared pixel model, native source context/preservation preflight and optional encode delegation.
 - Preserve fractional Q3 luma precision in subsampled AV1 CfL prediction.
 - Prepare versioned shared/encoder registry dependencies and self-contained package contents.
-- This candidate is not published. Publish shared 0.1.0, then encoder 0.1.0, before decoder 0.1.0.
+- Published after shared 0.1.0 and encoder 0.1.0.
 
 ## 0.0.8 - 2026-10-01
 

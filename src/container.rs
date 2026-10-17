@@ -5842,8 +5842,7 @@ pub(crate) fn grid_cell_alpha_item_id(payload: &[u8], cell_id: u32) -> Option<u3
 pub(crate) fn grid_has_cell_alpha(payload: &[u8]) -> bool {
     payload
         .windows(GRID_ALPHA_MAP_MAGIC.len())
-        .rposition(|window| window == GRID_ALPHA_MAP_MAGIC)
-        .is_some()
+        .any(|window| window == GRID_ALPHA_MAP_MAGIC)
 }
 
 #[cfg(test)]
@@ -6046,18 +6045,14 @@ fn item_payload_with_stack_context(
         0 | 1 => {
             let source: Cow<'_, [u8]> = if construction_method == 0 {
                 Cow::Borrowed(data)
+            } else if let Some((start, end)) = state.idat_payload_range {
+                Cow::Borrowed(data.get(start..end).ok_or_else(|| {
+                    DecoderError::NotEnoughData("idat payload is outside the input".to_string())
+                })?)
             } else {
-                if let Some((start, end)) = state.idat_payload_range {
-                    Cow::Borrowed(data.get(start..end).ok_or_else(|| {
-                        DecoderError::NotEnoughData("idat payload is outside the input".to_string())
-                    })?)
-                } else {
-                    Cow::Borrowed(state.idat_payload.as_deref().ok_or_else(|| {
-                        DecoderError::Bitstream(format!(
-                            "item {item_id} references missing idat box"
-                        ))
-                    })?)
-                }
+                Cow::Borrowed(state.idat_payload.as_deref().ok_or_else(|| {
+                    DecoderError::Bitstream(format!("item {item_id} references missing idat box"))
+                })?)
             };
             for extent in &location.extents {
                 append_item_extent_with_context(

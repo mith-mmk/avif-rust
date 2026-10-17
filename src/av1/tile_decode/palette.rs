@@ -907,20 +907,30 @@ pub(super) fn palette_map_dimensions(
 ) -> (usize, usize, usize, usize) {
     let subsampling_x = usize::from(subsampling_x);
     let subsampling_y = usize::from(subsampling_y);
-    let plane_block_width = block_size.width() >> subsampling_x;
-    let plane_block_height = block_size.height() >> subsampling_y;
+    let mut plane_block_width = block_size.width() >> subsampling_x;
+    let mut plane_block_height = block_size.height() >> subsampling_y;
     let plane_x = x >> subsampling_x;
     let plane_y = y >> subsampling_y;
     let plane_frame_width = (mi_cols << 2).div_ceil(1 << subsampling_x);
     let plane_frame_height = (mi_rows << 2).div_ceil(1 << subsampling_y);
-    let cols = plane_frame_width
+    let mut cols = plane_frame_width
         .saturating_sub(plane_x)
         .min(plane_block_width)
         .max(1);
-    let rows = plane_frame_height
+    let mut rows = plane_frame_height
         .saturating_sub(plane_y)
         .min(plane_block_height)
         .max(1);
+    // AV1 palette_tokens expands sub-8x8 chroma to the shared 4-pixel
+    // prediction unit, including the portion outside the current luma block.
+    if plane_block_width < 4 {
+        plane_block_width += 2;
+        cols += 2;
+    }
+    if plane_block_height < 4 {
+        plane_block_height += 2;
+        rows += 2;
+    }
     (plane_block_width, plane_block_height, cols, rows)
 }
 

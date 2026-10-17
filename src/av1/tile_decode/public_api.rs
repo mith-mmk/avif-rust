@@ -1758,7 +1758,7 @@ mod tests {
         // Keep the payload offset valid but truncate it after the strict
         // TileDecoder has been constructed.  This drives the fallible `?`
         // path after the scratch ticket has been admitted.
-        tile.len = 1;
+        tile.len = 0;
 
         let mut buffers = alloc_frame_buffers(&plan).expect("sample buffers must allocate");
         let mut budget = DecodeBudget::new(None);

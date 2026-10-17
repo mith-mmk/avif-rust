@@ -19,6 +19,38 @@ fn palette_map_dimensions_are_per_pixel_and_clip_at_frame_edges() {
 }
 
 #[test]
+fn subsampled_palette_maps_cover_the_shared_chroma_prediction_unit() {
+    // The chroma-reference block at x=12 shares its 4-wide chroma unit
+    // with the luma block at x=8 (AV1 palette_tokens).
+    assert_eq!(
+        palette_map_dimensions(BlockSize::Block4x16, 12, 48, 16, 16, true, true),
+        (4, 8, 4, 8)
+    );
+    assert_eq!(
+        palette_map_dimensions(BlockSize::Block16x4, 48, 12, 16, 16, true, true),
+        (8, 4, 8, 4)
+    );
+    // YUV422 expands only the horizontal dimension; YUV444 needs no expansion.
+    assert_eq!(
+        palette_map_dimensions(BlockSize::Block4x16, 12, 48, 16, 16, true, false),
+        (4, 16, 4, 16)
+    );
+    assert_eq!(
+        palette_map_dimensions(BlockSize::Block4x16, 12, 48, 16, 16, false, false),
+        (4, 16, 4, 16)
+    );
+    // Expand the on-screen area after clipping at the right/bottom frame edge.
+    assert_eq!(
+        palette_map_dimensions(BlockSize::Block4x16, 12, 8, 4, 3, true, true),
+        (4, 8, 4, 2)
+    );
+    assert_eq!(
+        palette_map_dimensions(BlockSize::Block16x4, 8, 12, 3, 4, true, true),
+        (8, 4, 2, 4)
+    );
+}
+
+#[test]
 fn palette_diagnostic_accessors_expose_read_only_plane_metadata() {
     let y = PalettePlaneInfo {
         colors: vec![10, 20, 30],

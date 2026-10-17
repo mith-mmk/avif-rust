@@ -22,3 +22,50 @@ are also included in the crate package for the library's unit tests.
 - Changes: none; the upstream AVIF file is copied byte for byte.
 - SHA-256: `245a3dad6371dc702f29eb7e9735f843b63c525da871859728bedbe5bb274985`
 - Used for native alpha header, split OBU, and allocation limit tests.
+
+## AVIS regression fixtures
+
+These synthetic `testsrc2` fixtures were generated locally with FFmpeg
+7.1.5 and libaom 3.12.1. They do not require an encoder or any sibling
+repository at test time. `avis_regression` runs explicitly in every CI OS job
+and is included in the published-source package test inventory.
+
+- `avis-subsampled-palette.avif`: 64x64 YUV420, 60 displayed samples,
+  61 coded frames, with hidden Inter frames and show-existing samples.
+  SHA-256: `a80eeeadf5275403b8bdf8f2dc284a12e4555f6a98fb13b1dd9fe74a20f2b20e`.
+  This reproduces three successive failures on the pre-fix decoder: undersized
+  chroma palette maps, incorrect inferred compound index, and rejection of
+  a valid one-byte entropy tile. The required test checks complete decoding
+  and agreement between batch, incremental, primary and indexed display APIs.
+- `lossless-sub8x8-palette.avif`: the lossless first key frame, remuxed as a
+  still item. It fails strict entropy termination on the pre-fix decoder.
+  SHA-256: `8848e29f4d8f8289fe25011f61e5a11353f81538b3390266fad15bce6529ff62`.
+- `lossless-sub8x8-palette.yuv`: 6,144 unmodified planar Y/U/V bytes from the
+  lossless key frame. FFmpeg's independent dav1d 1.5.1 and libaom 3.12.1
+  decoders give identical bytes. Every native sample is checked exactly.
+  SHA-256: `6a6238036a0d304ab9960bac59d282eebffd09ed0f4daf0c444b5e72f31624b7`.
+
+Regeneration (the encoded bytes can vary with FFmpeg/libaom versions):
+
+```sh
+mkdir -p .test-avis-regenerate
+ffmpeg -y -v error -f lavfi -i testsrc2=size=64x64:rate=30 \
+  -frames:v 60 -c:v libaom-av1 -still-picture 0 -g 60 \
+  -lag-in-frames 25 -auto-alt-ref 1 -f avif \
+  .test-avis-regenerate/avis-subsampled-palette.avif
+ffmpeg -y -v error -f lavfi -i testsrc2=size=64x64:rate=30 \
+  -frames:v 60 -c:v libaom-av1 -crf 0 -b:v 0 -still-picture 0 \
+  -g 60 -lag-in-frames 25 -auto-alt-ref 1 -threads 2 -f avif \
+  .test-avis-regenerate/lossless.avif
+ffmpeg -y -v error -i .test-avis-regenerate/lossless.avif \
+  -map 0:v:0 -c:v copy -f avif .test-avis-regenerate/lossless-sub8x8-palette.avif
+ffmpeg -y -v error -c:v libdav1d \
+  -i .test-avis-regenerate/lossless-sub8x8-palette.avif \
+  -pix_fmt yuv420p -f rawvideo .test-avis-regenerate/lossless-sub8x8-palette.yuv
+```
+
+The non-lossless 60-frame fixture is a decode/sequence-state regression,
+not a claim of exact pixel conformance. Independent full-sequence decoding
+must select `-map 0:v:1`; FFmpeg's default stream is only the primary still.
+The current decoder still differs from the independent oracle on this lossy
+sequence. See `avis-validation.json` for measured differences and scope.

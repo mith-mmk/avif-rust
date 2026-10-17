@@ -180,11 +180,11 @@ fn synthetic_avis(corruption: SyntheticSequenceCorruption) -> Vec<u8> {
     for (alpha, duplicate) in [(false, false), (false, true), (true, false), (true, true)] {
         moov_payload.extend_from_slice(&synthetic_sequence_track(alpha, duplicate, corruption));
     }
-    let moov = synthetic_box(b"moov", &moov_payload);
+
     // The sample tables point at the beginning of the file. The movie box is
     // already larger than the selected tracks' two one-byte samples, so no
     // trailing mdat is needed for this container-only parser test.
-    moov
+    synthetic_box(b"moov", &moov_payload)
 }
 
 fn generous_sequence_limits() -> NativeDecodeLimits {
