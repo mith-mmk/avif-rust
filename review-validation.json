@@ -1,0 +1,37 @@
+{
+  "date_utc": "2026-10-17",
+  "decoder_base": "6c52f6e06c90359dbdcfaf63c8358dd2a15a3cde",
+  "encoder_revision": "e039e990cc5285f7219cedd827493c48a5c22b7d",
+  "shared_revision": "5c73c7f26c276098ddd761fb20b956302a462001",
+  "candidate_versions": {"avif-image-buffer":"0.1.0","avifenc-rust":"0.1.0","avif-rust":"0.1.0"},
+  "rust_cargo": "1.91.0",
+  "local_checks": {
+    "decoder_default_release_no_fail_fast": {"passed":857,"failed":1,"ignored":9},
+    "decoder_encode_shared_transcode": {"passed":12,"failed":0},
+    "shared_contracts": {"passed":10,"failed":0},
+    "encoder_release_lib_tests": {"passed":93,"failed":0},
+    "clippy_all_targets_encode": "passed with the same five inherited decoder warnings; encoder retains its three inherited warnings",
+    "format": "passed",
+    "rustdoc_lib_Dwarnings_encode": "passed",
+    "fuzz_bins_check": "passed",
+    "wasm32_unknown_unknown_encode_check": "passed",
+    "wasm_release_node_runtime": {"cases":5,"passed":true,"mocked_imports":false},
+    "ffmpeg_exact_samples": {"files":60,"samples":2430,"all_exact":true},
+    "git_dependency_identity": "one shared Git package; one encoder Git package; encode remains optional; root and WASM lockfiles changed only the encoder source revision"
+  },
+  "new_regressions": [
+    "HDR_CLL item data and unknown Metadata OBUs in primary/alpha data and av1C require explicit Av1Metadata drop; reports count omitted OBUs",
+    "malformed OBU size framing remains a parse error before preservation policy",
+    "two distinct alpha payloads in both orders require AdditionalAlphaItems; selected and dropped source item IDs are reported",
+    "three alphas record both omitted IDs; normal zero/one-alpha paths remain supported",
+    "unknown, altr and mixed grpl lists require EntityGroups drop; empty list is harmless; malformed child bounds reject",
+    "backend option values, types, unknown keys, cross-option and dimension boundaries reject before adapter copies and backend entry"
+  ],
+  "known_avis_failure": {
+    "test":"generated_avis_exposes_inter_and_show_existing_reference_samples",
+    "error":"AV1 tile 0 entropy validation failed: bitstream error: AV1 entropy trailing one bit is missing",
+    "status":"Same previously reproduced unmodified-base failure; not fixed by these four changes. Fixture-dependent CI ok may mean early return."
+  },
+  "registry_publication": "Unpublished shared 0.1.0 still prevents downstream registry packaging. No publish, merge, tag or release was performed.",
+  "limitations":"External-fixture tests can return early. These results do not establish complete HEIF/MIAF conformance, all backend combinations, or full container preservation. CI at the resulting commit is recorded in the paired PR descriptions separately."
+}

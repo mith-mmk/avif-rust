@@ -42,7 +42,7 @@ avif-image-buffer = { version = "0.1.0", git = "https://github.com/mith-mmk/avif
 The optional decoder-to-encoder dependency is:
 
 ```toml
-avifenc_codec = { package = "avifenc-rust", version = "0.1.0", git = "https://github.com/mith-mmk/avifenc.git", rev = "c9a333b04ee5fdccabfc66104c7463ea9a1ed244", optional = true, default-features = false }
+avifenc_codec = { package = "avifenc-rust", version = "0.1.0", git = "https://github.com/mith-mmk/avifenc.git", rev = "e039e990cc5285f7219cedd827493c48a5c22b7d", optional = true, default-features = false }
 ```
 
 Cargo uses the Git source during development and checks its package version.

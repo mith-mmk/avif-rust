@@ -16,7 +16,7 @@ The local copy is excluded from the root workspace and tested independently;
 it is not a second model package in the codec dependency graph.
 
 The encoder implementation is pinned to avifenc commit
-`c9a333b04ee5fdccabfc66104c7463ea9a1ed244`:
+`e039e990cc5285f7219cedd827493c48a5c22b7d`:
 
 ```text
 avif-rust ------------------------> avif-image-buffer
@@ -162,3 +162,22 @@ Strict Clippy also fails on baseline warnings. MSRV1.88, non-Linux runtime and
 a full external corpus were not tested locally. WML2 core integration and
 registry publication remain separate work. The subsequent packaging checkpoint
 in PACKAGING.md separates local archive verification from real registry checks.
+
+### Preservation inventory corrections
+
+The bounded native parse inventories Metadata OBUs in primary/alpha item data
+and av1C configOBUs without retaining another payload copy. The current writer
+cannot re-emit them: default preflight rejects `Av1Metadata`, and only that
+individual permission enables omission. `dropped_av1_metadata_obus` records the
+count. Malformed OBU boundaries still fail parsing, regardless of drop policy.
+
+Only the first decoder-selected alpha is represented by the shared pixel view.
+Multiple source alphas therefore require `AdditionalAlphaItems` permission;
+reports identify `retained_alpha_item_id` and `dropped_alpha_item_ids`. `Alpha`
+preservation refers to the selected plane, not the original auxiliary graph.
+The output verifier checks the exact supported item/alpha cardinality.
+
+Every nonempty grpl child list, including unknown group types, is inventoried as
+`EntityGroups`. Default transcode rejects it; explicit omission is reported.
+Legacy decoders continue to ignore unknown groups. Empty lists carry no group
+relation. Broken child-box sizes remain parse errors.

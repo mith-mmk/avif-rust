@@ -17,6 +17,10 @@ pub enum PreservationFeature {
     UnknownColr([u8; 4]),
     ExtendedPixelInformation,
     ExtraItems,
+    /// AV1 Metadata OBUs are not re-emitted by the current writer.
+    Av1Metadata,
+    /// Keep the decoder-selected first alpha and omit the additional items.
+    AdditionalAlphaItems,
     DerivedStructure,
     SequenceOrGrid,
     OtherTopLevel,
@@ -65,6 +69,12 @@ pub struct NativeTranscodeReport {
     pub encode: EncodeReportEx,
     pub preserved: Vec<PreservationFeature>,
     pub dropped: Vec<PreservationFeature>,
+    /// Source item selected by the decoder; output item IDs may be rebuilt.
+    pub retained_alpha_item_id: Option<u32>,
+    /// Source alpha IDs omitted with explicit AdditionalAlphaItems permission.
+    pub dropped_alpha_item_ids: Vec<u32>,
+    /// Count omitted with explicit Av1Metadata permission (item data + configOBUs).
+    pub dropped_av1_metadata_obus: usize,
     pub signalling_changes: Vec<SignallingChange>,
     pub color_authority: ColorAuthority,
     pub container_signalling_verified: bool,
@@ -275,6 +285,14 @@ fn prepare<'a>(
             PreservationFeature::OtherReferences,
         ),
         (inventory.entity_groups, PreservationFeature::EntityGroups),
+        (
+            inventory.av1_metadata_obus != 0,
+            PreservationFeature::Av1Metadata,
+        ),
+        (
+            info.alpha_auxiliary_items.len() > 1,
+            PreservationFeature::AdditionalAlphaItems,
+        ),
         (inventory.custom_item_names, PreservationFeature::ItemNames),
         (
             inventory.unmodelled_auxiliary,
@@ -463,11 +481,20 @@ fn prepare<'a>(
     {
         push(&mut preserved, PreservationFeature::IccPropertyType)?;
     }
+    let retained_alpha_item_id = info.alpha_auxiliary_items.first().map(|a| a.item_id);
+    let mut dropped_alpha_item_ids = Vec::new();
+    dropped_alpha_item_ids
+        .try_reserve_exact(info.alpha_auxiliary_items.len().saturating_sub(1))
+        .map_err(|_| BufferError::Allocation)?;
+    dropped_alpha_item_ids.extend(info.alpha_auxiliary_items.iter().skip(1).map(|a| a.item_id));
     let report = NativeTranscodeReport {
         encoded: false,
         encode,
         preserved,
         dropped: drops,
+        retained_alpha_item_id,
+        dropped_alpha_item_ids,
+        dropped_av1_metadata_obus: inventory.av1_metadata_obus,
         signalling_changes: changes,
         color_authority: policy.color_authority,
         container_signalling_verified: false,
@@ -547,7 +574,9 @@ pub fn transcode_native(
     if actual_depth != options.native.bit_depth
         || (config.chroma_subsampling_x, config.chroma_subsampling_y) != expected
         || config.monochrome != (encoded.report.model == NativeModel::Monochrome)
-        || info.alpha_auxiliary_items.is_empty() == (encoded.report.alpha != AlphaMode::Absent)
+        || info.alpha_auxiliary_items.len()
+            != usize::from(encoded.report.alpha != AlphaMode::Absent)
+        || information.item_count() != 1 + info.alpha_auxiliary_items.len()
     {
         return Err(PreservationError::OutputVerification(
             "AV1 depth/sampling/alpha",

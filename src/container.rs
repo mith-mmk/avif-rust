@@ -908,6 +908,8 @@ pub struct SourceStructureInventory {
     pub other_metadata: bool,
     pub other_references: bool,
     pub entity_groups: bool,
+    /// Metadata OBUs in primary/alpha item data and av1C configOBUs.
+    pub av1_metadata_obus: usize,
     pub custom_item_names: bool,
     pub unmodelled_auxiliary: bool,
     pub unassociated_properties: bool,
@@ -1007,7 +1009,7 @@ fn parse_rich_info_with_limits_and_budget_mode(
         &parsed.info,
         primary_item_id,
         &mut stats.source_inventory,
-    );
+    )?;
     let ParsedAvif {
         info: parsed_info,
         metadata,
@@ -1471,12 +1473,38 @@ fn inventory_source_metadata(
     info: &AvifInfo,
     primary: u32,
     out: &mut SourceStructureInventory,
-) {
+) -> Result<(), DecoderError> {
     out.other_references = state
         .item_references
         .iter()
         .any(|r| r.reference_type != *b"auxl" || r.to_item_ids.len() != 1);
-    out.entity_groups = !state.alternate_entity_groups.is_empty();
+    out.entity_groups |= !state.alternate_entity_groups.is_empty();
+    // Borrow the already bounded parse owners; no second container parse or
+    // opaque payload copy is needed to inventory unsupported AV1 metadata.
+    for item in &state.item_infos {
+        if item.item_type != *b"av01" {
+            continue;
+        }
+        let payload = if item.item_id == primary {
+            Some(info.primary_item_payload.as_slice())
+        } else {
+            info.alpha_auxiliary_items
+                .iter()
+                .find(|a| a.item_id == item.item_id)
+                .map(|a| a.payload.as_slice())
+        };
+        if let Some(payload) = payload {
+            inventory_metadata_obus(payload, out)?;
+        }
+    }
+    for property in &state.item_properties {
+        if let ItemProperty::Av1Config(config) = property {
+            let obus = config.get(4..).ok_or_else(|| {
+                DecoderError::NotEnoughData("av1C configuration header is missing".to_string())
+            })?;
+            inventory_metadata_obus(obus, out)?;
+        }
+    }
     for item in &state.item_infos {
         let expected = if item.item_id == primary {
             "Color"
@@ -1560,6 +1588,21 @@ fn inventory_source_metadata(
             out.unmodelled_auxiliary = true;
         }
     }
+    Ok(())
+}
+
+fn inventory_metadata_obus(
+    payload: &[u8],
+    out: &mut SourceStructureInventory,
+) -> Result<(), DecoderError> {
+    for obu in crate::obu::ObuIter::new(payload) {
+        if obu?.obu_type == crate::obu::ObuType::Metadata {
+            out.av1_metadata_obus = out.av1_metadata_obus.checked_add(1).ok_or_else(|| {
+                DecoderError::InvalidParam("AV1 metadata OBU count overflows".to_string())
+            })?;
+        }
+    }
+    Ok(())
 }
 
 fn scan_native_limits(
@@ -1644,7 +1687,15 @@ fn scan_meta_limits(
                 limits.check_count(stats.iloc_item_count, limits.max_items(), "iloc item")?;
             }
             b"iprp" => scan_iprp_limits(child, limits, stats)?,
-            b"hdlr" | b"pitm" | b"idat" | b"iref" | b"grpl" => {}
+            b"grpl" => {
+                let mut group_offset = 0;
+                while group_offset < child.len() {
+                    let group = read_box_header(child, group_offset, child.len())?;
+                    stats.source_inventory.entity_groups = true;
+                    group_offset = checked_add(group.offset, group.size, "grpl child box end")?;
+                }
+            }
+            b"hdlr" | b"pitm" | b"idat" | b"iref" => {}
             _ => stats.source_inventory.other_metadata = true,
         }
         offset = checked_add(header.offset, header.size, "meta child box end")?;
