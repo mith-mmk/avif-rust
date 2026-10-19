@@ -11,8 +11,10 @@
 アクセス、[`wml2`](https://github.com/mith-mmk/wml2-on-rust)互換のcallback
 インターフェースを提供します。
 
-現在のreleaseは
-[`avif-rust 0.0.8`](https://crates.io/crates/avif-rust/0.0.8)です。
+0.1.1ではAVISのentropy decodeを修正し、同梱fixtureによる回帰テストを追加しました。
+[変更履歴](CHANGELOG.md)と[配布検証](PACKAGING.md)を参照してください。
+共有bufferとoptional encoderの依存は公開済み0.1.0のままです。
+非lossless AVISには外部referenceとの既知の画素差分が残っており、完全なAV1画素一致は保証しません。
 
 実行時にFFmpeg、libaom、その他のネイティブcodecは呼び出しません。これらは
 テスト用oracleの生成と検証にのみ使用します。
@@ -57,15 +59,14 @@ trailing-one欠落、非ゼロpadding、切り詰め、算術readerの過剰read
 ## インストール
 
 ```console
-cargo add avif-rust --git https://github.com/mith-mmk/avif-rust.git --branch codex/avif-native-context-20261016
+cargo add avif-rust@0.1.1
 ```
 
 または`Cargo.toml`へ直接追加します。
 
 ```toml
 [dependencies]
-# 0.1.0 の公開後に使う registry 指定です。現在は未公開です。
-avif-rust = "0.1.0"
+avif-rust = "0.1.1"
 ```
 
 最小サポートRustバージョン（MSRV）はRust 1.88です。
@@ -165,6 +166,3 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/verify_oracle_sources.ps1
 ## ライセンス
 
 [MIT](https://github.com/mith-mmk/avif-rust/blob/main/LICENSE)
-
-
-このブランチは共有バッファ対応の未公開候補 0.1.0 を準備しています。公開済み版は 0.0.8 のままです。配布検証と公開順は [PACKAGING.md](PACKAGING.md) を参照してください。

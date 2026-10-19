@@ -1,4 +1,40 @@
-# Shared buffer distribution preparation
+# Distribution checks
+
+## Decoder 0.1.1
+
+The 0.1.0 versions of `avif-image-buffer`, `avifenc-rust` and `avif-rust` were
+published on 2026-10-17. Decoder 0.1.1 includes the later AVIS decoding fixes and
+bundled regressions. Shared and encoder versions and immutable dependency pins
+remain unchanged. The known non-lossless AVIS pixel differences and strict
+sequence layout limitation remain; see [CHANGELOG.md](CHANGELOG.md).
+
+For this decoder-only release, use a clean, committed checkout and ordinary
+registry resolution without patches or local source substitutions:
+
+```sh
+cargo fmt --all -- --check
+cargo test --locked --release
+cargo test --locked --release --features encode --test shared_buffer --test shared_transcode --test avis_regression
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo rustdoc --locked --all-features --lib -- -D warnings
+cargo package --locked
+cargo publish --dry-run --locked
+```
+
+Before the separately authorized real upload, confirm the exact version is absent
+from crates.io and the clean source commit is pushed and matches its remote SHA.
+Test the extracted archive against registry dependencies, including the embedded
+AVIS regressions and optional encode/transcode integration. Check a registry-only
+consumer with encode off and on, shared type identity and a lossless round trip.
+After upload, verify the crates.io version, archive checksum and clean
+`.cargo_vcs_info.json` commit SHA. Do not overwrite a published version.
+
+## Historical shared-buffer 0.1.0 preparation
+
+The remaining sections record the prepublication checkpoint on 2026-10-16.
+Their unpublished-version statements and uniform-0.1.0 local-chain script describe
+that historical checkpoint, not current registry availability or the decoder-only
+0.1.1 release procedure above.
 
 No crates were uploaded, credentials created, tags/releases published or main
 branches merged by this work. Versions below are **unpublished candidates**.

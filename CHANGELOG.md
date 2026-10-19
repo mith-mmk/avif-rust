@@ -2,14 +2,19 @@
 
 All notable changes to this crate are documented in this file.
 
-## Unreleased
+## 0.1.1 - 2026-10-19
 
 - Fix AVIS entropy desynchronization for shared sub-8x8 chroma palette maps
   and inferred compound indices; accept valid one-byte entropy tiles while
   retaining strict trailing-bit validation.
 - Add bundled AVIS regressions that execute without FFmpeg, including an
   exact independent YUV oracle for a lossless palette key frame.
-- These fixes require a later release; the published 0.1.0 archives are unchanged.
+- Non-lossless AVIS reconstruction still has known pixel differences from the
+  external reference. This release does not claim complete AV1 pixel conformance;
+  the lossless palette key oracle is exact. The bounded strict sequence decoder
+  still rejects the tested multiple-coded-frame sample layout.
+- Shared buffers and the optional encoder remain at 0.1.0. The published 0.1.0
+  archives are unchanged.
 
 ## 0.1.0 - 2026-10-17
 
