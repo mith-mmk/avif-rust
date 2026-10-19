@@ -3084,7 +3084,6 @@ pub(super) fn apply_cfl_prediction(
         let source_x = (x + col) << subsampling_x;
         let source_y = (y + row) << subsampling_y;
         let mut luma_sum = 0u32;
-        let sample_count = 1usize << (subsampling_x + subsampling_y);
         for luma_row in 0..(1usize << subsampling_y) {
             let source_y = (source_y + luma_row).min(luma_height - 1);
             for luma_col in 0..(1usize << subsampling_x) {
@@ -3092,8 +3091,9 @@ pub(super) fn apply_cfl_prediction(
                 luma_sum += u32::from(luma_plane.samples[source_y * luma_width + source_x]);
             }
         }
-        let value = (luma_sum + (sample_count as u32 / 2)) / sample_count as u32;
-        (value as i32) << 3
+        // AV1 7.11.5 retains the subsampled sum at Q3 precision. Rounding
+        // to an integer luma value first loses fractional AC information.
+        (luma_sum << (3 - subsampling_x - subsampling_y)) as i32
     };
     let mut sum = 0i64;
     for row in 0..height {

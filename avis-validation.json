@@ -1,0 +1,186 @@
+{
+  "date_utc": "2026-10-17",
+  "scope": "AVIS decode failure fix; local validation record. Final immutable-head CI and remote SHA are recorded in PR #1.",
+  "baseline_commit": "00272cbd6d2a9b083f2ffe4811d376fb172c75ce",
+  "branch": "codex/avif-native-context-20261016",
+  "toolchain": "Rust/Cargo/Clippy 1.91.0, Linux x86_64",
+  "build_jobs": 2,
+  "root_causes": [
+    {
+      "cause": "Sub-8x8 subsampled chroma palette dimensions omitted the normative +2 expansion of both block and on-screen extent.",
+      "fix": "Expand each subsampled dimension smaller than 4 before wavefront palette decoding.",
+      "spec": "https://aomediacodec.github.io/av1-spec/#palette-tokens-syntax"
+    },
+    {
+      "cause": "A compound neighbor with no coded compound_idx was retained as None, later interpreted as 0 rather than the inferred 1.",
+      "fix": "Initialize compound_idx to 1 for compound blocks, including masked-compound and skip-mode paths.",
+      "spec": "https://aomediacodec.github.io/av1-spec/#inter-block-mode-info-syntax"
+    },
+    {
+      "cause": "EntropyDecoder rejected every one-byte tile, although arithmetic initialization permits implicit zero padding.",
+      "fix": "Reject empty payloads; accept one byte while preserving the -14-bit exit budget and all trailing-bit checks.",
+      "spec": "https://aomediacodec.github.io/av1-spec/#initialization-process-for-symbol-decoder"
+    }
+  ],
+  "fixtures": [
+    {
+      "path": "tests/avis-subsampled-palette.avif",
+      "bytes": 13116,
+      "sha256": "a80eeeadf5275403b8bdf8f2dc284a12e4555f6a98fb13b1dd9fe74a20f2b20e"
+    },
+    {
+      "path": "tests/lossless-sub8x8-palette.avif",
+      "bytes": 1766,
+      "sha256": "8848e29f4d8f8289fe25011f61e5a11353f81538b3390266fad15bce6529ff62"
+    },
+    {
+      "path": "tests/lossless-sub8x8-palette.yuv",
+      "bytes": 6144,
+      "sha256": "6a6238036a0d304ab9960bac59d282eebffd09ed0f4daf0c444b5e72f31624b7"
+    }
+  ],
+  "baseline_reproduction": {
+    "original_command": "cargo test --locked --release --test container_obu generated_avis_exposes_inter_and_show_existing_reference_samples -- --exact --nocapture",
+    "result": "Failed: AV1 entropy trailing one bit is missing, first Key frame.",
+    "successive_failures": "After the palette fix, sample 1 unit 1 failed compound entropy; after inferred-index repair, a valid one-byte tile failed at coded unit 17.",
+    "lossless_key_result": "Baseline rejected the bundled lossless key with entropy padding overread; fixed decoder matches all 6144 reference samples exactly."
+  },
+  "independent_reference": {
+    "ffmpeg": "7.1.5-0+deb13u1",
+    "dav1d": "1.5.1",
+    "libaom": "3.12.1",
+    "sequence_stream": "0:v:1 (default 0:v:0 is only the primary still)",
+    "reference_decoders_equal_for_all_60_frames": true,
+    "sequence_reference_bytes": 368640,
+    "sequence_reference_sha256": "3c97d5771e916c2cc1c54df81f1c5ac9fd6a505b02953509af7a6d998171c8bc",
+    "entropy_trace": {
+      "aom_revision": "7d61ce8d764648a443363f3dbbc20dcf111a85f0",
+      "coded_units": 61,
+      "symbol_or_boolean_operations": 81172,
+      "all_decoded_values_ranges_differences_and_cdfs_equal": true
+    },
+    "entropy_trace_method": "Temporary test-only Rust symbol/boolean logging and a CONFIG_ACCOUNTING reference aomdec build; compare per-operation decoded value, normalized range, difference register and CDF before update. All 61 unit lengths and all 81172 operations match. Temporary logging is not included in production sources.",
+    "lossless_key_native_samples_exact": 6144,
+    "lossy_sequence_native_pixel_difference": {
+      "comparison": "native YUV420 against FFmpeg dav1d and libaom (both references exact to each other)",
+      "samples": 368640,
+      "max_absolute_error": 228,
+      "mean_absolute_error": 3.6842339409722222,
+      "mismatched_samples": 134618,
+      "reference_sha256": "3c97d5771e916c2cc1c54df81f1c5ac9fd6a505b02953509af7a6d998171c8bc",
+      "native_sha256": "884b24ad5ad84b2952fc2397b7eaece808a4d057b7ac15e8c95d861237338a17"
+    },
+    "display_check": "Viewed enlarged decoded/reference frame 5. Lossy reconstruction differences remain visible; no complete visual or pixel conformance claim."
+  },
+  "checks": [
+    {
+      "command": "cargo test --locked --release --no-fail-fast",
+      "passed": 862,
+      "failed": 0,
+      "ignored": 9,
+      "caveat": "Some pre-existing external-fixture tests may return early; mandatory avis_regression tests have no such path."
+    },
+    {
+      "command": "cargo test --locked --features encode --test shared_transcode --test shared_buffer",
+      "passed": 16,
+      "failed": 0
+    },
+    {
+      "command": "cargo clippy --locked --all-targets --all-features -- -D warnings",
+      "result": "passed; five inherited Rust 1.91 lints corrected without suppressing them"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "result": "passed"
+    },
+    {
+      "command": "cargo rustdoc --locked --lib -- -D warnings",
+      "result": "passed"
+    },
+    {
+      "command": "cargo package --locked --allow-dirty",
+      "result": "passed archive verification against normalized registry dependencies; no upload"
+    },
+    {
+      "command": "cargo test --locked --manifest-path <archive extracted outside the checkout>/Cargo.toml --test avis_regression",
+      "passed": 2,
+      "failed": 0
+    },
+    {
+      "command": "PATH=/nonexistent <avis_regression binary>",
+      "passed": 2,
+      "failed": 0
+    },
+    {
+      "command": "PATH=/nonexistent <container_obu binary> generated_avis_exposes_inter_and_show_existing_reference_samples --exact --nocapture",
+      "passed": 1,
+      "failed": 0,
+      "note": "Missing executable uses bundled fixture, then executes all decode assertions."
+    },
+    {
+      "command": "<container_obu binary with a test ffmpeg executable returning exit 1> generated_avis_exposes_inter_and_show_existing_reference_samples --exact --nocapture",
+      "passed": 1,
+      "failed": 0,
+      "note": "Forced generator failure uses bundled fixture, then executes all decode assertions."
+    }
+  ],
+  "memory": {
+    "environment_limit_bytes": 17179869184,
+    "environment_peak_bytes": 3421085696,
+    "cgroup_oom_events": 0,
+    "cgroup_oom_kills": 0
+  },
+  "remaining_limitations": [
+    "The lossy 60-frame sequence is decodable but not pixel-exact to dav1d/libaom: max absolute native error 228, mean absolute error 3.6842339409722222 over 368640 samples. This is separate reconstruction work, not resolved by syntax/entropy fixes.",
+    "The existing bounded StrictAvifSequenceDecoder rejects this multi-coded-frame sample layout (requires exactly one AV1 coded frame). Legacy batch/indexed/incremental APIs are covered by this regression.",
+    "A later crate version is required to distribute the fixes: all three published 0.1.0 archives remain unchanged.",
+    "Additional publication, version bumps, main merge, tags and releases were not performed. Other repositories and publication credentials were untouched."
+  ],
+  "benchmark": {
+    "fixture": "tests/WML2Viewer.avif",
+    "iterations_per_round": 10,
+    "rounds": [
+      {
+        "version": "baseline",
+        "native_ms": 129.05777700000002,
+        "rgba_ms": 138.830492
+      },
+      {
+        "version": "fixed",
+        "native_ms": 162.794222,
+        "rgba_ms": 163.06379900000002
+      },
+      {
+        "version": "fixed",
+        "native_ms": 135.847376,
+        "rgba_ms": 135.424427
+      },
+      {
+        "version": "baseline",
+        "native_ms": 187.638441,
+        "rgba_ms": 201.455833
+      },
+      {
+        "version": "baseline",
+        "native_ms": 166.142732,
+        "rgba_ms": 168.732393
+      },
+      {
+        "version": "fixed",
+        "native_ms": 135.173948,
+        "rgba_ms": 140.719598
+      }
+    ],
+    "median_of_round_medians": {
+      "baseline": {
+        "native_ms": 166.142732,
+        "rgba_ms": 168.732393
+      },
+      "fixed": {
+        "native_ms": 135.847376,
+        "rgba_ms": 140.719598
+      }
+    },
+    "note": "Short local measurements on shared hardware; not a performance guarantee."
+  }
+}

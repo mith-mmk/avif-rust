@@ -412,17 +412,17 @@ fn generated_avis_exposes_inter_and_show_existing_reference_samples() {
         ])
         .arg(&output)
         .status();
-    let Ok(status) = status else {
-        eprintln!("ffmpeg is not available; skipping generated AVIS reference sample");
-        let _ = std::fs::remove_dir_all(&root);
-        return;
+    let data = match status {
+        Ok(status) if status.success() => {
+            std::fs::read(&output).expect("generated AVIS reference sample should be readable")
+        }
+        result => {
+            eprintln!(
+                "AVIS reference generator unavailable ({result:?}); using bundled regression fixture"
+            );
+            include_bytes!("avis-subsampled-palette.avif").to_vec()
+        }
     };
-    if !status.success() {
-        eprintln!("libaom AVIS encoder is unavailable; skipping reference sample");
-        let _ = std::fs::remove_dir_all(&root);
-        return;
-    }
-    let data = std::fs::read(&output).expect("generated AVIS reference sample should be readable");
     let info = parse_avif(&data).expect("generated AVIS reference metadata should parse");
     assert_eq!(&info.major_brand, b"avis");
     assert_eq!(info.sequence_sample_payloads.len(), 60);

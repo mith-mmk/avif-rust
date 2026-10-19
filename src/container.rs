@@ -899,8 +899,25 @@ pub fn parse_rich_info(data: &[u8]) -> Result<RichAvifInfo, DecoderError> {
     })
 }
 
+/// Presence inventory, not opaque payload storage or a preservation guarantee.
+/// Collected in the existing bounded scan/parse, without a second container parse.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SourceStructureInventory {
+    pub scan_complete: bool,
+    pub other_top_level: bool,
+    pub other_metadata: bool,
+    pub other_references: bool,
+    pub entity_groups: bool,
+    /// Metadata OBUs in primary/alpha item data and av1C configOBUs.
+    pub av1_metadata_obus: usize,
+    pub custom_item_names: bool,
+    pub unmodelled_auxiliary: bool,
+    pub unassociated_properties: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct NativeParseStats {
+    pub source_inventory: SourceStructureInventory,
     pub metadata_bytes: usize,
     pub retained_metadata_bytes: usize,
     pub icc_bytes: usize,
@@ -987,6 +1004,12 @@ fn parse_rich_info_with_limits_and_budget_mode(
     let color_information = collect_color_information_with_context(colors, &mut context)?;
     stats.ordered_primary_properties =
         primary_property_records_with_context(&parsed.metadata, primary_item_id, &mut context)?;
+    inventory_source_metadata(
+        &parsed.metadata,
+        &parsed.info,
+        primary_item_id,
+        &mut stats.source_inventory,
+    )?;
     let ParsedAvif {
         info: parsed_info,
         metadata,
@@ -1445,12 +1468,153 @@ fn copy_string_owned(
     ))
 }
 
+fn inventory_source_metadata(
+    state: &MetaState,
+    info: &AvifInfo,
+    primary: u32,
+    out: &mut SourceStructureInventory,
+) -> Result<(), DecoderError> {
+    out.other_references = state
+        .item_references
+        .iter()
+        .any(|r| r.reference_type != *b"auxl" || r.to_item_ids.len() != 1);
+    out.entity_groups |= !state.alternate_entity_groups.is_empty();
+    // Borrow the already bounded parse owners; no second container parse or
+    // opaque payload copy is needed to inventory unsupported AV1 metadata.
+    for item in &state.item_infos {
+        if item.item_type != *b"av01" {
+            continue;
+        }
+        let payload = if item.item_id == primary {
+            Some(info.primary_item_payload.as_slice())
+        } else {
+            info.alpha_auxiliary_items
+                .iter()
+                .find(|a| a.item_id == item.item_id)
+                .map(|a| a.payload.as_slice())
+        };
+        if let Some(payload) = payload {
+            inventory_metadata_obus(payload, out)?;
+        }
+    }
+    for property in &state.item_properties {
+        if let ItemProperty::Av1Config(config) = property {
+            let obus = config.get(4..).ok_or_else(|| {
+                DecoderError::NotEnoughData("av1C configuration header is missing".to_string())
+            })?;
+            inventory_metadata_obus(obus, out)?;
+        }
+    }
+    for item in &state.item_infos {
+        let expected = if item.item_id == primary {
+            "Color"
+        } else {
+            "Alpha"
+        };
+        if !item.item_name.is_empty() && item.item_name != expected {
+            out.custom_item_names = true;
+        }
+    }
+    let primary_bits = info
+        .pixel_information
+        .as_ref()
+        .and_then(|p| p.bits_per_channel.first())
+        .copied();
+    for (index, property) in state.item_properties.iter().enumerate() {
+        let mut associated = false;
+        for association in &state.item_property_associations {
+            let selected_alpha = info
+                .alpha_auxiliary_items
+                .iter()
+                .any(|a| a.item_id == association.item_id);
+            if association.item_id != primary && !selected_alpha {
+                continue;
+            }
+            if !association
+                .associations
+                .iter()
+                .any(|a| usize::from(a.index) == index + 1)
+            {
+                continue;
+            }
+            associated = true;
+            if selected_alpha {
+                let supported = match property {
+                    ItemProperty::SpatialExtents(v) => {
+                        Some(v.width) == info.width && Some(v.height) == info.height
+                    }
+                    ItemProperty::PixelInformation(v) => {
+                        v.extended_channels.is_none()
+                            && v.bits_per_channel.len() == 1
+                            && v.bits_per_channel.first().copied() == primary_bits
+                    }
+                    ItemProperty::Av1Config(v) => crate::av1::parse_av1_config(v).is_ok_and(|c| {
+                        let bits = if c.high_bitdepth {
+                            if c.twelve_bit { 12 } else { 10 }
+                        } else {
+                            8
+                        };
+                        Some(bits) == primary_bits
+                    }),
+                    ItemProperty::AuxiliaryType(_) => true,
+                    _ => false,
+                };
+                if !supported {
+                    out.unmodelled_auxiliary = true;
+                }
+            }
+        }
+        if !associated {
+            out.unassociated_properties = true;
+        }
+    }
+    // A selected alpha without explicit depth signalling cannot be advertised
+    // as preserving its original encoded precision, even if decode succeeds.
+    for alpha in &info.alpha_auxiliary_items {
+        let has_pixi = state
+            .item_property_associations
+            .iter()
+            .filter(|a| a.item_id == alpha.item_id)
+            .flat_map(|a| a.associations.iter())
+            .any(|a| {
+                matches!(
+                    state
+                        .item_properties
+                        .get(usize::from(a.index).saturating_sub(1)),
+                    Some(ItemProperty::PixelInformation(_))
+                )
+            });
+        if !has_pixi {
+            out.unmodelled_auxiliary = true;
+        }
+    }
+    Ok(())
+}
+
+fn inventory_metadata_obus(
+    payload: &[u8],
+    out: &mut SourceStructureInventory,
+) -> Result<(), DecoderError> {
+    for obu in crate::obu::ObuIter::new(payload) {
+        if obu?.obu_type == crate::obu::ObuType::Metadata {
+            out.av1_metadata_obus = out.av1_metadata_obus.checked_add(1).ok_or_else(|| {
+                DecoderError::InvalidParam("AV1 metadata OBU count overflows".to_string())
+            })?;
+        }
+    }
+    Ok(())
+}
+
 fn scan_native_limits(
     data: &[u8],
     limits: &NativeDecodeLimits,
 ) -> Result<NativeParseStats, DecoderError> {
     limits.check_input_len(data.len())?;
     let mut stats = NativeParseStats {
+        source_inventory: SourceStructureInventory {
+            scan_complete: true,
+            ..Default::default()
+        },
         metadata_bytes: 0,
         retained_metadata_bytes: 0,
         icc_bytes: 0,
@@ -1469,8 +1633,12 @@ fn scan_native_limits(
             b"meta" => {
                 scan_meta_limits(payload, limits, &mut stats)?;
             }
-            b"moov" => scan_movie_limits(payload, limits)?,
-            _ => {}
+            b"moov" => {
+                stats.source_inventory.other_top_level = true;
+                scan_movie_limits(payload, limits)?;
+            }
+            b"ftyp" | b"mdat" | b"free" | b"skip" | b"wide" => {}
+            _ => stats.source_inventory.other_top_level = true,
         }
         Ok(())
     })?;
@@ -1519,7 +1687,16 @@ fn scan_meta_limits(
                 limits.check_count(stats.iloc_item_count, limits.max_items(), "iloc item")?;
             }
             b"iprp" => scan_iprp_limits(child, limits, stats)?,
-            _ => {}
+            b"grpl" => {
+                let mut group_offset = 0;
+                while group_offset < child.len() {
+                    let group = read_box_header(child, group_offset, child.len())?;
+                    stats.source_inventory.entity_groups = true;
+                    group_offset = checked_add(group.offset, group.size, "grpl child box end")?;
+                }
+            }
+            b"hdlr" | b"pitm" | b"idat" | b"iref" => {}
+            _ => stats.source_inventory.other_metadata = true,
         }
         offset = checked_add(header.offset, header.size, "meta child box end")?;
     }
@@ -1593,7 +1770,7 @@ fn scan_iprp_limits(
                     "property association",
                 )?;
             }
-            _ => {}
+            _ => stats.source_inventory.other_metadata = true,
         }
         offset = checked_add(header.offset, header.size, "iprp child box end")?;
     }
@@ -5665,8 +5842,7 @@ pub(crate) fn grid_cell_alpha_item_id(payload: &[u8], cell_id: u32) -> Option<u3
 pub(crate) fn grid_has_cell_alpha(payload: &[u8]) -> bool {
     payload
         .windows(GRID_ALPHA_MAP_MAGIC.len())
-        .rposition(|window| window == GRID_ALPHA_MAP_MAGIC)
-        .is_some()
+        .any(|window| window == GRID_ALPHA_MAP_MAGIC)
 }
 
 #[cfg(test)]
@@ -5869,18 +6045,14 @@ fn item_payload_with_stack_context(
         0 | 1 => {
             let source: Cow<'_, [u8]> = if construction_method == 0 {
                 Cow::Borrowed(data)
+            } else if let Some((start, end)) = state.idat_payload_range {
+                Cow::Borrowed(data.get(start..end).ok_or_else(|| {
+                    DecoderError::NotEnoughData("idat payload is outside the input".to_string())
+                })?)
             } else {
-                if let Some((start, end)) = state.idat_payload_range {
-                    Cow::Borrowed(data.get(start..end).ok_or_else(|| {
-                        DecoderError::NotEnoughData("idat payload is outside the input".to_string())
-                    })?)
-                } else {
-                    Cow::Borrowed(state.idat_payload.as_deref().ok_or_else(|| {
-                        DecoderError::Bitstream(format!(
-                            "item {item_id} references missing idat box"
-                        ))
-                    })?)
-                }
+                Cow::Borrowed(state.idat_payload.as_deref().ok_or_else(|| {
+                    DecoderError::Bitstream(format!("item {item_id} references missing idat box"))
+                })?)
             };
             for extent in &location.extents {
                 append_item_extent_with_context(

@@ -1,6 +1,6 @@
 [package]
 name = "avif-rust"
-version = "0.0.8"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Experimental pure Rust AVIF container and AV1 image-sequence decoder"
@@ -14,6 +14,17 @@ include = [
     "/README.md",
     "/README.ja.md",
     "/LICENSE",
+    "/SHARED_BUFFER.md",
+    "/PACKAGING.md",
+    "/scripts/verify-packages.py",
+    "/benches/**",
+    "/tests/avis_regression.rs",
+    "/tests/avis-subsampled-palette.avif",
+    "/tests/lossless-sub8x8-palette.avif",
+    "/tests/lossless-sub8x8-palette.yuv",
+    "/tests/shared_buffer.rs",
+    "/tests/shared_transcode.rs",
+    "/tests/shared_oracles.py",
     "/tests/WML2Viewer.avif",
     "/tests/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
     "/tests/FIXTURES.md",
@@ -21,6 +32,11 @@ include = [
 
 [dependencies]
 bin-rs = { version = "0.0.10", features = ["stream", "util"] }
+avif-image-buffer = { version = "0.1.0", git = "https://github.com/mith-mmk/avif-rust.git", rev = "5c73c7f26c276098ddd761fb20b956302a462001" }
+avifenc_codec = { package = "avifenc-rust", version = "0.1.0", git = "https://github.com/mith-mmk/avifenc.git", rev = "e039e990cc5285f7219cedd827493c48a5c22b7d", optional = true, default-features = false }
+
+[features]
+encode = ["dep:avifenc_codec"]
 
 [lints.clippy]
 # AV1 syntax and reconstruction functions intentionally mirror normative
@@ -31,6 +47,8 @@ type_complexity = "allow"
 
 # Keep this nested repository independent when it is checked out inside WML2.
 [workspace]
+exclude = ["crates/avif-image-buffer", "tests/wasm_shared"]
+resolver = "2"
 
 [[bench]]
 name = "decode"

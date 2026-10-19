@@ -45,6 +45,40 @@ fn cfl_prediction_applies_signed_q3_luma_ac() {
 }
 
 #[test]
+fn cfl_subsampled_prediction_keeps_fractional_luma_precision() {
+    // The first pair/quad averages to 1/2. Q3 must retain 4 rather than
+    // round it to one luma sample before computing AC. Fixed expectations
+    // follow AV1 7.11.5, independently of encoder prediction code.
+    for bits in [8, 10, 12] {
+        for (sx, sy, height, samples) in [
+            (1, 0, 1, vec![0, 1, 0, 0]),
+            (1, 1, 2, vec![0, 1, 0, 0, 1, 0, 0, 0]),
+        ] {
+            let luma = PlaneBuffer {
+                layout: PlaneLayout {
+                    plane: 0,
+                    width: 4,
+                    height,
+                    subsampling_x: 0,
+                    subsampling_y: 0,
+                    sample_count: 4 * height,
+                },
+                samples,
+            };
+            for (alpha, expected) in [(16, [129, 127]), (-16, [127, 129])] {
+                let mut prediction = [128; 2];
+                apply_cfl_prediction(&mut prediction, &luma, 0, 0, 2, 1, alpha, bits, sx, sy)
+                    .unwrap();
+                assert_eq!(
+                    prediction, expected,
+                    "bits={bits} sampling={sx}/{sy} alpha={alpha}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn decodes_sample_first_luma_transform_into_frame_buffer() {
     let Some(data) = read_sample_avif() else {
         return;

@@ -12,6 +12,15 @@ pub mod decoder;
 mod error;
 mod icc;
 mod image;
+pub mod image_ex;
+/// Codec-independent shared pixel model; identical to the encoder's buffer API.
+pub use avif_image_buffer as buffer;
+/// Optional delegation to the standalone encoder; no encoder is selected by default.
+#[cfg(feature = "encode")]
+pub use avifenc_codec as encoder;
+#[cfg(feature = "encode")]
+pub use avifenc_codec::{EncodeErrorEx, EncodeOptionsEx, EncodedImageEx, encode_ex, preflight_ex};
+pub use image_ex::{AvifSourceContext, NativeImageEx, decode_native_ex};
 pub mod limits;
 mod native;
 pub mod obu;
@@ -19,6 +28,8 @@ pub mod obu;
 pub(crate) mod test_allocation_observer;
 #[cfg(test)]
 mod test_support;
+#[cfg(feature = "encode")]
+pub mod transcode;
 
 pub use compat::{
     CallbackResponse, DataMap, DecodeOptions, DrawCallback, DrawOptions, ImageRect, InitOptions,

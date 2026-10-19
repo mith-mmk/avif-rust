@@ -26,11 +26,13 @@ pub(crate) struct EntropyStateSnapshot {
 
 impl<'a> EntropyDecoder<'a> {
     pub fn new(data: &'a [u8], disable_cdf_update: bool) -> Result<Self, DecoderError> {
-        if data.len() < 2 {
+        if data.is_empty() {
             return Err(DecoderError::NotEnoughData(
-                "AV1 entropy tile payload is too short".to_string(),
+                "AV1 entropy tile payload is empty".to_string(),
             ));
         }
+        // The symbol decoder may initialize from one byte and read implicit
+        // zero padding; exit() still enforces the padding budget and trailing bits.
         let mut decoder = Self {
             data,
             bit_offset: 15,
@@ -289,9 +291,19 @@ mod tests {
     }
 
     #[test]
-    fn rejects_short_tile_payload() {
-        let err = EntropyDecoder::new(&[0], false).unwrap_err();
-        assert!(err.to_string().contains("too short"));
+    fn rejects_empty_tile_payload() {
+        let err = EntropyDecoder::new(&[], false).unwrap_err();
+        assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn one_byte_tile_uses_implicit_zero_padding_and_validates_termination() {
+        let mut decoder = EntropyDecoder::new(&[0x20], false).unwrap();
+        assert_eq!(decoder.read_bool().unwrap(), 0);
+        assert_eq!(decoder.exit().unwrap(), 1);
+
+        let mut truncated = EntropyDecoder::new(&[0x00], false).unwrap();
+        assert!(truncated.exit().is_err());
     }
 
     #[test]

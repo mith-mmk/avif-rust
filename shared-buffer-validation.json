@@ -1,0 +1,344 @@
+{
+  "validated_at_utc": "2026-10-16T14:55:36.160312+00:00",
+  "scope": "Initial shared model, both codec adapters, native AVIF context/preservation preflight and optional encode delegation; not full color/geometry conversion or document-preserving writer",
+  "environment": {
+    "rustc": "1.91.0 (f8297e351 2025-10-28)",
+    "cargo": "1.91.0 (ea2d97820 2025-10-10)",
+    "os": "Linux x86_64",
+    "wasm_target": "wasm32-unknown-unknown",
+    "node": "v24.19.0",
+    "wasm_bindgen_cli": "0.2.126"
+  },
+  "source_checkpoints": {
+    "requested_avif_base": "d8b8c9f5edd69b241a423739925782a879d47b25",
+    "avif_original_main": "ecc37b220daf37b24134aacac0bc12723aadc357",
+    "shared_canonical_git_commit": "9ed4ad242582c3375c8d8ee1365ef7d6ddc5b53a",
+    "encoder_git_commit": "e8eec232ef9ef61f99df9ecdb5c7f8a4685d5bac",
+    "encoder_original_main": "39edfaa462823c215bfdc90b473789ae355acd94",
+    "cfl_fix_commit": "7cc328771de2adad26cbc1a3c918ae9b172a1d04"
+  },
+  "specifications": [
+    {
+      "library_id": "libfile_07dc5c1ee7448191b7f8dbdb20a9c47b",
+      "filename": "avif_avifenc_unified_buffer_spec_2026-10-16.md",
+      "complete_library_read": true,
+      "materialization": "download failed; not claimed locally available"
+    },
+    {
+      "library_id": "libfile_7bd93496d2c081919b100f228a1e7641",
+      "filename": "avif2avif_contract_2026-10-16.md",
+      "complete_library_read": true,
+      "materialization": "download failed; not claimed locally available"
+    }
+  ],
+  "tests": {
+    "core-standalone-tests.log": {
+      "runner_passed": 10,
+      "runner_failed": 0,
+      "runner_ignored": 0
+    },
+    "decoder-full-no-fail-fast.log": {
+      "runner_passed": 863,
+      "runner_failed": 1,
+      "runner_ignored": 9
+    },
+    "shared-final-integration-tests.log": {
+      "runner_passed": 11,
+      "runner_failed": 0,
+      "runner_ignored": 0
+    },
+    "shared-final-precision-tests.log": {
+      "runner_passed": 4,
+      "runner_failed": 0,
+      "runner_ignored": 0
+    },
+    "encoder-shared-tests.log": {
+      "runner_passed": 90,
+      "runner_failed": 0,
+      "runner_ignored": 0
+    },
+    "encoder-multithread-tests.log": {
+      "runner_passed": 90,
+      "runner_failed": 0,
+      "runner_ignored": 0
+    }
+  },
+  "full_suite_limitation": "One failing test generated_avis_exposes_inter_and_show_existing_reference_samples in container_obu, same entropy trailing one bit missing error reproduced on unmodified ecc37b2. Other runners finished via --no-fail-fast. Counts include tests that conditionally return when external fixtures are missing, not full corpus conformance.",
+  "independent_oracle": {
+    "oracle": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "files": 60,
+    "samples": 2430,
+    "all_exact": true
+  },
+  "wasm_runtime": {
+    "runtime": "v24.19.0",
+    "cases": 5,
+    "all_passed": true,
+    "host_imports": [
+      {
+        "module": "./verify_bg.js",
+        "name": "__wbindgen_init_externref_table",
+        "kind": "function"
+      }
+    ],
+    "bindings": "wasm-bindgen nodejs; no mocked imports"
+  },
+  "dependency_graph": {
+    "acyclic_encoder_does_not_depend_on_decoder": true,
+    "encode_off_excludes_encoder_and_backends": true,
+    "one_shared_package_source": "git+https://github.com/mith-mmk/avif-rust.git?rev=9ed4ad242582c3375c8d8ee1365ef7d6ddc5b53a#avif-image-buffer@0.1.0",
+    "encoder_package": "git+https://github.com/mith-mmk/avifenc.git?rev=e8eec232ef9ef61f99df9ecdb5c7f8a4685d5bac#avifenc-rust@0.0.7",
+    "higher_than_declared_msrv": []
+  },
+  "legacy_encoder_comparison": [
+    {
+      "case": "rgba8.avif",
+      "same_encoded_payloads": true,
+      "intentional_auxl_changed_offsets": [
+        219,
+        223
+      ],
+      "baseline_sha256": "4cc4191fa8fc9f7d381b69ab76119e5f68c0faf362b2c9b1f6ae220bb3ea6892",
+      "current_sha256": "61fbe4042f29195105bc656133f1d2d7936d3b9d99ac7f558e27c3b694899136",
+      "current_streams": [
+        {
+          "width": 3,
+          "height": 2,
+          "pix_fmt": "gbrp"
+        },
+        {
+          "width": 3,
+          "height": 2,
+          "pix_fmt": "gray"
+        }
+      ]
+    },
+    {
+      "case": "rgba16.avif",
+      "same_encoded_payloads": true,
+      "intentional_auxl_changed_offsets": [
+        219,
+        223
+      ],
+      "baseline_sha256": "47357c3baa65e4cb36dda09e691f4d3c11c1119706ea42009d0e363fbeb0f586",
+      "current_sha256": "4cf193a2344d80f52665d6e9afc7ea3e14cee69929a6065876f8d60d12b3d091",
+      "current_streams": [
+        {
+          "width": 3,
+          "height": 2,
+          "pix_fmt": "gbrp12le"
+        },
+        {
+          "width": 3,
+          "height": 2,
+          "pix_fmt": "gray12le"
+        }
+      ]
+    }
+  ],
+  "legacy_decoder_and_benchmark": {
+    "method": "alternating baseline/current in three rounds, two warmups and seven measured native bounded decodes per sample per round; no concurrent builds observed",
+    "summary": [
+      {
+        "file": "/workspace/avif-rust/tests/WML2Viewer.avif",
+        "native_and_legacy_rgba16_rgba8_equal": true,
+        "median_of_three_seven_iteration_medians_us": {
+          "baseline": 290214,
+          "current": 239176
+        },
+        "relative_percent": -17.59
+      },
+      {
+        "file": "/workspace/avif-rust/tests/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
+        "native_and_legacy_rgba16_rgba8_equal": true,
+        "median_of_three_seven_iteration_medians_us": {
+          "baseline": 3693,
+          "current": 3753
+        },
+        "relative_percent": 1.62
+      }
+    ],
+    "rounds": {
+      "baseline": [
+        [
+          {
+            "file": "/workspace/avif-rust/tests/WML2Viewer.avif",
+            "native_hash": "7fccb966a5847e45",
+            "rgba16_hash": "5543ccac0dcc94d9",
+            "rgba8_hash": "b30382939a3c5b2d",
+            "native_median_us": 429785
+          },
+          {
+            "file": "/workspace/avif-rust/tests/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
+            "native_hash": "078f606fe04d1454",
+            "rgba16_hash": "cd07bcd788d62e23",
+            "rgba8_hash": "96dbe0e8390d92fb",
+            "native_median_us": 3693
+          }
+        ],
+        [
+          {
+            "file": "/workspace/avif-rust/tests/WML2Viewer.avif",
+            "native_hash": "7fccb966a5847e45",
+            "rgba16_hash": "5543ccac0dcc94d9",
+            "rgba8_hash": "b30382939a3c5b2d",
+            "native_median_us": 238005
+          },
+          {
+            "file": "/workspace/avif-rust/tests/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
+            "native_hash": "078f606fe04d1454",
+            "rgba16_hash": "cd07bcd788d62e23",
+            "rgba8_hash": "96dbe0e8390d92fb",
+            "native_median_us": 3935
+          }
+        ],
+        [
+          {
+            "file": "/workspace/avif-rust/tests/WML2Viewer.avif",
+            "native_hash": "7fccb966a5847e45",
+            "rgba16_hash": "5543ccac0dcc94d9",
+            "rgba8_hash": "b30382939a3c5b2d",
+            "native_median_us": 290214
+          },
+          {
+            "file": "/workspace/avif-rust/tests/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
+            "native_hash": "078f606fe04d1454",
+            "rgba16_hash": "cd07bcd788d62e23",
+            "rgba8_hash": "96dbe0e8390d92fb",
+            "native_median_us": 3180
+          }
+        ]
+      ],
+      "current": [
+        [
+          {
+            "file": "/workspace/avif-rust/tests/WML2Viewer.avif",
+            "native_hash": "7fccb966a5847e45",
+            "rgba16_hash": "5543ccac0dcc94d9",
+            "rgba8_hash": "b30382939a3c5b2d",
+            "native_median_us": 297453
+          },
+          {
+            "file": "/workspace/avif-rust/tests/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
+            "native_hash": "078f606fe04d1454",
+            "rgba16_hash": "cd07bcd788d62e23",
+            "rgba8_hash": "96dbe0e8390d92fb",
+            "native_median_us": 3199
+          }
+        ],
+        [
+          {
+            "file": "/workspace/avif-rust/tests/WML2Viewer.avif",
+            "native_hash": "7fccb966a5847e45",
+            "rgba16_hash": "5543ccac0dcc94d9",
+            "rgba8_hash": "b30382939a3c5b2d",
+            "native_median_us": 239176
+          },
+          {
+            "file": "/workspace/avif-rust/tests/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
+            "native_hash": "078f606fe04d1454",
+            "rgba16_hash": "cd07bcd788d62e23",
+            "rgba8_hash": "96dbe0e8390d92fb",
+            "native_median_us": 3905
+          }
+        ],
+        [
+          {
+            "file": "/workspace/avif-rust/tests/WML2Viewer.avif",
+            "native_hash": "7fccb966a5847e45",
+            "rgba16_hash": "5543ccac0dcc94d9",
+            "rgba8_hash": "b30382939a3c5b2d",
+            "native_median_us": 238926
+          },
+          {
+            "file": "/workspace/avif-rust/tests/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
+            "native_hash": "078f606fe04d1454",
+            "rgba16_hash": "cd07bcd788d62e23",
+            "rgba8_hash": "96dbe0e8390d92fb",
+            "native_median_us": 3753
+          }
+        ]
+      ]
+    },
+    "limitation": "exploratory wall-clock comparison on two fixtures, not a statistical or corpus-wide performance guarantee"
+  },
+  "image_display_check": {
+    "performed": true,
+    "artifact": "/workspace/.test-avif-common-restart-20261016/.test-native-oracles/.test-rgba-display.png",
+    "method": "FFmpeg decoded primary plus alpha, alpha-merged and scaled nearest for visual inspection"
+  },
+  "other_gates": {
+    "format": "passed root, shared crate and WASM harness",
+    "rustdoc_with_warnings_denied": "passed with encode enabled",
+    "ordinary_clippy_all_targets": "passed with five warnings, same five warnings on baseline",
+    "strict_core_clippy": "passed",
+    "default_and_no_default_build": "checked encode-off; encoder/backends absent",
+    "package": "failed: unpublished Git avif-image-buffer has no registry version; release distribution not implemented"
+  },
+  "known_intentional_behavior_changes": [
+    "Correct alpha auxl direction from alpha to primary; old encoded output reference IDs change two bytes",
+    "Retain Q3 precision in subsampled decoder CfL; fixes demonstrated native sample mismatch"
+  ],
+  "guarantee_boundaries": [
+    "Native sample allocations move into owned shared model; ICC may copy",
+    "Encoder adapter copies logical samples once into compact native Vecs",
+    "Production transcode verifies output container signalling but does not decode output pixels; per-call pixel_roundtrip_verified stays false",
+    "Native limits retain existing documented parser/header/frame scope and are not an adapter/encoder total allocation guarantee",
+    "Original container order/graph/unknown payload preservation rejects when requested; unsupported metadata requires individual drop permission"
+  ],
+  "not_performed": [
+    "MSRV1.88 execution",
+    "non-Linux runtime",
+    "complete external corpus",
+    "WML2 core integration or PR13 merge",
+    "crates.io publication or release",
+    "new pull request or merge",
+    "CI waiting"
+  ],
+  "protected_worktrees": {
+    "wml2_pr13": "96adfa8c74e798e6fcd9c9a0902dba66002afcba; clean and unchanged",
+    "jpeg2000": "899e25cd84bb20b71b4258a3061f13d57d47eba7; clean and unchanged"
+  },
+  "source_sha256": {
+    "Cargo.toml": "2da74683accdeed9220a4fa6b80cca2cc7b4c1b189cb6b93525a0f21d4b81833",
+    "Cargo.lock": "c7bc01fabf0c831c659703520f481c12aa4172790ec69de2295048336b2ce43d",
+    "src/image_ex.rs": "28b3e2615191bfd55f1a8d4421de2cef399543544d540a2d923d8f9a833e0832",
+    "src/container.rs": "13758e7fead03c6b9aa1ed5b305e47bf8f95436298082f705e0ffe1e3a5cf450",
+    "src/native.rs": "06d81520e6c0bb540213082e30fce87e067711fd568b383924527992bef2e5e2",
+    "src/transcode.rs": "cd90bb2b23f97378f0cf764d4fb8228428377ed493ab078f7b6ed918837bf6c4",
+    "src/lib.rs": "758b8bbab6e097ab59fb459df1a047d76c28383675caca250f8e548699f196ab",
+    "src/av1/tile_decode/reconstruction.rs": "6339aacd52cb1a835faf6228921d98faa06153ba2589dff948c62c8bdd292bca",
+    "src/av1/tile_decode/tests/tile_decode_reconstruction.rs": "e6036189a3776f8f0e1d7ec39416525a122ab65943aafea0e911b16136f4b5c1",
+    "tests/shared_buffer.rs": "f0c9fc806f0326409477b9b22b312215602498dbfd758c843374e5a0c9460490",
+    "tests/shared_transcode.rs": "ba8b5ee226f285e95ee95b8b87616c286f168aeb0bbbf7e5db8f38100363d038",
+    "tests/shared_oracles.py": "2d729af1334cbcf03b94e537e627de28d92258f64c02dd2e8dfcec5666c80723",
+    "tests/wasm_shared/Cargo.toml": "fe45f9b1d5dc99a5fd2833bc34d97fdd9510bb4908fe84e041d13ba411d23ddd",
+    "tests/wasm_shared/Cargo.lock": "e04bb58ae657c541101054e0aa320fb1c37bed8546e08eb1e9fbb21de576859b",
+    "tests/wasm_shared/lib.rs": "c145cac564700903a91692e2252b0e350c19a12c5a589205cba61fba0825bcbc",
+    "tests/wasm_shared/run.cjs": "b96bdb83f345638c5114bafe1d0ff31adbdf3e19ba02d7acd5d826c77878241e",
+    "crates/avif-image-buffer/src/lib.rs": "8808fca93d2ee8f6e633168020cde8bcf78f412a4569d754af732f194c83abac",
+    "crates/avif-image-buffer/src/convert.rs": "5d23a69ebaf4e05c43d8788d545f0679249fc1461c4356cb360908fed2ca437e"
+  },
+  "evidence_directory": "/workspace/.test-avif-common-restart-20261016",
+  "evidence_sha256": {
+    "core-standalone-tests.log": "d8fd3a4df3ef9235bd6ddc59ebf0e3e0142c41e97a6443eb29e3a94f7db9c160",
+    "core-standalone-clippy.log": "778e351f02d7301a8063db5bdfe788a7ad8a1143b48bc39661a51437f9f7e34b",
+    "decoder-full-no-fail-fast.log": "abbd9c84321ea627458837ba5b93fc1ae9f2e6afa5404dd233d677bfa25519a0",
+    "baseline-container-inter.log": "25ddf944f985e4fe7c33703def97d530e5ca96ab39fcd5552056cd8feee1325c",
+    "shared-final-integration-tests.log": "acc0db3b34144607aff4b20f8ba352545231edd4f73c58062631866c9eae4f0a",
+    "shared-final-precision-tests.log": "062cf14d33b71a07f59ca072a9dde104009c839365017f23786f7e478b957993",
+    "encoder-shared-tests.log": "23653f70460f054981746e75914af2ff20ca8e4783f3f23b8a07e5862d997ccc",
+    "encoder-multithread-tests.log": "da99ecdf68aa302c8ad1edfa06a975929b33bf5e5e1cf5dfe8fb49a0b9e837d2",
+    "encode-off-check-final.log": "99f71393b9903dca098310bb446022a4bdee195ea9996f351a787195555210a6",
+    "shared-final-clippy.log": "818854123f8fae35d4d1b32dba04d4e2caec6deaf845bdeb615e8879e8a676ec",
+    "baseline-all-target-clippy.log": "090f617c5f8274aa893fed0361c32c26f79cc506b08f30e424420dca6ee978b3",
+    "shared-final-rustdoc.log": "b14e2d2421e3274224f562e1b067b596c89ab110e219ad71ee4d0517903ecdee",
+    "shared-wasm-build-final.log": "9dad5a7264b4101a939b55e489f16e994f8657dbd6f39ae251f18c0ad2c22b1d",
+    "shared-wasm-run.json": "f7af4832cce7ae312b093e09fd7da4443eadd63e26bb4a905faec7130997cb0b",
+    "independent-native-oracles.json": "245d975f13197222e6ed93cd716cd9d408458a385e41f51a5b23653a89874456",
+    "dependency-graph-report.json": "59c847c1ad7a7e235466b2325613f472aa8b61eae816708b756183cee20f77d3",
+    "encoder-legacy-compatibility.json": "6c86575914e0ddf9e6bdbeb9c04196bfa2cd6878b16a9c1530dbdebbcf03d0ff",
+    "native-compatibility-benchmark.json": "ae2f2c9a65e0d0c1084ded6fd64a6cfd7aade22daacfa9ec79f714a97ef6d615",
+    "shared-package-check.log": "0caa2982123eb425b487d35b2dfab8086d6d90fb843f23440a527a593c4a015e"
+  }
+}
