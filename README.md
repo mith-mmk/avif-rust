@@ -10,12 +10,11 @@
 decoder. It provides direct RGBA helpers, access to decoded AV1 source planes,
 and a callback interface compatible with [`wml2`](https://github.com/mith-mmk/wml2-on-rust).
 
-The current release is
-[`avif-rust 0.0.8`](https://crates.io/crates/avif-rust/0.0.8).
-
-This branch prepares the unpublished 0.1.0 shared-buffer candidate; see
-[packaging and publication order](PACKAGING.md). The published release above
-remains unchanged.
+Version 0.1.1 fixes AVIS entropy decoding and adds bundled regressions; see
+[the changelog](CHANGELOG.md) and [distribution checks](PACKAGING.md).
+The shared buffer and optional encoder dependencies remain at their published
+0.1.0 versions. Non-lossless AVIS reconstruction still has known pixel differences
+from the external reference; complete AV1 pixel conformance is not claimed.
 
 The crate does not call FFmpeg, libaom, or another native codec at runtime.
 Those implementations are used only to generate and verify test oracles.
@@ -61,15 +60,14 @@ and arithmetic-reader overread are rejected as bitstream errors.
 ## Installation
 
 ```console
-cargo add avif-rust --git https://github.com/mith-mmk/avif-rust.git --branch codex/avif-native-context-20261016
+cargo add avif-rust@0.1.1
 ```
 
-After separately authorized publication of 0.1.0, add the registry dependency
-manually (0.1.0 is not published yet):
+Or add the registry dependency manually:
 
 ```toml
 [dependencies]
-avif-rust = "0.1.0"
+avif-rust = "0.1.1"
 ```
 
 The minimum supported Rust version (MSRV) is Rust 1.88.
