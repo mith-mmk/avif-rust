@@ -153,7 +153,7 @@ fn subsampled_avis_all_native_frames_match_independent_reference_exactly() {
     assert_eq!(reference.len(), frames.len() * SAMPLES_PER_FRAME);
     for (frame_index, (frame, expected)) in frames
         .iter()
-        .zip(reference.chunks_exact(SAMPLES_PER_FRAME))
+        .zip(reference.as_chunks::<SAMPLES_PER_FRAME>().0)
         .enumerate()
     {
         let sample_count: usize = frame.buffers.planes.iter().map(|p| p.samples.len()).sum();
