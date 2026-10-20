@@ -432,3 +432,52 @@ fn plans_sample_first_block_transforms() {
 fn read_sample_avif() -> Option<Vec<u8>> {
     crate::test_support::wml2viewer_avif()
 }
+
+#[test]
+fn distance_compound_weights_match_aom_quantized_offsets() {
+    use crate::av1::tile_decode::block_syntax::distance_weighted_compound_weight;
+    let data = read_sample_avif().expect("bundled WML2Viewer fixture is required");
+    let info = parse_avif(&data).unwrap();
+    let payload = find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
+        .unwrap()
+        .unwrap();
+    let mut sequence = parse_sequence_header(payload).unwrap();
+    let payload = find_obu_payload(&info.primary_item_payload, ObuType::Frame)
+        .unwrap()
+        .unwrap();
+    let mut frame = parse_frame_header(payload, &sequence).unwrap();
+    // Outputs are av1_dist_wtd_comp_weight_assign fwd_offset * 4, retaining
+    // this decoder's primary-weight scale of 64 (AOM stores offsets / 16).
+    for (bits, current, primary, secondary, expected) in [
+        (8, 100, Some(99), Some(96), 52),
+        (8, 100, Some(96), Some(99), 12),
+        (8, 100, Some(98), Some(97), 44),
+        (8, 100, Some(97), Some(98), 20),
+        (8, 100, Some(98), Some(95), 48),
+        (8, 100, Some(98), Some(93), 52),
+        (8, 100, Some(99), Some(99), 28),
+        (8, 100, Some(100), Some(100), 12),
+        (8, 100, Some(100), Some(99), 52),
+        (8, 100, Some(99), Some(100), 12),
+        (8, 0, Some(255), Some(4), 52),
+        (8, 255, Some(0), Some(251), 52),
+        (8, 100, Some(0), Some(99), 12),
+        (8, 100, Some(99), Some(0), 52),
+        (8, 100, None, Some(99), 12),
+        (8, 100, Some(99), None, 52),
+        (0, 7, Some(3), Some(4), 12),
+    ] {
+        sequence.order_hint_bits = bits;
+        frame.order_hint = current;
+        frame.reference_order_hints = [None; 7];
+        // Nonadjacent types ensure the selected references, and their order,
+        // are used rather than assuming the first two reference slots.
+        frame.reference_order_hints[2] = primary;
+        frame.reference_order_hints[5] = secondary;
+        assert_eq!(
+            distance_weighted_compound_weight(&sequence, &frame, 2, 5),
+            expected,
+            "bits={bits} current={current} primary={primary:?} secondary={secondary:?}"
+        );
+    }
+}

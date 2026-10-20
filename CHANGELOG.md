@@ -11,6 +11,12 @@ All notable changes to this crate are documented in this file.
 - Preserve single-reference separable interpolation precision with AV1's staged
   rounding, including horizontal-only and 12-bit bilinear predictions; retain
   the exact 8/10-bit bilinear fast path.
+- Retain fractional compound prediction precision through translation, warp,
+  equal/distance weighting and masks; clip only after the final blend.
+- Use AV1's discrete distance-weight table and correct wedge tables/signs.
+- Fix warped prediction output stride and affine filter phase origins.
+- Reconstruct shared sub-8x8 chroma regions using their luma owners' refs/MVs/filters.
+- Reuse and downsample the luma compound mask for chroma at every subsampling.
 - Add exact independent native YUV coverage for the non-lossless AVIS key frame.
   Remaining inter-frame reconstruction differences are not resolved by these fixes.
 

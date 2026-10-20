@@ -6,6 +6,18 @@ use crate::av1::decode::TileDecodePlan;
 use crate::av1::frame::InterpolationFilter;
 use crate::av1::syntax::{BlockSize, Partition, TxSize};
 
+/// A luma-owned region of a shared, subsampled chroma prediction block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Sub8ChromaOwner {
+    pub x: usize,
+    pub y: usize,
+    pub width: usize,
+    pub height: usize,
+    pub reference_frame: u8,
+    pub motion_vector: (i32, i32),
+    pub interpolation_filters: (InterpolationFilter, InterpolationFilter),
+}
+
 fn intra_bc_candidate_offsets(block_size: BlockSize) -> [(isize, isize); 9] {
     let n8_w = block_size.width().max(8) / 8;
     let n8_h = block_size.height().max(8) / 8;
@@ -509,6 +521,59 @@ impl<'a> TileDecoder<'a> {
             compare(counts[2], counts[3]),
             compare(counts[4], counts[5]),
         ]
+    }
+
+    /// AOM reconinter_template.inc builds shared sub8 chroma from each
+    /// contributing luma owner's prediction, provided every owner is inter
+    /// and none uses intrabc. Otherwise the current block owns all chroma.
+    pub(super) fn sub8_chroma_owners(
+        &self,
+        x: usize,
+        y: usize,
+        block_size: BlockSize,
+        subsampling_x: usize,
+        subsampling_y: usize,
+    ) -> Option<[Option<Sub8ChromaOwner>; 4]> {
+        let split_x = block_size.width() == 4 && subsampling_x != 0;
+        let split_y = block_size.height() == 4 && subsampling_y != 0;
+        if !split_x && !split_y {
+            return None;
+        }
+        let first_col = (x / 4).checked_sub(usize::from(split_x))?;
+        let first_row = (y / 4).checked_sub(usize::from(split_y))?;
+        if first_col < self.tile_mi_col_start || first_row < self.tile_mi_row_start {
+            return None;
+        }
+        let width = block_size.width() >> subsampling_x;
+        let height = block_size.height() >> subsampling_y;
+        let origin_x = (first_col * 4) >> subsampling_x;
+        let origin_y = (first_row * 4) >> subsampling_y;
+        let mut owners = [None; 4];
+        for row in 0..=usize::from(split_y) {
+            for col in 0..=usize::from(split_x) {
+                let mi_row = first_row + row;
+                let mi_col = first_col + col;
+                if mi_row >= self.mi_rows || mi_col >= self.mi_cols {
+                    return None;
+                }
+                let index = mi_row * self.mi_cols + mi_col;
+                if self.is_inter_grid[index] != Some(true) || self.intra_bc_mv_grid[index].is_some()
+                {
+                    return None;
+                }
+                owners[row * 2 + col] = Some(Sub8ChromaOwner {
+                    x: origin_x + col * width,
+                    y: origin_y + row * height,
+                    width,
+                    height,
+                    reference_frame: self.reference_frame_grid[index]?,
+                    motion_vector: self.motion_vector_grid[index]?,
+                    interpolation_filters: self.interpolation_filter_grid[index]
+                        .unwrap_or((InterpolationFilter::Regular, InterpolationFilter::Regular)),
+                });
+            }
+        }
+        Some(owners)
     }
 
     pub(super) fn obmc_neighbors(
@@ -2578,6 +2643,95 @@ mod tests {
         assert_eq!(
             intra_bc_candidate_offsets(BlockSize::Block4x16)[..4],
             [(2, -2), (-2, 0), (-2, 0), (0, -2)]
+        );
+    }
+}
+
+#[cfg(test)]
+mod sub8_chroma_tests {
+    use super::*;
+
+    fn decoder() -> TileDecoder<'static> {
+        let bytes = crate::test_support::wml2viewer_avif().expect("packaged AVIF fixture");
+        let info = crate::container::parse_avif(&bytes).unwrap();
+        let seq_payload = crate::obu::find_obu_payload(
+            &info.primary_item_payload,
+            crate::obu::ObuType::SequenceHeader,
+        )
+        .unwrap()
+        .unwrap();
+        let sequence = crate::av1::parse_sequence_header(seq_payload).unwrap();
+        let frame_payload =
+            crate::obu::find_obu_payload(&info.primary_item_payload, crate::obu::ObuType::Frame)
+                .unwrap()
+                .unwrap();
+        let frame = crate::av1::parse_frame_header(frame_payload, &sequence).unwrap();
+        TileDecoder::new(&[0, 0], &frame).unwrap()
+    }
+
+    #[test]
+    fn sub8_chroma_owners_keep_independent_refs_mvs_and_filters() {
+        let mut decoder = decoder();
+        for (i, (x, y)) in [(8, 8), (12, 8), (8, 12), (12, 12)].into_iter().enumerate() {
+            let index = (y / 4) * decoder.mi_cols + x / 4;
+            decoder.is_inter_grid[index] = Some(true);
+            decoder.reference_frame_grid[index] = Some(i as u8);
+            decoder.motion_vector_grid[index] = Some((0, i as i32 * 16));
+            decoder.interpolation_filter_grid[index] =
+                Some((InterpolationFilter::Smooth, InterpolationFilter::Sharp));
+        }
+        let owners = decoder
+            .sub8_chroma_owners(12, 12, BlockSize::Block4x4, 1, 1)
+            .unwrap();
+        for (i, owner) in owners.into_iter().flatten().enumerate() {
+            assert_eq!(
+                (owner.x, owner.y, owner.width, owner.height),
+                (4 + i % 2 * 2, 4 + i / 2 * 2, 2, 2)
+            );
+            assert_eq!(owner.reference_frame, i as u8);
+            assert_eq!(owner.motion_vector, (0, i as i32 * 16));
+            assert_eq!(
+                owner.interpolation_filters,
+                (InterpolationFilter::Smooth, InterpolationFilter::Sharp)
+            );
+        }
+        // Horizontal/vertical subsampling and narrow rectangular shapes
+        // share only the corresponding luma-owner axis.
+        for (x, y, size, ssx, ssy, w, h) in [
+            (12, 12, BlockSize::Block4x4, 1, 0, 2, 4),
+            (12, 12, BlockSize::Block4x4, 0, 1, 4, 2),
+            (12, 8, BlockSize::Block4x8, 1, 1, 2, 4),
+            (8, 12, BlockSize::Block8x4, 1, 1, 4, 2),
+        ] {
+            let regions = decoder.sub8_chroma_owners(x, y, size, ssx, ssy).unwrap();
+            assert_eq!(regions.iter().flatten().count(), 2);
+            for owner in regions.into_iter().flatten() {
+                assert_eq!((owner.width, owner.height), (w, h));
+            }
+        }
+        let first = 2 * decoder.mi_cols + 2;
+        decoder.is_inter_grid[first] = Some(false);
+        assert!(
+            decoder
+                .sub8_chroma_owners(12, 12, BlockSize::Block4x4, 1, 1)
+                .is_none()
+        );
+        decoder.is_inter_grid[first] = Some(true);
+        decoder.intra_bc_mv_grid[first] = Some((0, -8));
+        assert!(
+            decoder
+                .sub8_chroma_owners(12, 12, BlockSize::Block4x4, 1, 1)
+                .is_none()
+        );
+        assert!(
+            decoder
+                .sub8_chroma_owners(0, 0, BlockSize::Block4x4, 1, 1)
+                .is_none()
+        );
+        assert!(
+            decoder
+                .sub8_chroma_owners(12, 12, BlockSize::Block8x8, 1, 1)
+                .is_none()
         );
     }
 }

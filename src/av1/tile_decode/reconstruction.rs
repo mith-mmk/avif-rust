@@ -1,4 +1,8 @@
+#[path = "compound_mask.rs"]
+mod compound_mask;
 use super::diagnostic::ObmcNeighbors;
+#[path = "sub8_chroma.rs"]
+mod sub8_chroma;
 use super::tx_type_syntax::inter_chroma_tx_type;
 use super::{
     BlockModeProbe, CompoundMask, DecodedTransform, InterIntraMode, LocalWarpSample, MotionMode,
@@ -131,11 +135,32 @@ pub(super) fn decode_plane_block_unit(
     let secondary_reference_plane = secondary_reference_buffer
         .as_ref()
         .and_then(|buffers| buffers.planes.get(plane_index));
+    let compound_mask_references = reference_buffer
+        .as_ref()
+        .and_then(|a| a.planes.first())
+        .zip(
+            secondary_reference_buffer
+                .as_ref()
+                .and_then(|b| b.planes.first()),
+        )
+        .map(|(primary, secondary)| compound_mask::References { primary, secondary });
     if block_mode.is_inter && reference_plane.is_none() {
         return Err(DecoderError::Unsupported(format!(
             "AV1 inter reference plane {plane_index} is unavailable"
         )));
     }
+    let sub8_chroma = if plane_index > 0 && block_mode.is_inter {
+        sub8_chroma::plan(
+            decoder,
+            x,
+            y,
+            block_mode.block_size,
+            subsampling_x,
+            subsampling_y,
+        )?
+    } else {
+        None
+    };
     let obmc_neighbors = if let (MotionMode::Obmc, Some(reference_frame)) =
         (block_mode.motion_mode, block_mode.reference_frame)
     {
@@ -309,6 +334,8 @@ pub(super) fn decode_plane_block_unit(
                 prediction,
                 &mut decoder.scratch.inter_intra[..prediction_len],
                 &obmc_neighbors,
+                sub8_chroma.as_ref(),
+                compound_mask_references.as_ref(),
             )?;
             write_plane_block(
                 plane,
@@ -411,6 +438,8 @@ pub(super) fn decode_plane_block_unit(
                 prediction,
                 &mut decoder.scratch.inter_intra[..prediction_len],
                 &obmc_neighbors,
+                sub8_chroma.as_ref(),
+                compound_mask_references.as_ref(),
             )?;
             write_plane_block(
                 plane,
@@ -482,6 +511,8 @@ pub(super) fn decode_plane_block_unit(
             prediction,
             &mut decoder.scratch.inter_intra[..prediction_len],
             &obmc_neighbors,
+            sub8_chroma.as_ref(),
+            compound_mask_references.as_ref(),
         )?;
         let block = decoded_transform.transform;
         let tx_type = decoded_transform.tx_type;
@@ -803,6 +834,8 @@ fn predict_plane_block_into(
     output: &mut [u16],
     inter_intra_scratch: &mut [u16],
     obmc_neighbors: &ObmcNeighbors,
+    sub8_chroma: Option<&sub8_chroma::PredictionPlan>,
+    compound_mask_references: Option<&compound_mask::References<'_>>,
 ) -> Result<(), DecoderError> {
     let sample_count = width.checked_mul(height).ok_or_else(|| {
         DecoderError::InvalidParam("AV1 prediction dimensions overflow".to_string())
@@ -820,6 +853,20 @@ fn predict_plane_block_into(
         width: (block_mode.block_size.width() >> subsampling_x).max(4),
         height: (block_mode.block_size.height() >> subsampling_y).max(4),
     };
+    if let Some(plan) = sub8_chroma {
+        return sub8_chroma::predict(
+            plan,
+            plane_index,
+            x,
+            y,
+            width,
+            height,
+            subsampling_x,
+            subsampling_y,
+            bit_depth,
+            output,
+        );
+    }
     if block_mode.is_inter {
         let slot = block_mode.reference_frame.ok_or_else(|| {
             DecoderError::Unsupported("AV1 inter block has no reference frame".to_string())
@@ -832,6 +879,30 @@ fn predict_plane_block_into(
                 "AV1 inter reference slot {slot} plane {plane_index} is unavailable"
             ))
         })?;
+        if plane_index > 0
+            && block_mode.compound_mask.is_some()
+            && let (Some(secondary), Some(references)) =
+                (secondary_reference_plane, compound_mask_references)
+        {
+            compound_mask::predict_chroma(
+                references,
+                reference,
+                secondary,
+                block_mode,
+                frame,
+                x,
+                y,
+                width,
+                height,
+                subsampling_x,
+                subsampling_y,
+                bit_depth,
+                mask_geometry,
+                output,
+                inter_intra_scratch,
+            );
+            return Ok(());
+        }
         predict_inter_block_into(
             reference,
             secondary_reference_plane,
@@ -876,131 +947,46 @@ fn predict_plane_block_into(
             // each prediction into its own reusable buffer before applying
             // the already-decoded compound mask/weight.
             if global_model.is_some() || secondary_global_model.is_some() {
-                if let Some(matrix) = global_model {
-                    let applied = predict_global_motion_block_into(
-                        output,
-                        reference,
-                        x,
-                        y,
-                        width,
-                        height,
-                        subsampling_x,
-                        subsampling_y,
-                        bit_depth,
-                        frame.allow_high_precision_mv,
-                        matrix,
-                    );
-                    if !applied {
-                        predict_inter_block_into(
-                            reference,
-                            None,
-                            x,
-                            y,
-                            width,
-                            height,
-                            mv,
-                            None,
-                            subsampling_x,
-                            subsampling_y,
-                            block_mode.interpolation_filter.unwrap_or((
-                                InterpolationFilter::Regular,
-                                InterpolationFilter::Regular,
-                            )),
-                            None,
-                            None,
-                            bit_depth,
-                            mask_geometry,
-                            output,
-                        )?;
-                    }
-                } else {
-                    predict_inter_block_into(
-                        reference,
-                        None,
-                        x,
-                        y,
-                        width,
-                        height,
-                        mv,
-                        None,
-                        subsampling_x,
-                        subsampling_y,
-                        block_mode.interpolation_filter.unwrap_or((
-                            InterpolationFilter::Regular,
-                            InterpolationFilter::Regular,
-                        )),
-                        None,
-                        None,
-                        bit_depth,
-                        mask_geometry,
-                        output,
-                    )?;
-                }
+                let filters = block_mode
+                    .interpolation_filter
+                    .unwrap_or((InterpolationFilter::Regular, InterpolationFilter::Regular));
+                predict_compound_global_or_translation_into(
+                    output,
+                    reference,
+                    x,
+                    y,
+                    width,
+                    height,
+                    mv,
+                    subsampling_x,
+                    subsampling_y,
+                    filters,
+                    bit_depth,
+                    mask_geometry,
+                    frame.allow_high_precision_mv,
+                    global_model,
+                );
                 let secondary_output = &mut inter_intra_scratch[..output.len()];
-                if let Some(matrix) = secondary_global_model {
-                    let applied = predict_global_motion_block_into(
-                        secondary_output,
-                        secondary,
-                        x,
-                        y,
-                        width,
-                        height,
-                        subsampling_x,
-                        subsampling_y,
-                        bit_depth,
-                        frame.allow_high_precision_mv,
-                        matrix,
-                    );
-                    if !applied {
-                        predict_inter_block_into(
-                            secondary,
-                            None,
-                            x,
-                            y,
-                            width,
-                            height,
-                            block_mode.motion_vector_secondary.unwrap_or(mv),
-                            None,
-                            subsampling_x,
-                            subsampling_y,
-                            block_mode.interpolation_filter.unwrap_or((
-                                InterpolationFilter::Regular,
-                                InterpolationFilter::Regular,
-                            )),
-                            None,
-                            None,
-                            bit_depth,
-                            mask_geometry,
-                            secondary_output,
-                        )?;
-                    }
-                } else {
-                    predict_inter_block_into(
-                        secondary,
-                        None,
-                        x,
-                        y,
-                        width,
-                        height,
-                        block_mode.motion_vector_secondary.unwrap_or(mv),
-                        None,
-                        subsampling_x,
-                        subsampling_y,
-                        block_mode.interpolation_filter.unwrap_or((
-                            InterpolationFilter::Regular,
-                            InterpolationFilter::Regular,
-                        )),
-                        None,
-                        None,
-                        bit_depth,
-                        mask_geometry,
-                        secondary_output,
-                    )?;
-                }
+                predict_compound_global_or_translation_into(
+                    secondary_output,
+                    secondary,
+                    x,
+                    y,
+                    width,
+                    height,
+                    block_mode.motion_vector_secondary.unwrap_or(mv),
+                    subsampling_x,
+                    subsampling_y,
+                    filters,
+                    bit_depth,
+                    mask_geometry,
+                    frame.allow_high_precision_mv,
+                    secondary_global_model,
+                );
                 for row in 0..height {
                     for col in 0..width {
                         let index = row * width + col;
-                        output[index] = blend_compound_prediction(
+                        output[index] = blend_compound_intermediates(
                             output[index],
                             secondary_output[index],
                             block_mode.compound_weight,
@@ -1526,6 +1512,36 @@ fn predict_global_motion_block_into(
     allow_high_precision_mv: bool,
     matrix: [i32; 6],
 ) -> bool {
+    predict_global_motion_block_with_precision_into(
+        output,
+        reference,
+        x,
+        y,
+        width,
+        height,
+        subsampling_x,
+        subsampling_y,
+        bit_depth,
+        allow_high_precision_mv,
+        matrix,
+        false,
+    )
+}
+
+fn predict_global_motion_block_with_precision_into(
+    output: &mut [u16],
+    reference: &PlaneBuffer,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    subsampling_x: usize,
+    subsampling_y: usize,
+    bit_depth: u8,
+    allow_high_precision_mv: bool,
+    matrix: [i32; 6],
+    compound: bool,
+) -> bool {
     let translation_shift = if allow_high_precision_mv { 3 } else { 4 };
     let Some(translation_x) = i64::from(matrix[0]).checked_shl(translation_shift) else {
         return false;
@@ -1545,6 +1561,7 @@ fn predict_global_motion_block_into(
         return false;
     };
     let (inter_round0, inter_round1) = if bit_depth == 12 { (5, 9) } else { (3, 11) };
+    let inter_round1 = if compound { 7 } else { inter_round1 };
     let mut intermediate = [0_i64; 15 * 8];
     for row in (0..height).step_by(8) {
         for col in (0..width).step_by(8) {
@@ -1754,7 +1771,7 @@ fn predict_warped_block_into(
     for k in -7_i64..8 {
         let iy = (iy4 + k).clamp(0, reference.layout.height.saturating_sub(1) as i64) as usize;
         for l in -4_i64..4 {
-            let sx = sx4 + alpha * l + beta * (k + 4);
+            let sx = sx4 + alpha * (l + 4) + beta * (k + 4);
             let offset =
                 (round_div_power_of_two_signed(sx, DIFF_BITS) + PIXEL_SHIFT).clamp(0, 192) as usize;
             let coeffs = &AV1_WARPED_FILTERS[offset];
@@ -1770,13 +1787,13 @@ fn predict_warped_block_into(
                 round_div_power_of_two_unsigned(sum, inter_round0);
         }
     }
-    let output_height = output_height.saturating_sub(row).min(8);
-    let output_width = output_width.saturating_sub(col).min(8);
-    for out_row in 0..output_height {
+    let chunk_height = output_height.saturating_sub(row).min(8);
+    let chunk_width = output_width.saturating_sub(col).min(8);
+    for out_row in 0..chunk_height {
         let k = out_row as i64 - 4;
-        for out_col in 0..output_width {
+        for out_col in 0..chunk_width {
             let l = out_col as i64 - 4;
-            let sy = sy4 + delta * (k + 4) + gamma * l;
+            let sy = sy4 + delta * (k + 4) + gamma * (l + 4);
             let offset =
                 (round_div_power_of_two_signed(sy, DIFF_BITS) + PIXEL_SHIFT).clamp(0, 192) as usize;
             let coeffs = &AV1_WARPED_FILTERS[offset];
@@ -1785,10 +1802,15 @@ fn predict_warped_block_into(
                 sum += i64::from(*coeff)
                     * intermediate[(k + tap as i64 + 4) as usize * 8 + (l + 4) as usize];
             }
-            let pixel = (round_div_power_of_two_unsigned(sum, inter_round1)
-                - (1_i64 << (u32::from(bit_depth) - 1))
-                - (1_i64 << u32::from(bit_depth)))
-            .clamp(0, (1_i64 << bit_depth.min(16)) - 1) as u16;
+            let value = round_div_power_of_two_unsigned(sum, inter_round1);
+            let pixel = if inter_round1 == 7 {
+                // Compound warp uses the same biased convolution buffer as translation.
+                debug_assert!((0..=i64::from(u16::MAX)).contains(&value));
+                value as u16
+            } else {
+                (value - (1_i64 << (u32::from(bit_depth) - 1)) - (1_i64 << u32::from(bit_depth)))
+                    .clamp(0, (1_i64 << bit_depth.min(16)) - 1) as u16
+            };
             output[(row + out_row) * output_width + col + out_col] = pixel;
         }
     }
@@ -2173,8 +2195,8 @@ fn predict_inter_block_into(
         }
         for row in 0..height {
             for col in 0..width {
-                output[row * width + col] = blend_compound_prediction(
-                    predict_inter_sample(
+                output[row * width + col] = blend_compound_intermediates(
+                    predict_compound_sample(
                         reference,
                         x0[col],
                         y0[row],
@@ -2184,7 +2206,7 @@ fn predict_inter_block_into(
                         bit_depth,
                         (mask_geometry.width, mask_geometry.height),
                     ),
-                    predict_inter_sample(
+                    predict_compound_sample(
                         secondary,
                         secondary_x0[col],
                         secondary_y0[row],
@@ -2223,25 +2245,20 @@ fn predict_inter_block_into(
     Ok(())
 }
 
-#[inline]
-fn average_prediction(first: u16, second: u16) -> u16 {
-    (u32::from(first) + u32::from(second)).div_ceil(2) as u16
-}
-
 const WEDGE_MASTER_EVEN: [u8; 64] = [
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 4,
-    11, 27, 46, 58, 62, 63, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
-    64, 64, 64, 64, 64, 64, 64, 64,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 4, 11,
+    27, 46, 58, 62, 63, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+    64, 64, 64, 64, 64, 64, 64, 64, 64,
 ];
 const WEDGE_MASTER_ODD: [u8; 64] = [
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2,
-    6, 18, 37, 53, 60, 63, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
-    64, 64, 64, 64, 64, 64, 64, 64,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 6,
+    18, 37, 53, 60, 63, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+    64, 64, 64, 64, 64, 64, 64, 64, 64,
 ];
 const WEDGE_MASTER_VERTICAL: [u8; 64] = [
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 7,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 7,
     21, 43, 57, 62, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
-    64, 64, 64, 64, 64, 64, 64, 64,
+    64, 64, 64, 64, 64, 64, 64, 64, 64,
 ];
 
 #[derive(Clone, Copy)]
@@ -2500,11 +2517,19 @@ const WEDGE_CODEBOOK_HEQW: [WedgeCode; 16] = [
 
 fn wedge_code(width: usize, height: usize, index: usize) -> Option<(WedgeCode, bool)> {
     let (codes, sign_flips) = match (width, height) {
-        (8, 16) | (16, 32) | (8, 32) => (
+        (8, 32) => (
+            &WEDGE_CODEBOOK_HGTW,
+            &[1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 0, 1, 1, 1, 0, 1][..],
+        ),
+        (32, 8) => (
+            &WEDGE_CODEBOOK_HLTW,
+            &[1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1][..],
+        ),
+        (8, 16) | (16, 32) => (
             &WEDGE_CODEBOOK_HGTW,
             &[1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1][..],
         ),
-        (16, 8) | (32, 16) | (32, 8) => (
+        (16, 8) | (32, 16) => (
             &WEDGE_CODEBOOK_HLTW,
             &[1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1][..],
         ),
@@ -2540,7 +2565,7 @@ fn wedge_master_value(direction: u8, inverse: bool, row: usize, column: usize) -
         0 => (wedge_oblique63(column, row), false),
         1 => (wedge_oblique63(row, column), false),
         2 => (wedge_oblique63(row, 63 - column), true),
-        3 => (wedge_oblique63(63 - column, row), true),
+        3 => (wedge_oblique63(column, 63 - row), true),
         4 => (WEDGE_MASTER_VERTICAL[row], false),
         5 => (WEDGE_MASTER_VERTICAL[column], false),
         _ => return 32,
@@ -2572,6 +2597,125 @@ fn wedge_mask_value(
     ))
 }
 
+// All weights operate on unrounded convolution values. The bias is common
+// to both predictors and is removed once, immediately before final rounding.
+#[inline]
+fn blend_compound_intermediates(
+    first: u16,
+    second: u16,
+    primary_weight: Option<u8>,
+    compound_mask: Option<CompoundMask>,
+    bit_depth: u8,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+) -> u16 {
+    let bits = compound_round_bits(bit_depth);
+    let mask = match compound_mask {
+        Some(CompoundMask::DifferenceWeighted { inverse }) => Some(compound_mask::difference_mask(
+            first, second, bit_depth, inverse,
+        )),
+        Some(CompoundMask::Wedge { index, inverse }) => {
+            wedge_mask_value(width, height, index, inverse, x, y)
+        }
+        None => None,
+    };
+    let value = if let Some(weight) = mask.or(primary_weight) {
+        (i64::from(first) * i64::from(weight) + i64::from(second) * i64::from(64 - weight)) >> 6
+    } else {
+        (i64::from(first) + i64::from(second)) >> 1
+    };
+    round_div_power_of_two_unsigned(value - compound_offset(bit_depth), bits)
+        .clamp(0, (1_i64 << bit_depth.min(16)) - 1) as u16
+}
+
+fn predict_compound_global_or_translation_into(
+    output: &mut [u16],
+    reference: &PlaneBuffer,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    mv: (i32, i32),
+    subsampling_x: usize,
+    subsampling_y: usize,
+    filters: (InterpolationFilter, InterpolationFilter),
+    bit_depth: u8,
+    geometry: MaskGeometry,
+    allow_high_precision_mv: bool,
+    matrix: Option<[i32; 6]>,
+) {
+    if let Some(matrix) = matrix
+        && predict_global_motion_block_with_precision_into(
+            output,
+            reference,
+            x,
+            y,
+            width,
+            height,
+            subsampling_x,
+            subsampling_y,
+            bit_depth,
+            allow_high_precision_mv,
+            matrix,
+            true,
+        )
+    {
+        return;
+    }
+    predict_compound_reference_into(
+        reference,
+        x,
+        y,
+        width,
+        height,
+        mv,
+        subsampling_x,
+        subsampling_y,
+        filters,
+        bit_depth,
+        geometry,
+        output,
+    );
+}
+
+fn predict_compound_reference_into(
+    reference: &PlaneBuffer,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    mv: (i32, i32),
+    subsampling_x: usize,
+    subsampling_y: usize,
+    filters: (InterpolationFilter, InterpolationFilter),
+    bit_depth: u8,
+    geometry: MaskGeometry,
+    output: &mut [u16],
+) {
+    let mx = motion_component_q4(mv.1, subsampling_x);
+    let my = motion_component_q4(mv.0, subsampling_y);
+    for row in 0..height {
+        let fixed_y = ((y + row) as i64) * 16 + my;
+        let sy = floor_div_sixteen(fixed_y);
+        for col in 0..width {
+            let fixed_x = ((x + col) as i64) * 16 + mx;
+            let sx = floor_div_sixteen(fixed_x);
+            output[row * width + col] = predict_compound_sample(
+                reference,
+                sx,
+                sy,
+                fixed_x - sx * 16,
+                fixed_y - sy * 16,
+                filters,
+                bit_depth,
+                (geometry.width, geometry.height),
+            );
+        }
+    }
+}
+
 #[inline]
 fn blend_compound_prediction(
     first: u16,
@@ -2584,27 +2728,19 @@ fn blend_compound_prediction(
     width: usize,
     height: usize,
 ) -> u16 {
-    if let Some(CompoundMask::DifferenceWeighted { inverse }) = compound_mask {
-        let shift = u32::from(bit_depth.saturating_sub(8));
-        let diff = u32::from(first.abs_diff(second)) >> shift;
-        let mask = (38 + diff / 16).min(64);
-        let mask = if inverse { 64 - mask } else { mask };
-        return ((u32::from(first) * mask + u32::from(second) * (64 - mask) + 32) >> 6) as u16;
-    }
-    if let Some(CompoundMask::Wedge { index, inverse }) = compound_mask
-        && let Some(mask) = wedge_mask_value(width, height, index, inverse, x, y)
-    {
-        return ((u32::from(first) * u32::from(mask)
-            + u32::from(second) * u32::from(64 - mask)
-            + 32)
-            >> 6) as u16;
-    }
-    let Some(primary_weight) = primary_weight else {
-        return average_prediction(first, second);
-    };
-    let secondary_weight = 64 - u32::from(primary_weight);
-    ((u32::from(first) * u32::from(primary_weight) + u32::from(second) * secondary_weight + 32)
-        >> 6) as u16
+    let bits = compound_round_bits(bit_depth);
+    let offset = compound_offset(bit_depth);
+    blend_compound_intermediates(
+        ((i64::from(first) << bits) + offset) as u16,
+        ((i64::from(second) << bits) + offset) as u16,
+        primary_weight,
+        compound_mask,
+        bit_depth,
+        x,
+        y,
+        width,
+        height,
+    )
 }
 
 fn predict_inter_block_into_fractional(
@@ -2662,21 +2798,34 @@ fn predict_inter_block_into_fractional(
             let fx = x_fixed - x0 * 16;
             let secondary_x0 = floor_div_sixteen(secondary_x_fixed);
             let secondary_fx = secondary_x_fixed - secondary_x0 * 16;
-            let first = predict_inter_sample(
-                reference,
-                x0,
-                y0,
-                fx,
-                fy,
-                interpolation_filters,
-                bit_depth,
-                (mask_geometry.width, mask_geometry.height),
-            );
+            let first = if secondary_reference.is_some() {
+                predict_compound_sample(
+                    reference,
+                    x0,
+                    y0,
+                    fx,
+                    fy,
+                    interpolation_filters,
+                    bit_depth,
+                    (mask_geometry.width, mask_geometry.height),
+                )
+            } else {
+                predict_inter_sample(
+                    reference,
+                    x0,
+                    y0,
+                    fx,
+                    fy,
+                    interpolation_filters,
+                    bit_depth,
+                    (mask_geometry.width, mask_geometry.height),
+                )
+            };
             output[row * width + col] = secondary_reference
                 .map(|secondary| {
-                    blend_compound_prediction(
+                    blend_compound_intermediates(
                         first,
-                        predict_inter_sample(
+                        predict_compound_sample(
                             secondary,
                             secondary_x0,
                             secondary_y0,
@@ -2865,11 +3014,73 @@ pub(super) fn predict_inter_sample(
             plane, source_x, source_y, subpel_x, subpel_y, bit_depth,
         );
     }
-    // AOM's single-reference convolution retains 7-round_0 fractional bits
+    let round_0 = if bit_depth == 12 { 5 } else { 3 };
+    interpolate_inter_sample(
+        plane,
+        source_x,
+        source_y,
+        subpel_x,
+        subpel_y,
+        interpolation_filters,
+        bit_depth,
+        prediction_dimensions,
+        14 - round_0,
+    )
+    .clamp(0, (1_i64 << bit_depth.min(16)) - 1) as u16
+}
+
+// Compound predictors keep fractional bits and filter overshoot in the same
+// biased u16 representation as AV1's convolution buffer. Clip only after blending.
+fn compound_round_bits(bit_depth: u8) -> u32 {
+    if bit_depth == 12 { 2 } else { 4 }
+}
+
+fn compound_offset(bit_depth: u8) -> i64 {
+    3_i64 << (u32::from(bit_depth) + compound_round_bits(bit_depth) - 1)
+}
+
+#[inline]
+fn predict_compound_sample(
+    plane: &PlaneBuffer,
+    source_x: i64,
+    source_y: i64,
+    subpel_x: i64,
+    subpel_y: i64,
+    interpolation_filters: (InterpolationFilter, InterpolationFilter),
+    bit_depth: u8,
+    prediction_dimensions: (usize, usize),
+) -> u16 {
+    let value = interpolate_inter_sample(
+        plane,
+        source_x,
+        source_y,
+        subpel_x,
+        subpel_y,
+        interpolation_filters,
+        bit_depth,
+        prediction_dimensions,
+        7,
+    ) + compound_offset(bit_depth);
+    debug_assert!((0..=i64::from(u16::MAX)).contains(&value));
+    value as u16
+}
+
+#[inline]
+fn interpolate_inter_sample(
+    plane: &PlaneBuffer,
+    source_x: i64,
+    source_y: i64,
+    subpel_x: i64,
+    subpel_y: i64,
+    interpolation_filters: (InterpolationFilter, InterpolationFilter),
+    bit_depth: u8,
+    prediction_dimensions: (usize, usize),
+    round_1: u32,
+) -> i64 {
+    // AV1 separable convolution retains 7-round_0 fractional bits
     // between the separable passes. The 12-bit path increases round_0 so the
     // offset intermediate fits 16 bits. Rounding each pass by 7 loses precision.
     let round_0 = if bit_depth == 12 { 5 } else { 3 };
-    let round_1 = 14 - round_0;
     let horizontal = interpolation_kernel(
         interpolation_filters.0,
         subpel_x as usize,
@@ -2899,7 +3110,7 @@ pub(super) fn predict_inter_sample(
     for (tap, coefficient) in vertical.iter().enumerate() {
         sum += intermediate[tap] * i64::from(*coefficient);
     }
-    round_div_power_of_two_unsigned(sum, round_1).clamp(0, (1_i64 << bit_depth.min(16)) - 1) as u16
+    round_div_power_of_two_unsigned(sum, round_1)
 }
 
 #[inline]
@@ -3296,6 +3507,174 @@ mod tests {
     use super::*;
 
     #[test]
+    fn compound_convolution_and_blends_match_aom_8_10_12_bit_oracles() {
+        // Scalar AOM 9440aeedd097343b763dfe1c75af72c99f4a3175:
+        // av1_highbd_dist_wtd_convolve_2d_c + blend_a64_d16_mask_c.
+        let cases = [
+            (
+                8,
+                [9720, 9700, 6812, 6856, 8008, 8128, 8456, 9744],
+                [9444, 6651, 9440, 7930, 5879, 8117, 9328, 8618],
+                [
+                    [215, 127, 124, 78, 50, 124, 172, 190],
+                    [218, 163, 93, 65, 75, 124, 162, 203],
+                    [217, 178, 83, 68, 79, 124, 164, 201],
+                    [213, 76, 165, 89, 21, 124, 179, 179],
+                    [224, 222, 42, 46, 114, 124, 148, 218],
+                ],
+            ),
+            (
+                10,
+                [38880, 38800, 27248, 27424, 32032, 32512, 33824, 38976],
+                [37772, 26600, 37756, 31716, 23512, 32464, 37308, 34468],
+                [
+                    [859, 508, 495, 312, 200, 495, 687, 759],
+                    [872, 651, 372, 262, 300, 495, 646, 812],
+                    [867, 710, 331, 270, 316, 495, 656, 803],
+                    [852, 305, 660, 354, 83, 494, 717, 715],
+                    [894, 889, 167, 182, 458, 496, 592, 874],
+                ],
+            ),
+            (
+                12,
+                [38880, 38800, 27248, 27424, 32032, 32512, 33824, 38976],
+                [37772, 26600, 37756, 31716, 23512, 32464, 37308, 34468],
+                [
+                    [3438, 2031, 1982, 1249, 799, 1978, 2748, 3037],
+                    [3489, 2603, 1489, 1047, 1198, 1980, 2584, 3248],
+                    [3468, 2841, 1325, 1081, 1265, 1979, 2625, 3213],
+                    [3407, 1221, 2638, 1416, 333, 1977, 2870, 2860],
+                    [3576, 3556, 668, 729, 1831, 1984, 2366, 3494],
+                ],
+            ),
+        ];
+        for (bit_depth, expected_a, expected_b, expected_outputs) in cases {
+            let layout = crate::av1::decode::PlaneLayout {
+                plane: 0,
+                width: 32,
+                height: 32,
+                subsampling_x: 0,
+                subsampling_y: 0,
+                sample_count: 1024,
+            };
+            let a = PlaneBuffer {
+                layout,
+                samples: (0..1024)
+                    .map(|i| (((i * 37 + i / 32 * 53) % 256) << (bit_depth - 8)) as u16)
+                    .collect(),
+            };
+            let b = PlaneBuffer {
+                layout,
+                samples: (0..1024)
+                    .map(|i| (((i * 71 + i / 32 * 19 + 43) % 256) << (bit_depth - 8)) as u16)
+                    .collect(),
+            };
+            let filters = (InterpolationFilter::Sharp, InterpolationFilter::Sharp);
+            for col in 0..8 {
+                let first = predict_compound_sample(
+                    &a,
+                    8 + col as i64,
+                    8,
+                    8,
+                    8,
+                    filters,
+                    bit_depth,
+                    (8, 8),
+                );
+                let second = predict_compound_sample(
+                    &b,
+                    8 + col as i64,
+                    8,
+                    6,
+                    10,
+                    filters,
+                    bit_depth,
+                    (8, 8),
+                );
+                assert_eq!(first, expected_a[col], "bd={bit_depth} A col={col}");
+                assert_eq!(second, expected_b[col], "bd={bit_depth} B col={col}");
+                let modes = [
+                    (None, None),
+                    (Some(44), None),
+                    (
+                        None,
+                        Some(CompoundMask::DifferenceWeighted { inverse: false }),
+                    ),
+                    (
+                        None,
+                        Some(CompoundMask::DifferenceWeighted { inverse: true }),
+                    ),
+                    (
+                        None,
+                        Some(CompoundMask::Wedge {
+                            index: 0,
+                            inverse: false,
+                        }),
+                    ),
+                ];
+                for (mode, (weight, mask)) in modes.into_iter().enumerate() {
+                    assert_eq!(
+                        blend_compound_intermediates(
+                            first, second, weight, mask, bit_depth, col, 0, 8, 8
+                        ),
+                        expected_outputs[mode][col],
+                        "bd={bit_depth} mode={mode} col={col}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn compound_prediction_retains_negative_filter_overshoot_until_blending() {
+        let layout = crate::av1::decode::PlaneLayout {
+            plane: 0,
+            width: 32,
+            height: 32,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 1024,
+        };
+        let mut reference = PlaneBuffer {
+            layout,
+            samples: vec![0; 1024],
+        };
+        reference.samples[8 * 32 + 7] = 255;
+        let secondary = PlaneBuffer {
+            layout,
+            samples: vec![128; 1024],
+        };
+        let mut output = [0; 64];
+        predict_inter_block_into(
+            &reference,
+            Some(&secondary),
+            8,
+            8,
+            8,
+            8,
+            (0, 4),
+            Some((0, 0)),
+            0,
+            0,
+            (InterpolationFilter::Regular, InterpolationFilter::Regular),
+            None,
+            None,
+            8,
+            MaskGeometry {
+                x: 0,
+                y: 0,
+                width: 8,
+                height: 8,
+            },
+            &mut output,
+        )
+        .unwrap();
+        // libaom dist_wtd_convolve: first predictor = -446/16, second=128.
+        // Clipping the first predictor before averaging incorrectly gives 64.
+        assert_eq!(output[0], 50);
+    }
+
+    #[test]
     fn transform_prediction_reads_reconstructed_neighbor() {
         let layout = crate::av1::decode::PlaneLayout {
             plane: 0,
@@ -3619,6 +3998,37 @@ mod tests {
     }
 
     #[test]
+    fn every_wedge_mask_matches_aom() {
+        // Actual av1_get_contiguous_soft_mask bytes from AOM 9440aeedd097343b763dfe1c75af72c99f4a3175.
+        // Each hash covers all 16 indices, both signs, and every pixel.
+        for (width, height, expected) in [
+            (8, 8, 1974917667661160085u64),
+            (8, 16, 4364072839248270917),
+            (16, 8, 17765138988367674869),
+            (16, 16, 5976315135349940925),
+            (16, 32, 12970946847464165333),
+            (32, 16, 15208080273227059917),
+            (32, 32, 1611978096444511037),
+            (8, 32, 16583822929344630061),
+            (32, 8, 4133912236952539205),
+        ] {
+            let mut hash = 14695981039346656037u64;
+            for index in 0..16 {
+                for inverse in [false, true] {
+                    for y in 0..height {
+                        for x in 0..width {
+                            let value =
+                                wedge_mask_value(width, height, index, inverse, x, y).unwrap();
+                            hash = (hash ^ u64::from(value)).wrapping_mul(1099511628211);
+                        }
+                    }
+                }
+            }
+            assert_eq!(hash, expected, "{width}x{height}");
+        }
+    }
+
+    #[test]
     fn wedge_prediction_uses_dimension_specific_mask() {
         let first = wedge_mask_value(8, 8, 0, false, 0, 0).unwrap();
         let opposite = wedge_mask_value(8, 8, 0, false, 7, 7).unwrap();
@@ -3731,6 +4141,97 @@ mod tests {
         assert!(params.beta.abs() > 0);
         assert!(params.gamma.abs() > 0);
         assert_eq!(fixed_warp_to_plane_eighth(-1, 0), -1);
+    }
+
+    #[test]
+    fn warped_16x16_matches_aom_identity_and_affine_at_all_depths() {
+        // AOM 9440aeedd097343b763dfe1c75af72c99f4a3175
+        // av1_highbd_warp_affine_c: 16x16 output at (8,8) from 32x32 source.
+        // FNV-1a includes every u16 sample, with no fixture/tool dependency.
+        let hashes = [
+            [3364059266267454437u64, 17396598565094874530],
+            [9344816254078712485, 18342698394889052376],
+            [2910353262732798072, 7441486440368512482],
+        ];
+        for (depth_index, bit_depth) in [8u8, 10, 12].into_iter().enumerate() {
+            let reference = PlaneBuffer {
+                layout: crate::av1::decode::PlaneLayout {
+                    plane: 0,
+                    width: 32,
+                    height: 32,
+                    subsampling_x: 0,
+                    subsampling_y: 0,
+                    sample_count: 1024,
+                },
+                samples: (0..1024)
+                    .map(|i| (((i * 37 + i / 32 * 53) % 256) as u16) << (bit_depth - 8))
+                    .collect(),
+            };
+            for affine in [false, true] {
+                let params = if affine {
+                    LocalWarpParams {
+                        translation_x: 32768,
+                        translation_y: 16384,
+                        alpha: 66048,
+                        beta: 256,
+                        gamma: 128,
+                        delta: 65920,
+                    }
+                } else {
+                    LocalWarpParams {
+                        translation_x: 0,
+                        translation_y: 0,
+                        alpha: 65536,
+                        beta: 0,
+                        gamma: 0,
+                        delta: 65536,
+                    }
+                };
+                let (alpha, beta, gamma, delta) = if affine {
+                    (512, 256, 128, 384)
+                } else {
+                    (0, 0, 0, 0)
+                };
+                let (round0, round1) = if bit_depth == 12 { (5, 9) } else { (3, 11) };
+                let mut output = [0u16; 256];
+                let mut scratch = [0i64; 120];
+                for row in (0..16).step_by(8) {
+                    for col in (0..16).step_by(8) {
+                        predict_warped_block_into(
+                            &mut output,
+                            &reference,
+                            8,
+                            8,
+                            16,
+                            16,
+                            row,
+                            col,
+                            0,
+                            0,
+                            &params,
+                            alpha,
+                            beta,
+                            gamma,
+                            delta,
+                            round0,
+                            round1,
+                            bit_depth,
+                            &mut scratch,
+                        );
+                    }
+                }
+                let hash = output
+                    .iter()
+                    .fold(14695981039346656037u64, |hash, &sample| {
+                        (hash ^ u64::from(sample)).wrapping_mul(1099511628211)
+                    });
+                assert_eq!(
+                    hash,
+                    hashes[depth_index][usize::from(affine)],
+                    "bit_depth={bit_depth} affine={affine}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -3946,5 +4447,94 @@ mod tests {
         )
         .unwrap();
         assert_eq!(output, [3, 4, 7, 8]);
+    }
+}
+
+#[cfg(test)]
+mod compound_warp_oracle_tests {
+    use super::*;
+
+    #[test]
+    fn compound_warp_raw_buffers_and_equal_blends_match_libaom() {
+        // av1_highbd_warp_affine_c, get_conv_params_no_round(...,compound=1),
+        // 32x32 reference, origin(8,8), 16x16 output; FNV-1a over all 256 u16
+        // values (not their byte encoding). Both raw biased convolution values
+        // and the official second-reference equal blend are checked.
+        let expected = [
+            [
+                (12428620813020704647u64, 16878257489973090916u64),
+                (7296945116231023171u64, 11203030156346682354u64),
+            ],
+            [
+                (9987412218138574116u64, 567118965557096033u64),
+                (13995544837461872796u64, 13885753161763910192u64),
+            ],
+            [
+                (9987412218138574116u64, 11928232938922546197u64),
+                (13995544837461872796u64, 3505714676248549099u64),
+            ],
+        ];
+        let hash = |pixels: &[u16]| {
+            pixels.iter().fold(14695981039346656037u64, |h, p| {
+                (h ^ u64::from(*p)).wrapping_mul(1099511628211)
+            })
+        };
+        for (depth_index, bit_depth) in [8u8, 10, 12].into_iter().enumerate() {
+            let reference = |second: bool| PlaneBuffer {
+                layout: crate::av1::decode::PlaneLayout {
+                    plane: 0,
+                    width: 32,
+                    height: 32,
+                    subsampling_x: 0,
+                    subsampling_y: 0,
+                    sample_count: 1024,
+                },
+                samples: (0..1024)
+                    .map(|i| {
+                        let value = if second {
+                            i * 19 + i / 32 * 17 + 23
+                        } else {
+                            i * 37 + i / 32 * 53
+                        };
+                        ((value % 256) as u16) << (bit_depth - 8)
+                    })
+                    .collect(),
+            };
+            let first = reference(false);
+            let second = reference(true);
+            // Header translations are Q13 for high-precision MV. AOM's full
+            // Q16 affine translations are (32768,16384), hence (4096,2048).
+            for (mode, matrix) in [
+                [0, 0, 65536, 0, 0, 65536],
+                [4096, 2048, 66048, 256, 128, 65920],
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let mut a = [0; 256];
+                let mut b = [0; 256];
+                assert!(predict_global_motion_block_with_precision_into(
+                    &mut a, &first, 8, 8, 16, 16, 0, 0, bit_depth, true, matrix, true
+                ));
+                assert!(predict_global_motion_block_with_precision_into(
+                    &mut b, &second, 8, 8, 16, 16, 0, 0, bit_depth, true, matrix, true
+                ));
+                assert_eq!(
+                    hash(&a),
+                    expected[depth_index][mode].0,
+                    "raw compound warp bd={bit_depth} mode={mode}"
+                );
+                for (pixel, other) in a.iter_mut().zip(b) {
+                    *pixel = blend_compound_intermediates(
+                        *pixel, other, None, None, bit_depth, 0, 0, 16, 16,
+                    );
+                }
+                assert_eq!(
+                    hash(&a),
+                    expected[depth_index][mode].1,
+                    "equal compound warp bd={bit_depth} mode={mode}"
+                );
+            }
+        }
     }
 }

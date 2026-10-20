@@ -1,6 +1,6 @@
 {
   "date_utc": "2026-10-20",
-  "scope": "Unreleased CDEF bounds, inter filter geometry, OBMC subdivision and separable precision fixes; no publication",
+  "scope": "Unreleased CDEF bounds, inter geometry, separable and compound precision, distance weights, warp, wedge and shared chroma fixes; no publication",
   "baseline_published_source": "070ad6509bad18f9ab76732d543659ef6d7f9129",
   "branch": "codex/avis-reconstruction-20261020",
   "reference": {
@@ -14,14 +14,24 @@
     "primary_sources": [
       "https://aomedia.googlesource.com/aom/+/9440aeedd097343b763dfe1c75af72c99f4a3175/av1/common/filter.h",
       "https://aomedia.googlesource.com/aom/+/9440aeedd097343b763dfe1c75af72c99f4a3175/av1/common/convolve.c",
-      "https://aomedia.googlesource.com/aom/+/9440aeedd097343b763dfe1c75af72c99f4a3175/av1/common/reconinter.h"
+      "https://aomedia.googlesource.com/aom/+/9440aeedd097343b763dfe1c75af72c99f4a3175/av1/common/reconinter.h",
+      "https://aomedia.googlesource.com/aom/+/9440aeedd097343b763dfe1c75af72c99f4a3175/av1/common/warped_motion.c",
+      "https://aomedia.googlesource.com/aom/+/9440aeedd097343b763dfe1c75af72c99f4a3175/av1/common/reconinter.c",
+      "https://aomedia.googlesource.com/aom/+/9440aeedd097343b763dfe1c75af72c99f4a3175/av1/common/reconinter_template.inc",
+      "https://aomedia.googlesource.com/aom/+/9440aeedd097343b763dfe1c75af72c99f4a3175/aom_dsp/blend_a64_mask.c"
     ]
   },
   "fixes": [
     "Use full luma bounds for CDEF; subsample only chroma bounds, in serial and parallel paths",
     "Select four-tap kernels for prediction axes at most four pixels, preserving full prediction geometry across transform subdivisions",
     "Select OBMC filters using complete neighbor-strip geometry before the transform intersection",
-    "Preserve single-reference separable precision with round_0/round_1=3/11 for 8/10 bit and 5/9 for 12 bit; retain exact 8/10-bit bilinear shortcut"
+    "Preserve single-reference separable precision with round_0/round_1=3/11 for 8/10 bit and 5/9 for 12 bit; retain exact 8/10-bit bilinear shortcut",
+    "Retain biased fractional compound predictors in existing u16 buffers through translation and warp; remove common bias and clip once after equal, discrete distance or mask blending",
+    "Quantize distance weights using normative AV1 threshold table, including wrap, clamp, zero and equal distances",
+    "Preserve full output stride across 8x8 warp chunks and correct cross-axis filter phase origin",
+    "Correct wedge master tables, oblique reflection and narrow-block sign maps",
+    "Use each contributing luma owner reference, MV and filter for shared sub8 chroma regions",
+    "Generate chroma masks from the same full-resolution luma predictors and round their subsampling average, including 4:4:4"
   ],
   "regression_evidence": {
     "cdef_key_before": {
@@ -74,29 +84,111 @@
         8
       ],
       "note": "Expected vector changed only after independent scalar AOM verification with replicated edges"
-    }
-  },
-  "tests": {
-    "default": {
-      "passed": 868,
-      "failed": 0,
-      "ignored": 9
     },
-    "encode": {
-      "passed": 19,
-      "failed": 0,
-      "ignored": 0
+    "compound_early_clipping": {
+      "before": 64,
+      "aom_and_after": 50,
+      "test_failed_before_fix": true,
+      "aom_first_unclipped_q4": -446,
+      "case": "8-bit regular phase8,0; A left-neighbor impulse255, B flat128; equal compound"
     },
-    "reconstruction": {
-      "passed": 36,
-      "failed": 0,
-      "ignored": 0
+    "compound_oracles": {
+      "bit_depths": [
+        8,
+        10,
+        12
+      ],
+      "modes": [
+        "equal",
+        "distance11:5",
+        "difference",
+        "inverse difference",
+        "wedge0"
+      ],
+      "raw_predictors_verified": true
+    },
+    "distance_weights": {
+      "actual_aom_cases": 17,
+      "first_before": 51,
+      "first_aom_and_after": 52
+    },
+    "warp": {
+      "shapes": [
+        "16x16 identity",
+        "16x16 affine"
+      ],
+      "bit_depths": [
+        8,
+        10,
+        12
+      ],
+      "all_256_samples_per_case_verified": true,
+      "before_8bit_identity_mismatches": 240,
+      "before_8bit_affine_mismatches": 249,
+      "stride_only_affine_mismatches": 206,
+      "after_mismatches": 0
+    },
+    "wedge": {
+      "all_pixels_verified": true,
+      "shapes": 9,
+      "indices": 16,
+      "signs": 2
+    },
+    "chroma_mask": {
+      "actual_aom_cases": 36,
+      "bit_depths": [
+        8,
+        10,
+        12
+      ],
+      "subsampling": [
+        "444",
+        "440",
+        "422",
+        "420"
+      ],
+      "modes": [
+        "difference",
+        "inverse difference",
+        "wedge0"
+      ],
+      "transform_subdivision_verified": true
+    },
+    "sub8_chroma": {
+      "actual_fixture_owner_region_calls": 1436,
+      "different_owner_mv_ref_or_filter": 702,
+      "example": {
+        "coded_frame_counter": 16,
+        "luma_current": [
+          12,
+          12
+        ],
+        "luma_block": "4x4",
+        "chroma_position": [
+          4,
+          4
+        ],
+        "current_mv": [
+          0,
+          -64
+        ],
+        "upper_left_owner_mv": [
+          0,
+          0
+        ],
+        "incorrect_u_v": [
+          89,
+          239
+        ],
+        "aom_owner_u_v": [
+          107,
+          142
+        ]
+      },
+      "instrumented_reference_exact": true,
+      "fixed_size_owner_descriptors": 4,
+      "new_persistent_grids_or_heap_allocations": false
     }
-  },
-  "quality": {
-    "fmt": true,
-    "strict_clippy_all_targets_all_features": true,
-    "rustdoc_deny_warnings": true
   },
   "full_sequence_after_checkpoint": {
     "samples": 368640,
@@ -107,7 +199,6 @@
   },
   "remaining": [
     "Inter-frame native reconstruction still differs from same-bitstream dav1d/libaom; complete pixel conformance is not claimed",
-    "Confirmed compound premature clipping: equal compound impulse/constant case gives Rust64 vs AOM50; broad internal precision work remains",
     "Bounded strict sequence decoder keeps its existing rejection of the multiple-coded-frame sample layout; no contract expansion",
     "9 existing ignored tests include external-oracle diagnostics; unrelated external-fixture tests may return early"
   ],
@@ -125,11 +216,35 @@
     "mean_absolute_error": 3.6206732855902777,
     "native_sha256": "9a9d19bbcb87d3c500f25ffb5471b0ed63725b735ff54690f90165e45559a9d1"
   },
-  "remaining_compound_counterexample": {
-    "case": "8-bit regular phase8,0; reference A has left-neighbor impulse255, reference B flat128; equal compound",
-    "current": 64,
-    "aom": 50,
-    "aom_first_unclipped_q4": -446,
-    "scope": "Needs unclipped fractional prediction storage across translational, warped, distance-weighted and masked compound paths. The existing u16 intermediate contract is unchanged."
-  }
+  "full_sequence_after_compound": {
+    "samples": 368640,
+    "mismatches": 96931,
+    "max_error": 182,
+    "mean_absolute_error": 2.7877332899305554,
+    "native_sha256": "8beee382c44782598c257eee297059c0f5fdd52a61c1222d68508ba230bd211d",
+    "key_mismatches": 0
+  },
+  "previous_checkpoint_tests": {
+    "default": {
+      "passed": 868,
+      "failed": 0,
+      "ignored": 9
+    },
+    "encode": {
+      "passed": 19,
+      "failed": 0,
+      "ignored": 0
+    },
+    "reconstruction": {
+      "passed": 36,
+      "failed": 0,
+      "ignored": 0
+    }
+  },
+  "previous_checkpoint_quality": {
+    "fmt": true,
+    "strict_clippy_all_targets_all_features": true,
+    "rustdoc_deny_warnings": true
+  },
+  "current_validation": "Focused regressions passed; full release suite and strict checks running before final PR update"
 }
