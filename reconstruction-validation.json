@@ -188,6 +188,19 @@
       "instrumented_reference_exact": true,
       "fixed_size_owner_descriptors": 4,
       "new_persistent_grids_or_heap_allocations": false
+    },
+    "compound_warp": {
+      "models": [
+        "identity",
+        "affine"
+      ],
+      "bit_depths": [
+        8,
+        10,
+        12
+      ],
+      "raw_biased_intermediates_and_equal_blend_verified": true,
+      "samples_per_case": 256
     }
   },
   "full_sequence_after_checkpoint": {
@@ -246,5 +259,41 @@
     "strict_clippy_all_targets_all_features": true,
     "rustdoc_deny_warnings": true
   },
-  "current_validation": "Focused regressions passed; full release suite and strict checks running before final PR update"
+  "tested_source_commit": "582bde1a0c1fff3bd828d1b163766af0b9196ffb",
+  "tests": {
+    "default": {
+      "passed": 877,
+      "failed": 0,
+      "ignored": 9
+    },
+    "encode": {
+      "passed": 19,
+      "failed": 0,
+      "ignored": 0
+    },
+    "extracted_package_compound": {
+      "passed": 7,
+      "failed": 0,
+      "ignored": 0
+    }
+  },
+  "quality": {
+    "fmt": true,
+    "strict_clippy_all_targets_all_features": true,
+    "rustdoc_deny_warnings": true,
+    "cargo_package_locked_verified": true,
+    "ordinary_push_remote_sha_verified": true,
+    "github_author_and_committer_login": "mith-mmk"
+  },
+  "remaining_first_divergence": {
+    "displayed_frame": 1,
+    "plane": "Y",
+    "x": 44,
+    "y": 5,
+    "rust": 41,
+    "reference": 40,
+    "frame_mismatches": 710,
+    "frame_max_error": 25,
+    "stage_or_root_cause": "not isolated by this patch"
+  }
 }
