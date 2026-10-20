@@ -62,6 +62,17 @@ fn sub8x8_chroma_palette_key_matches_independent_yuv_exactly() {
     let data = include_bytes!("lossless-sub8x8-palette.avif");
     let expected = include_bytes!("lossless-sub8x8-palette.yuv");
     let frame = avif_rust::decode_frame_bytes(data).unwrap();
+    assert_yuv420_reference(&frame, expected);
+}
+
+#[test]
+fn subsampled_avis_key_cdef_matches_independent_yuv_exactly() {
+    let expected = include_bytes!("avis-subsampled-key-reference.yuv");
+    let frame = avif_rust::decode_frame_bytes(AVIS).unwrap();
+    assert_yuv420_reference(&frame, expected);
+}
+
+fn assert_yuv420_reference(frame: &avif_rust::DecodedFrame, expected: &[u8]) {
     assert_eq!((frame.width, frame.height, frame.bit_depth), (64, 64, 8));
     assert_eq!(frame.buffers.planes.len(), 3);
     let mut offset = 0;

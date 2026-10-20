@@ -2,6 +2,15 @@
 
 All notable changes to this crate are documented in this file.
 
+## Unreleased
+
+- Apply CDEF over the full luma plane for subsampled images, retaining chroma
+  dimensions only for chroma planes in both serial and parallel paths.
+- Select AV1's four-tap interpolation kernels on prediction axes of four pixels
+  or less, using the full prediction block size rather than transform fragments.
+- Add exact independent native YUV coverage for the non-lossless AVIS key frame.
+  Remaining inter-frame reconstruction differences are not resolved by these fixes.
+
 ## 0.1.1 - 2026-10-19
 
 - Fix AVIS entropy desynchronization for shared sub-8x8 chroma palette maps

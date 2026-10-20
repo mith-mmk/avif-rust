@@ -342,3 +342,152 @@ fn decodes_sample_prefix_through_palette_blocks() {
 fn read_sample_avif() -> Option<Vec<u8>> {
     crate::test_support::wml2viewer_avif()
 }
+
+#[test]
+fn small_inter_predictions_use_dimension_specific_four_tap_filters() {
+    // AOM filter.h av1_sub_pel_filters_4[8] is [0,0,-12,76,76,-12,0,0].
+    // A single 128-valued impulse at tap 2 therefore contributes -12; the
+    // full regular and sharp kernels incorrectly contribute -14 and -24.
+    // Add a DC pedestal so negative filter contributions are not clipped.
+    let plane = PlaneBuffer {
+        layout: PlaneLayout {
+            plane: 0,
+            width: 16,
+            height: 16,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 256,
+        },
+        samples: (0..256)
+            .map(|i| if i % 16 == 3 { 192 } else { 64 })
+            .collect(),
+    };
+    use crate::av1::frame::InterpolationFilter::*;
+    use crate::av1::tile_decode::reconstruction::predict_inter_sample;
+    for filter in [Regular, Sharp, Smooth] {
+        let expected = if filter == Smooth { 76 } else { 52 };
+        assert_eq!(
+            predict_inter_sample(&plane, 4, 4, 8, 0, (filter, Regular), 8, (4, 8)),
+            expected,
+            "horizontal {filter:?}"
+        );
+        // Small vertical dimension must not switch the horizontal kernel.
+        let wide = if filter == Sharp {
+            40
+        } else if filter == Smooth {
+            78
+        } else {
+            50
+        };
+        assert_eq!(
+            predict_inter_sample(&plane, 4, 4, 8, 0, (filter, Regular), 8, (8, 4)),
+            wide,
+            "wide horizontal {filter:?}"
+        );
+    }
+    let mut transposed = plane.clone();
+    for y in 0..16 {
+        for x in 0..16 {
+            transposed.samples[y * 16 + x] = plane.samples[x * 16 + y];
+        }
+    }
+    for filter in [Regular, Sharp, Smooth] {
+        let expected = if filter == Smooth { 76 } else { 52 };
+        assert_eq!(
+            predict_inter_sample(&transposed, 4, 4, 0, 8, (Regular, filter), 8, (8, 4)),
+            expected,
+            "vertical {filter:?}"
+        );
+    }
+}
+
+#[test]
+fn obmc_filter_choice_is_independent_of_transform_subdivision() {
+    use crate::av1::frame::InterpolationFilter;
+    use crate::av1::tile_decode::diagnostic::{ObmcNeighbor, ObmcNeighbors};
+    use crate::av1::tile_decode::reconstruction::apply_obmc_edge_blend;
+    let reference = PlaneBuffer {
+        layout: PlaneLayout {
+            plane: 0,
+            width: 32,
+            height: 32,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 1024,
+        },
+        samples: (0..1024)
+            .map(|i| ((i * 37 + i / 32 * 53) % 256) as u16)
+            .collect(),
+    };
+    for above in [true, false] {
+        for filter in [
+            InterpolationFilter::Regular,
+            InterpolationFilter::Sharp,
+            InterpolationFilter::Smooth,
+        ] {
+            let neighbor = ObmcNeighbor {
+                origin_x: if above { 8 } else { 0 },
+                origin_y: if above { 0 } else { 8 },
+                width: 16,
+                height: 16,
+                motion_vector: (4, 4),
+                interpolation_filters: (filter, filter),
+            };
+            let mut neighbors = ObmcNeighbors::default();
+            if above {
+                neighbors.above[0] = Some(neighbor);
+            } else {
+                neighbors.left[0] = Some(neighbor);
+            }
+            let mut whole = vec![64; 16 * 16];
+            apply_obmc_edge_blend(
+                &mut whole,
+                &reference,
+                8,
+                8,
+                8,
+                8,
+                16,
+                16,
+                16,
+                16,
+                0,
+                0,
+                &neighbors,
+                &mut [0; 256],
+                8,
+            )
+            .unwrap();
+            assert!(whole.iter().any(|&sample| sample != 64));
+            let mut divided = vec![64; 16 * 16];
+            for y in (0..16).step_by(4) {
+                for x in (0..16).step_by(4) {
+                    let mut tile = [64; 16];
+                    apply_obmc_edge_blend(
+                        &mut tile,
+                        &reference,
+                        8,
+                        8,
+                        8 + x,
+                        8 + y,
+                        4,
+                        4,
+                        16,
+                        16,
+                        0,
+                        0,
+                        &neighbors,
+                        &mut [0; 16],
+                        8,
+                    )
+                    .unwrap();
+                    for row in 0..4 {
+                        divided[(y + row) * 16 + x..(y + row) * 16 + x + 4]
+                            .copy_from_slice(&tile[row * 4..row * 4 + 4]);
+                    }
+                }
+            }
+            assert_eq!(whole, divided, "above={above} filter={filter:?}");
+        }
+    }
+}

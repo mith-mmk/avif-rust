@@ -812,6 +812,8 @@ fn predict_plane_block_into(
             "AV1 prediction output dimensions do not match block".to_string(),
         ));
     }
+    // Filter choice follows the full prediction block even when this call
+    // reconstructs only one of its transform subdivisions.
     let mask_geometry = MaskGeometry {
         x: x.saturating_sub(block_x),
         y: y.saturating_sub(block_y),
@@ -1234,7 +1236,7 @@ fn predict_plane_block_into(
     clippy::too_many_arguments,
     reason = "OBMC prediction keeps frame, block, plane, and scratch geometry explicit"
 )]
-fn apply_obmc_edge_blend(
+pub(super) fn apply_obmc_edge_blend(
     output: &mut [u16],
     reference: &PlaneBuffer,
     block_x: usize,
@@ -1284,6 +1286,8 @@ fn apply_obmc_edge_blend(
                 height,
                 block_x,
                 block_y,
+                block_width,
+                block_height,
                 overlap_x,
                 overlap_y,
                 neighbor,
@@ -1305,6 +1309,8 @@ fn apply_obmc_edge_blend(
             height,
             block_x,
             block_y,
+            block_width,
+            block_height,
             overlap_x,
             overlap_y,
             neighbor,
@@ -1331,6 +1337,8 @@ fn blend_obmc_neighbor_prediction(
     height: usize,
     block_x: usize,
     block_y: usize,
+    block_width: usize,
+    block_height: usize,
     overlap_x: usize,
     overlap_y: usize,
     neighbor: &super::diagnostic::ObmcNeighbor,
@@ -1344,6 +1352,26 @@ fn blend_obmc_neighbor_prediction(
     let neighbor_y = neighbor.origin_y >> subsampling_y;
     let neighbor_width = ceil_shift(neighbor.width, subsampling_x);
     let neighbor_height = ceil_shift(neighbor.height, subsampling_y);
+    // OBMC predicts a complete neighbor strip before blending it. The current
+    // transform may cover only a slice of that strip; filter selection must
+    // retain the strip dimensions (AV1 build_prediction_by_above/left_pred).
+    let filter_dimensions = if above {
+        (
+            block_x
+                .saturating_add(block_width)
+                .min(neighbor_x.saturating_add(neighbor_width))
+                .saturating_sub(block_x.max(neighbor_x)),
+            overlap_y.max(4),
+        )
+    } else {
+        (
+            overlap_x.max(4),
+            block_y
+                .saturating_add(block_height)
+                .min(neighbor_y.saturating_add(neighbor_height))
+                .saturating_sub(block_y.max(neighbor_y)),
+        )
+    };
     let x_end = x.saturating_add(width);
     let y_end = y.saturating_add(height);
     let (predict_x, predict_y, predict_width, predict_height) = if above {
@@ -1393,8 +1421,8 @@ fn blend_obmc_neighbor_prediction(
         MaskGeometry {
             x: 0,
             y: 0,
-            width: predict_width,
-            height: predict_height,
+            width: filter_dimensions.0,
+            height: filter_dimensions.1,
         },
         &mut scratch[..predicted_count],
     )?;
@@ -2085,7 +2113,7 @@ fn predict_inter_block_into(
     }
 
     // The integer path above is allocation-free. Fractional motion uses the
-    // normative AV1 regular 8-tap separable kernel; keeping the source
+    // dimension-specific AV1 separable kernels; keeping the source
     // coordinate arrays per block avoids redoing fixed-point division for
     // every row/column sample.
     const MAX_INTER_BLOCK_DIMENSION: usize = 128;
@@ -2154,6 +2182,7 @@ fn predict_inter_block_into(
                         fy[row],
                         interpolation_filters,
                         bit_depth,
+                        (mask_geometry.width, mask_geometry.height),
                     ),
                     predict_inter_sample(
                         secondary,
@@ -2163,6 +2192,7 @@ fn predict_inter_block_into(
                         secondary_fy[row],
                         interpolation_filters,
                         bit_depth,
+                        (mask_geometry.width, mask_geometry.height),
                     ),
                     compound_weight,
                     compound_mask,
@@ -2185,6 +2215,7 @@ fn predict_inter_block_into(
                     fy[row],
                     interpolation_filters,
                     bit_depth,
+                    (mask_geometry.width, mask_geometry.height),
                 );
             }
         }
@@ -2631,8 +2662,16 @@ fn predict_inter_block_into_fractional(
             let fx = x_fixed - x0 * 16;
             let secondary_x0 = floor_div_sixteen(secondary_x_fixed);
             let secondary_fx = secondary_x_fixed - secondary_x0 * 16;
-            let first =
-                predict_inter_sample(reference, x0, y0, fx, fy, interpolation_filters, bit_depth);
+            let first = predict_inter_sample(
+                reference,
+                x0,
+                y0,
+                fx,
+                fy,
+                interpolation_filters,
+                bit_depth,
+                (mask_geometry.width, mask_geometry.height),
+            );
             output[row * width + col] = secondary_reference
                 .map(|secondary| {
                     blend_compound_prediction(
@@ -2645,6 +2684,7 @@ fn predict_inter_block_into_fractional(
                             secondary_fy,
                             interpolation_filters,
                             bit_depth,
+                            (mask_geometry.width, mask_geometry.height),
                         ),
                         compound_weight,
                         compound_mask,
@@ -2737,8 +2777,63 @@ const AV1_BILINEAR_SUBPEL_FILTERS: [[i16; 8]; 16] = [
     [0, 0, 0, 8, 120, 0, 0, 0],
 ];
 
+// AV1 subpel-filter tables for prediction dimensions of four pixels or less.
+// Regular and Sharp share the reduced-tap bank (AOM av1/common/filter.h).
+const AV1_SMALL_REGULAR_SUBPEL_FILTERS: [[i16; 8]; 16] = [
+    [0, 0, 0, 128, 0, 0, 0, 0],
+    [0, 0, -4, 126, 8, -2, 0, 0],
+    [0, 0, -8, 122, 18, -4, 0, 0],
+    [0, 0, -10, 116, 28, -6, 0, 0],
+    [0, 0, -12, 110, 38, -8, 0, 0],
+    [0, 0, -12, 102, 48, -10, 0, 0],
+    [0, 0, -14, 94, 58, -10, 0, 0],
+    [0, 0, -12, 84, 66, -10, 0, 0],
+    [0, 0, -12, 76, 76, -12, 0, 0],
+    [0, 0, -10, 66, 84, -12, 0, 0],
+    [0, 0, -10, 58, 94, -14, 0, 0],
+    [0, 0, -10, 48, 102, -12, 0, 0],
+    [0, 0, -8, 38, 110, -12, 0, 0],
+    [0, 0, -6, 28, 116, -10, 0, 0],
+    [0, 0, -4, 18, 122, -8, 0, 0],
+    [0, 0, -2, 8, 126, -4, 0, 0],
+];
+
+const AV1_SMALL_SMOOTH_SUBPEL_FILTERS: [[i16; 8]; 16] = [
+    [0, 0, 0, 128, 0, 0, 0, 0],
+    [0, 0, 30, 62, 34, 2, 0, 0],
+    [0, 0, 26, 62, 36, 4, 0, 0],
+    [0, 0, 22, 62, 40, 4, 0, 0],
+    [0, 0, 20, 60, 42, 6, 0, 0],
+    [0, 0, 18, 58, 44, 8, 0, 0],
+    [0, 0, 16, 56, 46, 10, 0, 0],
+    [0, 0, 14, 54, 48, 12, 0, 0],
+    [0, 0, 12, 52, 52, 12, 0, 0],
+    [0, 0, 12, 48, 54, 14, 0, 0],
+    [0, 0, 10, 46, 56, 16, 0, 0],
+    [0, 0, 8, 44, 58, 18, 0, 0],
+    [0, 0, 6, 42, 60, 20, 0, 0],
+    [0, 0, 4, 40, 62, 22, 0, 0],
+    [0, 0, 4, 36, 62, 26, 0, 0],
+    [0, 0, 2, 34, 62, 30, 0, 0],
+];
+
 #[inline]
-fn interpolation_kernel(filter: InterpolationFilter, phase: usize) -> &'static [i16; 8] {
+fn interpolation_kernel(
+    filter: InterpolationFilter,
+    phase: usize,
+    dimension: usize,
+) -> &'static [i16; 8] {
+    if dimension <= 4 {
+        match filter {
+            InterpolationFilter::Regular
+            | InterpolationFilter::Switchable
+            | InterpolationFilter::Sharp => {
+                return &AV1_SMALL_REGULAR_SUBPEL_FILTERS[phase];
+            }
+            InterpolationFilter::Smooth => return &AV1_SMALL_SMOOTH_SUBPEL_FILTERS[phase],
+            InterpolationFilter::Bilinear => {}
+        }
+    }
     match filter {
         InterpolationFilter::Regular | InterpolationFilter::Switchable => {
             &AV1_REGULAR_SUBPEL_FILTERS[phase]
@@ -2759,7 +2854,7 @@ fn round_filter_sum(sum: i64) -> i64 {
 }
 
 #[inline]
-fn predict_inter_sample(
+pub(super) fn predict_inter_sample(
     plane: &PlaneBuffer,
     source_x: i64,
     source_y: i64,
@@ -2767,14 +2862,23 @@ fn predict_inter_sample(
     subpel_y: i64,
     interpolation_filters: (InterpolationFilter, InterpolationFilter),
     bit_depth: u8,
+    prediction_dimensions: (usize, usize),
 ) -> u16 {
     if interpolation_filters == (InterpolationFilter::Bilinear, InterpolationFilter::Bilinear) {
         return predict_inter_sample_bilinear(
             plane, source_x, source_y, subpel_x, subpel_y, bit_depth,
         );
     }
-    let horizontal = interpolation_kernel(interpolation_filters.0, subpel_x as usize);
-    let vertical = interpolation_kernel(interpolation_filters.1, subpel_y as usize);
+    let horizontal = interpolation_kernel(
+        interpolation_filters.0,
+        subpel_x as usize,
+        prediction_dimensions.0,
+    );
+    let vertical = interpolation_kernel(
+        interpolation_filters.1,
+        subpel_y as usize,
+        prediction_dimensions.1,
+    );
     let mut intermediate = [0i64; 8];
     for (row, value) in intermediate.iter_mut().enumerate() {
         let sy = (source_y + row as i64 - 3).clamp(0, plane.layout.height.saturating_sub(1) as i64)
@@ -3793,6 +3897,7 @@ mod tests {
             0,
             (InterpolationFilter::Regular, InterpolationFilter::Regular),
             8,
+            (16, 16),
         );
         assert_eq!(max, 255);
     }

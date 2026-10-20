@@ -1,0 +1,72 @@
+{
+  "date_utc": "2026-10-20",
+  "scope": "CDEF bounds, dimension-specific inter filters and OBMC subdivision checkpoint; no publication",
+  "baseline_published_source": "070ad6509bad18f9ab76732d543659ef6d7f9129",
+  "branch": "codex/avis-reconstruction-20261020",
+  "reference": {
+    "ffmpeg": "7.1.5",
+    "dav1d": "1.5.1",
+    "libaom": "3.12.1",
+    "scalar_aom_commit": "9440aeedd097343b763dfe1c75af72c99f4a3175",
+    "same_bitstream_three_decoder_outputs_exact": true,
+    "sequence_yuv_sha256": "3c97d5771e916c2cc1c54df81f1c5ac9fd6a505b02953509af7a6d998171c8bc",
+    "key_yuv_sha256": "d1dcfdf234f15af9ebc4ff8952c687921def68c891032268921c8e22421e94b6"
+  },
+  "fixes": [
+    "Use full luma bounds for CDEF; subsample only chroma bounds, in serial and parallel paths",
+    "Select four-tap kernels for prediction axes at most four pixels, preserving full prediction geometry across transform subdivisions",
+    "Select OBMC filters using complete neighbor-strip geometry before the transform intersection"
+  ],
+  "regression_evidence": {
+    "cdef_key_before": {
+      "luma_mismatches": 661,
+      "max_error": 3,
+      "all_outside_top_left_32x32": true,
+      "prefilter_and_deblock_exact": true
+    },
+    "cdef_key_after": {
+      "exact_samples": 6144,
+      "test_failed_before_fix": true
+    },
+    "small_filter_before_regular_actual_expected": [
+      50,
+      52
+    ],
+    "obmc_whole_vs_subdivided_before": [
+      135,
+      138
+    ],
+    "obmc_whole_vs_subdivided_after_exact": true
+  },
+  "tests": {
+    "default": {
+      "passed": 865,
+      "failed": 0,
+      "ignored": 9
+    },
+    "encode": {
+      "passed": 19,
+      "failed": 0,
+      "ignored": 0
+    }
+  },
+  "quality": {
+    "fmt": true,
+    "strict_clippy_all_targets_all_features": true,
+    "rustdoc_deny_warnings": true
+  },
+  "full_sequence_after_checkpoint": {
+    "samples": 368640,
+    "mismatches": 118425,
+    "max_error": 228,
+    "mean_absolute_error": 3.6235921223958334,
+    "native_sha256": "d486d21c4d5fe5ed866e7e70a83f761dfe80b9414c3de0dffdc1bae49db3651b"
+  },
+  "remaining": [
+    "Inter-frame native reconstruction still differs from same-bitstream dav1d/libaom; complete pixel conformance is not claimed",
+    "Confirmed single-reference interpolation intermediate-rounding mismatch: 8-bit regular phase8,8 impulse1 gives Rust1 vs AOM0; follow-up in progress",
+    "Confirmed compound premature clipping: equal compound impulse/constant case gives Rust64 vs AOM50; broad internal precision work remains",
+    "Bounded strict sequence decoder keeps its existing rejection of the multiple-coded-frame sample layout; no contract expansion",
+    "9 existing ignored tests include external-oracle diagnostics; unrelated external-fixture tests may return early"
+  ]
+}
