@@ -1,0 +1,2 @@
+# Native-plane oracle bytes must survive every checkout unchanged.
+*.yuv binary
