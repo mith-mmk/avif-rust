@@ -2370,6 +2370,8 @@ fn apply_deblock_stage(
 }
 
 const STRICT_DEBLOCK_FILTER_GRID_LABEL: &str = "native AV1 deblock filter grid";
+// AV1 references and modes can differ in each 4x4 MI cell.
+const DEBLOCK_FILTER_GRID_STEP: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct StrictDeblockFilterGridPlan {
@@ -2386,7 +2388,7 @@ impl StrictDeblockFilterGridPlan {
                 "native AV1 deblock filter grid dimensions are empty".to_string(),
             ));
         }
-        const STEP: usize = 8;
+        const STEP: usize = DEBLOCK_FILTER_GRID_STEP;
         let width = width
             .checked_add(STEP - 1)
             .map(|value| value / STEP)
@@ -2820,7 +2822,7 @@ fn populate_deblock_filter_grid(
     filter_grid_height: usize,
     state: &PostFilterState,
 ) {
-    const FILTER_GRID_STEP: usize = 8;
+    const FILTER_GRID_STEP: usize = DEBLOCK_FILTER_GRID_STEP;
     for candidate in &state.block_filter_states {
         let start_x = (candidate.x / FILTER_GRID_STEP).min(filter_grid_width);
         let start_y = (candidate.y / FILTER_GRID_STEP).min(filter_grid_height);
@@ -2970,7 +2972,7 @@ fn apply_deblock_plane_with_filter_grid(
     shared_filter_grid: Option<&[Option<crate::av1::BlockFilterState>]>,
     shared_boundary_orders: Option<&StrictDeblockBoundaryOrderOwner>,
 ) {
-    const FILTER_GRID_STEP: usize = 8;
+    const FILTER_GRID_STEP: usize = DEBLOCK_FILTER_GRID_STEP;
     let filter_grid_width = frame_width.div_ceil(FILTER_GRID_STEP);
     let filter_grid_height = frame_height.div_ceil(FILTER_GRID_STEP);
     let filter_grid = match shared_filter_grid {
@@ -3092,7 +3094,10 @@ fn apply_deblock_plane_with_filter_grid(
                 let current_block = if plane_index == 0 {
                     None
                 } else {
-                    block_filter_state_at(edge_x << subsampling_x, edge_y << subsampling_y)
+                    block_filter_state_at(
+                        deblock_luma_owner_coordinate(edge_x, subsampling_x),
+                        deblock_luma_owner_coordinate(edge_y, subsampling_y),
+                    )
                 };
                 let luma_x = if plane_index == 0 {
                     edge_x
@@ -3109,7 +3114,11 @@ fn apply_deblock_plane_with_filter_grid(
                 {
                     continue;
                 }
-                let filter_state = block_filter_state_at(luma_x, luma_y);
+                let filter_state = if plane_index == 0 {
+                    block_filter_state_at(luma_x, luma_y)
+                } else {
+                    current_block
+                };
                 // Select the per-block reference/motion deltas for both still
                 // images and AVIS inter frames. Intra blocks use the
                 // INTRA_FRAME reference slot and zero-MV mode delta.
@@ -3118,30 +3127,47 @@ fn apply_deblock_plane_with_filter_grid(
                 } else {
                     plane_index + 1
                 };
-                let block_delta = filter_state
-                    .map(|state| state.delta_lf[delta_lf_index])
-                    .unwrap_or(0);
-                let segment_delta = filter_state
-                    .and_then(|state| {
-                        frame_header
-                            .segmentation
-                            .segment_delta_lf
-                            .get(usize::from(state.segment_id))
-                    })
-                    .map(|deltas| deltas[delta_lf_index])
-                    .unwrap_or(0);
-                let reference_delta_index =
-                    loop_filter_reference_delta_index(boundary.is_inter, boundary.reference_frame);
-                let mode_delta_index =
-                    loop_filter_mode_delta_index(boundary.is_inter, boundary.has_nonzero_mv);
-                let level = apply_loop_filter_deltas(
-                    base_level,
-                    frame_header.loop_filter.delta_enabled,
-                    frame_header.loop_filter.ref_deltas[reference_delta_index],
-                    frame_header.loop_filter.mode_deltas[mode_delta_index],
-                    block_delta,
-                    segment_delta,
-                );
+                let level_for_state = |filter_state: Option<BlockFilterState>| {
+                    let block_delta = filter_state
+                        .map(|state| state.delta_lf[delta_lf_index])
+                        .unwrap_or(0);
+                    let segment_delta = filter_state
+                        .and_then(|state| {
+                            frame_header
+                                .segmentation
+                                .segment_delta_lf
+                                .get(usize::from(state.segment_id))
+                        })
+                        .map(|deltas| deltas[delta_lf_index])
+                        .unwrap_or(0);
+                    let reference_delta_index = filter_state
+                        .and_then(|block| block.loop_filter_reference)
+                        .map(usize::from)
+                        .unwrap_or_else(|| {
+                            loop_filter_reference_delta_index(
+                                boundary.is_inter,
+                                boundary.reference_frame,
+                            )
+                        });
+                    let mode_delta_index = filter_state
+                        .map(|block| usize::from(block.loop_filter_mode))
+                        .unwrap_or_else(|| loop_filter_mode_delta_index(boundary.is_inter, false));
+                    // Intra filtering never applies a mode delta.
+                    let mode_delta = if reference_delta_index == 0 {
+                        0
+                    } else {
+                        frame_header.loop_filter.mode_deltas[mode_delta_index]
+                    };
+                    apply_loop_filter_deltas(
+                        base_level,
+                        frame_header.loop_filter.delta_enabled,
+                        frame_header.loop_filter.ref_deltas[reference_delta_index],
+                        mode_delta,
+                        block_delta,
+                        segment_delta,
+                    )
+                };
+                let mut level = level_for_state(filter_state);
                 let dimension = if plane_index == 0 {
                     if vertical {
                         block.tx_size.width()
@@ -3169,13 +3195,37 @@ fn apply_deblock_plane_with_filter_grid(
                     None
                 } else if vertical {
                     edge_x.checked_sub(1).and_then(|x| {
-                        block_filter_state_at(x << subsampling_x, edge_y << subsampling_y)
+                        block_filter_state_at(
+                            deblock_luma_owner_coordinate(x, subsampling_x),
+                            deblock_luma_owner_coordinate(edge_y, subsampling_y),
+                        )
                     })
                 } else {
                     edge_y.checked_sub(1).and_then(|y| {
-                        block_filter_state_at(edge_x << subsampling_x, y << subsampling_y)
+                        block_filter_state_at(
+                            deblock_luma_owner_coordinate(edge_x, subsampling_x),
+                            deblock_luma_owner_coordinate(y, subsampling_y),
+                        )
                     })
                 };
+                // AV1 uses the current side's strength when nonzero, or
+                // the preceding side's strength when the current one is zero.
+                if level == 0 {
+                    let previous_state = if plane_index != 0 {
+                        previous_block
+                    } else if vertical {
+                        edge_x
+                            .checked_sub(1)
+                            .and_then(|x| block_filter_state_at(x, edge_y))
+                    } else {
+                        edge_y
+                            .checked_sub(1)
+                            .and_then(|y| block_filter_state_at(edge_x, y))
+                    };
+                    if let Some(previous_state) = previous_state {
+                        level = level_for_state(Some(previous_state));
+                    }
+                }
                 let previous_dimension = if plane_index != 0 {
                     previous_block
                         .map(|previous| {
@@ -3275,13 +3325,30 @@ fn apply_deblock_plane_with_filter_grid(
                         .is_some_and(|(_, _, _, skip, is_inter)| *skip && *is_inter)
                 };
                 let current_block_start = filter_state.is_some_and(|current| {
-                    if vertical {
-                        edge_x == current.x
+                    if plane_index == 0 {
+                        if vertical {
+                            edge_x == current.x
+                        } else {
+                            edge_y == current.y
+                        }
                     } else {
-                        edge_y == current.y
+                        // A chroma PU has at least four samples per axis, even
+                        // when its owning luma MI is a smaller partition.
+                        let prediction_dimension = if vertical {
+                            ceil_shift(current.block_size.width(), subsampling_x)
+                        } else {
+                            ceil_shift(current.block_size.height(), subsampling_y)
+                        }
+                        .max(4);
+                        let coordinate = if vertical { edge_x } else { edge_y };
+                        coordinate & (prediction_dimension - 1) == 0
                     }
                 });
-                if boundary.skip && boundary.is_inter && previous_skipped && !current_block_start {
+                let current_skipped = filter_state
+                    .map_or(boundary.skip && boundary.is_inter, |current| {
+                        current.skip && current.is_inter
+                    });
+                if current_skipped && previous_skipped && !current_block_start {
                     continue;
                 }
                 let dimension = dimension.min(previous_dimension);
@@ -3315,6 +3382,12 @@ fn apply_deblock_plane_with_filter_grid(
             }
         }
     }
+}
+
+// AV1 set_lpf_parameters chooses the bottom/right luma MI for a shared
+// subsampled chroma unit; OR in MI space also handles the previous-side lookup.
+fn deblock_luma_owner_coordinate(coordinate: usize, subsampling: usize) -> usize {
+    (((coordinate << subsampling) >> 2) | subsampling) << 2
 }
 
 fn is_tile_edge(frame_header: &FrameHeader, x: usize, y: usize, vertical: bool) -> bool {
@@ -3388,16 +3461,15 @@ fn apply_loop_filter_deltas(
     block_delta: i8,
     segment_delta: i8,
 ) -> u8 {
+    // AV1 clamps delta-LF before applying segmentation, then selects the
+    // reference/mode multiplier from that segmented level.
+    let block_level = (i16::from(level) + i16::from(block_delta)).clamp(0, 63);
+    let segmented = (block_level + i16::from(segment_delta)).clamp(0, 63);
     if !enabled {
-        return (i16::from(level) + i16::from(segment_delta) + i16::from(block_delta)).clamp(0, 63)
-            as u8;
+        return segmented as u8;
     }
-    let adjusted = i16::from(level)
-        + i16::from(segment_delta)
-        + i16::from(ref_delta)
-        + i16::from(mode_delta)
-        + i16::from(block_delta);
-    adjusted.clamp(0, 63) as u8
+    let scale = 1i16 << (segmented >> 5);
+    (segmented + (i16::from(ref_delta) + i16::from(mode_delta)) * scale).clamp(0, 63) as u8
 }
 
 fn loop_filter_reference_delta_index(is_inter: bool, reference_frame: Option<u8>) -> usize {
@@ -3408,8 +3480,10 @@ fn loop_filter_reference_delta_index(is_inter: bool, reference_frame: Option<u8>
         .unwrap_or(0)
 }
 
-fn loop_filter_mode_delta_index(is_inter: bool, has_nonzero_mv: bool) -> usize {
-    usize::from(is_inter && has_nonzero_mv)
+fn loop_filter_mode_delta_index(is_inter: bool, global_motion_mode: bool) -> usize {
+    // GLOBALMV and GLOBAL_GLOBALMV use class 0. Every other inter mode
+    // uses class 1 even when its decoded vector happens to be zero.
+    usize::from(is_inter && !global_motion_mode)
 }
 
 fn ceil_shift(value: usize, shift: usize) -> usize {

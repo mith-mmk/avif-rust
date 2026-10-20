@@ -13,8 +13,11 @@ and a callback interface compatible with [`wml2`](https://github.com/mith-mmk/wm
 Version 0.1.1 fixes AVIS entropy decoding and adds bundled regressions; see
 [the changelog](CHANGELOG.md) and [distribution checks](PACKAGING.md).
 The shared buffer and optional encoder dependencies remain at their published
-0.1.0 versions. Non-lossless AVIS reconstruction still has known pixel differences
-from the external reference; complete AV1 pixel conformance is not claimed.
+0.1.0 versions. Published 0.1.1 has known non-lossless AVIS pixel differences.
+The unreleased reconstruction fixes make the bundled 60-frame AVIS bitstream
+match every native reference sample exactly; see
+[the verification record](reconstruction-validation.json). This fixture result
+does not establish complete AV1 pixel conformance.
 
 The crate does not call FFmpeg, libaom, or another native codec at runtime.
 Those implementations are used only to generate and verify test oracles.

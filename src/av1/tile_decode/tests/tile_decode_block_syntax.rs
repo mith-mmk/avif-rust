@@ -481,3 +481,55 @@ fn distance_compound_weights_match_aom_quantized_offsets() {
         );
     }
 }
+
+#[test]
+fn skipped_inter_and_intrabc_keep_maximum_rectangular_transform_without_symbols() {
+    let data = read_sample_avif().expect("bundled fixture is required");
+    let info = parse_avif(&data).unwrap();
+    let payload = find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
+        .unwrap()
+        .unwrap();
+    let sequence = parse_sequence_header(payload).unwrap();
+    let payload = find_obu_payload(&info.primary_item_payload, ObuType::Frame)
+        .unwrap()
+        .unwrap();
+    let mut frame = parse_frame_header(payload, &sequence).unwrap();
+    frame.tx_mode = crate::av1::TxMode::Select;
+    // AOM parse_decode_block passes inter_block_tx = is_inter || is_intrabc;
+    // read_tx_size then chooses max_txsize_rect_lookup when skip_txfm is set.
+    for size in [
+        BlockSize::Block8x8,
+        BlockSize::Block16x8,
+        BlockSize::Block8x16,
+        BlockSize::Block32x64,
+        BlockSize::Block64x32,
+        BlockSize::Block128x128,
+    ] {
+        for (inter, intrabc) in [(true, false), (false, true)] {
+            let mut decoder = TileDecoder::new(&[0x20], &frame).unwrap();
+            let before = decoder.reader.bit_position();
+            let (context, symbol, tx, blocks) = decoder
+                .read_intra_tx_size(&frame, size, true, inter, intrabc, 0, 0)
+                .unwrap();
+            assert_eq!(
+                tx,
+                size.largest_supported_rect_tx_size(),
+                "{size:?} intrabc={intrabc}"
+            );
+            assert_eq!(decoder.reader.bit_position(), before);
+            assert_eq!((context, symbol), (None, None));
+            if inter {
+                assert!(blocks.iter().all(|block| block.tx_size == tx));
+            }
+        }
+    }
+    frame.tx_mode = crate::av1::TxMode::Only4x4;
+    let mut decoder = TileDecoder::new(&[0x20], &frame).unwrap();
+    assert_eq!(
+        decoder
+            .read_intra_tx_size(&frame, BlockSize::Block16x8, true, true, false, 0, 0)
+            .unwrap()
+            .2,
+        TxSize::Tx4x4
+    );
+}

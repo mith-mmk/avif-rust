@@ -1639,7 +1639,7 @@ impl<'a> TileDecoder<'a> {
         Ok(self.current_delta_lf)
     }
 
-    fn read_intra_tx_size(
+    pub(super) fn read_intra_tx_size(
         &mut self,
         frame: &FrameHeader,
         block_size: BlockSize,
@@ -1663,6 +1663,12 @@ impl<'a> TileDecoder<'a> {
             // Using the square helper here turns edge partitions such as
             // 32x64 into 32x32 and desynchronizes the entropy stream.
             TxMode::Largest => block_size.largest_supported_rect_tx_size(),
+            // skip_txfm suppresses the inter/IntrABC transform-size syntax,
+            // but the inferred size remains max_txsize_rect_lookup. It is
+            // also the transform extent used by loop filtering at PU edges.
+            TxMode::Select if skip && (is_inter || use_intrabc) => {
+                block_size.largest_supported_rect_tx_size()
+            }
             // Intra blocks signal the selected transform size even when
             // skip_txfm suppresses coefficient payloads. IntrABC is parsed as
             // an inter block by the AV1 syntax, so skipped IntrABC blocks do

@@ -1,6 +1,10 @@
 #[path = "compound_mask.rs"]
 mod compound_mask;
 use super::diagnostic::ObmcNeighbors;
+#[path = "interintra.rs"]
+mod interintra;
+#[path = "obmc_reference.rs"]
+mod obmc_reference;
 #[path = "sub8_chroma.rs"]
 mod sub8_chroma;
 use super::tx_type_syntax::inter_chroma_tx_type;
@@ -161,12 +165,15 @@ pub(super) fn decode_plane_block_unit(
     } else {
         None
     };
-    let obmc_neighbors = if let (MotionMode::Obmc, Some(reference_frame)) =
-        (block_mode.motion_mode, block_mode.reference_frame)
-    {
-        decoder.obmc_neighbors(x, y, block_mode.block_size, reference_frame)
+    let obmc_neighbors = if block_mode.motion_mode == MotionMode::Obmc {
+        decoder.obmc_neighbors(x, y, block_mode.block_size)
     } else {
         ObmcNeighbors::default()
+    };
+    let obmc_references = if block_mode.motion_mode == MotionMode::Obmc {
+        Some(obmc_reference::Plan::new(decoder, &obmc_neighbors)?)
+    } else {
+        None
     };
     let chroma_tx_size = || {
         if frame.coded_lossless() {
@@ -332,10 +339,11 @@ pub(super) fn decode_plane_block_unit(
                 subsampling_x,
                 subsampling_y,
                 prediction,
-                &mut decoder.scratch.inter_intra[..prediction_len],
+                &mut decoder.scratch.inter_intra,
                 &obmc_neighbors,
                 sub8_chroma.as_ref(),
                 compound_mask_references.as_ref(),
+                obmc_references.as_ref(),
             )?;
             write_plane_block(
                 plane,
@@ -436,10 +444,11 @@ pub(super) fn decode_plane_block_unit(
                 subsampling_x,
                 subsampling_y,
                 prediction,
-                &mut decoder.scratch.inter_intra[..prediction_len],
+                &mut decoder.scratch.inter_intra,
                 &obmc_neighbors,
                 sub8_chroma.as_ref(),
                 compound_mask_references.as_ref(),
+                obmc_references.as_ref(),
             )?;
             write_plane_block(
                 plane,
@@ -509,10 +518,11 @@ pub(super) fn decode_plane_block_unit(
             subsampling_x,
             subsampling_y,
             prediction,
-            &mut decoder.scratch.inter_intra[..prediction_len],
+            &mut decoder.scratch.inter_intra,
             &obmc_neighbors,
             sub8_chroma.as_ref(),
             compound_mask_references.as_ref(),
+            obmc_references.as_ref(),
         )?;
         let block = decoded_transform.transform;
         let tx_type = decoded_transform.tx_type;
@@ -836,6 +846,7 @@ fn predict_plane_block_into(
     obmc_neighbors: &ObmcNeighbors,
     sub8_chroma: Option<&sub8_chroma::PredictionPlan>,
     compound_mask_references: Option<&compound_mask::References<'_>>,
+    obmc_references: Option<&obmc_reference::Plan>,
 ) -> Result<(), DecoderError> {
     let sample_count = width.checked_mul(height).ok_or_else(|| {
         DecoderError::InvalidParam("AV1 prediction dimensions overflow".to_string())
@@ -923,12 +934,17 @@ fn predict_plane_block_into(
             mask_geometry,
             output,
         )?;
-        let global_model = global_motion_matrix(frame, block_mode.global_motion_index);
-        let secondary_global_model =
-            global_motion_matrix(frame, block_mode.global_motion_index_secondary);
+        let warp_allowed =
+            mask_geometry.width >= 8 && mask_geometry.height >= 8 && frame.force_integer_mv != 1;
+        let global_model = warp_allowed
+            .then(|| global_motion_matrix(frame, block_mode.global_motion_index))
+            .flatten();
+        let secondary_global_model = warp_allowed
+            .then(|| global_motion_matrix(frame, block_mode.global_motion_index_secondary))
+            .flatten();
         if secondary_reference_plane.is_none() {
             if let Some(matrix) = global_model {
-                let _ = predict_global_motion_block_into(
+                let _ = predict_global_motion_block_anchored_into(
                     output,
                     reference,
                     x,
@@ -940,6 +956,9 @@ fn predict_plane_block_into(
                     bit_depth,
                     frame.allow_high_precision_mv,
                     matrix,
+                    false,
+                    x - mask_geometry.x,
+                    y - mask_geometry.y,
                 );
             }
         } else if let Some(secondary) = secondary_reference_plane {
@@ -1019,8 +1038,10 @@ fn predict_plane_block_into(
                 obmc_neighbors,
                 inter_intra_scratch,
                 bit_depth,
+                obmc_references,
+                plane_index,
             )?,
-            MotionMode::LocalWarp if secondary_reference_plane.is_none() => {
+            MotionMode::LocalWarp if secondary_reference_plane.is_none() && warp_allowed => {
                 apply_local_warp_prediction(
                     output,
                     reference,
@@ -1041,74 +1062,31 @@ fn predict_plane_block_into(
             }
             MotionMode::LocalWarp => {}
         }
-        if let Some(interintra_mode) = block_mode.interintra_mode {
-            if inter_intra_scratch.len() != output.len() {
-                return Err(DecoderError::Bitstream(
-                    "AV1 inter-intra scratch dimensions do not match block".to_string(),
-                ));
-            }
-            let intra_prediction = &mut inter_intra_scratch[..output.len()];
-            let prediction_mode = match interintra_mode {
-                InterIntraMode::Dc => PredictionMode::Dc,
-                InterIntraMode::Vertical => PredictionMode::Vertical,
-                InterIntraMode::Horizontal => PredictionMode::Horizontal,
-                InterIntraMode::Smooth => PredictionMode::Smooth,
-            };
-            if prediction_mode == PredictionMode::Dc {
-                predict_dc_block_into_with_bounds(
-                    plane,
-                    x,
-                    y,
-                    width,
-                    height,
-                    bit_depth,
-                    tile_left,
-                    tile_top,
-                    tile_right,
-                    tile_bottom,
-                    intra_prediction,
-                );
-            } else {
-                predict_block_into(
-                    plane,
-                    prediction_mode,
-                    x,
-                    y,
-                    width,
-                    height,
-                    None,
-                    None,
-                    bit_depth,
-                    enable_intra_edge_filter,
-                    false,
-                    top_right_available,
-                    bottom_left_available,
-                    tile_left,
-                    tile_top,
-                    tile_right,
-                    tile_bottom,
-                    intra_prediction,
-                )?;
-            }
-            let wedge_index = block_mode.interintra_wedge_index;
-            for (sample_index, sample) in output.iter_mut().enumerate() {
-                let mask = wedge_index
-                    .and_then(|wedge_idx| {
-                        wedge_mask_value(
-                            mask_geometry.width,
-                            mask_geometry.height,
-                            wedge_idx,
-                            false,
-                            mask_geometry.x + sample_index % width,
-                            mask_geometry.y + sample_index / width,
-                        )
-                    })
-                    .unwrap_or(32);
-                *sample = ((u32::from(*sample) * u32::from(mask)
-                    + u32::from(intra_prediction[sample_index]) * u32::from(64 - mask)
-                    + 32)
-                    >> 6) as u16;
-            }
+        if let Some(mode) = block_mode.interintra_mode {
+            interintra::apply(
+                plane,
+                output,
+                mode,
+                block_mode.interintra_wedge_index,
+                block_mode.block_size.width(),
+                block_mode.block_size.height(),
+                block_x,
+                block_y,
+                x,
+                y,
+                width,
+                height,
+                mask_geometry,
+                bit_depth,
+                subsampling_x,
+                subsampling_y,
+                enable_intra_edge_filter,
+                tile_left,
+                tile_top,
+                tile_right,
+                tile_bottom,
+                inter_intra_scratch,
+            )?;
         }
     } else if let Some(mv) = intra_block_copy_mv {
         predict_intra_block_copy_into(
@@ -1238,13 +1216,15 @@ pub(super) fn apply_obmc_edge_blend(
     neighbors: &ObmcNeighbors,
     scratch: &mut [u16],
     bit_depth: u8,
+    references: Option<&obmc_reference::Plan>,
+    plane_index: usize,
 ) -> Result<(), DecoderError> {
     let has_neighbors = neighbors.above.iter().flatten().next().is_some()
         || neighbors.left.iter().flatten().next().is_some();
     if !has_neighbors {
         // AV1 only blends predictors from eligible causal neighbours. A frame
-        // edge or a neighbour using another reference does not synthesize a
-        // replacement predictor from the already reconstructed current frame.
+        // edge or an intra neighbour does not synthesize a replacement
+        // predictor from the already reconstructed current frame.
         return Ok(());
     }
     let sample_count = width.checked_mul(height).ok_or_else(|| {
@@ -1263,6 +1243,11 @@ pub(super) fn apply_obmc_edge_blend(
         block_width <= 8 && block_height <= 8 && (block_width == 4 || block_height == 4);
     if !skip_above {
         for neighbor in neighbors.above.iter().flatten() {
+            let reference = if let Some(plan) = references {
+                plan.plane(neighbor.reference_frame, plane_index)?
+            } else {
+                reference
+            };
             blend_obmc_neighbor_prediction(
                 output,
                 reference,
@@ -1286,6 +1271,11 @@ pub(super) fn apply_obmc_edge_blend(
         }
     }
     for neighbor in neighbors.left.iter().flatten() {
+        let reference = if let Some(plan) = references {
+            plan.plane(neighbor.reference_frame, plane_index)?
+        } else {
+            reference
+        };
         blend_obmc_neighbor_prediction(
             output,
             reference,
@@ -1499,6 +1489,7 @@ fn global_motion_matrix(frame: &FrameHeader, index: Option<usize>) -> Option<[i3
     clippy::too_many_arguments,
     reason = "global motion prediction keeps matrix and plane geometry explicit"
 )]
+#[cfg(test)]
 fn predict_global_motion_block_into(
     output: &mut [u16],
     reference: &PlaneBuffer,
@@ -1528,6 +1519,10 @@ fn predict_global_motion_block_into(
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "global warp keeps prediction geometry and precision explicit"
+)]
 fn predict_global_motion_block_with_precision_into(
     output: &mut [u16],
     reference: &PlaneBuffer,
@@ -1541,6 +1536,44 @@ fn predict_global_motion_block_with_precision_into(
     allow_high_precision_mv: bool,
     matrix: [i32; 6],
     compound: bool,
+) -> bool {
+    predict_global_motion_block_anchored_into(
+        output,
+        reference,
+        x,
+        y,
+        width,
+        height,
+        subsampling_x,
+        subsampling_y,
+        bit_depth,
+        allow_high_precision_mv,
+        matrix,
+        compound,
+        x,
+        y,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "global warp keeps prediction geometry and precision explicit"
+)]
+fn predict_global_motion_block_anchored_into(
+    output: &mut [u16],
+    reference: &PlaneBuffer,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    subsampling_x: usize,
+    subsampling_y: usize,
+    bit_depth: u8,
+    allow_high_precision_mv: bool,
+    matrix: [i32; 6],
+    compound: bool,
+    block_x: usize,
+    block_y: usize,
 ) -> bool {
     let translation_shift = if allow_high_precision_mv { 3 } else { 4 };
     let Some(translation_x) = i64::from(matrix[0]).checked_shl(translation_shift) else {
@@ -1562,32 +1595,23 @@ fn predict_global_motion_block_with_precision_into(
     };
     let (inter_round0, inter_round1) = if bit_depth == 12 { (5, 9) } else { (3, 11) };
     let inter_round1 = if compound { 7 } else { inter_round1 };
-    let mut intermediate = [0_i64; 15 * 8];
-    for row in (0..height).step_by(8) {
-        for col in (0..width).step_by(8) {
-            predict_warped_block_into(
-                output,
-                reference,
-                x,
-                y,
-                width,
-                height,
-                row,
-                col,
-                subsampling_x,
-                subsampling_y,
-                &params,
-                warp_alpha,
-                warp_beta,
-                warp_gamma,
-                warp_delta,
-                inter_round0,
-                inter_round1,
-                bit_depth,
-                &mut intermediate,
-            );
-        }
-    }
+    predict_warped_region_into(
+        output,
+        reference,
+        x,
+        y,
+        width,
+        height,
+        block_x,
+        block_y,
+        subsampling_x,
+        subsampling_y,
+        &params,
+        (warp_alpha, warp_beta, warp_gamma, warp_delta),
+        inter_round0,
+        inter_round1,
+        bit_depth,
+    );
     true
 }
 
@@ -1645,33 +1669,87 @@ fn apply_local_warp_prediction(
         return Ok(());
     };
     let (inter_round0, inter_round1) = if bit_depth == 12 { (5, 9) } else { (3, 11) };
+    predict_warped_region_into(
+        output,
+        reference,
+        x,
+        y,
+        width,
+        height,
+        block_x,
+        block_y,
+        subsampling_x,
+        subsampling_y,
+        &params,
+        (warp_alpha, warp_beta, warp_gamma, warp_delta),
+        inter_round0,
+        inter_round1,
+        bit_depth,
+    );
+    Ok(())
+}
+
+// A warp's filter phases are relative to the prediction block's 8x8 tiles,
+// independently of the transform fragments that request their samples.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "warp region keeps prediction and transform geometry explicit"
+)]
+fn predict_warped_region_into(
+    output: &mut [u16],
+    reference: &PlaneBuffer,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    block_x: usize,
+    block_y: usize,
+    subsampling_x: usize,
+    subsampling_y: usize,
+    params: &LocalWarpParams,
+    shear: (i64, i64, i64, i64),
+    inter_round0: u32,
+    inter_round1: u32,
+    bit_depth: u8,
+) {
     let mut intermediate = [0_i64; 15 * 8];
-    for row in (0..height).step_by(8) {
-        for col in (0..width).step_by(8) {
+    let mut tile = [0_u16; 64];
+    let offset_x = x - block_x;
+    let offset_y = y - block_y;
+    for tile_y in ((offset_y & !7)..offset_y + height).step_by(8) {
+        for tile_x in ((offset_x & !7)..offset_x + width).step_by(8) {
             predict_warped_block_into(
-                output,
+                &mut tile,
                 reference,
-                x,
-                y,
-                width,
-                height,
-                row,
-                col,
+                block_x + tile_x,
+                block_y + tile_y,
+                8,
+                8,
+                0,
+                0,
                 subsampling_x,
                 subsampling_y,
-                &params,
-                warp_alpha,
-                warp_beta,
-                warp_gamma,
-                warp_delta,
+                params,
+                shear.0,
+                shear.1,
+                shear.2,
+                shear.3,
                 inter_round0,
                 inter_round1,
                 bit_depth,
                 &mut intermediate,
             );
+            let left = offset_x.max(tile_x);
+            let right = (offset_x + width).min(tile_x + 8);
+            let top = offset_y.max(tile_y);
+            let bottom = (offset_y + height).min(tile_y + 8);
+            for row in top..bottom {
+                let src = (row - tile_y) * 8 + left - tile_x;
+                let dst = (row - offset_y) * width + left - offset_x;
+                output[dst..dst + right - left].copy_from_slice(&tile[src..src + right - left]);
+            }
         }
     }
-    Ok(())
 }
 
 fn setup_warp_shear(params: &LocalWarpParams) -> Option<(i64, i64, i64, i64)> {
@@ -1680,13 +1758,13 @@ fn setup_warp_shear(params: &LocalWarpParams) -> Option<(i64, i64, i64, i64)> {
     const NONDIAG_CLAMP: i64 = 1 << 15;
     let alpha = (params.alpha - (1 << MODEL_BITS)).clamp(-NONDIAG_CLAMP, NONDIAG_CLAMP - 1);
     let beta = params.beta.clamp(-NONDIAG_CLAMP, NONDIAG_CLAMP - 1);
-    if params.alpha == 0 {
+    if params.alpha <= 0 {
         return None;
     }
-    let gamma = round_div_signed(params.gamma << MODEL_BITS, params.alpha)?
+    let gamma = warp_divide(params.gamma, params.alpha, MODEL_BITS as u32)?
         .clamp(-NONDIAG_CLAMP, NONDIAG_CLAMP - 1);
     let delta = (params.delta
-        - round_div_signed(params.beta.checked_mul(params.gamma)?, params.alpha)?
+        - warp_divide(params.beta.checked_mul(params.gamma)?, params.alpha, 0)?
         - (1 << MODEL_BITS))
         .clamp(-NONDIAG_CLAMP, NONDIAG_CLAMP - 1);
     let reduce =
@@ -1707,7 +1785,7 @@ fn round_div_power_of_two_signed(value: i64, bits: u32) -> i64 {
     } else {
         let half = 1_i64 << (bits - 1);
         if value < 0 {
-            (value - half) >> bits
+            -((-value + half) >> bits)
         } else {
             (value + half) >> bits
         }
@@ -1772,8 +1850,8 @@ fn predict_warped_block_into(
         let iy = (iy4 + k).clamp(0, reference.layout.height.saturating_sub(1) as i64) as usize;
         for l in -4_i64..4 {
             let sx = sx4 + alpha * (l + 4) + beta * (k + 4);
-            let offset =
-                (round_div_power_of_two_signed(sx, DIFF_BITS) + PIXEL_SHIFT).clamp(0, 192) as usize;
+            let offset = (round_div_power_of_two_unsigned(sx, DIFF_BITS) + PIXEL_SHIFT)
+                .clamp(0, 192) as usize;
             let coeffs = &AV1_WARPED_FILTERS[offset];
             let mut sum = 1_i64 << offset_bits_horiz;
             for (tap, coeff) in coeffs.iter().enumerate() {
@@ -1794,8 +1872,8 @@ fn predict_warped_block_into(
         for out_col in 0..chunk_width {
             let l = out_col as i64 - 4;
             let sy = sy4 + delta * (k + 4) + gamma * (l + 4);
-            let offset =
-                (round_div_power_of_two_signed(sy, DIFF_BITS) + PIXEL_SHIFT).clamp(0, 192) as usize;
+            let offset = (round_div_power_of_two_unsigned(sy, DIFF_BITS) + PIXEL_SHIFT)
+                .clamp(0, 192) as usize;
             let coeffs = &AV1_WARPED_FILTERS[offset];
             let mut sum = 1_i64 << offset_bits_vert;
             for (tap, coeff) in coeffs.iter().enumerate() {
@@ -1885,35 +1963,31 @@ fn estimate_local_warp_params(
     if determinant == 0 {
         return None;
     }
-    let alpha = round_div_signed(
-        a11.checked_mul(bx0)?
-            .checked_sub(a01.checked_mul(bx1)?)?
-            .checked_shl(WARPEDMODEL_PREC_BITS)?,
+    let alpha = warp_divide(
+        a11.checked_mul(bx0)?.checked_sub(a01.checked_mul(bx1)?)?,
         determinant,
+        WARPEDMODEL_PREC_BITS,
     )?
     .clamp(
         (1 << WARPEDMODEL_PREC_BITS) - NONDIAG_CLAMP + 1,
         (1 << WARPEDMODEL_PREC_BITS) + NONDIAG_CLAMP - 1,
     );
-    let beta = round_div_signed(
-        a00.checked_mul(bx1)?
-            .checked_sub(a01.checked_mul(bx0)?)?
-            .checked_shl(WARPEDMODEL_PREC_BITS)?,
+    let beta = warp_divide(
+        a00.checked_mul(bx1)?.checked_sub(a01.checked_mul(bx0)?)?,
         determinant,
+        WARPEDMODEL_PREC_BITS,
     )?
     .clamp(-NONDIAG_CLAMP + 1, NONDIAG_CLAMP - 1);
-    let gamma = round_div_signed(
-        a11.checked_mul(by0)?
-            .checked_sub(a01.checked_mul(by1)?)?
-            .checked_shl(WARPEDMODEL_PREC_BITS)?,
+    let gamma = warp_divide(
+        a11.checked_mul(by0)?.checked_sub(a01.checked_mul(by1)?)?,
         determinant,
+        WARPEDMODEL_PREC_BITS,
     )?
     .clamp(-NONDIAG_CLAMP + 1, NONDIAG_CLAMP - 1);
-    let delta = round_div_signed(
-        a00.checked_mul(by1)?
-            .checked_sub(a01.checked_mul(by0)?)?
-            .checked_shl(WARPEDMODEL_PREC_BITS)?,
+    let delta = warp_divide(
+        a00.checked_mul(by1)?.checked_sub(a01.checked_mul(by0)?)?,
         determinant,
+        WARPEDMODEL_PREC_BITS,
     )?
     .clamp(
         (1 << WARPEDMODEL_PREC_BITS) - NONDIAG_CLAMP + 1,
@@ -1950,17 +2024,39 @@ fn ls_product(a: i64, b: i64) -> Option<i64> {
         .checked_add(b)
 }
 
-fn round_div_signed(numerator: i64, denominator: i64) -> Option<i64> {
-    if denominator == 0 {
+// AV1 ResolveDivisor quantizes the reciprocal to the normative 257-entry
+// table. Exact division changes affine coefficients and sampled filter phases.
+fn warp_divide(numerator: i64, denominator: i64, precision: u32) -> Option<i64> {
+    let magnitude = denominator.unsigned_abs();
+    if magnitude == 0 {
         return None;
     }
-    let half = denominator.abs() / 2;
-    let adjusted = if (numerator < 0) ^ (denominator < 0) {
-        numerator.checked_sub(half)?
+    let msb = 63 - magnitude.leading_zeros();
+    let remainder = magnitude - (1u64 << msb);
+    let index = if msb > 8 {
+        let bits = msb - 8;
+        (remainder + (1u64 << (bits - 1))) >> bits
     } else {
-        numerator.checked_add(half)?
+        remainder << (8 - msb)
     };
-    adjusted.checked_div(denominator)
+    // round(2^22 / (256+index)) reproduces every entry of AV1's div_lut.
+    let divisor = 256 + index;
+    let reciprocal = ((1u64 << 22) + divisor / 2) / divisor;
+    let sign = if denominator < 0 { -1i128 } else { 1 };
+    let value = i128::from(numerator) * i128::from(reciprocal) * sign;
+    let shift = msb + 14;
+    let result = if shift > precision {
+        let bits = shift - precision;
+        let half = 1i128 << (bits - 1);
+        if value < 0 {
+            -((-value + half) >> bits)
+        } else {
+            (value + half) >> bits
+        }
+    } else {
+        value << (precision - shift)
+    };
+    i64::try_from(result).ok()
 }
 
 #[cfg(test)]
@@ -2647,7 +2743,7 @@ fn predict_compound_global_or_translation_into(
     matrix: Option<[i32; 6]>,
 ) {
     if let Some(matrix) = matrix
-        && predict_global_motion_block_with_precision_into(
+        && predict_global_motion_block_anchored_into(
             output,
             reference,
             x,
@@ -2660,6 +2756,8 @@ fn predict_compound_global_or_translation_into(
             allow_high_precision_mv,
             matrix,
             true,
+            x - geometry.x,
+            y - geometry.y,
         )
     {
         return;
@@ -4085,6 +4183,8 @@ mod tests {
             &ObmcNeighbors::default(),
             &mut scratch,
             8,
+            None,
+            0,
         )
         .unwrap();
         assert!(output.iter().all(|sample| *sample == 123));
@@ -4100,7 +4200,31 @@ mod tests {
     }
 
     #[test]
-    fn local_warp_estimation_preserves_translation_for_flat_samples() {
+    fn local_warp_projection_and_shear_match_aom_single_sample() {
+        let mut samples = [None; 8];
+        samples[0] = Some(LocalWarpSample {
+            source: (56, 184),
+            destination: (56, 184),
+        });
+        let p = estimate_local_warp_params(8, 16, 8, 8, (32, -12), samples).unwrap();
+        // Actual av1_find_projection: points relative to block origin are
+        // (120,-72); absolute coordinates above match the decoder MI grid.
+        assert_eq!(
+            [
+                p.translation_x,
+                p.translation_y,
+                p.alpha,
+                p.beta,
+                p.gamma,
+                p.delta
+            ],
+            [-70110, 196616, 69730, -3912, -8191, 73727]
+        );
+        assert_eq!(setup_warp_shear(&p), Some((4224, -3904, -7680, 7744)));
+    }
+
+    #[test]
+    fn local_warp_estimation_matches_aom_quantized_flat_samples() {
         let base_mv = (8_i32, 16_i32);
         let mid_x = 15_i64 * 8;
         let mid_y = 15_i64 * 8;
@@ -4116,12 +4240,20 @@ mod tests {
         });
         samples[..4].copy_from_slice(&flat_samples);
         let params = estimate_local_warp_params(8, 8, 16, 16, base_mv, samples).unwrap();
-        assert_eq!(params.alpha, 1 << 16);
-        assert_eq!(params.beta, 0);
-        assert_eq!(params.gamma, 0);
-        assert_eq!(params.delta, 1 << 16);
-        assert_eq!(params.translation_x, i64::from(base_mv.1) << 13);
-        assert_eq!(params.translation_y, i64::from(base_mv.0) << 13);
+        // Actual AOM av1_find_projection uses a quantized reciprocal even for
+        // a flat translation; mathematically exact division is not normative.
+        assert_eq!(
+            [
+                params.translation_x,
+                params.translation_y,
+                params.alpha,
+                params.beta,
+                params.gamma,
+                params.delta
+            ],
+            [130412, 64876, 65580, 0, 0, 65580]
+        );
+        assert_eq!(setup_warp_shear(&params), Some((64, 0, 0, 64)));
     }
 
     #[test]
@@ -4535,6 +4667,512 @@ mod compound_warp_oracle_tests {
                     "equal compound warp bd={bit_depth} mode={mode}"
                 );
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod negative_shear_warp_oracle_tests {
+    use super::*;
+
+    #[test]
+    fn negative_shear_full_warp_matches_aom_8_10_12_bit_oracles() {
+        // Scalar libaom av1_get_shear_params + av1_highbd_warp_affine_c,
+        // origin(8,8), full16x16 output, no external fixture or runtime tools.
+        // Matrix0 is the actual AVIS local projection at block(8,16).
+        let matrices = [
+            [-70110, 196616, 69730, -3912, -8191, 73727],
+            [8192, -4096, 65024, -384, -256, 65280],
+        ];
+        let shears = [(4224, -3904, -7680, 7744), (-512, -384, -256, -256)];
+        let expected = [
+            [8586656794483808355u64, 15309225790323642852u64],
+            [11128722576567324103u64, 4205857561272084126u64],
+            [11323588007346037997u64, 2868876082466028956u64],
+        ];
+        for (di, bit_depth) in [8u8, 10, 12].into_iter().enumerate() {
+            let reference = PlaneBuffer {
+                layout: crate::av1::decode::PlaneLayout {
+                    plane: 0,
+                    width: 32,
+                    height: 32,
+                    subsampling_x: 0,
+                    subsampling_y: 0,
+                    sample_count: 1024,
+                },
+                samples: (0..1024)
+                    .map(|i| (((i * 37 + i / 32 * 53) % 256) as u16) << (bit_depth - 8))
+                    .collect(),
+            };
+            for (mi, matrix) in matrices.into_iter().enumerate() {
+                let params = LocalWarpParams {
+                    translation_x: matrix[0],
+                    translation_y: matrix[1],
+                    alpha: matrix[2],
+                    beta: matrix[3],
+                    gamma: matrix[4],
+                    delta: matrix[5],
+                };
+                let shear = setup_warp_shear(&params).expect("AOM accepts this affine model");
+                assert_eq!(shear, shears[mi], "AOM negative shear matrix{mi}");
+                let mut output = [0; 256];
+                let mut intermediate = [0i64; 15 * 8];
+                let (round0, round1) = if bit_depth == 12 { (5, 9) } else { (3, 11) };
+                for row in [0, 8] {
+                    for col in [0, 8] {
+                        predict_warped_block_into(
+                            &mut output,
+                            &reference,
+                            8,
+                            8,
+                            16,
+                            16,
+                            row,
+                            col,
+                            0,
+                            0,
+                            &params,
+                            shear.0,
+                            shear.1,
+                            shear.2,
+                            shear.3,
+                            round0,
+                            round1,
+                            bit_depth,
+                            &mut intermediate,
+                        );
+                    }
+                }
+                let hash = output.iter().fold(14695981039346656037u64, |h, p| {
+                    (h ^ u64::from(*p)).wrapping_mul(1099511628211)
+                });
+                assert_eq!(
+                    hash, expected[di][mi],
+                    "AOM full256pixels bd={bit_depth} matrix{mi}"
+                );
+            }
+        }
+    }
+}
+#[cfg(test)]
+mod warp_eligibility_prediction_tests {
+    use super::*;
+    use crate::av1::syntax::BlockSize;
+
+    fn frame() -> FrameHeader {
+        let info = crate::container::parse_avif(include_bytes!(
+            "../../../tests/avis-subsampled-palette.avif"
+        ))
+        .unwrap();
+        let sample = &info.sequence_sample_payloads[0];
+        let sequence = crate::av1::parse_sequence_header(
+            crate::obu::find_obu_payload(sample, crate::obu::ObuType::SequenceHeader)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        let mut frame = crate::av1::parse_frame_header(
+            crate::obu::find_obu_payload(sample, crate::obu::ObuType::Frame)
+                .unwrap()
+                .unwrap(),
+            &sequence,
+        )
+        .unwrap();
+        frame.force_integer_mv = 0;
+        frame.allow_high_precision_mv = true;
+        frame.global_motion.types[0] = GlobalMotionType::Affine;
+        frame.global_motion.matrices[0] = [4096, 2048, 66048, 256, 128, 65920];
+        frame
+    }
+
+    fn mode(global: bool) -> BlockModeProbe {
+        let mut samples = [None; 8];
+        samples[0] = Some(LocalWarpSample {
+            source: (56, 184),
+            destination: (56, 184),
+        });
+        BlockModeProbe {
+            tile_id: 0,
+            block_size: BlockSize::Block8x8,
+            segment_id: 0,
+            qindex: 98,
+            delta_lf: [0; 4],
+            skip_context: 0,
+            skip_symbol: 0,
+            skip: false,
+            skip_mode: false,
+            is_inter: true,
+            reference_frame: Some(0),
+            reference_frame_secondary: None,
+            motion_vector: Some((32, -12)),
+            motion_vector_secondary: None,
+            global_motion_index: global.then_some(0),
+            global_motion_index_secondary: None,
+            motion_mode: if global {
+                MotionMode::Simple
+            } else {
+                MotionMode::LocalWarp
+            },
+            interintra_mode: None,
+            interintra_wedge_index: None,
+            local_warp_neighbors: [None; 4],
+            local_warp_samples: samples,
+            interpolation_filter: Some((
+                InterpolationFilter::Regular,
+                InterpolationFilter::Regular,
+            )),
+            compound_weight: None,
+            compound_mask: None,
+            use_intrabc: false,
+            intra_block_copy_mv: None,
+            cdef_idx: None,
+            y_above_context: 0,
+            y_left_context: 0,
+            y_mode_symbol: 0,
+            y_mode: PredictionMode::Dc,
+            angle_delta_y: None,
+            y_smooth_neighbour: false,
+            filter_intra_mode: None,
+            uv_mode_symbol: None,
+            uv_mode: None,
+            angle_delta_uv: None,
+            uv_smooth_neighbour: false,
+            palette: crate::av1::tile_decode::PaletteBlockInfo { y: None, uv: None },
+            tx_size_context: None,
+            tx_size_symbol: None,
+            tx_size: TxSize::Tx4x4,
+            transform_blocks: Vec::new(),
+            bit_position_after: 0,
+        }
+    }
+
+    fn reference() -> PlaneBuffer {
+        PlaneBuffer {
+            layout: crate::av1::decode::PlaneLayout {
+                plane: 0,
+                width: 32,
+                height: 32,
+                subsampling_x: 0,
+                subsampling_y: 0,
+                sample_count: 1024,
+            },
+            samples: (0..1024)
+                .map(|i| ((i * 37 + i / 32 * 53) % 256) as u16)
+                .collect(),
+        }
+    }
+
+    fn predict(
+        reference: &PlaneBuffer,
+        frame: &FrameHeader,
+        mode: &BlockModeProbe,
+        plane: usize,
+        ss: usize,
+        x: usize,
+        y: usize,
+        w: usize,
+        h: usize,
+    ) -> Vec<u16> {
+        predict_region(reference, frame, mode, plane, ss, x, y, x, y, w, h, 8)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn predict_region(
+        reference: &PlaneBuffer,
+        frame: &FrameHeader,
+        mode: &BlockModeProbe,
+        plane: usize,
+        ss: usize,
+        block_x: usize,
+        block_y: usize,
+        x: usize,
+        y: usize,
+        w: usize,
+        h: usize,
+        bit_depth: u8,
+    ) -> Vec<u16> {
+        let mut output = vec![0; w * h];
+        let mut scratch = [0; 4096];
+        predict_plane_block_into(
+            reference,
+            Some(reference),
+            None,
+            mode,
+            frame,
+            plane,
+            PredictionMode::Dc,
+            block_x,
+            block_y,
+            x,
+            y,
+            w,
+            h,
+            None,
+            None,
+            bit_depth,
+            false,
+            false,
+            0,
+            0,
+            0,
+            0,
+            32,
+            32,
+            None,
+            None,
+            None,
+            ss,
+            ss,
+            &mut output,
+            &mut scratch,
+            &ObmcNeighbors::default(),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        output
+    }
+
+    fn translation(mode: &BlockModeProbe) -> BlockModeProbe {
+        let mut result = mode.clone();
+        result.global_motion_index = None;
+        result.motion_mode = MotionMode::Simple;
+        result
+    }
+
+    #[test]
+    fn sub8_chroma_bypasses_local_and_global_warp_in_actual_plane_prediction() {
+        // AOM av1_init_warp_params rejects either prediction dimension<8.
+        let frame = frame();
+        let reference = reference();
+        for global in [false, true] {
+            let mode = mode(global);
+            let baseline = predict(&reference, &frame, &translation(&mode), 1, 1, 4, 8, 4, 4);
+            assert_eq!(
+                predict(&reference, &frame, &mode, 1, 1, 4, 8, 4, 4),
+                baseline
+            );
+            // Reproduce the pre-gate caller's unconditional warp to ensure
+            // this fixture would fail if the eligibility guard were removed.
+            let mut previous = baseline.clone();
+            if global {
+                assert!(predict_global_motion_block_into(
+                    &mut previous,
+                    &reference,
+                    4,
+                    8,
+                    4,
+                    4,
+                    1,
+                    1,
+                    8,
+                    true,
+                    frame.global_motion.matrices[0]
+                ));
+            } else {
+                apply_local_warp_prediction(
+                    &mut previous,
+                    &reference,
+                    4,
+                    8,
+                    4,
+                    4,
+                    4,
+                    8,
+                    4,
+                    4,
+                    (32, -12),
+                    1,
+                    1,
+                    8,
+                    mode.local_warp_samples,
+                )
+                .unwrap();
+            }
+            assert_ne!(previous, baseline, "pre-gate local/global={global}");
+        }
+    }
+
+    #[test]
+    fn full8_prediction_still_warps_a_4x4_transform_fragment() {
+        // Eligibility follows the full8x8 prediction, not this4x4 fragment.
+        let frame = frame();
+        let reference = reference();
+        for global in [false, true] {
+            let mode = mode(global);
+            let baseline = predict(&reference, &frame, &translation(&mode), 0, 0, 8, 16, 4, 4);
+            let actual = predict(&reference, &frame, &mode, 0, 0, 8, 16, 4, 4);
+            assert_ne!(actual, baseline, "eligible local/global={global}");
+            let mut expected = baseline.clone();
+            if global {
+                assert!(predict_global_motion_block_into(
+                    &mut expected,
+                    &reference,
+                    8,
+                    16,
+                    4,
+                    4,
+                    0,
+                    0,
+                    8,
+                    true,
+                    frame.global_motion.matrices[0]
+                ));
+            } else {
+                apply_local_warp_prediction(
+                    &mut expected,
+                    &reference,
+                    8,
+                    16,
+                    4,
+                    4,
+                    8,
+                    16,
+                    8,
+                    8,
+                    (32, -12),
+                    0,
+                    0,
+                    8,
+                    mode.local_warp_samples,
+                )
+                .unwrap();
+            }
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn force_integer_mv_bypasses_local_and_global_warp_in_actual_plane_prediction() {
+        // AOM av1_init_warp_params also rejects cur_frame_force_integer_mv.
+        let mut frame = frame();
+        frame.force_integer_mv = 1;
+        frame.allow_high_precision_mv = false;
+        let reference = reference();
+        for global in [false, true] {
+            let mut mode = mode(global);
+            mode.motion_vector = Some((32, -16));
+            let baseline = predict(&reference, &frame, &translation(&mode), 0, 0, 8, 16, 8, 8);
+            assert_eq!(
+                predict(&reference, &frame, &mode, 0, 0, 8, 16, 8, 8),
+                baseline
+            );
+        }
+    }
+    #[test]
+    fn all_warp_transform_fragments_match_aom_full_prediction() {
+        // libaom av1_highbd_warp_affine_c: full8x8 at8,16, raw affine
+        // [-70110,196616,69730,-3912,-8191,73727]; global syntax rounds
+        // translation_x to -70112 and yields these same64 samples.
+        let expected = [
+            14178864780517097510_u64,
+            7958934973007843195,
+            13145496955326679774,
+        ];
+        for (depth, expected) in [8_u8, 10, 12].into_iter().zip(expected) {
+            let mut frame = frame();
+            frame.global_motion.matrices[0] = [-8764, 24577, 69730, -3912, -8191, 73727];
+            let mut reference = reference();
+            for sample in &mut reference.samples {
+                *sample <<= depth - 8;
+            }
+            for global in [false, true] {
+                let mode = mode(global);
+                let whole =
+                    predict_region(&reference, &frame, &mode, 0, 0, 8, 16, 8, 16, 8, 8, depth);
+                let hash = whole.iter().fold(14695981039346656037_u64, |h, &v| {
+                    (h ^ u64::from(v)).wrapping_mul(1099511628211)
+                });
+                assert_eq!(
+                    hash, expected,
+                    "full prediction depth{depth} global{global}"
+                );
+                let mut assembled = [0_u16; 64];
+                for oy in [0, 4] {
+                    for ox in [0, 4] {
+                        let part = predict_region(
+                            &reference,
+                            &frame,
+                            &mode,
+                            0,
+                            0,
+                            8,
+                            16,
+                            8 + ox,
+                            16 + oy,
+                            4,
+                            4,
+                            depth,
+                        );
+                        for row in 0..4 {
+                            assembled[(oy + row) * 8 + ox..(oy + row) * 8 + ox + 4]
+                                .copy_from_slice(&part[row * 4..row * 4 + 4]);
+                        }
+                    }
+                }
+                assert_eq!(
+                    assembled.as_slice(),
+                    whole,
+                    "transform fragments depth{depth} global{global}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn compound_global_fragments_preserve_aom_raw_precision() {
+        let expected = [
+            4834513913386005089_u64,
+            12884725509075423797,
+            12884725509075423797,
+        ];
+        for (depth, expected) in [8_u8, 10, 12].into_iter().zip(expected) {
+            let mut reference = reference();
+            for sample in &mut reference.samples {
+                *sample <<= depth - 8;
+            }
+            let matrix = [-8764, 24577, 69730, -3912, -8191, 73727];
+            let mut whole = [0_u16; 64];
+            assert!(predict_global_motion_block_with_precision_into(
+                &mut whole, &reference, 8, 16, 8, 8, 0, 0, depth, true, matrix, true
+            ));
+            let hash = whole.iter().fold(14695981039346656037_u64, |h, &v| {
+                (h ^ u64::from(v)).wrapping_mul(1099511628211)
+            });
+            assert_eq!(hash, expected, "AOM raw compound depth{depth}");
+            let mut assembled = [0_u16; 64];
+            for oy in [0, 4] {
+                for ox in [0, 4] {
+                    let mut part = [0_u16; 16];
+                    predict_compound_global_or_translation_into(
+                        &mut part,
+                        &reference,
+                        8 + ox,
+                        16 + oy,
+                        4,
+                        4,
+                        (0, 0),
+                        0,
+                        0,
+                        (InterpolationFilter::Regular, InterpolationFilter::Regular),
+                        depth,
+                        MaskGeometry {
+                            x: ox,
+                            y: oy,
+                            width: 8,
+                            height: 8,
+                        },
+                        true,
+                        Some(matrix),
+                    );
+                    for row in 0..4 {
+                        assembled[(oy + row) * 8 + ox..(oy + row) * 8 + ox + 4]
+                            .copy_from_slice(&part[row * 4..row * 4 + 4]);
+                    }
+                }
+            }
+            assert_eq!(assembled, whole, "raw compound fragments depth{depth}");
         }
     }
 }

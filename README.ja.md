@@ -14,7 +14,10 @@
 0.1.1ではAVISのentropy decodeを修正し、同梱fixtureによる回帰テストを追加しました。
 [変更履歴](CHANGELOG.md)と[配布検証](PACKAGING.md)を参照してください。
 共有bufferとoptional encoderの依存は公開済み0.1.0のままです。
-非lossless AVISには外部referenceとの既知の画素差分が残っており、完全なAV1画素一致は保証しません。
+公開済み0.1.1には非lossless AVISの既知の画素差分が残ります。
+未リリースの復号修正では、同梱60フレームAVISの全native sampleが外部referenceと完全一致します。
+[検証記録](reconstruction-validation.json)を参照してください。このfixtureでの一致は、
+すべてのAV1機能での完全な画素一致を保証するものではありません。
 
 実行時にFFmpeg、libaom、その他のネイティブcodecは呼び出しません。これらは
 テスト用oracleの生成と検証にのみ使用します。

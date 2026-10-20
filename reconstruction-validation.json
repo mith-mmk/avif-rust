@@ -1,6 +1,6 @@
 {
   "date_utc": "2026-10-20",
-  "scope": "Unreleased CDEF bounds, inter geometry, separable and compound precision, distance weights, warp, wedge and shared chroma fixes; no publication",
+  "scope": "Unreleased exact reconstruction of the bundled 60-display/61-coded AVIS fixture, with isolated AV1 prediction and filtering fixes; no merge or publication",
   "baseline_published_source": "070ad6509bad18f9ab76732d543659ef6d7f9129",
   "branch": "codex/avis-reconstruction-20261020",
   "reference": {
@@ -31,7 +31,13 @@
     "Preserve full output stride across 8x8 warp chunks and correct cross-axis filter phase origin",
     "Correct wedge master tables, oblique reflection and narrow-block sign maps",
     "Use each contributing luma owner reference, MV and filter for shared sub8 chroma regions",
-    "Generate chroma masks from the same full-resolution luma predictors and round their subsampling average, including 4:4:4"
+    "Generate chroma masks from the same full-resolution luma predictors and round their subsampling average, including 4:4:4",
+    "Correct inter-intra weight orientation, directional masks, chroma wedge reduction and full-block intra edges",
+    "Use logical LF reference/mode metadata, normative delta math, MI4 grid, shared chroma ownership, PU boundary and previous-strength fallback",
+    "Infer maximum rectangular skipped inter/IntrABC transforms without entropy reads",
+    "Use each OBMC primary reference and pair sub8 neighbors with normative limits",
+    "Use normative affine reciprocal/rounding and full-plane warp eligibility; anchor full8x8 tiles across transform fragments",
+    "Verify every native sample in the bundled60-frame AVIS oracle exactly"
   ],
   "regression_evidence": {
     "cdef_key_before": {
@@ -201,6 +207,192 @@
       ],
       "raw_biased_intermediates_and_equal_blend_verified": true,
       "samples_per_case": 256
+    },
+    "first_displayed_inter": {
+      "displayed_frame": 1,
+      "plane": "Y",
+      "x": 44,
+      "y": 5,
+      "before": 41,
+      "reference_and_after": 40,
+      "first_divergent_stage": "deblock",
+      "root_cause": "physical slot0 misclassified as INTRA instead of logical LAST: level3 vs level2",
+      "regression_failed_before_fix": true
+    },
+    "interintra": {
+      "first_hidden_coded_frame": 1,
+      "order_hint": 16,
+      "xy": [
+        8,
+        16
+      ],
+      "inter_predictor": 58,
+      "before_blend": 58,
+      "aom_and_after_blend": 31,
+      "residual": 2,
+      "aom_final": 33,
+      "masks": "intra weighted first; directional II weights; subsampled luma wedge; original full-block intra edges",
+      "actual_aom_mask_cases": 30,
+      "regression_failed_before_fix": true
+    },
+    "old_max_error_182": {
+      "displayed_frame": 29,
+      "xy": [
+        6,
+        39
+      ],
+      "before": 21,
+      "reference_and_after": 203,
+      "upstream_coded_frame": 26,
+      "upstream_order_hint": 36,
+      "inter_predictor": 210,
+      "before_interintra_predictor": 32,
+      "root_cause": "inter-intra mask reversal, then reference propagation; independent from the original deblock 41/40 error"
+    },
+    "loop_filter_metadata": {
+      "logical_reference_preserved_without_public_api_change": true,
+      "coded_global_vs_other_inter_mode_class": true,
+      "normative_delta_scale_and_staged_clamps": true,
+      "intra_mode_delta_suppressed": true,
+      "actual_aom_delta_vectors": 7,
+      "existing_metadata_grid_step_before": 8,
+      "existing_metadata_grid_step_after": 4,
+      "grid_entries_scale": 4,
+      "strict_grid_memory_proportionally_charged": true,
+      "linear_fallback_scan": false
+    },
+    "implicit_skipped_transform": {
+      "before": "Tx4x4",
+      "after": "largest supported rectangular transform",
+      "cases": "6 rectangular shapes, inter and IntrABC, no entropy consumption; Only4x4 retained",
+      "actual_aom_edge_before_length": 4,
+      "actual_aom_edge_after_length": 8,
+      "regression_failed_before_fix": true
+    },
+    "chroma_loop_filter_ownership": {
+      "first_hidden_coded_frame": 1,
+      "edge": [
+        12,
+        4
+      ],
+      "plane": "U",
+      "owner_mi": [
+        7,
+        3
+      ],
+      "logical_reference": "LAST",
+      "level": 7,
+      "filter_length": 4,
+      "xy": [
+        13,
+        3
+      ],
+      "before": 97,
+      "reference_and_after": 98,
+      "fix": "bottom-right shared luma MI owner and plane-coordinate PU boundary",
+      "regression_failed_before_fix": true
+    },
+    "obmc_cross_reference": {
+      "coded_frame": 2,
+      "order_hint": 8,
+      "xy": [
+        24,
+        40
+      ],
+      "base_predictor": 210,
+      "left_predictor": 126,
+      "current_weight": 39,
+      "before_blend": 210,
+      "aom_and_after_blend": 177,
+      "residual": -51,
+      "before_final": 159,
+      "reference_and_after_final": 126,
+      "fix": "own primary reference, including compound neighbors; fixed8 Arc slots, no new heap/persistent grid",
+      "regression_failed_before_fix": true
+    },
+    "obmc_sub8_pairing": {
+      "coded_frame": 4,
+      "order_hint": 2,
+      "xy": [
+        40,
+        40
+      ],
+      "before": 74,
+      "reference_and_after": 71,
+      "fix": "pair adjacent4-pixel neighbors, select right/bottom owner before eligibility, full8-pixel strips, normative valid-neighbor count and64-pixel cap",
+      "regression_failed_before_fix": true
+    },
+    "warp_projection_and_rounding": {
+      "single_sample_matrix_reference": [
+        -70110,
+        196616,
+        69730,
+        -3912,
+        -8191,
+        73727
+      ],
+      "single_sample_matrix_before": [
+        -70735,
+        196616,
+        69792,
+        -3915,
+        -8191,
+        73727
+      ],
+      "normative_reciprocal_table": true,
+      "negative_signed_rounding_corrected": true,
+      "filter_phase_uses_unsigned_rounding": true,
+      "negative_shear_full_pixel_cases": 6,
+      "flat_sample_test_updated_after_actual_aom_oracle": "AOM quantized projection is diagonal65580, not exact65536; translations130412/64876; no tolerance widening"
+    },
+    "warp_eligibility_and_fragment_anchor": {
+      "plane_minimum": [
+        8,
+        8
+      ],
+      "force_integer_mv_disables_warp": true,
+      "eligibility_uses_full_prediction_geometry": true,
+      "fragment_before": 59,
+      "reference_and_after": 61,
+      "full_tile_anchor_and_crop": true,
+      "oracle_depths": [
+        8,
+        10,
+        12
+      ],
+      "paths": [
+        "local",
+        "global",
+        "raw compound"
+      ],
+      "all_four_quadrants_verified": true,
+      "new_heap_or_persistent_allocation": false
+    },
+    "zero_current_loop_filter": {
+      "first_coded_frame": 41,
+      "order_hint": 37,
+      "xy": [
+        7,
+        29
+      ],
+      "current_level": 0,
+      "previous_level": 1,
+      "before": 31,
+      "reference_and_after": 32,
+      "second_order_hint": 58,
+      "root_cause": "fall back to previous block strength when current strength is zero",
+      "regression_failed_before_fix": true
+    },
+    "full_native_sequence": {
+      "reference_bytes": 368640,
+      "displayed_frames": 60,
+      "sha256": "3c97d5771e916c2cc1c54df81f1c5ac9fd6a505b02953509af7a6d998171c8bc",
+      "mandatory_packaged_fixture": "tests/avis-subsampled-reference.yuv",
+      "regression_failed_before_final_fix": true,
+      "before_failure": "displayed37 native sample1863:31 vs32",
+      "after_mismatches": 0,
+      "tolerance": 0,
+      "external_runtime_tool_or_skip": false
     }
   },
   "full_sequence_after_checkpoint": {
@@ -211,9 +403,9 @@
     "native_sha256": "d486d21c4d5fe5ed866e7e70a83f761dfe80b9414c3de0dffdc1bae49db3651b"
   },
   "remaining": [
-    "Inter-frame native reconstruction still differs from same-bitstream dav1d/libaom; complete pixel conformance is not claimed",
-    "Bounded strict sequence decoder keeps its existing rejection of the multiple-coded-frame sample layout; no contract expansion",
-    "9 existing ignored tests include external-oracle diagnostics; unrelated external-fixture tests may return early"
+    "Exact reconstruction is established for this tracked AVIS bitstream and isolated oracles; general AV1 feature/stream conformance is not claimed",
+    "Bounded strict sequence decoder retains the existing rejection of the tested multiple-coded-frame sample layout; no contract expansion",
+    "9 existing ignored tests include external-oracle diagnostics; unrelated external-fixture tests may return early, while the new mandatory full-sequence oracle cannot"
   ],
   "full_sequence_baseline": {
     "samples": 368640,
@@ -259,8 +451,18 @@
     "strict_clippy_all_targets_all_features": true,
     "rustdoc_deny_warnings": true
   },
-  "tested_source_commit": "582bde1a0c1fff3bd828d1b163766af0b9196ffb",
-  "tests": {
+  "quality": {
+    "fmt": true,
+    "strict_clippy_all_targets_all_features": true,
+    "rustdoc_deny_warnings": true,
+    "cargo_package_locked_verified": true,
+    "ordinary_push_remote_sha_verified": true,
+    "github_author_and_committer_login": "mith-mmk",
+    "temporary_runtime_tracing_removed": true
+  },
+  "followup_base": "2eab158099bdcf6248caa8d36d4ba43a66c386d0",
+  "historical_tested_source_commit": "582bde1a0c1fff3bd828d1b163766af0b9196ffb",
+  "before_inter_followup_tests": {
     "default": {
       "passed": 877,
       "failed": 0,
@@ -277,23 +479,42 @@
       "ignored": 0
     }
   },
-  "quality": {
-    "fmt": true,
-    "strict_clippy_all_targets_all_features": true,
-    "rustdoc_deny_warnings": true,
-    "cargo_package_locked_verified": true,
-    "ordinary_push_remote_sha_verified": true,
-    "github_author_and_committer_login": "mith-mmk"
+  "tests": {
+    "default": {
+      "passed": 903,
+      "failed": 0,
+      "ignored": 9
+    },
+    "encode": {
+      "passed": 23,
+      "failed": 0,
+      "ignored": 0
+    },
+    "reconstruction": {
+      "passed": 54,
+      "failed": 0,
+      "ignored": 0
+    }
   },
-  "remaining_first_divergence": {
-    "displayed_frame": 1,
-    "plane": "Y",
-    "x": 44,
-    "y": 5,
-    "rust": 41,
-    "reference": 40,
-    "frame_mismatches": 710,
-    "frame_max_error": 25,
-    "stage_or_root_cause": "not isolated by this patch"
-  }
+  "full_sequence_after_inter_followup": {
+    "samples": 368640,
+    "mismatches": 0,
+    "max_error": 0,
+    "mean_absolute_error": 0.0,
+    "native_sha256": "3c97d5771e916c2cc1c54df81f1c5ac9fd6a505b02953509af7a6d998171c8bc",
+    "key_mismatches": 0
+  },
+  "all_coded_stage_equivalence": {
+    "coded_frames": 61,
+    "stages": [
+      "prefilter",
+      "deblock",
+      "cdef",
+      "restoration"
+    ],
+    "comparisons": 244,
+    "mismatches": 0,
+    "scope": "Final production code copied to a separate /tmp project; tracing added only to that copy. Final shipping code contains no tracing."
+  },
+  "verified_production_sources_sha256": "6931295d59246ec8f16013ed481d61ee615cde3d162f7604295032f9c1cfd038"
 }

@@ -17,8 +17,20 @@ All notable changes to this crate are documented in this file.
 - Fix warped prediction output stride and affine filter phase origins.
 - Reconstruct shared sub-8x8 chroma regions using their luma owners' refs/MVs/filters.
 - Reuse and downsample the luma compound mask for chroma at every subsampling.
-- Add exact independent native YUV coverage for the non-lossless AVIS key frame.
-  Remaining inter-frame reconstruction differences are not resolved by these fixes.
+- Correct inter-intra mask orientation and direction weights; preserve full
+  prediction-block edges across transform subdivisions and subsample luma wedges.
+- Select deblock strength from logical reference/mode metadata, with normative
+  delta scaling, previous-level fallback and shared-chroma MI/PU ownership.
+- Infer maximum rectangular transforms for skipped inter/IntrABC without
+  consuming entropy; retain lossless 4x4 transforms.
+- Use each OBMC neighbor's own primary reference, pairing sub8 neighbors and
+  enforcing the normative overlap limits.
+- Use AV1's reciprocal and signed rounding for affine projection/shear;
+  apply warp eligibility to full plane prediction geometry.
+- Add exact native YUV coverage for all 60 displayed AVIS frames. Independent
+  AOM stage dumps match all 61 coded frames before and after every filter.
+  This fixture's pixel differences are resolved; general AV1 conformance and
+  strict sequence sample-layout support are not expanded by this claim.
 
 ## 0.1.1 - 2026-10-19
 

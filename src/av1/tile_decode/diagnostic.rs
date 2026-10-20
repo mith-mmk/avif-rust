@@ -30,9 +30,10 @@ pub struct LocalWarpSample {
     pub destination: (i32, i32),
 }
 
-/// One same-reference neighbor used by overlapped block motion compensation.
+/// One inter neighbor and its primary reference for overlapped prediction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct ObmcNeighbor {
+    pub reference_frame: u8,
     pub origin_x: usize,
     pub origin_y: usize,
     pub width: usize,

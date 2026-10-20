@@ -1740,6 +1740,10 @@ pub(crate) struct BlockFilterState {
     pub(crate) skip: bool,
     pub(crate) is_inter: bool,
     pub(crate) reference_frame: Option<u8>,
+    /// AV1 loop-filter reference enum: 0=intra, 1..7=logical inter types.
+    /// Kept separate from reference_frame, which indexes physical buffers.
+    pub(crate) loop_filter_reference: Option<u8>,
+    pub(crate) loop_filter_mode: u8,
     pub(crate) has_nonzero_mv: bool,
     pub(crate) y_mode: PredictionMode,
     pub(crate) uv_mode: Option<UvPredictionMode>,
@@ -1878,10 +1882,21 @@ impl<'a> TileDecoder<'a> {
         is_inter: bool,
         reference_frame: Option<u8>,
         has_nonzero_mv: bool,
+        global_motion_mode: bool,
         y_mode: PredictionMode,
         uv_mode: Option<UvPredictionMode>,
         delta_lf: [i8; 4],
     ) {
+        let loop_filter_reference = if is_inter {
+            self.reference_frame_type_grid
+                .get((y / 4) * self.mi_cols + x / 4)
+                .copied()
+                .flatten()
+                .map(|reference_type| reference_type + 1)
+        } else {
+            Some(0)
+        };
+        let loop_filter_mode = u8::from(is_inter && !global_motion_mode);
         self.block_filter_states.push(BlockFilterState {
             x,
             y,
@@ -1890,6 +1905,8 @@ impl<'a> TileDecoder<'a> {
             skip,
             is_inter,
             reference_frame,
+            loop_filter_reference,
+            loop_filter_mode,
             has_nonzero_mv,
             y_mode,
             uv_mode,
@@ -2701,6 +2718,79 @@ mod tests {
     }
 
     #[test]
+    fn recorded_loop_filter_metadata_uses_logical_reference_and_coded_mode() {
+        let info =
+            crate::container::parse_avif(include_bytes!("../../../tests/WML2Viewer.avif")).unwrap();
+        let seq = crate::obu::find_obu_payload(
+            &info.primary_item_payload,
+            crate::obu::ObuType::SequenceHeader,
+        )
+        .unwrap()
+        .unwrap();
+        let sequence = crate::av1::parse_sequence_header(seq).unwrap();
+        let payload =
+            crate::obu::find_obu_payload(&info.primary_item_payload, crate::obu::ObuType::Frame)
+                .unwrap()
+                .unwrap();
+        let frame = crate::av1::parse_frame_header(payload, &sequence).unwrap();
+        let mut decoder = super::TileDecoder::new(&[0, 0], &frame).unwrap();
+        let index = decoder.mi_cols + 2;
+        decoder.reference_frame_type_grid[index] = Some(0); // logical LAST, physical slot 0
+        decoder.record_block_filter_state(
+            8,
+            4,
+            BlockSize::Block4x4,
+            0,
+            true,
+            true,
+            Some(0),
+            false,
+            false,
+            PredictionMode::Dc,
+            None,
+            [0; 4],
+        );
+        decoder.reference_frame_type_grid[index] = Some(6); // logical ALTREF, same physical slot
+        decoder.record_block_filter_state(
+            8,
+            4,
+            BlockSize::Block4x4,
+            0,
+            true,
+            true,
+            Some(0),
+            true,
+            true,
+            PredictionMode::Dc,
+            None,
+            [0; 4],
+        );
+        decoder.record_block_filter_state(
+            8,
+            4,
+            BlockSize::Block4x4,
+            0,
+            true,
+            false,
+            None,
+            false,
+            false,
+            PredictionMode::Dc,
+            None,
+            [0; 4],
+        );
+        let blocks = &decoder.block_filter_states;
+        assert_eq!(blocks[0].reference_frame, Some(0));
+        assert_eq!(blocks[0].loop_filter_reference, Some(1));
+        assert_eq!(blocks[0].loop_filter_mode, 1); // non-global zero MV still class 1
+        assert_eq!(blocks[1].reference_frame, Some(0));
+        assert_eq!(blocks[1].loop_filter_reference, Some(7));
+        assert_eq!(blocks[1].loop_filter_mode, 0); // GLOBALMV / GLOBAL_GLOBALMV
+        assert_eq!(blocks[2].loop_filter_reference, Some(0));
+        assert_eq!(blocks[2].loop_filter_mode, 0);
+    }
+
+    #[test]
     fn post_filter_state_retains_block_mode_metadata() {
         let mut state = PostFilterState::default();
         state.merge(PostFilterState {
@@ -2716,6 +2806,8 @@ mod tests {
                 skip: true,
                 is_inter: false,
                 reference_frame: None,
+                loop_filter_reference: Some(0),
+                loop_filter_mode: 0,
                 has_nonzero_mv: false,
                 y_mode: PredictionMode::Dc,
                 uv_mode: Some(UvPredictionMode::Intra(PredictionMode::Dc)),

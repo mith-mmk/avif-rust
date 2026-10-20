@@ -21,6 +21,7 @@ include = [
     "/tests/avis_regression.rs",
     "/tests/avis-subsampled-palette.avif",
     "/tests/avis-subsampled-key-reference.yuv",
+    "/tests/avis-subsampled-reference.yuv",
     "/tests/lossless-sub8x8-palette.avif",
     "/tests/lossless-sub8x8-palette.yuv",
     "/tests/shared_buffer.rs",

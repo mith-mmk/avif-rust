@@ -28,8 +28,12 @@ pub(super) fn predict_chroma(
     let filters = mode
         .interpolation_filter
         .unwrap_or((InterpolationFilter::Regular, InterpolationFilter::Regular));
-    let primary_model = global_motion_matrix(frame, mode.global_motion_index);
-    let secondary_model = global_motion_matrix(frame, mode.global_motion_index_secondary);
+    let primary_model = (frame.force_integer_mv != 1)
+        .then(|| global_motion_matrix(frame, mode.global_motion_index))
+        .flatten();
+    let secondary_model = (frame.force_integer_mv != 1)
+        .then(|| global_motion_matrix(frame, mode.global_motion_index_secondary))
+        .flatten();
     predict_compound_global_or_translation_into(
         output,
         primary,
@@ -44,7 +48,7 @@ pub(super) fn predict_chroma(
         bit_depth,
         geometry,
         frame.allow_high_precision_mv,
-        primary_model,
+        primary_model.filter(|_| geometry.width >= 8 && geometry.height >= 8),
     );
     let secondary_output = &mut scratch[..output.len()];
     predict_compound_global_or_translation_into(
@@ -61,7 +65,7 @@ pub(super) fn predict_chroma(
         bit_depth,
         geometry,
         frame.allow_high_precision_mv,
-        secondary_model,
+        secondary_model.filter(|_| geometry.width >= 8 && geometry.height >= 8),
     );
     let block_x = (x - geometry.x) << subsampling_x;
     let block_y = (y - geometry.y) << subsampling_y;

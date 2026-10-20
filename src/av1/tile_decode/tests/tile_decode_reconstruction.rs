@@ -426,6 +426,7 @@ fn obmc_filter_choice_is_independent_of_transform_subdivision() {
             InterpolationFilter::Smooth,
         ] {
             let neighbor = ObmcNeighbor {
+                reference_frame: 0,
                 origin_x: if above { 8 } else { 0 },
                 origin_y: if above { 0 } else { 8 },
                 width: 16,
@@ -456,6 +457,8 @@ fn obmc_filter_choice_is_independent_of_transform_subdivision() {
                 &neighbors,
                 &mut [0; 256],
                 8,
+                None,
+                0,
             )
             .unwrap();
             assert!(whole.iter().any(|&sample| sample != 64));
@@ -479,6 +482,8 @@ fn obmc_filter_choice_is_independent_of_transform_subdivision() {
                         &neighbors,
                         &mut [0; 16],
                         8,
+                        None,
+                        0,
                     )
                     .unwrap();
                     for row in 0..4 {

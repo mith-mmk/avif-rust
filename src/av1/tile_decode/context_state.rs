@@ -581,11 +581,10 @@ impl<'a> TileDecoder<'a> {
         x: usize,
         y: usize,
         block_size: BlockSize,
-        reference_frame: u8,
     ) -> ObmcNeighbors {
         ObmcNeighbors {
-            above: self.collect_obmc_above(x, y, block_size, reference_frame),
-            left: self.collect_obmc_left(x, y, block_size, reference_frame),
+            above: self.collect_obmc_above(x, y, block_size),
+            left: self.collect_obmc_left(x, y, block_size),
         }
     }
 
@@ -594,57 +593,8 @@ impl<'a> TileDecoder<'a> {
         x: usize,
         y: usize,
         block_size: BlockSize,
-        reference_frame: u8,
     ) -> [Option<ObmcNeighbor>; 4] {
-        let mi_col = x / 4;
-        let mi_row = y / 4;
-        if mi_row <= self.tile_mi_row_start {
-            return [None; 4];
-        }
-        let end_col = mi_col
-            .saturating_add((block_size.width() / 4).max(1))
-            .min(self.mi_cols);
-        let sample_row = mi_row - 1;
-        let mut result = [None; 4];
-        let mut result_len = 0usize;
-        let mut candidate_col = mi_col.max(self.tile_mi_col_start);
-        while candidate_col < end_col && result_len < result.len() {
-            let index = sample_row * self.mi_cols + candidate_col;
-            let Some(source_size) = self.motion_block_size_grid[index] else {
-                candidate_col += 1;
-                continue;
-            };
-            let source_w4 = (source_size.width() / 4).max(1);
-            let source_h4 = (source_size.height() / 4).max(1);
-            let origin_col = candidate_col & !(source_w4 - 1);
-            let origin_row = sample_row & !(source_h4 - 1);
-            if origin_row + source_h4 != mi_row {
-                candidate_col += 1;
-                continue;
-            }
-            let origin_index = origin_row * self.mi_cols + origin_col;
-            let same_reference = self.reference_frame_grid[origin_index] == Some(reference_frame)
-                && self.reference_frame_secondary_grid[origin_index].is_none();
-            if same_reference && let Some(motion_vector) = self.motion_vector_grid[origin_index] {
-                let neighbor = ObmcNeighbor {
-                    origin_x: origin_col * 4,
-                    origin_y: origin_row * 4,
-                    width: source_w4 * 4,
-                    height: source_h4 * 4,
-                    motion_vector,
-                    interpolation_filters: self.interpolation_filter_grid[origin_index]
-                        .unwrap_or((InterpolationFilter::Regular, InterpolationFilter::Regular)),
-                };
-                if !result[..result_len].contains(&Some(neighbor)) {
-                    result[result_len] = Some(neighbor);
-                    result_len += 1;
-                }
-            }
-            candidate_col = candidate_col
-                .saturating_add(1)
-                .max(origin_col.saturating_add(source_w4));
-        }
-        result
+        self.collect_obmc_direction(x, y, block_size, true)
     }
 
     fn collect_obmc_left(
@@ -652,55 +602,113 @@ impl<'a> TileDecoder<'a> {
         x: usize,
         y: usize,
         block_size: BlockSize,
-        reference_frame: u8,
+    ) -> [Option<ObmcNeighbor>; 4] {
+        self.collect_obmc_direction(x, y, block_size, false)
+    }
+
+    fn collect_obmc_direction(
+        &self,
+        x: usize,
+        y: usize,
+        block_size: BlockSize,
+        above: bool,
     ) -> [Option<ObmcNeighbor>; 4] {
         let mi_col = x / 4;
         let mi_row = y / 4;
-        if mi_col <= self.tile_mi_col_start {
-            return [None; 4];
-        }
-        let end_row = mi_row
-            .saturating_add((block_size.height() / 4).max(1))
-            .min(self.mi_rows);
-        let sample_col = mi_col - 1;
+        let (start, boundary, tile_boundary, extent, limit) = if above {
+            (
+                mi_col,
+                mi_row,
+                self.tile_mi_row_start,
+                block_size.width() / 4,
+                self.mi_cols,
+            )
+        } else {
+            (
+                mi_row,
+                mi_col,
+                self.tile_mi_col_start,
+                block_size.height() / 4,
+                self.mi_rows,
+            )
+        };
         let mut result = [None; 4];
-        let mut result_len = 0usize;
-        let mut candidate_row = mi_row.max(self.tile_mi_row_start);
-        while candidate_row < end_row && result_len < result.len() {
-            let index = candidate_row * self.mi_cols + sample_col;
-            let Some(source_size) = self.motion_block_size_grid[index] else {
-                candidate_row += 1;
+        if boundary <= tile_boundary {
+            return result;
+        }
+        // AV1 max_neighbor_obmc, indexed by log2 of the block's MI extent.
+        let max_neighbors = (extent.trailing_zeros() as usize).min(result.len());
+        let end = start.saturating_add(extent).min(limit);
+        let mut candidate = start;
+        let mut count = 0;
+        while candidate < end && count < max_neighbors {
+            let index_at = |along| {
+                if above {
+                    (mi_row - 1) * self.mi_cols + along
+                } else {
+                    along * self.mi_cols + mi_col - 1
+                }
+            };
+            let Some(size) = self.motion_block_size_grid[index_at(candidate)] else {
+                candidate += 1;
                 continue;
             };
-            let source_w4 = (source_size.width() / 4).max(1);
-            let source_h4 = (source_size.height() / 4).max(1);
-            let origin_col = sample_col & !(source_w4 - 1);
-            let origin_row = candidate_row & !(source_h4 - 1);
-            if origin_col + source_w4 != mi_col {
-                candidate_row += 1;
-                continue;
+            let mut step = if above {
+                size.width() / 4
+            } else {
+                size.height() / 4
             }
-            let origin_index = origin_row * self.mi_cols + origin_col;
-            let same_reference = self.reference_frame_grid[origin_index] == Some(reference_frame)
-                && self.reference_frame_secondary_grid[origin_index].is_none();
-            if same_reference && let Some(motion_vector) = self.motion_vector_grid[origin_index] {
-                let neighbor = ObmcNeighbor {
-                    origin_x: origin_col * 4,
-                    origin_y: origin_row * 4,
-                    width: source_w4 * 4,
-                    height: source_h4 * 4,
-                    motion_vector,
-                    interpolation_filters: self.interpolation_filter_grid[origin_index]
-                        .unwrap_or((InterpolationFilter::Regular, InterpolationFilter::Regular)),
+            .min(16);
+            let owner = if step == 1 {
+                // foreach_overlappable_nb_* groups a pair of 4-sample
+                // partitions and selects its right/bottom primary predictor.
+                // This happens before testing whether that owner is inter.
+                candidate &= !1;
+                step = 2;
+                candidate + 1
+            } else {
+                candidate
+            };
+            if owner >= limit {
+                break;
+            }
+            let index = index_at(owner);
+            if self.is_inter_grid[index] == Some(true)
+                && self.intra_bc_mv_grid[index].is_none()
+                && let (Some(reference_frame), Some(motion_vector)) = (
+                    self.reference_frame_grid[index],
+                    self.motion_vector_grid[index],
+                )
+            {
+                let source_size = self.motion_block_size_grid[index].unwrap_or(size);
+                let (origin_x, origin_y, width, height) = if above {
+                    (
+                        candidate * 4,
+                        ((mi_row - 1) & !(source_size.height() / 4 - 1)) * 4,
+                        extent.min(step) * 4,
+                        source_size.height(),
+                    )
+                } else {
+                    (
+                        ((mi_col - 1) & !(source_size.width() / 4 - 1)) * 4,
+                        candidate * 4,
+                        source_size.width(),
+                        extent.min(step) * 4,
+                    )
                 };
-                if !result[..result_len].contains(&Some(neighbor)) {
-                    result[result_len] = Some(neighbor);
-                    result_len += 1;
-                }
+                result[count] = Some(ObmcNeighbor {
+                    reference_frame,
+                    origin_x,
+                    origin_y,
+                    width,
+                    height,
+                    motion_vector,
+                    interpolation_filters: self.interpolation_filter_grid[index]
+                        .unwrap_or((InterpolationFilter::Regular, InterpolationFilter::Regular)),
+                });
+                count += 1;
             }
-            candidate_row = candidate_row
-                .saturating_add(1)
-                .max(origin_row.saturating_add(source_h4));
+            candidate += step;
         }
         result
     }
@@ -2732,6 +2740,164 @@ mod sub8_chroma_tests {
             decoder
                 .sub8_chroma_owners(12, 12, BlockSize::Block8x8, 1, 1)
                 .is_none()
+        );
+    }
+    #[test]
+    fn obmc_collects_different_reference_and_compound_primary_neighbors() {
+        let mut decoder = decoder();
+        for (x, y, reference, secondary) in [(24, 32, 1, 2), (16, 40, 3, 4)] {
+            decoder.set_inter_mv(
+                x,
+                y,
+                BlockSize::Block8x8,
+                reference,
+                1,
+                (0, 16),
+                false,
+                false,
+                Some(secondary),
+                Some(2),
+                Some((4, 4)),
+                (InterpolationFilter::Regular, InterpolationFilter::Regular),
+            );
+            for row in y / 4..y / 4 + 2 {
+                for col in x / 4..x / 4 + 2 {
+                    decoder.is_inter_grid[row * decoder.mi_cols + col] = Some(true);
+                }
+            }
+        }
+        let neighbors = decoder.obmc_neighbors(24, 40, BlockSize::Block8x8);
+        assert!(
+            neighbors.above[0].is_some(),
+            "OBMC accepts above primary ref1 despite current ref0 and a compound neighbor"
+        );
+        assert!(
+            neighbors.left[0].is_some(),
+            "OBMC accepts left primary ref3 despite current ref0 and a compound neighbor"
+        );
+        assert_eq!(neighbors.above[0].unwrap().reference_frame, 1);
+        assert_eq!(neighbors.left[0].unwrap().reference_frame, 3);
+        let above_index = 9 * decoder.mi_cols + 6;
+        decoder.is_inter_grid[above_index] = Some(false);
+        assert!(decoder.obmc_neighbors(24, 40, BlockSize::Block8x8).above[0].is_none());
+        decoder.is_inter_grid[above_index] = Some(true);
+        decoder.intra_bc_mv_grid[above_index] = Some((0, -8));
+        assert!(decoder.obmc_neighbors(24, 40, BlockSize::Block8x8).above[0].is_none());
+    }
+    #[test]
+    fn obmc_sub8_pairs_use_right_and_bottom_primary_predictors() {
+        let mut decoder = decoder();
+        let filters = (InterpolationFilter::Sharp, InterpolationFilter::Smooth);
+        for (x, y, reference, mv) in [
+            (24, 36, 1, (0, 8)),
+            (28, 36, 2, (4, 16)),
+            (20, 40, 3, (8, 24)),
+            (20, 44, 4, (12, 32)),
+        ] {
+            decoder.set_inter_mv(
+                x,
+                y,
+                BlockSize::Block4x4,
+                reference,
+                1,
+                mv,
+                false,
+                false,
+                None,
+                None,
+                None,
+                filters,
+            );
+            decoder.is_inter_grid[(y / 4) * decoder.mi_cols + x / 4] = Some(true);
+        }
+        let neighbors = decoder.obmc_neighbors(24, 40, BlockSize::Block8x8);
+        let above = neighbors.above[0].unwrap();
+        assert_eq!(
+            (
+                above.reference_frame,
+                above.motion_vector,
+                above.interpolation_filters
+            ),
+            (2, (4, 16), filters)
+        );
+        assert_eq!((above.origin_x, above.width), (24, 8));
+        let left = neighbors.left[0].unwrap();
+        assert_eq!(
+            (
+                left.reference_frame,
+                left.motion_vector,
+                left.interpolation_filters
+            ),
+            (4, (12, 32), filters)
+        );
+        assert_eq!((left.origin_y, left.height), (40, 8));
+        assert_eq!(neighbors.above.iter().flatten().count(), 1);
+        assert_eq!(neighbors.left.iter().flatten().count(), 1);
+        // An intra first member still contributes its shape to pairing;
+        // its inter right/bottom owner is the sole predictor for the pair.
+        decoder.is_inter_grid[9 * decoder.mi_cols + 6] = Some(false);
+        decoder.is_inter_grid[10 * decoder.mi_cols + 5] = Some(false);
+        let paired = decoder.obmc_neighbors(24, 40, BlockSize::Block8x8);
+        assert_eq!(paired.above[0].unwrap(), above);
+        assert_eq!(paired.left[0].unwrap(), left);
+        // Eligibility is evaluated on the selected owner, not its paired
+        // predecessor: an intra or intrabc owner suppresses the whole pair.
+        let right = 9 * decoder.mi_cols + 7;
+        decoder.is_inter_grid[right] = Some(false);
+        assert!(decoder.obmc_neighbors(24, 40, BlockSize::Block8x8).above[0].is_none());
+        decoder.is_inter_grid[right] = Some(true);
+        decoder.intra_bc_mv_grid[right] = Some((0, -8));
+        assert!(decoder.obmc_neighbors(24, 40, BlockSize::Block8x8).above[0].is_none());
+        let bottom = 11 * decoder.mi_cols + 5;
+        decoder.is_inter_grid[bottom] = Some(false);
+        assert!(decoder.obmc_neighbors(24, 40, BlockSize::Block8x8).left[0].is_none());
+    }
+    #[test]
+    fn obmc_neighbor_limit_counts_only_overlappable_owners() {
+        let mut decoder = decoder();
+        for x in [32, 40, 48, 56] {
+            decoder.set_inter_mv(
+                x,
+                32,
+                BlockSize::Block8x8,
+                1,
+                1,
+                (0, 0),
+                false,
+                false,
+                None,
+                None,
+                None,
+                (InterpolationFilter::Regular, InterpolationFilter::Regular),
+            );
+            for row in 8..10 {
+                for col in x / 4..x / 4 + 2 {
+                    decoder.is_inter_grid[row * decoder.mi_cols + col] = Some(true);
+                }
+            }
+        }
+        let first = 8 * decoder.mi_cols + 8;
+        // 32-wide OBMC allows three valid above neighbors, not four.
+        let all = decoder.obmc_neighbors(32, 40, BlockSize::Block32x32);
+        assert_eq!(
+            all.above
+                .iter()
+                .flatten()
+                .map(|n| n.origin_x)
+                .collect::<Vec<_>>(),
+            [32, 40, 48]
+        );
+        decoder.is_inter_grid[first] = Some(false);
+        decoder.is_inter_grid[first + decoder.mi_cols] = Some(false);
+        let skipped = decoder.obmc_neighbors(32, 40, BlockSize::Block32x32);
+        assert_eq!(
+            skipped
+                .above
+                .iter()
+                .flatten()
+                .map(|n| n.origin_x)
+                .collect::<Vec<_>>(),
+            [40, 48, 56]
         );
     }
 }
