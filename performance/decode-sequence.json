@@ -1,0 +1,140 @@
+{
+  "system": "Linux-6.18.55-x86_64-with-glibc2.41",
+  "before_binary": "/tmp/avif-decode-before",
+  "after_binary": "/tmp/avif-decode-after",
+  "arguments": [
+    "tests/avis-subsampled-palette.avif",
+    "sequence",
+    "9"
+  ],
+  "trials": {
+    "before": [
+      {
+        "median_ms": 29.760148,
+        "min_ms": 26.987889,
+        "max_ms": 31.829868,
+        "iterations": 9,
+        "allocations": 32223,
+        "requested_bytes": 21549820,
+        "checksum": "f546488b57363b42",
+        "peak_rss_kib": 4132,
+        "workload": "input=tests/avis-subsampled-palette.avif bytes=13116 dimensions=64x64 bit_depth=8 frames=60 mode=sequence"
+      },
+      {
+        "median_ms": 26.725187,
+        "min_ms": 25.860609,
+        "max_ms": 27.937013,
+        "iterations": 9,
+        "allocations": 32223,
+        "requested_bytes": 21549820,
+        "checksum": "f546488b57363b42",
+        "peak_rss_kib": 4236,
+        "workload": "input=tests/avis-subsampled-palette.avif bytes=13116 dimensions=64x64 bit_depth=8 frames=60 mode=sequence"
+      },
+      {
+        "median_ms": 30.052086,
+        "min_ms": 28.326576,
+        "max_ms": 34.258771,
+        "iterations": 9,
+        "allocations": 32223,
+        "requested_bytes": 21549820,
+        "checksum": "f546488b57363b42",
+        "peak_rss_kib": 4016,
+        "workload": "input=tests/avis-subsampled-palette.avif bytes=13116 dimensions=64x64 bit_depth=8 frames=60 mode=sequence"
+      },
+      {
+        "median_ms": 27.373908,
+        "min_ms": 26.625981,
+        "max_ms": 29.112678,
+        "iterations": 9,
+        "allocations": 32223,
+        "requested_bytes": 21549820,
+        "checksum": "f546488b57363b42",
+        "peak_rss_kib": 4116,
+        "workload": "input=tests/avis-subsampled-palette.avif bytes=13116 dimensions=64x64 bit_depth=8 frames=60 mode=sequence"
+      },
+      {
+        "median_ms": 27.03467,
+        "min_ms": 25.863592,
+        "max_ms": 28.796855,
+        "iterations": 9,
+        "allocations": 32223,
+        "requested_bytes": 21549820,
+        "checksum": "f546488b57363b42",
+        "peak_rss_kib": 4008,
+        "workload": "input=tests/avis-subsampled-palette.avif bytes=13116 dimensions=64x64 bit_depth=8 frames=60 mode=sequence"
+      }
+    ],
+    "after": [
+      {
+        "median_ms": 27.126383,
+        "min_ms": 25.95315,
+        "max_ms": 27.903664,
+        "iterations": 9,
+        "allocations": 32101,
+        "requested_bytes": 20550396,
+        "checksum": "f546488b57363b42",
+        "peak_rss_kib": 4076,
+        "workload": "input=tests/avis-subsampled-palette.avif bytes=13116 dimensions=64x64 bit_depth=8 frames=60 mode=sequence"
+      },
+      {
+        "median_ms": 28.753461,
+        "min_ms": 27.147313,
+        "max_ms": 31.693387,
+        "iterations": 9,
+        "allocations": 32101,
+        "requested_bytes": 20550396,
+        "checksum": "f546488b57363b42",
+        "peak_rss_kib": 4092,
+        "workload": "input=tests/avis-subsampled-palette.avif bytes=13116 dimensions=64x64 bit_depth=8 frames=60 mode=sequence"
+      },
+      {
+        "median_ms": 27.324445,
+        "min_ms": 26.737925,
+        "max_ms": 28.510995,
+        "iterations": 9,
+        "allocations": 32101,
+        "requested_bytes": 20550396,
+        "checksum": "f546488b57363b42",
+        "peak_rss_kib": 4104,
+        "workload": "input=tests/avis-subsampled-palette.avif bytes=13116 dimensions=64x64 bit_depth=8 frames=60 mode=sequence"
+      },
+      {
+        "median_ms": 29.223681,
+        "min_ms": 26.289367,
+        "max_ms": 31.756716,
+        "iterations": 9,
+        "allocations": 32101,
+        "requested_bytes": 20550396,
+        "checksum": "f546488b57363b42",
+        "peak_rss_kib": 4140,
+        "workload": "input=tests/avis-subsampled-palette.avif bytes=13116 dimensions=64x64 bit_depth=8 frames=60 mode=sequence"
+      },
+      {
+        "median_ms": 27.75749,
+        "min_ms": 26.240336,
+        "max_ms": 35.89151,
+        "iterations": 9,
+        "allocations": 32101,
+        "requested_bytes": 20550396,
+        "checksum": "f546488b57363b42",
+        "peak_rss_kib": 4208,
+        "workload": "input=tests/avis-subsampled-palette.avif bytes=13116 dimensions=64x64 bit_depth=8 frames=60 mode=sequence"
+      }
+    ]
+  },
+  "summary": {
+    "before": {
+      "median_ms": 27.373908,
+      "allocations": 32223,
+      "requested_bytes": 21549820,
+      "peak_rss_kib": 4116
+    },
+    "after": {
+      "median_ms": 27.75749,
+      "allocations": 32101,
+      "requested_bytes": 20550396,
+      "peak_rss_kib": 4104
+    }
+  }
+}

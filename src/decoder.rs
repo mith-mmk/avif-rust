@@ -2333,12 +2333,19 @@ fn apply_deblock_stage(
     let bit_depth = frame.bit_depth;
     let subsampling_x = frame.color_config.subsampling_x;
     let subsampling_y = frame.color_config.subsampling_y;
+    // The metadata grid is expressed in luma MI coordinates for every
+    // plane. Build it once and share its immutable view across workers.
+    let grid_width = frame_width.div_ceil(DEBLOCK_FILTER_GRID_STEP);
+    let grid_height = frame_height.div_ceil(DEBLOCK_FILTER_GRID_STEP);
+    let mut filter_grid = vec![None; grid_width * grid_height];
+    populate_deblock_filter_grid(&mut filter_grid, grid_width, grid_height, state);
+    let filter_grid = filter_grid.as_slice();
     #[cfg(not(target_family = "wasm"))]
     if post_filter_parallel_work_is_large_enough(frame) {
         std::thread::scope(|scope| {
             for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
                 scope.spawn(move || {
-                    apply_deblock_plane(
+                    apply_deblock_plane_with_filter_grid(
                         plane,
                         plane_index,
                         frame_width,
@@ -2348,6 +2355,8 @@ fn apply_deblock_stage(
                         subsampling_y,
                         frame_header,
                         state,
+                        Some(filter_grid),
+                        None,
                     );
                 });
             }
@@ -2355,7 +2364,7 @@ fn apply_deblock_stage(
         return;
     }
     for (plane_index, plane) in frame.buffers.planes.iter_mut().enumerate() {
-        apply_deblock_plane(
+        apply_deblock_plane_with_filter_grid(
             plane,
             plane_index,
             frame_width,
@@ -2365,6 +2374,8 @@ fn apply_deblock_stage(
             subsampling_y,
             frame_header,
             state,
+            Some(filter_grid),
+            None,
         );
     }
 }
@@ -2933,6 +2944,7 @@ fn apply_deblock_stage_with_budget(
     workspace.release(budget)
 }
 
+#[cfg(test)]
 fn apply_deblock_plane(
     plane: &mut PlaneBuffer,
     target_plane_index: usize,
