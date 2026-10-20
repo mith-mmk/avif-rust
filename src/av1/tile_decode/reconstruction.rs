@@ -2845,15 +2845,6 @@ fn interpolation_kernel(
 }
 
 #[inline]
-fn round_filter_sum(sum: i64) -> i64 {
-    if sum >= 0 {
-        (sum + 64) >> 7
-    } else {
-        -(((-sum) + 64) >> 7)
-    }
-}
-
-#[inline]
 pub(super) fn predict_inter_sample(
     plane: &PlaneBuffer,
     source_x: i64,
@@ -2864,11 +2855,21 @@ pub(super) fn predict_inter_sample(
     bit_depth: u8,
     prediction_dimensions: (usize, usize),
 ) -> u16 {
-    if interpolation_filters == (InterpolationFilter::Bilinear, InterpolationFilter::Bilinear) {
+    // Bilinear coefficients are multiples of 8, so round_0=3 is exact at
+    // 8/10 bits and the four-sample shortcut preserves the normative result.
+    // At 12 bits round_0=5 is material, so use the staged convolution below.
+    if bit_depth != 12
+        && interpolation_filters == (InterpolationFilter::Bilinear, InterpolationFilter::Bilinear)
+    {
         return predict_inter_sample_bilinear(
             plane, source_x, source_y, subpel_x, subpel_y, bit_depth,
         );
     }
+    // AOM's single-reference convolution retains 7-round_0 fractional bits
+    // between the separable passes. The 12-bit path increases round_0 so the
+    // offset intermediate fits 16 bits. Rounding each pass by 7 loses precision.
+    let round_0 = if bit_depth == 12 { 5 } else { 3 };
+    let round_1 = 14 - round_0;
     let horizontal = interpolation_kernel(
         interpolation_filters.0,
         subpel_x as usize,
@@ -2890,13 +2891,15 @@ pub(super) fn predict_inter_sample(
                 as usize;
             sum += i64::from(plane.samples[sy * plane.layout.width + sx]) * i64::from(*coefficient);
         }
-        *value = round_filter_sum(sum);
+        // The positive offsets used by AOM cancel exactly after the vertical
+        // pass; this signed form avoids carrying them through the temporary.
+        *value = round_div_power_of_two_unsigned(sum, round_0);
     }
     let mut sum = 0i64;
     for (tap, coefficient) in vertical.iter().enumerate() {
         sum += intermediate[tap] * i64::from(*coefficient);
     }
-    round_filter_sum(sum).clamp(0, (1_i64 << bit_depth.min(16)) - 1) as u16
+    round_div_power_of_two_unsigned(sum, round_1).clamp(0, (1_i64 << bit_depth.min(16)) - 1) as u16
 }
 
 #[inline]
@@ -3871,7 +3874,9 @@ mod tests {
             &mut output,
         )
         .unwrap();
-        assert_eq!(output, [2, 4, 6, 8]);
+        // libaom av1_convolve_2d_sr_c with replicated frame edges and
+        // dimension-specific 4-tap regular filters produces [2,3,6,8].
+        assert_eq!(output, [2, 3, 6, 8]);
     }
 
     #[test]

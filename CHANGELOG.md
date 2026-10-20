@@ -8,6 +8,9 @@ All notable changes to this crate are documented in this file.
   dimensions only for chroma planes in both serial and parallel paths.
 - Select AV1's four-tap interpolation kernels on prediction axes of four pixels
   or less, using the full prediction block size rather than transform fragments.
+- Preserve single-reference separable interpolation precision with AV1's staged
+  rounding, including horizontal-only and 12-bit bilinear predictions; retain
+  the exact 8/10-bit bilinear fast path.
 - Add exact independent native YUV coverage for the non-lossless AVIS key frame.
   Remaining inter-frame reconstruction differences are not resolved by these fixes.
 

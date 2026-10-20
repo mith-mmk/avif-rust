@@ -491,3 +491,73 @@ fn obmc_filter_choice_is_independent_of_transform_subdivision() {
         }
     }
 }
+
+fn inter_precision_impulse(value: u16) -> PlaneBuffer {
+    let mut samples = vec![0; 16 * 16];
+    samples[4 * 16 + 4] = value;
+    PlaneBuffer {
+        layout: PlaneLayout {
+            plane: 0,
+            width: 16,
+            height: 16,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: samples.len(),
+        },
+        samples,
+    }
+}
+
+#[test]
+fn inter_filter_precision_regular_2d_matches_aom() {
+    use crate::av1::frame::InterpolationFilter::Regular;
+    use crate::av1::tile_decode::reconstruction::predict_inter_sample;
+    // libaom av1_highbd_convolve_2d_sr_c, regular phase (8,8), 8x8 block:
+    // one unit impulse at the source coordinate produces 0 at every depth.
+    // Rounding the horizontal 76/128 to 1 prematurely instead produces 1.
+    let plane = inter_precision_impulse(1);
+    for bit_depth in [8, 10, 12] {
+        assert_eq!(
+            predict_inter_sample(&plane, 4, 4, 8, 8, (Regular, Regular), bit_depth, (8, 8)),
+            0,
+            "{bit_depth}-bit regular 2D interpolation"
+        );
+    }
+}
+
+#[test]
+fn inter_filter_precision_horizontal_matches_aom() {
+    use crate::av1::frame::InterpolationFilter::Regular;
+    use crate::av1::tile_decode::reconstruction::predict_inter_sample;
+    // AOM's horizontal-only route also rounds in two stages (3 then 4 bits):
+    // ROUND(ROUND(21*76,3),4) = 13; a single 7-bit round incorrectly gives 12.
+    assert_eq!(
+        predict_inter_sample(
+            &inter_precision_impulse(21),
+            4,
+            4,
+            8,
+            0,
+            (Regular, Regular),
+            8,
+            (8, 8),
+        ),
+        13
+    );
+}
+
+#[test]
+fn inter_filter_precision_twelve_bit_bilinear_matches_aom() {
+    use crate::av1::frame::InterpolationFilter::Bilinear;
+    use crate::av1::tile_decode::reconstruction::predict_inter_sample;
+    // libaom's 12-bit round_0=5 is material even for the bilinear kernel:
+    // impulse 1, phase (1,8) produces 1, rather than the unrounded product's 0.
+    let plane = inter_precision_impulse(1);
+    for (bit_depth, expected) in [(8, 0), (10, 0), (12, 1)] {
+        assert_eq!(
+            predict_inter_sample(&plane, 4, 4, 1, 8, (Bilinear, Bilinear), bit_depth, (8, 8)),
+            expected,
+            "{bit_depth}-bit bilinear interpolation"
+        );
+    }
+}
