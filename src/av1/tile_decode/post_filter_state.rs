@@ -1218,10 +1218,9 @@ pub(crate) fn sgrproj_filter_unit_into_with_fixed_scratch_bit_depth_visible(
                 // AOM's av1_x_by_xplus1 table maps zero to one and rounds
                 // 256*z/(z+1) to nearest for every other variance value.
                 let af = sgr_x_by_xplus1(z);
-                let bf = round_shift(
-                    i64::from(256 - af) * normalized_sum * ((4096 + n / 2) / n),
-                    12,
-                );
+                // Only variance is normalized to 8-bit. The affine offset
+                // must retain the original sample precision.
+                let bf = round_shift(i64::from(256 - af) * sum * ((4096 + n / 2) / n), 12);
                 let index = yy * stride + xx;
                 a[index] = af;
                 b[index] = bf;
@@ -1428,7 +1427,9 @@ pub(crate) fn deblock_filter_edge_with_visible_bounds(
         let (lane_x, lane_y, p1, p0, q0, q1) = if vertical {
             let x = edge_x;
             let y = edge_y + lane;
-            if y >= visible_height {
+            // Complete the four-lane unit: later perpendicular edges may
+            // read its padding lanes. Edge eligibility remains visible-only.
+            if y >= visible_height.div_ceil(4).saturating_mul(4).min(height) {
                 continue;
             }
             (
@@ -1442,7 +1443,7 @@ pub(crate) fn deblock_filter_edge_with_visible_bounds(
         } else {
             let x = edge_x + lane;
             let y = edge_y;
-            if x >= visible_width {
+            if x >= visible_width.div_ceil(4).saturating_mul(4).min(width) {
                 continue;
             }
             (
@@ -2570,7 +2571,7 @@ mod tests {
     }
 
     #[test]
-    fn visible_edge_uses_coded_padding_taps_but_not_padding_lanes() {
+    fn visible_edge_filters_complete_four_lane_unit_but_not_later_padding() {
         for vertical in [true, false] {
             let mut samples = vec![0u16; 16 * 16];
             for y in 0..16 {
@@ -2597,9 +2598,25 @@ mod tests {
                 8,
                 8,
             );
-            assert_eq!(samples[if vertical { 7 } else { 7 * 16 }], 39);
-            assert_eq!(samples[if vertical { 8 } else { 8 * 16 }], 39);
-            for lane in 2..16 {
+            for lane in 0..4 {
+                assert_eq!(
+                    samples[if vertical {
+                        lane * 16 + 7
+                    } else {
+                        7 * 16 + lane
+                    }],
+                    39
+                );
+                assert_eq!(
+                    samples[if vertical {
+                        lane * 16 + 8
+                    } else {
+                        8 * 16 + lane
+                    }],
+                    39
+                );
+            }
+            for lane in 4..16 {
                 for axis in 0..16 {
                     let i = if vertical {
                         lane * 16 + axis

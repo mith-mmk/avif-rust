@@ -4522,8 +4522,14 @@ fn apply_cdef_stage_with_optional_indices(
                         subsampling_y,
                         cdef_coeff_shift,
                         cdef,
-                        ceil_shift(visible_luma_width, usize::from(subsampling_x)),
-                        ceil_shift(visible_luma_height, usize::from(subsampling_y)),
+                        ceil_shift(
+                            visible_luma_width,
+                            usize::from(plane_index > 0 && subsampling_x),
+                        ),
+                        ceil_shift(
+                            visible_luma_height,
+                            usize::from(plane_index > 0 && subsampling_y),
+                        ),
                         cdef_blocks,
                         strict_snapshots,
                     );
@@ -4540,8 +4546,14 @@ fn apply_cdef_stage_with_optional_indices(
             subsampling_y,
             cdef_coeff_shift,
             cdef,
-            ceil_shift(visible_luma_width, usize::from(subsampling_x)),
-            ceil_shift(visible_luma_height, usize::from(subsampling_y)),
+            ceil_shift(
+                visible_luma_width,
+                usize::from(plane_index > 0 && subsampling_x),
+            ),
+            ceil_shift(
+                visible_luma_height,
+                usize::from(plane_index > 0 && subsampling_y),
+            ),
             cdef_blocks,
             strict_snapshots,
         );

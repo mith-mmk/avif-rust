@@ -23,5 +23,20 @@
     "name": "yuv444p12le-lossless",
     "avif_sha256": "794a322a41acc91e8cd4f222167c9142dd8667dc87c52afbcf64f667db289fbb",
     "yuv_sha256": "00c790abd698030a29073ff076a2e9bd19f846aa2b682b7e50b074986dd02357"
+  },
+  {
+    "name": "yuv422p12le-lossy",
+    "avif_sha256": "8d74303b370cdb4725b77e8913e081210f553702836f74779012334065fed527",
+    "yuv_sha256": "13ccac0c9972ea74d2f69f389ab9fe79efff25e91aff55ac40dec60be9354542"
+  },
+  {
+    "name": "yuv420p10le-cdef",
+    "avif_sha256": "a34190aae9192fc6c86baf02ccffe339c92102343d675998ac81417a73908b92",
+    "yuv_sha256": "3bdd18b4b51bb2978ebeabddc6fc14ff6d014a946a87caff8c66203c7c8f00db"
+  },
+  {
+    "name": "gray12le-sgr",
+    "avif_sha256": "404b845575c8d5268d8201021562a5e924c093fbb1f2b0f20bc63a64f7340bff",
+    "yuv_sha256": "67c91244c7d3f26b47206dc74b8818544e4185240ab8f07919b544011ca703ef"
   }
 ]

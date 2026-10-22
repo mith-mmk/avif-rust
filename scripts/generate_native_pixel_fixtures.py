@@ -12,10 +12,10 @@ import subprocess
 import sys
 
 
-def generate(output):
+def generate(output, default_filters=False):
     output.mkdir(parents=True, exist_ok=True)
     manifest = []
-    width, height = 85, 73
+    width, height = (93, 77) if default_filters else (85, 73)
     for depth in (8, 10, 12):
         for fmt, sx, sy in [("420", 1, 1), ("422", 1, 0), ("444", 0, 0), ("gray", 0, 0)]:
             for lossless in (False, True):
@@ -43,7 +43,7 @@ def generate(output):
                     "-pixel_format", pixel_format, "-video_size", f"{width}x{height}",
                     "-i", str(source_path), "-frames:v", "1", "-c:v", "libaom-av1",
                     "-cpu-used", "4", "-threads", "1", "-still-picture", "1",
-                    "-aom-params", "enable-cdef=0:enable-restoration=0",
+                    *(["-aom-params", "enable-cdef=0:enable-restoration=0"] if not default_filters else []),
                     "-crf", "0" if lossless else "26", "-b:v", "0", str(avif),
                 ], check=True)
                 references = []
@@ -63,4 +63,4 @@ def generate(output):
 
 
 if __name__ == "__main__":
-    generate(Path(sys.argv[1]))
+    generate(Path(sys.argv[1]), "--default-filters" in sys.argv[2:])
