@@ -11,13 +11,12 @@
 アクセス、[`wml2`](https://github.com/mith-mmk/wml2-on-rust)互換のcallback
 インターフェースを提供します。
 
-0.1.1ではAVISのentropy decodeを修正し、同梱fixtureによる回帰テストを追加しました。
+0.1.2ではnative静止画とAVISの復号、画像端のフィルター、共有metadataの確保を修正しました。
+同梱60フレームAVISは全native sampleが独立referenceと一致します。
+optional encoderはavifenc-rust 0.1.2、共有bufferは0.1.0を使用します。
+修正により0.1.1と画素値が変わる場合があり、厳しいstrict allocation上限は調整が必要です。
+これらの回帰検証は、全AV1機能での完全一致を保証するものではありません。
 [変更履歴](CHANGELOG.md)と[配布検証](PACKAGING.md)を参照してください。
-共有bufferとoptional encoderの依存は公開済み0.1.0のままです。
-公開済み0.1.1には非lossless AVISの既知の画素差分が残ります。
-未リリースの復号修正では、同梱60フレームAVISの全native sampleが外部referenceと完全一致します。
-[検証記録](reconstruction-validation.json)を参照してください。このfixtureでの一致は、
-すべてのAV1機能での完全な画素一致を保証するものではありません。
 
 実行時にFFmpeg、libaom、その他のネイティブcodecは呼び出しません。これらは
 テスト用oracleの生成と検証にのみ使用します。
@@ -62,14 +61,14 @@ trailing-one欠落、非ゼロpadding、切り詰め、算術readerの過剰read
 ## インストール
 
 ```console
-cargo add avif-rust@0.1.1
+cargo add avif-rust@0.1.2
 ```
 
 または`Cargo.toml`へ直接追加します。
 
 ```toml
 [dependencies]
-avif-rust = "0.1.1"
+avif-rust = "0.1.2"
 ```
 
 最小サポートRustバージョン（MSRV）はRust 1.88です。

@@ -1,39 +1,28 @@
 # Shared pixel model and optional encoding
 
-This branch integrates the codec-independent `avif-image-buffer` package,
-both codec adapters, AVIF source context, preservation preflight and optional
-encoder delegation. WML2 PR #13 remains on hold and unchanged. JPEG2000,
-release versions and decoder/encoder defaults are unchanged.
+The codec-independent `avif-image-buffer` package provides both codec adapters,
+AVIF source context, preservation preflight and optional encoder delegation.
 
 ## Dependency and distribution boundary
 
-The shared package lives in `crates/avif-image-buffer`, has no dependencies
-and forbids unsafe code. Its initial 0.1.0 registry package is prepared but
-not published. Both codecs
-select that package from the same immutable avif-rust Git commit
-`5c73c7f26c276098ddd761fb20b956302a462001`, preserving Rust type identity.
-The local copy is excluded from the root workspace and tested independently;
-it is not a second model package in the codec dependency graph.
+The shared package lives in `crates/avif-image-buffer`, has no dependencies,
+forbids unsafe code and remains at published version 0.1.0. Both codecs select
+it from immutable Git commit `5c73c7f26c276098ddd761fb20b956302a462001`
+during development, preserving Rust type identity. The local copy is excluded
+from the root workspace and tested independently.
 
-The encoder implementation is pinned to avifenc commit
-`e039e990cc5285f7219cedd827493c48a5c22b7d`:
+The encoder dependency requires 0.1.2 and the exact release Git revision listed
+in Cargo.toml. Registry packages remove Git coordinates and retain version
+requirements. There is no encoder dependency on the decoder package:
 
 ```text
-avif-rust ------------------------> avif-image-buffer
-avif-rust -- feature encode ------> avifenc-rust --> avif-image-buffer
+avif-rust ------------------------> avif-image-buffer 0.1.0
+avif-rust -- feature encode ------> avifenc-rust 0.1.2 --> avif-image-buffer 0.1.0
 ```
 
-The encoder selects only the shared package from the decoder repository; it
-has no dependency on the decoder package. `encode` is optional and does not
-change defaults. Encode-off selects neither encoder nor encoder backends.
-These Git development dependencies now include registry version requirements:
-shared `0.1.0` and optional encoder `0.1.0`. Cargo checks the selected Git
-package versions locally and removes Git coordinates from packaged manifests.
-The existing published encoder 0.0.7 has no shared API and is intentionally
-excluded. This branch prepares decoder 0.1.0, not a replacement of published
-0.0.8. See [PACKAGING.md](PACKAGING.md) for archive checks and publication order.
-Normal registry packaging remains blocked until the new dependencies have been
-published. No release or publication has been performed.
+`encode` is optional and does not change defaults. Encode-off selects neither
+the encoder nor its backends. See [PACKAGING.md](PACKAGING.md) for clean registry
+verification and encoder-before-decoder publication order.
 
 ## Shared model and compatibility
 

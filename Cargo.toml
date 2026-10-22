@@ -1,6 +1,6 @@
 [package]
 name = "avif-rust"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.88"
 description = "Experimental pure Rust AVIF container and AV1 image-sequence decoder"
@@ -37,7 +37,7 @@ include = [
 [dependencies]
 bin-rs = { version = "0.0.10", features = ["stream", "util"] }
 avif-image-buffer = { version = "0.1.0", git = "https://github.com/mith-mmk/avif-rust.git", rev = "5c73c7f26c276098ddd761fb20b956302a462001" }
-avifenc_codec = { package = "avifenc-rust", version = "0.1.0", git = "https://github.com/mith-mmk/avifenc.git", rev = "e039e990cc5285f7219cedd827493c48a5c22b7d", optional = true, default-features = false }
+avifenc_codec = { package = "avifenc-rust", version = "0.1.2", git = "https://github.com/mith-mmk/avifenc.git", rev = "342d36fd8219ab87ff5561daa58489e5d3bd88e0", optional = true, default-features = false }
 
 [features]
 encode = ["dep:avifenc_codec"]

@@ -1,40 +1,36 @@
 # Distribution checks
 
-## Decoder 0.1.1
+## Decoder 0.1.2
 
-The 0.1.0 versions of `avif-image-buffer`, `avifenc-rust` and `avif-rust` were
-published on 2026-10-17. Decoder 0.1.1 includes the later AVIS decoding fixes and
-bundled regressions. Shared and encoder versions and immutable dependency pins
-remain unchanged. The known non-lossless AVIS pixel differences and strict
-sequence layout limitation remain; see [CHANGELOG.md](CHANGELOG.md).
+Publish the verified `avifenc-rust` 0.1.2 first, then `avif-rust` 0.1.2.
+`avif-image-buffer` remains the already-published 0.1.0. The decoder's minimum
+encoder requirement and immutable Git revision must both identify the encoder
+0.1.2 release source. Cargo's normalized package manifest uses the registry
+requirement; development uses the pinned Git revision.
 
-For this decoder-only release, use a clean, committed checkout and ordinary
-registry resolution without patches or local source substitutions:
+From a clean, committed checkout, verify the locked package, dry-run and the
+extracted archive with registry dependencies. Run the required AVIS/native
+oracles and encode/shared/transcode regressions. Verify a registry-only consumer
+with encode off/on and one shared image-buffer type identity. Do not substitute
+local path patches for the final registry check.
 
-```sh
-cargo fmt --all -- --check
-cargo test --locked --release
-cargo test --locked --release --features encode --test shared_buffer --test shared_transcode --test avis_regression
-cargo clippy --locked --all-targets --all-features -- -D warnings
-cargo rustdoc --locked --all-features --lib -- -D warnings
-cargo package --locked
-cargo publish --dry-run --locked
-```
+Before real upload, confirm version absence, exact pushed commit/remote SHA,
+and successful release-source CI. After upload, retrieve the registry archive,
+check its SHA-256 against registry metadata, verify `.cargo_vcs_info.json`, and
+resolve/build an independent consumer from crates.io. On an uncertain upload,
+query the registry before any retry. Never overwrite a published version.
 
-Before the separately authorized real upload, confirm the exact version is absent
-from crates.io and the clean source commit is pushed and matches its remote SHA.
-Test the extracted archive against registry dependencies, including the embedded
-AVIS regressions and optional encode/transcode integration. Check a registry-only
-consumer with encode off and on, shared type identity and a lossless round trip.
-After upload, verify the crates.io version, archive checksum and clean
-`.cargo_vcs_info.json` commit SHA. Do not overwrite a published version.
+This release changes previously incorrect native pixels and correctly charges
+larger padded reconstruction storage to strict allocation budgets; see CHANGELOG.
+The old deblock residuals and strict multiple-coded-frame sequence-layout limit
+remain documented limitations. Hosted OS CI is not an additional hardware test.
 
 ## Historical shared-buffer 0.1.0 preparation
 
 The remaining sections record the prepublication checkpoint on 2026-10-16.
 Their unpublished-version statements and uniform-0.1.0 local-chain script describe
 that historical checkpoint, not current registry availability or the decoder-only
-0.1.1 release procedure above.
+0.1.2 release procedure above.
 
 No crates were uploaded, credentials created, tags/releases published or main
 branches merged by this work. Versions below are **unpublished candidates**.

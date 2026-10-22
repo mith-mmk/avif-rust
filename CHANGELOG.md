@@ -2,7 +2,22 @@
 
 All notable changes to this crate are documented in this file.
 
-## Unreleased
+## 0.1.2 - 2026-10-22
+
+- Correct native still-image reconstruction and deblock at coded frame edges:
+  retain complete transforms for CfL while respecting actual reconstruction
+  availability, process complete four-lane edges, scale high-bitdepth flatness,
+  and preserve shared chroma contexts/metadata and zero-level gating.
+- Correct high-bitdepth SGR affine offsets and luma CDEF dimensions. Corrected
+  decoding intentionally changes pixel output where previous versions differed
+  from independent libaom/dav1d references; general AV1 conformance is not claimed.
+- Charge padded transform storage and deblock metadata to strict allocation
+  admission. Tight limits that admitted 0.1.1 may now reject the same input;
+  callers may need a larger allocation budget. Transactional failure remains.
+- Share one immutable deblock grid across planes to reduce redundant allocation.
+- Require avifenc-rust 0.1.2 for optional encode/transcode, including rectangular
+  lossless syntax, monochrome headers and staging fixes. Shared avif-image-buffer
+  stays at 0.1.0. Public APIs, default features and MSRV Rust 1.88 are unchanged.
 
 - Apply CDEF over the full luma plane for subsampled images, retaining chroma
   dimensions only for chroma planes in both serial and parallel paths.
