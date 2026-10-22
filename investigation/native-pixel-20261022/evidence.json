@@ -1,0 +1,4089 @@
+{
+  "main": "070ad6509bad18f9ab76732d543659ef6d7f9129",
+  "pr3": "d3ea4e602763951626d678291cc9c325e2c475b2",
+  "libaom": "v3.12.1",
+  "dav1d": "1.5.1",
+  "packages": "libaom3:amd64\t3.12.1-1+deb13u1\nlibdav1d7:amd64\t1.5.1-1\n",
+  "zip_sha256": "26960271e1bd58a169b7653ec9b92ccf4beb1e169b833f60193abfcda0a8dba8",
+  "images": [
+    {
+      "name": "colors_hdr_rec2020.avif",
+      "sha256": "9980e58ddf718a923f1738c34aad1c72f8e5795ec07e68f1a5f9bd216ca19740",
+      "bit_depth": 10,
+      "reference_sha256": "43721854d26686fec9ea7e442111b42141b9da6757aa8eca8ea6c931d10a2a15",
+      "reference_agreement": true,
+      "native": {
+        "samples": 120000,
+        "count": 11011,
+        "max": 2,
+        "mae": 0.09188333333333333,
+        "planes": [
+          {
+            "plane": 0,
+            "width": 200,
+            "height": 200,
+            "count": 5369,
+            "bbox_inclusive": [
+              0,
+              0,
+              199,
+              199
+            ],
+            "first_samples": [
+              {
+                "x": 15,
+                "y": 0,
+                "actual": 460,
+                "expected": 459
+              },
+              {
+                "x": 16,
+                "y": 0,
+                "actual": 459,
+                "expected": 460
+              },
+              {
+                "x": 29,
+                "y": 0,
+                "actual": 457,
+                "expected": 456
+              },
+              {
+                "x": 34,
+                "y": 0,
+                "actual": 456,
+                "expected": 457
+              },
+              {
+                "x": 96,
+                "y": 0,
+                "actual": 516,
+                "expected": 517
+              }
+            ]
+          },
+          {
+            "plane": 1,
+            "width": 200,
+            "height": 200,
+            "count": 3018,
+            "bbox_inclusive": [
+              0,
+              0,
+              199,
+              199
+            ],
+            "first_samples": [
+              {
+                "x": 62,
+                "y": 0,
+                "actual": 410,
+                "expected": 411
+              },
+              {
+                "x": 128,
+                "y": 0,
+                "actual": 405,
+                "expected": 404
+              },
+              {
+                "x": 174,
+                "y": 0,
+                "actual": 405,
+                "expected": 404
+              },
+              {
+                "x": 175,
+                "y": 0,
+                "actual": 404,
+                "expected": 405
+              },
+              {
+                "x": 190,
+                "y": 0,
+                "actual": 404,
+                "expected": 405
+              }
+            ]
+          },
+          {
+            "plane": 2,
+            "width": 200,
+            "height": 200,
+            "count": 2624,
+            "bbox_inclusive": [
+              0,
+              0,
+              199,
+              199
+            ],
+            "first_samples": [
+              {
+                "x": 31,
+                "y": 0,
+                "actual": 620,
+                "expected": 621
+              },
+              {
+                "x": 32,
+                "y": 0,
+                "actual": 620,
+                "expected": 619
+              },
+              {
+                "x": 95,
+                "y": 0,
+                "actual": 539,
+                "expected": 540
+              },
+              {
+                "x": 193,
+                "y": 0,
+                "actual": 471,
+                "expected": 470
+              },
+              {
+                "x": 79,
+                "y": 1,
+                "actual": 564,
+                "expected": 565
+              }
+            ]
+          }
+        ]
+      },
+      "main": {
+        "samples": 120000,
+        "count": 11011,
+        "max": 2,
+        "mae": 0.09188333333333333,
+        "planes": [
+          {
+            "plane": 0,
+            "width": 200,
+            "height": 200,
+            "count": 5369,
+            "bbox_inclusive": [
+              0,
+              0,
+              199,
+              199
+            ],
+            "first_samples": [
+              {
+                "x": 15,
+                "y": 0,
+                "actual": 460,
+                "expected": 459
+              },
+              {
+                "x": 16,
+                "y": 0,
+                "actual": 459,
+                "expected": 460
+              },
+              {
+                "x": 29,
+                "y": 0,
+                "actual": 457,
+                "expected": 456
+              },
+              {
+                "x": 34,
+                "y": 0,
+                "actual": 456,
+                "expected": 457
+              },
+              {
+                "x": 96,
+                "y": 0,
+                "actual": 516,
+                "expected": 517
+              }
+            ]
+          },
+          {
+            "plane": 1,
+            "width": 200,
+            "height": 200,
+            "count": 3018,
+            "bbox_inclusive": [
+              0,
+              0,
+              199,
+              199
+            ],
+            "first_samples": [
+              {
+                "x": 62,
+                "y": 0,
+                "actual": 410,
+                "expected": 411
+              },
+              {
+                "x": 128,
+                "y": 0,
+                "actual": 405,
+                "expected": 404
+              },
+              {
+                "x": 174,
+                "y": 0,
+                "actual": 405,
+                "expected": 404
+              },
+              {
+                "x": 175,
+                "y": 0,
+                "actual": 404,
+                "expected": 405
+              },
+              {
+                "x": 190,
+                "y": 0,
+                "actual": 404,
+                "expected": 405
+              }
+            ]
+          },
+          {
+            "plane": 2,
+            "width": 200,
+            "height": 200,
+            "count": 2624,
+            "bbox_inclusive": [
+              0,
+              0,
+              199,
+              199
+            ],
+            "first_samples": [
+              {
+                "x": 31,
+                "y": 0,
+                "actual": 620,
+                "expected": 621
+              },
+              {
+                "x": 32,
+                "y": 0,
+                "actual": 620,
+                "expected": 619
+              },
+              {
+                "x": 95,
+                "y": 0,
+                "actual": 539,
+                "expected": 540
+              },
+              {
+                "x": 193,
+                "y": 0,
+                "actual": 471,
+                "expected": 470
+              },
+              {
+                "x": 79,
+                "y": 1,
+                "actual": 564,
+                "expected": 565
+              }
+            ]
+          }
+        ]
+      },
+      "main_pr_changed_samples": 0,
+      "stages": {
+        "raw": {
+          "samples": 120000,
+          "count": 0,
+          "max": 0,
+          "mae": 0.0,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 200,
+              "height": 200,
+              "count": 0
+            },
+            {
+              "plane": 1,
+              "width": 200,
+              "height": 200,
+              "count": 0
+            },
+            {
+              "plane": 2,
+              "width": 200,
+              "height": 200,
+              "count": 0
+            }
+          ]
+        },
+        "deblock": {
+          "samples": 120000,
+          "count": 11011,
+          "max": 2,
+          "mae": 0.09188333333333333,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 200,
+              "height": 200,
+              "count": 5369,
+              "bbox_inclusive": [
+                0,
+                0,
+                199,
+                199
+              ],
+              "first_samples": [
+                {
+                  "x": 15,
+                  "y": 0,
+                  "actual": 460,
+                  "expected": 459
+                },
+                {
+                  "x": 16,
+                  "y": 0,
+                  "actual": 459,
+                  "expected": 460
+                },
+                {
+                  "x": 29,
+                  "y": 0,
+                  "actual": 457,
+                  "expected": 456
+                },
+                {
+                  "x": 34,
+                  "y": 0,
+                  "actual": 456,
+                  "expected": 457
+                },
+                {
+                  "x": 96,
+                  "y": 0,
+                  "actual": 516,
+                  "expected": 517
+                }
+              ]
+            },
+            {
+              "plane": 1,
+              "width": 200,
+              "height": 200,
+              "count": 3018,
+              "bbox_inclusive": [
+                0,
+                0,
+                199,
+                199
+              ],
+              "first_samples": [
+                {
+                  "x": 62,
+                  "y": 0,
+                  "actual": 410,
+                  "expected": 411
+                },
+                {
+                  "x": 128,
+                  "y": 0,
+                  "actual": 405,
+                  "expected": 404
+                },
+                {
+                  "x": 174,
+                  "y": 0,
+                  "actual": 405,
+                  "expected": 404
+                },
+                {
+                  "x": 175,
+                  "y": 0,
+                  "actual": 404,
+                  "expected": 405
+                },
+                {
+                  "x": 190,
+                  "y": 0,
+                  "actual": 404,
+                  "expected": 405
+                }
+              ]
+            },
+            {
+              "plane": 2,
+              "width": 200,
+              "height": 200,
+              "count": 2624,
+              "bbox_inclusive": [
+                0,
+                0,
+                199,
+                199
+              ],
+              "first_samples": [
+                {
+                  "x": 31,
+                  "y": 0,
+                  "actual": 620,
+                  "expected": 621
+                },
+                {
+                  "x": 32,
+                  "y": 0,
+                  "actual": 620,
+                  "expected": 619
+                },
+                {
+                  "x": 95,
+                  "y": 0,
+                  "actual": 539,
+                  "expected": 540
+                },
+                {
+                  "x": 193,
+                  "y": 0,
+                  "actual": 471,
+                  "expected": 470
+                },
+                {
+                  "x": 79,
+                  "y": 1,
+                  "actual": 564,
+                  "expected": 565
+                }
+              ]
+            }
+          ]
+        },
+        "cdef": {
+          "samples": 120000,
+          "count": 11011,
+          "max": 2,
+          "mae": 0.09188333333333333,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 200,
+              "height": 200,
+              "count": 5369,
+              "bbox_inclusive": [
+                0,
+                0,
+                199,
+                199
+              ],
+              "first_samples": [
+                {
+                  "x": 15,
+                  "y": 0,
+                  "actual": 460,
+                  "expected": 459
+                },
+                {
+                  "x": 16,
+                  "y": 0,
+                  "actual": 459,
+                  "expected": 460
+                },
+                {
+                  "x": 29,
+                  "y": 0,
+                  "actual": 457,
+                  "expected": 456
+                },
+                {
+                  "x": 34,
+                  "y": 0,
+                  "actual": 456,
+                  "expected": 457
+                },
+                {
+                  "x": 96,
+                  "y": 0,
+                  "actual": 516,
+                  "expected": 517
+                }
+              ]
+            },
+            {
+              "plane": 1,
+              "width": 200,
+              "height": 200,
+              "count": 3018,
+              "bbox_inclusive": [
+                0,
+                0,
+                199,
+                199
+              ],
+              "first_samples": [
+                {
+                  "x": 62,
+                  "y": 0,
+                  "actual": 410,
+                  "expected": 411
+                },
+                {
+                  "x": 128,
+                  "y": 0,
+                  "actual": 405,
+                  "expected": 404
+                },
+                {
+                  "x": 174,
+                  "y": 0,
+                  "actual": 405,
+                  "expected": 404
+                },
+                {
+                  "x": 175,
+                  "y": 0,
+                  "actual": 404,
+                  "expected": 405
+                },
+                {
+                  "x": 190,
+                  "y": 0,
+                  "actual": 404,
+                  "expected": 405
+                }
+              ]
+            },
+            {
+              "plane": 2,
+              "width": 200,
+              "height": 200,
+              "count": 2624,
+              "bbox_inclusive": [
+                0,
+                0,
+                199,
+                199
+              ],
+              "first_samples": [
+                {
+                  "x": 31,
+                  "y": 0,
+                  "actual": 620,
+                  "expected": 621
+                },
+                {
+                  "x": 32,
+                  "y": 0,
+                  "actual": 620,
+                  "expected": 619
+                },
+                {
+                  "x": 95,
+                  "y": 0,
+                  "actual": 539,
+                  "expected": 540
+                },
+                {
+                  "x": 193,
+                  "y": 0,
+                  "actual": 471,
+                  "expected": 470
+                },
+                {
+                  "x": 79,
+                  "y": 1,
+                  "actual": 564,
+                  "expected": 565
+                }
+              ]
+            }
+          ]
+        },
+        "restoration": {
+          "samples": 120000,
+          "count": 11011,
+          "max": 2,
+          "mae": 0.09188333333333333,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 200,
+              "height": 200,
+              "count": 5369,
+              "bbox_inclusive": [
+                0,
+                0,
+                199,
+                199
+              ],
+              "first_samples": [
+                {
+                  "x": 15,
+                  "y": 0,
+                  "actual": 460,
+                  "expected": 459
+                },
+                {
+                  "x": 16,
+                  "y": 0,
+                  "actual": 459,
+                  "expected": 460
+                },
+                {
+                  "x": 29,
+                  "y": 0,
+                  "actual": 457,
+                  "expected": 456
+                },
+                {
+                  "x": 34,
+                  "y": 0,
+                  "actual": 456,
+                  "expected": 457
+                },
+                {
+                  "x": 96,
+                  "y": 0,
+                  "actual": 516,
+                  "expected": 517
+                }
+              ]
+            },
+            {
+              "plane": 1,
+              "width": 200,
+              "height": 200,
+              "count": 3018,
+              "bbox_inclusive": [
+                0,
+                0,
+                199,
+                199
+              ],
+              "first_samples": [
+                {
+                  "x": 62,
+                  "y": 0,
+                  "actual": 410,
+                  "expected": 411
+                },
+                {
+                  "x": 128,
+                  "y": 0,
+                  "actual": 405,
+                  "expected": 404
+                },
+                {
+                  "x": 174,
+                  "y": 0,
+                  "actual": 405,
+                  "expected": 404
+                },
+                {
+                  "x": 175,
+                  "y": 0,
+                  "actual": 404,
+                  "expected": 405
+                },
+                {
+                  "x": 190,
+                  "y": 0,
+                  "actual": 404,
+                  "expected": 405
+                }
+              ]
+            },
+            {
+              "plane": 2,
+              "width": 200,
+              "height": 200,
+              "count": 2624,
+              "bbox_inclusive": [
+                0,
+                0,
+                199,
+                199
+              ],
+              "first_samples": [
+                {
+                  "x": 31,
+                  "y": 0,
+                  "actual": 620,
+                  "expected": 621
+                },
+                {
+                  "x": 32,
+                  "y": 0,
+                  "actual": 620,
+                  "expected": 619
+                },
+                {
+                  "x": 95,
+                  "y": 0,
+                  "actual": 539,
+                  "expected": 540
+                },
+                {
+                  "x": 193,
+                  "y": 0,
+                  "actual": 471,
+                  "expected": 470
+                },
+                {
+                  "x": 79,
+                  "y": 1,
+                  "actual": 564,
+                  "expected": 565
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "native_metadata": "200 200 10 ColorConfig { high_bitdepth: true, twelve_bit: false, bit_depth: 10, monochrome: false, color_description: Some(ColorDescription { color_primaries: 9, transfer_characteristics: 16, matrix_coefficients: 9 }), color_range: Full, subsampling_x: false, subsampling_y: false, chroma_sample_position: None, separate_uv_delta_q: false }\nplane PlaneLayout { plane: 0, width: 200, height: 200, subsampling_x: 0, subsampling_y: 0, sample_count: 40000 }\nplane PlaneLayout { plane: 1, width: 200, height: 200, subsampling_x: 0, subsampling_y: 0, sample_count: 40000 }\nplane PlaneLayout { plane: 2, width: 200, height: 200, subsampling_x: 0, subsampling_y: 0, sample_count: 40000 }\n",
+      "reference_metadata": {
+        "width": 200,
+        "height": 200,
+        "pix_fmt": "yuv444p10le",
+        "color_range": "pc",
+        "color_space": "bt2020nc",
+        "color_transfer": "smpte2084",
+        "color_primaries": "bt2020"
+      }
+    },
+    {
+      "name": "fox.profile0.8bpc.yuv420.avif",
+      "sha256": "cb884c82ac7b6d4fa03b1f687e9e20abc346107095473e9c1d422aaf0de14eaf",
+      "bit_depth": 8,
+      "reference_sha256": "47cbd6ffb44d83139d8f003857e550187af323695a0b857b39e378554175dc9d",
+      "reference_agreement": true,
+      "native": {
+        "samples": 1444800,
+        "count": 39149,
+        "max": 7,
+        "mae": 0.027452242524916945,
+        "planes": [
+          {
+            "plane": 0,
+            "width": 1204,
+            "height": 800,
+            "count": 0
+          },
+          {
+            "plane": 1,
+            "width": 602,
+            "height": 400,
+            "count": 9956,
+            "bbox_inclusive": [
+              8,
+              0,
+              601,
+              399
+            ],
+            "first_samples": [
+              {
+                "x": 599,
+                "y": 0,
+                "actual": 141,
+                "expected": 140
+              },
+              {
+                "x": 600,
+                "y": 0,
+                "actual": 139,
+                "expected": 140
+              },
+              {
+                "x": 599,
+                "y": 1,
+                "actual": 142,
+                "expected": 141
+              },
+              {
+                "x": 600,
+                "y": 1,
+                "actual": 137,
+                "expected": 138
+              },
+              {
+                "x": 599,
+                "y": 2,
+                "actual": 140,
+                "expected": 138
+              }
+            ]
+          },
+          {
+            "plane": 2,
+            "width": 602,
+            "height": 400,
+            "count": 29193,
+            "bbox_inclusive": [
+              8,
+              0,
+              601,
+              399
+            ],
+            "first_samples": [
+              {
+                "x": 599,
+                "y": 0,
+                "actual": 116,
+                "expected": 117
+              },
+              {
+                "x": 600,
+                "y": 0,
+                "actual": 121,
+                "expected": 120
+              },
+              {
+                "x": 599,
+                "y": 1,
+                "actual": 116,
+                "expected": 117
+              },
+              {
+                "x": 600,
+                "y": 1,
+                "actual": 121,
+                "expected": 120
+              },
+              {
+                "x": 600,
+                "y": 2,
+                "actual": 121,
+                "expected": 120
+              }
+            ]
+          }
+        ]
+      },
+      "main": {
+        "samples": 1444800,
+        "count": 38881,
+        "max": 7,
+        "mae": 0.02725221483942414,
+        "planes": [
+          {
+            "plane": 0,
+            "width": 1204,
+            "height": 800,
+            "count": 0
+          },
+          {
+            "plane": 1,
+            "width": 602,
+            "height": 400,
+            "count": 9783,
+            "bbox_inclusive": [
+              8,
+              4,
+              600,
+              399
+            ],
+            "first_samples": [
+              {
+                "x": 167,
+                "y": 4,
+                "actual": 130,
+                "expected": 131
+              },
+              {
+                "x": 164,
+                "y": 7,
+                "actual": 128,
+                "expected": 129
+              },
+              {
+                "x": 165,
+                "y": 7,
+                "actual": 130,
+                "expected": 131
+              },
+              {
+                "x": 164,
+                "y": 8,
+                "actual": 130,
+                "expected": 131
+              },
+              {
+                "x": 129,
+                "y": 11,
+                "actual": 132,
+                "expected": 133
+              }
+            ]
+          },
+          {
+            "plane": 2,
+            "width": 602,
+            "height": 400,
+            "count": 29098,
+            "bbox_inclusive": [
+              8,
+              6,
+              601,
+              399
+            ],
+            "first_samples": [
+              {
+                "x": 164,
+                "y": 6,
+                "actual": 124,
+                "expected": 123
+              },
+              {
+                "x": 165,
+                "y": 6,
+                "actual": 120,
+                "expected": 121
+              },
+              {
+                "x": 166,
+                "y": 7,
+                "actual": 121,
+                "expected": 122
+              },
+              {
+                "x": 166,
+                "y": 8,
+                "actual": 124,
+                "expected": 125
+              },
+              {
+                "x": 130,
+                "y": 11,
+                "actual": 122,
+                "expected": 123
+              }
+            ]
+          }
+        ]
+      },
+      "main_pr_changed_samples": 270,
+      "stages": {
+        "raw": {
+          "samples": 1444800,
+          "count": 38603,
+          "max": 7,
+          "mae": 0.026896456256921372,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 1204,
+              "height": 800,
+              "count": 0
+            },
+            {
+              "plane": 1,
+              "width": 602,
+              "height": 400,
+              "count": 9663,
+              "bbox_inclusive": [
+                8,
+                4,
+                567,
+                399
+              ],
+              "first_samples": [
+                {
+                  "x": 167,
+                  "y": 4,
+                  "actual": 130,
+                  "expected": 131
+                },
+                {
+                  "x": 164,
+                  "y": 6,
+                  "actual": 129,
+                  "expected": 130
+                },
+                {
+                  "x": 164,
+                  "y": 7,
+                  "actual": 127,
+                  "expected": 128
+                },
+                {
+                  "x": 165,
+                  "y": 7,
+                  "actual": 129,
+                  "expected": 130
+                },
+                {
+                  "x": 130,
+                  "y": 12,
+                  "actual": 133,
+                  "expected": 132
+                }
+              ]
+            },
+            {
+              "plane": 2,
+              "width": 602,
+              "height": 400,
+              "count": 28940,
+              "bbox_inclusive": [
+                8,
+                5,
+                601,
+                399
+              ],
+              "first_samples": [
+                {
+                  "x": 164,
+                  "y": 5,
+                  "actual": 120,
+                  "expected": 121
+                },
+                {
+                  "x": 164,
+                  "y": 6,
+                  "actual": 124,
+                  "expected": 123
+                },
+                {
+                  "x": 165,
+                  "y": 6,
+                  "actual": 120,
+                  "expected": 121
+                },
+                {
+                  "x": 165,
+                  "y": 7,
+                  "actual": 124,
+                  "expected": 123
+                },
+                {
+                  "x": 166,
+                  "y": 7,
+                  "actual": 120,
+                  "expected": 121
+                }
+              ]
+            }
+          ]
+        },
+        "deblock": {
+          "samples": 1444800,
+          "count": 39149,
+          "max": 7,
+          "mae": 0.027452242524916945,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 1204,
+              "height": 800,
+              "count": 0
+            },
+            {
+              "plane": 1,
+              "width": 602,
+              "height": 400,
+              "count": 9956,
+              "bbox_inclusive": [
+                8,
+                0,
+                601,
+                399
+              ],
+              "first_samples": [
+                {
+                  "x": 599,
+                  "y": 0,
+                  "actual": 141,
+                  "expected": 140
+                },
+                {
+                  "x": 600,
+                  "y": 0,
+                  "actual": 139,
+                  "expected": 140
+                },
+                {
+                  "x": 599,
+                  "y": 1,
+                  "actual": 142,
+                  "expected": 141
+                },
+                {
+                  "x": 600,
+                  "y": 1,
+                  "actual": 137,
+                  "expected": 138
+                },
+                {
+                  "x": 599,
+                  "y": 2,
+                  "actual": 140,
+                  "expected": 138
+                }
+              ]
+            },
+            {
+              "plane": 2,
+              "width": 602,
+              "height": 400,
+              "count": 29193,
+              "bbox_inclusive": [
+                8,
+                0,
+                601,
+                399
+              ],
+              "first_samples": [
+                {
+                  "x": 599,
+                  "y": 0,
+                  "actual": 116,
+                  "expected": 117
+                },
+                {
+                  "x": 600,
+                  "y": 0,
+                  "actual": 121,
+                  "expected": 120
+                },
+                {
+                  "x": 599,
+                  "y": 1,
+                  "actual": 116,
+                  "expected": 117
+                },
+                {
+                  "x": 600,
+                  "y": 1,
+                  "actual": 121,
+                  "expected": 120
+                },
+                {
+                  "x": 600,
+                  "y": 2,
+                  "actual": 121,
+                  "expected": 120
+                }
+              ]
+            }
+          ]
+        },
+        "cdef": {
+          "samples": 1444800,
+          "count": 39149,
+          "max": 7,
+          "mae": 0.027452242524916945,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 1204,
+              "height": 800,
+              "count": 0
+            },
+            {
+              "plane": 1,
+              "width": 602,
+              "height": 400,
+              "count": 9956,
+              "bbox_inclusive": [
+                8,
+                0,
+                601,
+                399
+              ],
+              "first_samples": [
+                {
+                  "x": 599,
+                  "y": 0,
+                  "actual": 141,
+                  "expected": 140
+                },
+                {
+                  "x": 600,
+                  "y": 0,
+                  "actual": 139,
+                  "expected": 140
+                },
+                {
+                  "x": 599,
+                  "y": 1,
+                  "actual": 142,
+                  "expected": 141
+                },
+                {
+                  "x": 600,
+                  "y": 1,
+                  "actual": 137,
+                  "expected": 138
+                },
+                {
+                  "x": 599,
+                  "y": 2,
+                  "actual": 140,
+                  "expected": 138
+                }
+              ]
+            },
+            {
+              "plane": 2,
+              "width": 602,
+              "height": 400,
+              "count": 29193,
+              "bbox_inclusive": [
+                8,
+                0,
+                601,
+                399
+              ],
+              "first_samples": [
+                {
+                  "x": 599,
+                  "y": 0,
+                  "actual": 116,
+                  "expected": 117
+                },
+                {
+                  "x": 600,
+                  "y": 0,
+                  "actual": 121,
+                  "expected": 120
+                },
+                {
+                  "x": 599,
+                  "y": 1,
+                  "actual": 116,
+                  "expected": 117
+                },
+                {
+                  "x": 600,
+                  "y": 1,
+                  "actual": 121,
+                  "expected": 120
+                },
+                {
+                  "x": 600,
+                  "y": 2,
+                  "actual": 121,
+                  "expected": 120
+                }
+              ]
+            }
+          ]
+        },
+        "restoration": {
+          "samples": 1444800,
+          "count": 39149,
+          "max": 7,
+          "mae": 0.027452242524916945,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 1204,
+              "height": 800,
+              "count": 0
+            },
+            {
+              "plane": 1,
+              "width": 602,
+              "height": 400,
+              "count": 9956,
+              "bbox_inclusive": [
+                8,
+                0,
+                601,
+                399
+              ],
+              "first_samples": [
+                {
+                  "x": 599,
+                  "y": 0,
+                  "actual": 141,
+                  "expected": 140
+                },
+                {
+                  "x": 600,
+                  "y": 0,
+                  "actual": 139,
+                  "expected": 140
+                },
+                {
+                  "x": 599,
+                  "y": 1,
+                  "actual": 142,
+                  "expected": 141
+                },
+                {
+                  "x": 600,
+                  "y": 1,
+                  "actual": 137,
+                  "expected": 138
+                },
+                {
+                  "x": 599,
+                  "y": 2,
+                  "actual": 140,
+                  "expected": 138
+                }
+              ]
+            },
+            {
+              "plane": 2,
+              "width": 602,
+              "height": 400,
+              "count": 29193,
+              "bbox_inclusive": [
+                8,
+                0,
+                601,
+                399
+              ],
+              "first_samples": [
+                {
+                  "x": 599,
+                  "y": 0,
+                  "actual": 116,
+                  "expected": 117
+                },
+                {
+                  "x": 600,
+                  "y": 0,
+                  "actual": 121,
+                  "expected": 120
+                },
+                {
+                  "x": 599,
+                  "y": 1,
+                  "actual": 116,
+                  "expected": 117
+                },
+                {
+                  "x": 600,
+                  "y": 1,
+                  "actual": 121,
+                  "expected": 120
+                },
+                {
+                  "x": 600,
+                  "y": 2,
+                  "actual": 121,
+                  "expected": 120
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "native_metadata": "1204 800 8 ColorConfig { high_bitdepth: false, twelve_bit: false, bit_depth: 8, monochrome: false, color_description: Some(ColorDescription { color_primaries: 1, transfer_characteristics: 13, matrix_coefficients: 9 }), color_range: Studio, subsampling_x: true, subsampling_y: true, chroma_sample_position: Some(Unknown), separate_uv_delta_q: false }\nplane PlaneLayout { plane: 0, width: 1204, height: 800, subsampling_x: 0, subsampling_y: 0, sample_count: 963200 }\nplane PlaneLayout { plane: 1, width: 602, height: 400, subsampling_x: 1, subsampling_y: 1, sample_count: 240800 }\nplane PlaneLayout { plane: 2, width: 602, height: 400, subsampling_x: 1, subsampling_y: 1, sample_count: 240800 }\n",
+      "reference_metadata": {
+        "width": 1204,
+        "height": 800,
+        "pix_fmt": "yuv420p",
+        "color_range": "tv",
+        "color_space": "bt2020nc",
+        "color_transfer": "iec61966-2-1",
+        "color_primaries": "bt709"
+      }
+    },
+    {
+      "name": "fox.profile1.10bpc.yuv444.avif",
+      "sha256": "a10de8204aee73ba1786daca6390546bd7aa6b069aaa644012219a1c11246a43",
+      "bit_depth": 10,
+      "reference_sha256": "ff563b7dac20f756ceb1800900064564822ee15dbca9214a432ad822cd5c2e0e",
+      "reference_agreement": true,
+      "native": {
+        "samples": 2889600,
+        "count": 172557,
+        "max": 12,
+        "mae": 0.0753734080841639,
+        "planes": [
+          {
+            "plane": 0,
+            "width": 1204,
+            "height": 800,
+            "count": 26975,
+            "bbox_inclusive": [
+              0,
+              0,
+              1203,
+              799
+            ],
+            "first_samples": [
+              {
+                "x": 230,
+                "y": 0,
+                "actual": 124,
+                "expected": 125
+              },
+              {
+                "x": 408,
+                "y": 0,
+                "actual": 73,
+                "expected": 74
+              },
+              {
+                "x": 409,
+                "y": 0,
+                "actual": 74,
+                "expected": 75
+              },
+              {
+                "x": 495,
+                "y": 0,
+                "actual": 211,
+                "expected": 210
+              },
+              {
+                "x": 229,
+                "y": 1,
+                "actual": 120,
+                "expected": 121
+              }
+            ]
+          },
+          {
+            "plane": 1,
+            "width": 1204,
+            "height": 800,
+            "count": 74075,
+            "bbox_inclusive": [
+              0,
+              0,
+              1203,
+              799
+            ],
+            "first_samples": [
+              {
+                "x": 30,
+                "y": 0,
+                "actual": 532,
+                "expected": 533
+              },
+              {
+                "x": 31,
+                "y": 0,
+                "actual": 531,
+                "expected": 532
+              },
+              {
+                "x": 112,
+                "y": 0,
+                "actual": 513,
+                "expected": 514
+              },
+              {
+                "x": 319,
+                "y": 0,
+                "actual": 514,
+                "expected": 515
+              },
+              {
+                "x": 320,
+                "y": 0,
+                "actual": 514,
+                "expected": 515
+              }
+            ]
+          },
+          {
+            "plane": 2,
+            "width": 1204,
+            "height": 800,
+            "count": 71507,
+            "bbox_inclusive": [
+              0,
+              0,
+              1203,
+              799
+            ],
+            "first_samples": [
+              {
+                "x": 14,
+                "y": 0,
+                "actual": 459,
+                "expected": 460
+              },
+              {
+                "x": 16,
+                "y": 0,
+                "actual": 455,
+                "expected": 456
+              },
+              {
+                "x": 17,
+                "y": 0,
+                "actual": 454,
+                "expected": 453
+              },
+              {
+                "x": 62,
+                "y": 0,
+                "actual": 486,
+                "expected": 485
+              },
+              {
+                "x": 63,
+                "y": 0,
+                "actual": 484,
+                "expected": 485
+              }
+            ]
+          }
+        ]
+      },
+      "main": {
+        "samples": 2889600,
+        "count": 172557,
+        "max": 12,
+        "mae": 0.0753734080841639,
+        "planes": [
+          {
+            "plane": 0,
+            "width": 1204,
+            "height": 800,
+            "count": 26975,
+            "bbox_inclusive": [
+              0,
+              0,
+              1203,
+              799
+            ],
+            "first_samples": [
+              {
+                "x": 230,
+                "y": 0,
+                "actual": 124,
+                "expected": 125
+              },
+              {
+                "x": 408,
+                "y": 0,
+                "actual": 73,
+                "expected": 74
+              },
+              {
+                "x": 409,
+                "y": 0,
+                "actual": 74,
+                "expected": 75
+              },
+              {
+                "x": 495,
+                "y": 0,
+                "actual": 211,
+                "expected": 210
+              },
+              {
+                "x": 229,
+                "y": 1,
+                "actual": 120,
+                "expected": 121
+              }
+            ]
+          },
+          {
+            "plane": 1,
+            "width": 1204,
+            "height": 800,
+            "count": 74075,
+            "bbox_inclusive": [
+              0,
+              0,
+              1203,
+              799
+            ],
+            "first_samples": [
+              {
+                "x": 30,
+                "y": 0,
+                "actual": 532,
+                "expected": 533
+              },
+              {
+                "x": 31,
+                "y": 0,
+                "actual": 531,
+                "expected": 532
+              },
+              {
+                "x": 112,
+                "y": 0,
+                "actual": 513,
+                "expected": 514
+              },
+              {
+                "x": 319,
+                "y": 0,
+                "actual": 514,
+                "expected": 515
+              },
+              {
+                "x": 320,
+                "y": 0,
+                "actual": 514,
+                "expected": 515
+              }
+            ]
+          },
+          {
+            "plane": 2,
+            "width": 1204,
+            "height": 800,
+            "count": 71507,
+            "bbox_inclusive": [
+              0,
+              0,
+              1203,
+              799
+            ],
+            "first_samples": [
+              {
+                "x": 14,
+                "y": 0,
+                "actual": 459,
+                "expected": 460
+              },
+              {
+                "x": 16,
+                "y": 0,
+                "actual": 455,
+                "expected": 456
+              },
+              {
+                "x": 17,
+                "y": 0,
+                "actual": 454,
+                "expected": 453
+              },
+              {
+                "x": 62,
+                "y": 0,
+                "actual": 486,
+                "expected": 485
+              },
+              {
+                "x": 63,
+                "y": 0,
+                "actual": 484,
+                "expected": 485
+              }
+            ]
+          }
+        ]
+      },
+      "main_pr_changed_samples": 0,
+      "stages": {
+        "raw": {
+          "samples": 2889600,
+          "count": 37,
+          "max": 1,
+          "mae": 1.280454042081949e-05,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 1204,
+              "height": 800,
+              "count": 0
+            },
+            {
+              "plane": 1,
+              "width": 1204,
+              "height": 800,
+              "count": 0
+            },
+            {
+              "plane": 2,
+              "width": 1204,
+              "height": 800,
+              "count": 37,
+              "bbox_inclusive": [
+                1184,
+                224,
+                1203,
+                265
+              ],
+              "first_samples": [
+                {
+                  "x": 1186,
+                  "y": 224,
+                  "actual": 505,
+                  "expected": 504
+                },
+                {
+                  "x": 1187,
+                  "y": 224,
+                  "actual": 505,
+                  "expected": 504
+                },
+                {
+                  "x": 1185,
+                  "y": 225,
+                  "actual": 505,
+                  "expected": 504
+                },
+                {
+                  "x": 1187,
+                  "y": 225,
+                  "actual": 505,
+                  "expected": 504
+                },
+                {
+                  "x": 1195,
+                  "y": 225,
+                  "actual": 505,
+                  "expected": 504
+                }
+              ]
+            }
+          ]
+        },
+        "deblock": {
+          "samples": 2889600,
+          "count": 172557,
+          "max": 12,
+          "mae": 0.0753734080841639,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 1204,
+              "height": 800,
+              "count": 26975,
+              "bbox_inclusive": [
+                0,
+                0,
+                1203,
+                799
+              ],
+              "first_samples": [
+                {
+                  "x": 230,
+                  "y": 0,
+                  "actual": 124,
+                  "expected": 125
+                },
+                {
+                  "x": 408,
+                  "y": 0,
+                  "actual": 73,
+                  "expected": 74
+                },
+                {
+                  "x": 409,
+                  "y": 0,
+                  "actual": 74,
+                  "expected": 75
+                },
+                {
+                  "x": 495,
+                  "y": 0,
+                  "actual": 211,
+                  "expected": 210
+                },
+                {
+                  "x": 229,
+                  "y": 1,
+                  "actual": 120,
+                  "expected": 121
+                }
+              ]
+            },
+            {
+              "plane": 1,
+              "width": 1204,
+              "height": 800,
+              "count": 74075,
+              "bbox_inclusive": [
+                0,
+                0,
+                1203,
+                799
+              ],
+              "first_samples": [
+                {
+                  "x": 30,
+                  "y": 0,
+                  "actual": 532,
+                  "expected": 533
+                },
+                {
+                  "x": 31,
+                  "y": 0,
+                  "actual": 531,
+                  "expected": 532
+                },
+                {
+                  "x": 112,
+                  "y": 0,
+                  "actual": 513,
+                  "expected": 514
+                },
+                {
+                  "x": 319,
+                  "y": 0,
+                  "actual": 514,
+                  "expected": 515
+                },
+                {
+                  "x": 320,
+                  "y": 0,
+                  "actual": 514,
+                  "expected": 515
+                }
+              ]
+            },
+            {
+              "plane": 2,
+              "width": 1204,
+              "height": 800,
+              "count": 71507,
+              "bbox_inclusive": [
+                0,
+                0,
+                1203,
+                799
+              ],
+              "first_samples": [
+                {
+                  "x": 14,
+                  "y": 0,
+                  "actual": 459,
+                  "expected": 460
+                },
+                {
+                  "x": 16,
+                  "y": 0,
+                  "actual": 455,
+                  "expected": 456
+                },
+                {
+                  "x": 17,
+                  "y": 0,
+                  "actual": 454,
+                  "expected": 453
+                },
+                {
+                  "x": 62,
+                  "y": 0,
+                  "actual": 486,
+                  "expected": 485
+                },
+                {
+                  "x": 63,
+                  "y": 0,
+                  "actual": 484,
+                  "expected": 485
+                }
+              ]
+            }
+          ]
+        },
+        "cdef": {
+          "samples": 2889600,
+          "count": 172557,
+          "max": 12,
+          "mae": 0.0753734080841639,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 1204,
+              "height": 800,
+              "count": 26975,
+              "bbox_inclusive": [
+                0,
+                0,
+                1203,
+                799
+              ],
+              "first_samples": [
+                {
+                  "x": 230,
+                  "y": 0,
+                  "actual": 124,
+                  "expected": 125
+                },
+                {
+                  "x": 408,
+                  "y": 0,
+                  "actual": 73,
+                  "expected": 74
+                },
+                {
+                  "x": 409,
+                  "y": 0,
+                  "actual": 74,
+                  "expected": 75
+                },
+                {
+                  "x": 495,
+                  "y": 0,
+                  "actual": 211,
+                  "expected": 210
+                },
+                {
+                  "x": 229,
+                  "y": 1,
+                  "actual": 120,
+                  "expected": 121
+                }
+              ]
+            },
+            {
+              "plane": 1,
+              "width": 1204,
+              "height": 800,
+              "count": 74075,
+              "bbox_inclusive": [
+                0,
+                0,
+                1203,
+                799
+              ],
+              "first_samples": [
+                {
+                  "x": 30,
+                  "y": 0,
+                  "actual": 532,
+                  "expected": 533
+                },
+                {
+                  "x": 31,
+                  "y": 0,
+                  "actual": 531,
+                  "expected": 532
+                },
+                {
+                  "x": 112,
+                  "y": 0,
+                  "actual": 513,
+                  "expected": 514
+                },
+                {
+                  "x": 319,
+                  "y": 0,
+                  "actual": 514,
+                  "expected": 515
+                },
+                {
+                  "x": 320,
+                  "y": 0,
+                  "actual": 514,
+                  "expected": 515
+                }
+              ]
+            },
+            {
+              "plane": 2,
+              "width": 1204,
+              "height": 800,
+              "count": 71507,
+              "bbox_inclusive": [
+                0,
+                0,
+                1203,
+                799
+              ],
+              "first_samples": [
+                {
+                  "x": 14,
+                  "y": 0,
+                  "actual": 459,
+                  "expected": 460
+                },
+                {
+                  "x": 16,
+                  "y": 0,
+                  "actual": 455,
+                  "expected": 456
+                },
+                {
+                  "x": 17,
+                  "y": 0,
+                  "actual": 454,
+                  "expected": 453
+                },
+                {
+                  "x": 62,
+                  "y": 0,
+                  "actual": 486,
+                  "expected": 485
+                },
+                {
+                  "x": 63,
+                  "y": 0,
+                  "actual": 484,
+                  "expected": 485
+                }
+              ]
+            }
+          ]
+        },
+        "restoration": {
+          "samples": 2889600,
+          "count": 172557,
+          "max": 12,
+          "mae": 0.0753734080841639,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 1204,
+              "height": 800,
+              "count": 26975,
+              "bbox_inclusive": [
+                0,
+                0,
+                1203,
+                799
+              ],
+              "first_samples": [
+                {
+                  "x": 230,
+                  "y": 0,
+                  "actual": 124,
+                  "expected": 125
+                },
+                {
+                  "x": 408,
+                  "y": 0,
+                  "actual": 73,
+                  "expected": 74
+                },
+                {
+                  "x": 409,
+                  "y": 0,
+                  "actual": 74,
+                  "expected": 75
+                },
+                {
+                  "x": 495,
+                  "y": 0,
+                  "actual": 211,
+                  "expected": 210
+                },
+                {
+                  "x": 229,
+                  "y": 1,
+                  "actual": 120,
+                  "expected": 121
+                }
+              ]
+            },
+            {
+              "plane": 1,
+              "width": 1204,
+              "height": 800,
+              "count": 74075,
+              "bbox_inclusive": [
+                0,
+                0,
+                1203,
+                799
+              ],
+              "first_samples": [
+                {
+                  "x": 30,
+                  "y": 0,
+                  "actual": 532,
+                  "expected": 533
+                },
+                {
+                  "x": 31,
+                  "y": 0,
+                  "actual": 531,
+                  "expected": 532
+                },
+                {
+                  "x": 112,
+                  "y": 0,
+                  "actual": 513,
+                  "expected": 514
+                },
+                {
+                  "x": 319,
+                  "y": 0,
+                  "actual": 514,
+                  "expected": 515
+                },
+                {
+                  "x": 320,
+                  "y": 0,
+                  "actual": 514,
+                  "expected": 515
+                }
+              ]
+            },
+            {
+              "plane": 2,
+              "width": 1204,
+              "height": 800,
+              "count": 71507,
+              "bbox_inclusive": [
+                0,
+                0,
+                1203,
+                799
+              ],
+              "first_samples": [
+                {
+                  "x": 14,
+                  "y": 0,
+                  "actual": 459,
+                  "expected": 460
+                },
+                {
+                  "x": 16,
+                  "y": 0,
+                  "actual": 455,
+                  "expected": 456
+                },
+                {
+                  "x": 17,
+                  "y": 0,
+                  "actual": 454,
+                  "expected": 453
+                },
+                {
+                  "x": 62,
+                  "y": 0,
+                  "actual": 486,
+                  "expected": 485
+                },
+                {
+                  "x": 63,
+                  "y": 0,
+                  "actual": 484,
+                  "expected": 485
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "native_metadata": "1204 800 10 ColorConfig { high_bitdepth: true, twelve_bit: false, bit_depth: 10, monochrome: false, color_description: Some(ColorDescription { color_primaries: 1, transfer_characteristics: 13, matrix_coefficients: 9 }), color_range: Studio, subsampling_x: false, subsampling_y: false, chroma_sample_position: None, separate_uv_delta_q: false }\nplane PlaneLayout { plane: 0, width: 1204, height: 800, subsampling_x: 0, subsampling_y: 0, sample_count: 963200 }\nplane PlaneLayout { plane: 1, width: 1204, height: 800, subsampling_x: 0, subsampling_y: 0, sample_count: 963200 }\nplane PlaneLayout { plane: 2, width: 1204, height: 800, subsampling_x: 0, subsampling_y: 0, sample_count: 963200 }\n",
+      "reference_metadata": {
+        "width": 1204,
+        "height": 800,
+        "pix_fmt": "yuv444p10le",
+        "color_range": "tv",
+        "color_space": "bt2020nc",
+        "color_transfer": "iec61966-2-1",
+        "color_primaries": "bt709"
+      }
+    },
+    {
+      "name": "fox.profile1.8bpc.yuv444.odd-width.odd-height.avif",
+      "sha256": "fad3b6dd9cb99e6925858f69aafae3f68c861845f2c3d4a6d1c51c6161490134",
+      "bit_depth": 8,
+      "reference_sha256": "aac86e23051859ce4558b863b2b683bc8b693e32ebb8b6540a8dace4f173b0d8",
+      "reference_agreement": true,
+      "native": {
+        "samples": 2883591,
+        "count": 731,
+        "max": 5,
+        "mae": 0.0002906098680430061,
+        "planes": [
+          {
+            "plane": 0,
+            "width": 1203,
+            "height": 799,
+            "count": 731,
+            "bbox_inclusive": [
+              1194,
+              48,
+              1202,
+              781
+            ],
+            "first_samples": [
+              {
+                "x": 1200,
+                "y": 48,
+                "actual": 36,
+                "expected": 37
+              },
+              {
+                "x": 1199,
+                "y": 49,
+                "actual": 37,
+                "expected": 36
+              },
+              {
+                "x": 1200,
+                "y": 49,
+                "actual": 35,
+                "expected": 36
+              },
+              {
+                "x": 1199,
+                "y": 50,
+                "actual": 37,
+                "expected": 36
+              },
+              {
+                "x": 1200,
+                "y": 50,
+                "actual": 35,
+                "expected": 36
+              }
+            ]
+          },
+          {
+            "plane": 1,
+            "width": 1203,
+            "height": 799,
+            "count": 0
+          },
+          {
+            "plane": 2,
+            "width": 1203,
+            "height": 799,
+            "count": 0
+          }
+        ]
+      },
+      "main": {
+        "samples": 2883591,
+        "count": 731,
+        "max": 5,
+        "mae": 0.0002906098680430061,
+        "planes": [
+          {
+            "plane": 0,
+            "width": 1203,
+            "height": 799,
+            "count": 731,
+            "bbox_inclusive": [
+              1194,
+              48,
+              1202,
+              781
+            ],
+            "first_samples": [
+              {
+                "x": 1200,
+                "y": 48,
+                "actual": 36,
+                "expected": 37
+              },
+              {
+                "x": 1199,
+                "y": 49,
+                "actual": 37,
+                "expected": 36
+              },
+              {
+                "x": 1200,
+                "y": 49,
+                "actual": 35,
+                "expected": 36
+              },
+              {
+                "x": 1199,
+                "y": 50,
+                "actual": 37,
+                "expected": 36
+              },
+              {
+                "x": 1200,
+                "y": 50,
+                "actual": 35,
+                "expected": 36
+              }
+            ]
+          },
+          {
+            "plane": 1,
+            "width": 1203,
+            "height": 799,
+            "count": 0
+          },
+          {
+            "plane": 2,
+            "width": 1203,
+            "height": 799,
+            "count": 0
+          }
+        ]
+      },
+      "main_pr_changed_samples": 0,
+      "stages": {
+        "raw": {
+          "samples": 2883591,
+          "count": 0,
+          "max": 0,
+          "mae": 0.0,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 1203,
+              "height": 799,
+              "count": 0
+            },
+            {
+              "plane": 1,
+              "width": 1203,
+              "height": 799,
+              "count": 0
+            },
+            {
+              "plane": 2,
+              "width": 1203,
+              "height": 799,
+              "count": 0
+            }
+          ]
+        },
+        "deblock": {
+          "samples": 2883591,
+          "count": 731,
+          "max": 5,
+          "mae": 0.0002906098680430061,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 1203,
+              "height": 799,
+              "count": 731,
+              "bbox_inclusive": [
+                1194,
+                48,
+                1202,
+                781
+              ],
+              "first_samples": [
+                {
+                  "x": 1200,
+                  "y": 48,
+                  "actual": 36,
+                  "expected": 37
+                },
+                {
+                  "x": 1199,
+                  "y": 49,
+                  "actual": 37,
+                  "expected": 36
+                },
+                {
+                  "x": 1200,
+                  "y": 49,
+                  "actual": 35,
+                  "expected": 36
+                },
+                {
+                  "x": 1199,
+                  "y": 50,
+                  "actual": 37,
+                  "expected": 36
+                },
+                {
+                  "x": 1200,
+                  "y": 50,
+                  "actual": 35,
+                  "expected": 36
+                }
+              ]
+            },
+            {
+              "plane": 1,
+              "width": 1203,
+              "height": 799,
+              "count": 0
+            },
+            {
+              "plane": 2,
+              "width": 1203,
+              "height": 799,
+              "count": 0
+            }
+          ]
+        },
+        "cdef": {
+          "samples": 2883591,
+          "count": 731,
+          "max": 5,
+          "mae": 0.0002906098680430061,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 1203,
+              "height": 799,
+              "count": 731,
+              "bbox_inclusive": [
+                1194,
+                48,
+                1202,
+                781
+              ],
+              "first_samples": [
+                {
+                  "x": 1200,
+                  "y": 48,
+                  "actual": 36,
+                  "expected": 37
+                },
+                {
+                  "x": 1199,
+                  "y": 49,
+                  "actual": 37,
+                  "expected": 36
+                },
+                {
+                  "x": 1200,
+                  "y": 49,
+                  "actual": 35,
+                  "expected": 36
+                },
+                {
+                  "x": 1199,
+                  "y": 50,
+                  "actual": 37,
+                  "expected": 36
+                },
+                {
+                  "x": 1200,
+                  "y": 50,
+                  "actual": 35,
+                  "expected": 36
+                }
+              ]
+            },
+            {
+              "plane": 1,
+              "width": 1203,
+              "height": 799,
+              "count": 0
+            },
+            {
+              "plane": 2,
+              "width": 1203,
+              "height": 799,
+              "count": 0
+            }
+          ]
+        },
+        "restoration": {
+          "samples": 2883591,
+          "count": 731,
+          "max": 5,
+          "mae": 0.0002906098680430061,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 1203,
+              "height": 799,
+              "count": 731,
+              "bbox_inclusive": [
+                1194,
+                48,
+                1202,
+                781
+              ],
+              "first_samples": [
+                {
+                  "x": 1200,
+                  "y": 48,
+                  "actual": 36,
+                  "expected": 37
+                },
+                {
+                  "x": 1199,
+                  "y": 49,
+                  "actual": 37,
+                  "expected": 36
+                },
+                {
+                  "x": 1200,
+                  "y": 49,
+                  "actual": 35,
+                  "expected": 36
+                },
+                {
+                  "x": 1199,
+                  "y": 50,
+                  "actual": 37,
+                  "expected": 36
+                },
+                {
+                  "x": 1200,
+                  "y": 50,
+                  "actual": 35,
+                  "expected": 36
+                }
+              ]
+            },
+            {
+              "plane": 1,
+              "width": 1203,
+              "height": 799,
+              "count": 0
+            },
+            {
+              "plane": 2,
+              "width": 1203,
+              "height": 799,
+              "count": 0
+            }
+          ]
+        }
+      },
+      "native_metadata": "1203 799 8 ColorConfig { high_bitdepth: false, twelve_bit: false, bit_depth: 8, monochrome: false, color_description: Some(ColorDescription { color_primaries: 1, transfer_characteristics: 13, matrix_coefficients: 9 }), color_range: Studio, subsampling_x: false, subsampling_y: false, chroma_sample_position: None, separate_uv_delta_q: false }\nplane PlaneLayout { plane: 0, width: 1203, height: 799, subsampling_x: 0, subsampling_y: 0, sample_count: 961197 }\nplane PlaneLayout { plane: 1, width: 1203, height: 799, subsampling_x: 0, subsampling_y: 0, sample_count: 961197 }\nplane PlaneLayout { plane: 2, width: 1203, height: 799, subsampling_x: 0, subsampling_y: 0, sample_count: 961197 }\n",
+      "reference_metadata": {
+        "width": 1203,
+        "height": 799,
+        "pix_fmt": "yuv444p",
+        "color_range": "tv",
+        "color_space": "bt2020nc",
+        "color_transfer": "iec61966-2-1",
+        "color_primaries": "bt709"
+      }
+    },
+    {
+      "name": "fox.profile2.12bpc.yuv444.avif",
+      "sha256": "ed96eca6ed79863eaf91e4d666e4e220b5fa4e5a6cb1696477ba901ac12f5dde",
+      "bit_depth": 12,
+      "reference_sha256": "389deb9638ee353c928bbabe9d3f0b61c9caecc5f2e776acd7b9d3c1ed03ed51",
+      "reference_agreement": true,
+      "native": {
+        "samples": 2889600,
+        "count": 396432,
+        "max": 46,
+        "mae": 0.3597103405315615,
+        "planes": [
+          {
+            "plane": 0,
+            "width": 1204,
+            "height": 800,
+            "count": 38259,
+            "bbox_inclusive": [
+              0,
+              0,
+              1203,
+              799
+            ],
+            "first_samples": [
+              {
+                "x": 230,
+                "y": 0,
+                "actual": 490,
+                "expected": 492
+              },
+              {
+                "x": 231,
+                "y": 0,
+                "actual": 487,
+                "expected": 490
+              },
+              {
+                "x": 232,
+                "y": 0,
+                "actual": 487,
+                "expected": 488
+              },
+              {
+                "x": 301,
+                "y": 0,
+                "actual": 389,
+                "expected": 388
+              },
+              {
+                "x": 302,
+                "y": 0,
+                "actual": 392,
+                "expected": 389
+              }
+            ]
+          },
+          {
+            "plane": 1,
+            "width": 1204,
+            "height": 800,
+            "count": 181975,
+            "bbox_inclusive": [
+              0,
+              0,
+              1203,
+              799
+            ],
+            "first_samples": [
+              {
+                "x": 94,
+                "y": 0,
+                "actual": 2062,
+                "expected": 2060
+              },
+              {
+                "x": 95,
+                "y": 0,
+                "actual": 2061,
+                "expected": 2055
+              },
+              {
+                "x": 96,
+                "y": 0,
+                "actual": 2050,
+                "expected": 2048
+              },
+              {
+                "x": 97,
+                "y": 0,
+                "actual": 2033,
+                "expected": 2041
+              },
+              {
+                "x": 110,
+                "y": 0,
+                "actual": 2024,
+                "expected": 2030
+              }
+            ]
+          },
+          {
+            "plane": 2,
+            "width": 1204,
+            "height": 800,
+            "count": 176198,
+            "bbox_inclusive": [
+              0,
+              0,
+              1203,
+              799
+            ],
+            "first_samples": [
+              {
+                "x": 14,
+                "y": 0,
+                "actual": 1832,
+                "expected": 1836
+              },
+              {
+                "x": 15,
+                "y": 0,
+                "actual": 1826,
+                "expected": 1824
+              },
+              {
+                "x": 16,
+                "y": 0,
+                "actual": 1811,
+                "expected": 1814
+              },
+              {
+                "x": 30,
+                "y": 0,
+                "actual": 1922,
+                "expected": 1917
+              },
+              {
+                "x": 31,
+                "y": 0,
+                "actual": 1921,
+                "expected": 1916
+              }
+            ]
+          }
+        ]
+      },
+      "main": {
+        "samples": 2889600,
+        "count": 396432,
+        "max": 46,
+        "mae": 0.3597103405315615,
+        "planes": [
+          {
+            "plane": 0,
+            "width": 1204,
+            "height": 800,
+            "count": 38259,
+            "bbox_inclusive": [
+              0,
+              0,
+              1203,
+              799
+            ],
+            "first_samples": [
+              {
+                "x": 230,
+                "y": 0,
+                "actual": 490,
+                "expected": 492
+              },
+              {
+                "x": 231,
+                "y": 0,
+                "actual": 487,
+                "expected": 490
+              },
+              {
+                "x": 232,
+                "y": 0,
+                "actual": 487,
+                "expected": 488
+              },
+              {
+                "x": 301,
+                "y": 0,
+                "actual": 389,
+                "expected": 388
+              },
+              {
+                "x": 302,
+                "y": 0,
+                "actual": 392,
+                "expected": 389
+              }
+            ]
+          },
+          {
+            "plane": 1,
+            "width": 1204,
+            "height": 800,
+            "count": 181975,
+            "bbox_inclusive": [
+              0,
+              0,
+              1203,
+              799
+            ],
+            "first_samples": [
+              {
+                "x": 94,
+                "y": 0,
+                "actual": 2062,
+                "expected": 2060
+              },
+              {
+                "x": 95,
+                "y": 0,
+                "actual": 2061,
+                "expected": 2055
+              },
+              {
+                "x": 96,
+                "y": 0,
+                "actual": 2050,
+                "expected": 2048
+              },
+              {
+                "x": 97,
+                "y": 0,
+                "actual": 2033,
+                "expected": 2041
+              },
+              {
+                "x": 110,
+                "y": 0,
+                "actual": 2024,
+                "expected": 2030
+              }
+            ]
+          },
+          {
+            "plane": 2,
+            "width": 1204,
+            "height": 800,
+            "count": 176198,
+            "bbox_inclusive": [
+              0,
+              0,
+              1203,
+              799
+            ],
+            "first_samples": [
+              {
+                "x": 14,
+                "y": 0,
+                "actual": 1832,
+                "expected": 1836
+              },
+              {
+                "x": 15,
+                "y": 0,
+                "actual": 1826,
+                "expected": 1824
+              },
+              {
+                "x": 16,
+                "y": 0,
+                "actual": 1811,
+                "expected": 1814
+              },
+              {
+                "x": 30,
+                "y": 0,
+                "actual": 1922,
+                "expected": 1917
+              },
+              {
+                "x": 31,
+                "y": 0,
+                "actual": 1921,
+                "expected": 1916
+              }
+            ]
+          }
+        ]
+      },
+      "main_pr_changed_samples": 0,
+      "stages": {
+        "raw": {
+          "samples": 2889600,
+          "count": 0,
+          "max": 0,
+          "mae": 0.0,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 1204,
+              "height": 800,
+              "count": 0
+            },
+            {
+              "plane": 1,
+              "width": 1204,
+              "height": 800,
+              "count": 0
+            },
+            {
+              "plane": 2,
+              "width": 1204,
+              "height": 800,
+              "count": 0
+            }
+          ]
+        },
+        "deblock": {
+          "samples": 2889600,
+          "count": 396432,
+          "max": 46,
+          "mae": 0.3597103405315615,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 1204,
+              "height": 800,
+              "count": 38259,
+              "bbox_inclusive": [
+                0,
+                0,
+                1203,
+                799
+              ],
+              "first_samples": [
+                {
+                  "x": 230,
+                  "y": 0,
+                  "actual": 490,
+                  "expected": 492
+                },
+                {
+                  "x": 231,
+                  "y": 0,
+                  "actual": 487,
+                  "expected": 490
+                },
+                {
+                  "x": 232,
+                  "y": 0,
+                  "actual": 487,
+                  "expected": 488
+                },
+                {
+                  "x": 301,
+                  "y": 0,
+                  "actual": 389,
+                  "expected": 388
+                },
+                {
+                  "x": 302,
+                  "y": 0,
+                  "actual": 392,
+                  "expected": 389
+                }
+              ]
+            },
+            {
+              "plane": 1,
+              "width": 1204,
+              "height": 800,
+              "count": 181975,
+              "bbox_inclusive": [
+                0,
+                0,
+                1203,
+                799
+              ],
+              "first_samples": [
+                {
+                  "x": 94,
+                  "y": 0,
+                  "actual": 2062,
+                  "expected": 2060
+                },
+                {
+                  "x": 95,
+                  "y": 0,
+                  "actual": 2061,
+                  "expected": 2055
+                },
+                {
+                  "x": 96,
+                  "y": 0,
+                  "actual": 2050,
+                  "expected": 2048
+                },
+                {
+                  "x": 97,
+                  "y": 0,
+                  "actual": 2033,
+                  "expected": 2041
+                },
+                {
+                  "x": 110,
+                  "y": 0,
+                  "actual": 2024,
+                  "expected": 2030
+                }
+              ]
+            },
+            {
+              "plane": 2,
+              "width": 1204,
+              "height": 800,
+              "count": 176198,
+              "bbox_inclusive": [
+                0,
+                0,
+                1203,
+                799
+              ],
+              "first_samples": [
+                {
+                  "x": 14,
+                  "y": 0,
+                  "actual": 1832,
+                  "expected": 1836
+                },
+                {
+                  "x": 15,
+                  "y": 0,
+                  "actual": 1826,
+                  "expected": 1824
+                },
+                {
+                  "x": 16,
+                  "y": 0,
+                  "actual": 1811,
+                  "expected": 1814
+                },
+                {
+                  "x": 30,
+                  "y": 0,
+                  "actual": 1922,
+                  "expected": 1917
+                },
+                {
+                  "x": 31,
+                  "y": 0,
+                  "actual": 1921,
+                  "expected": 1916
+                }
+              ]
+            }
+          ]
+        },
+        "cdef": {
+          "samples": 2889600,
+          "count": 396432,
+          "max": 46,
+          "mae": 0.3597103405315615,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 1204,
+              "height": 800,
+              "count": 38259,
+              "bbox_inclusive": [
+                0,
+                0,
+                1203,
+                799
+              ],
+              "first_samples": [
+                {
+                  "x": 230,
+                  "y": 0,
+                  "actual": 490,
+                  "expected": 492
+                },
+                {
+                  "x": 231,
+                  "y": 0,
+                  "actual": 487,
+                  "expected": 490
+                },
+                {
+                  "x": 232,
+                  "y": 0,
+                  "actual": 487,
+                  "expected": 488
+                },
+                {
+                  "x": 301,
+                  "y": 0,
+                  "actual": 389,
+                  "expected": 388
+                },
+                {
+                  "x": 302,
+                  "y": 0,
+                  "actual": 392,
+                  "expected": 389
+                }
+              ]
+            },
+            {
+              "plane": 1,
+              "width": 1204,
+              "height": 800,
+              "count": 181975,
+              "bbox_inclusive": [
+                0,
+                0,
+                1203,
+                799
+              ],
+              "first_samples": [
+                {
+                  "x": 94,
+                  "y": 0,
+                  "actual": 2062,
+                  "expected": 2060
+                },
+                {
+                  "x": 95,
+                  "y": 0,
+                  "actual": 2061,
+                  "expected": 2055
+                },
+                {
+                  "x": 96,
+                  "y": 0,
+                  "actual": 2050,
+                  "expected": 2048
+                },
+                {
+                  "x": 97,
+                  "y": 0,
+                  "actual": 2033,
+                  "expected": 2041
+                },
+                {
+                  "x": 110,
+                  "y": 0,
+                  "actual": 2024,
+                  "expected": 2030
+                }
+              ]
+            },
+            {
+              "plane": 2,
+              "width": 1204,
+              "height": 800,
+              "count": 176198,
+              "bbox_inclusive": [
+                0,
+                0,
+                1203,
+                799
+              ],
+              "first_samples": [
+                {
+                  "x": 14,
+                  "y": 0,
+                  "actual": 1832,
+                  "expected": 1836
+                },
+                {
+                  "x": 15,
+                  "y": 0,
+                  "actual": 1826,
+                  "expected": 1824
+                },
+                {
+                  "x": 16,
+                  "y": 0,
+                  "actual": 1811,
+                  "expected": 1814
+                },
+                {
+                  "x": 30,
+                  "y": 0,
+                  "actual": 1922,
+                  "expected": 1917
+                },
+                {
+                  "x": 31,
+                  "y": 0,
+                  "actual": 1921,
+                  "expected": 1916
+                }
+              ]
+            }
+          ]
+        },
+        "restoration": {
+          "samples": 2889600,
+          "count": 396432,
+          "max": 46,
+          "mae": 0.3597103405315615,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 1204,
+              "height": 800,
+              "count": 38259,
+              "bbox_inclusive": [
+                0,
+                0,
+                1203,
+                799
+              ],
+              "first_samples": [
+                {
+                  "x": 230,
+                  "y": 0,
+                  "actual": 490,
+                  "expected": 492
+                },
+                {
+                  "x": 231,
+                  "y": 0,
+                  "actual": 487,
+                  "expected": 490
+                },
+                {
+                  "x": 232,
+                  "y": 0,
+                  "actual": 487,
+                  "expected": 488
+                },
+                {
+                  "x": 301,
+                  "y": 0,
+                  "actual": 389,
+                  "expected": 388
+                },
+                {
+                  "x": 302,
+                  "y": 0,
+                  "actual": 392,
+                  "expected": 389
+                }
+              ]
+            },
+            {
+              "plane": 1,
+              "width": 1204,
+              "height": 800,
+              "count": 181975,
+              "bbox_inclusive": [
+                0,
+                0,
+                1203,
+                799
+              ],
+              "first_samples": [
+                {
+                  "x": 94,
+                  "y": 0,
+                  "actual": 2062,
+                  "expected": 2060
+                },
+                {
+                  "x": 95,
+                  "y": 0,
+                  "actual": 2061,
+                  "expected": 2055
+                },
+                {
+                  "x": 96,
+                  "y": 0,
+                  "actual": 2050,
+                  "expected": 2048
+                },
+                {
+                  "x": 97,
+                  "y": 0,
+                  "actual": 2033,
+                  "expected": 2041
+                },
+                {
+                  "x": 110,
+                  "y": 0,
+                  "actual": 2024,
+                  "expected": 2030
+                }
+              ]
+            },
+            {
+              "plane": 2,
+              "width": 1204,
+              "height": 800,
+              "count": 176198,
+              "bbox_inclusive": [
+                0,
+                0,
+                1203,
+                799
+              ],
+              "first_samples": [
+                {
+                  "x": 14,
+                  "y": 0,
+                  "actual": 1832,
+                  "expected": 1836
+                },
+                {
+                  "x": 15,
+                  "y": 0,
+                  "actual": 1826,
+                  "expected": 1824
+                },
+                {
+                  "x": 16,
+                  "y": 0,
+                  "actual": 1811,
+                  "expected": 1814
+                },
+                {
+                  "x": 30,
+                  "y": 0,
+                  "actual": 1922,
+                  "expected": 1917
+                },
+                {
+                  "x": 31,
+                  "y": 0,
+                  "actual": 1921,
+                  "expected": 1916
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "native_metadata": "1204 800 12 ColorConfig { high_bitdepth: true, twelve_bit: true, bit_depth: 12, monochrome: false, color_description: Some(ColorDescription { color_primaries: 1, transfer_characteristics: 13, matrix_coefficients: 9 }), color_range: Studio, subsampling_x: false, subsampling_y: false, chroma_sample_position: None, separate_uv_delta_q: false }\nplane PlaneLayout { plane: 0, width: 1204, height: 800, subsampling_x: 0, subsampling_y: 0, sample_count: 963200 }\nplane PlaneLayout { plane: 1, width: 1204, height: 800, subsampling_x: 0, subsampling_y: 0, sample_count: 963200 }\nplane PlaneLayout { plane: 2, width: 1204, height: 800, subsampling_x: 0, subsampling_y: 0, sample_count: 963200 }\n",
+      "reference_metadata": {
+        "width": 1204,
+        "height": 800,
+        "pix_fmt": "yuv444p12le",
+        "color_range": "tv",
+        "color_space": "bt2020nc",
+        "color_transfer": "iec61966-2-1",
+        "color_primaries": "bt709"
+      }
+    },
+    {
+      "name": "paris_icc_exif_xmp.avif",
+      "sha256": "961bc38b61e60b7651fa20efa24269ae2f35e4958822a81c908c9bbf9b3f66e1",
+      "bit_depth": 8,
+      "reference_sha256": "cd485d47f16fc96c3c5e7e3218f5a80cf8fa3d2ed1966de4443fa30359aea97b",
+      "reference_agreement": true,
+      "native": {
+        "samples": 365118,
+        "count": 218,
+        "max": 6,
+        "mae": 0.0008052191346359259,
+        "planes": [
+          {
+            "plane": 0,
+            "width": 403,
+            "height": 302,
+            "count": 218,
+            "bbox_inclusive": [
+              397,
+              1,
+              402,
+              298
+            ],
+            "first_samples": [
+              {
+                "x": 398,
+                "y": 1,
+                "actual": 165,
+                "expected": 164
+              },
+              {
+                "x": 399,
+                "y": 1,
+                "actual": 165,
+                "expected": 164
+              },
+              {
+                "x": 400,
+                "y": 1,
+                "actual": 162,
+                "expected": 163
+              },
+              {
+                "x": 401,
+                "y": 1,
+                "actual": 162,
+                "expected": 163
+              },
+              {
+                "x": 399,
+                "y": 2,
+                "actual": 169,
+                "expected": 167
+              }
+            ]
+          },
+          {
+            "plane": 1,
+            "width": 403,
+            "height": 302,
+            "count": 0
+          },
+          {
+            "plane": 2,
+            "width": 403,
+            "height": 302,
+            "count": 0
+          }
+        ]
+      },
+      "main": {
+        "samples": 365118,
+        "count": 218,
+        "max": 6,
+        "mae": 0.0008052191346359259,
+        "planes": [
+          {
+            "plane": 0,
+            "width": 403,
+            "height": 302,
+            "count": 218,
+            "bbox_inclusive": [
+              397,
+              1,
+              402,
+              298
+            ],
+            "first_samples": [
+              {
+                "x": 398,
+                "y": 1,
+                "actual": 165,
+                "expected": 164
+              },
+              {
+                "x": 399,
+                "y": 1,
+                "actual": 165,
+                "expected": 164
+              },
+              {
+                "x": 400,
+                "y": 1,
+                "actual": 162,
+                "expected": 163
+              },
+              {
+                "x": 401,
+                "y": 1,
+                "actual": 162,
+                "expected": 163
+              },
+              {
+                "x": 399,
+                "y": 2,
+                "actual": 169,
+                "expected": 167
+              }
+            ]
+          },
+          {
+            "plane": 1,
+            "width": 403,
+            "height": 302,
+            "count": 0
+          },
+          {
+            "plane": 2,
+            "width": 403,
+            "height": 302,
+            "count": 0
+          }
+        ]
+      },
+      "main_pr_changed_samples": 0,
+      "stages": {
+        "raw": {
+          "samples": 365118,
+          "count": 0,
+          "max": 0,
+          "mae": 0.0,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 403,
+              "height": 302,
+              "count": 0
+            },
+            {
+              "plane": 1,
+              "width": 403,
+              "height": 302,
+              "count": 0
+            },
+            {
+              "plane": 2,
+              "width": 403,
+              "height": 302,
+              "count": 0
+            }
+          ]
+        },
+        "deblock": {
+          "samples": 365118,
+          "count": 218,
+          "max": 6,
+          "mae": 0.0008052191346359259,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 403,
+              "height": 302,
+              "count": 218,
+              "bbox_inclusive": [
+                397,
+                1,
+                402,
+                298
+              ],
+              "first_samples": [
+                {
+                  "x": 398,
+                  "y": 1,
+                  "actual": 165,
+                  "expected": 164
+                },
+                {
+                  "x": 399,
+                  "y": 1,
+                  "actual": 165,
+                  "expected": 164
+                },
+                {
+                  "x": 400,
+                  "y": 1,
+                  "actual": 162,
+                  "expected": 163
+                },
+                {
+                  "x": 401,
+                  "y": 1,
+                  "actual": 162,
+                  "expected": 163
+                },
+                {
+                  "x": 399,
+                  "y": 2,
+                  "actual": 169,
+                  "expected": 167
+                }
+              ]
+            },
+            {
+              "plane": 1,
+              "width": 403,
+              "height": 302,
+              "count": 0
+            },
+            {
+              "plane": 2,
+              "width": 403,
+              "height": 302,
+              "count": 0
+            }
+          ]
+        },
+        "cdef": {
+          "samples": 365118,
+          "count": 218,
+          "max": 6,
+          "mae": 0.0008052191346359259,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 403,
+              "height": 302,
+              "count": 218,
+              "bbox_inclusive": [
+                397,
+                1,
+                402,
+                298
+              ],
+              "first_samples": [
+                {
+                  "x": 398,
+                  "y": 1,
+                  "actual": 165,
+                  "expected": 164
+                },
+                {
+                  "x": 399,
+                  "y": 1,
+                  "actual": 165,
+                  "expected": 164
+                },
+                {
+                  "x": 400,
+                  "y": 1,
+                  "actual": 162,
+                  "expected": 163
+                },
+                {
+                  "x": 401,
+                  "y": 1,
+                  "actual": 162,
+                  "expected": 163
+                },
+                {
+                  "x": 399,
+                  "y": 2,
+                  "actual": 169,
+                  "expected": 167
+                }
+              ]
+            },
+            {
+              "plane": 1,
+              "width": 403,
+              "height": 302,
+              "count": 0
+            },
+            {
+              "plane": 2,
+              "width": 403,
+              "height": 302,
+              "count": 0
+            }
+          ]
+        },
+        "restoration": {
+          "samples": 365118,
+          "count": 218,
+          "max": 6,
+          "mae": 0.0008052191346359259,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 403,
+              "height": 302,
+              "count": 218,
+              "bbox_inclusive": [
+                397,
+                1,
+                402,
+                298
+              ],
+              "first_samples": [
+                {
+                  "x": 398,
+                  "y": 1,
+                  "actual": 165,
+                  "expected": 164
+                },
+                {
+                  "x": 399,
+                  "y": 1,
+                  "actual": 165,
+                  "expected": 164
+                },
+                {
+                  "x": 400,
+                  "y": 1,
+                  "actual": 162,
+                  "expected": 163
+                },
+                {
+                  "x": 401,
+                  "y": 1,
+                  "actual": 162,
+                  "expected": 163
+                },
+                {
+                  "x": 399,
+                  "y": 2,
+                  "actual": 169,
+                  "expected": 167
+                }
+              ]
+            },
+            {
+              "plane": 1,
+              "width": 403,
+              "height": 302,
+              "count": 0
+            },
+            {
+              "plane": 2,
+              "width": 403,
+              "height": 302,
+              "count": 0
+            }
+          ]
+        }
+      },
+      "native_metadata": "403 302 8 ColorConfig { high_bitdepth: false, twelve_bit: false, bit_depth: 8, monochrome: false, color_description: Some(ColorDescription { color_primaries: 2, transfer_characteristics: 2, matrix_coefficients: 6 }), color_range: Full, subsampling_x: false, subsampling_y: false, chroma_sample_position: None, separate_uv_delta_q: false }\nplane PlaneLayout { plane: 0, width: 403, height: 302, subsampling_x: 0, subsampling_y: 0, sample_count: 121706 }\nplane PlaneLayout { plane: 1, width: 403, height: 302, subsampling_x: 0, subsampling_y: 0, sample_count: 121706 }\nplane PlaneLayout { plane: 2, width: 403, height: 302, subsampling_x: 0, subsampling_y: 0, sample_count: 121706 }\n",
+      "reference_metadata": {
+        "width": 403,
+        "height": 302,
+        "pix_fmt": "yuv444p",
+        "color_range": "pc",
+        "color_space": "smpte170m",
+        "side_data_list": [
+          {}
+        ]
+      }
+    },
+    {
+      "name": "plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
+      "sha256": "245a3dad6371dc702f29eb7e9735f843b63c525da871859728bedbe5bb274985",
+      "bit_depth": 8,
+      "reference_sha256": "79128f06b4b1e49742a5cf56bca2f61f880226c7d09e2cae984694ad7d1dd157",
+      "reference_agreement": true,
+      "native": {
+        "samples": 49152,
+        "count": 0,
+        "max": 0,
+        "mae": 0.0,
+        "planes": [
+          {
+            "plane": 0,
+            "width": 128,
+            "height": 128,
+            "count": 0
+          },
+          {
+            "plane": 1,
+            "width": 128,
+            "height": 128,
+            "count": 0
+          },
+          {
+            "plane": 2,
+            "width": 128,
+            "height": 128,
+            "count": 0
+          }
+        ]
+      },
+      "main": {
+        "samples": 49152,
+        "count": 0,
+        "max": 0,
+        "mae": 0.0,
+        "planes": [
+          {
+            "plane": 0,
+            "width": 128,
+            "height": 128,
+            "count": 0
+          },
+          {
+            "plane": 1,
+            "width": 128,
+            "height": 128,
+            "count": 0
+          },
+          {
+            "plane": 2,
+            "width": 128,
+            "height": 128,
+            "count": 0
+          }
+        ]
+      },
+      "main_pr_changed_samples": 0,
+      "stages": {
+        "raw": {
+          "samples": 49152,
+          "count": 0,
+          "max": 0,
+          "mae": 0.0,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 128,
+              "height": 128,
+              "count": 0
+            },
+            {
+              "plane": 1,
+              "width": 128,
+              "height": 128,
+              "count": 0
+            },
+            {
+              "plane": 2,
+              "width": 128,
+              "height": 128,
+              "count": 0
+            }
+          ]
+        },
+        "deblock": {
+          "samples": 49152,
+          "count": 0,
+          "max": 0,
+          "mae": 0.0,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 128,
+              "height": 128,
+              "count": 0
+            },
+            {
+              "plane": 1,
+              "width": 128,
+              "height": 128,
+              "count": 0
+            },
+            {
+              "plane": 2,
+              "width": 128,
+              "height": 128,
+              "count": 0
+            }
+          ]
+        },
+        "cdef": {
+          "samples": 49152,
+          "count": 0,
+          "max": 0,
+          "mae": 0.0,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 128,
+              "height": 128,
+              "count": 0
+            },
+            {
+              "plane": 1,
+              "width": 128,
+              "height": 128,
+              "count": 0
+            },
+            {
+              "plane": 2,
+              "width": 128,
+              "height": 128,
+              "count": 0
+            }
+          ]
+        },
+        "restoration": {
+          "samples": 49152,
+          "count": 0,
+          "max": 0,
+          "mae": 0.0,
+          "planes": [
+            {
+              "plane": 0,
+              "width": 128,
+              "height": 128,
+              "count": 0
+            },
+            {
+              "plane": 1,
+              "width": 128,
+              "height": 128,
+              "count": 0
+            },
+            {
+              "plane": 2,
+              "width": 128,
+              "height": 128,
+              "count": 0
+            }
+          ]
+        }
+      },
+      "alpha": {
+        "samples": 16384,
+        "count": 0,
+        "max": 0,
+        "mae": 0.0,
+        "planes": [
+          {
+            "plane": 0,
+            "width": 128,
+            "height": 128,
+            "count": 0
+          }
+        ]
+      },
+      "native_metadata": "128 128 8 ColorConfig { high_bitdepth: false, twelve_bit: false, bit_depth: 8, monochrome: false, color_description: Some(ColorDescription { color_primaries: 1, transfer_characteristics: 13, matrix_coefficients: 9 }), color_range: Studio, subsampling_x: false, subsampling_y: false, chroma_sample_position: None, separate_uv_delta_q: false }\nplane PlaneLayout { plane: 0, width: 128, height: 128, subsampling_x: 0, subsampling_y: 0, sample_count: 16384 }\nplane PlaneLayout { plane: 1, width: 128, height: 128, subsampling_x: 0, subsampling_y: 0, sample_count: 16384 }\nplane PlaneLayout { plane: 2, width: 128, height: 128, subsampling_x: 0, subsampling_y: 0, sample_count: 16384 }\nplane PlaneLayout { plane: 3, width: 128, height: 128, subsampling_x: 0, subsampling_y: 0, sample_count: 16384 }\n",
+      "reference_metadata": {
+        "width": 128,
+        "height": 128,
+        "pix_fmt": "yuv444p",
+        "color_range": "tv",
+        "color_space": "bt2020nc",
+        "color_transfer": "iec61966-2-1",
+        "color_primaries": "bt709"
+      }
+    }
+  ],
+  "probe-results": {
+    "plum-blossom-small.profile1.8bpc.yuv444.alpha-full": {
+      "flat": {
+        "count": 0,
+        "max": 0,
+        "mae": 0.0
+      },
+      "edge": {
+        "count": 0,
+        "max": 0,
+        "mae": 0.0
+      },
+      "both": {
+        "count": 0,
+        "max": 0,
+        "mae": 0.0
+      }
+    },
+    "fox.profile0.8bpc.yuv420": {
+      "flat": {
+        "count": 39149,
+        "max": 7,
+        "mae": 0.027452242524916945
+      },
+      "edge": {
+        "count": 39039,
+        "max": 7,
+        "mae": 0.027365725359911407
+      },
+      "both": {
+        "count": 39039,
+        "max": 7,
+        "mae": 0.027365725359911407
+      }
+    },
+    "fox.profile2.12bpc.yuv444": {
+      "flat": {
+        "count": 0,
+        "max": 0,
+        "mae": 0.0
+      },
+      "edge": {
+        "count": 396497,
+        "max": 46,
+        "mae": 0.35982212070874864
+      },
+      "both": {
+        "count": 65,
+        "max": 31,
+        "mae": 0.00011178017718715394
+      }
+    },
+    "fox.profile1.10bpc.yuv444": {
+      "flat": {
+        "count": 35,
+        "max": 1,
+        "mae": 1.2112403100775194e-05
+      },
+      "edge": {
+        "count": 172616,
+        "max": 12,
+        "mae": 0.07540836101882613
+      },
+      "both": {
+        "count": 94,
+        "max": 8,
+        "mae": 4.7065337763012184e-05
+      }
+    },
+    "paris_icc_exif_xmp": {
+      "flat": {
+        "count": 218,
+        "max": 6,
+        "mae": 0.0008052191346359259
+      },
+      "edge": {
+        "count": 0,
+        "max": 0,
+        "mae": 0.0
+      },
+      "both": {
+        "count": 0,
+        "max": 0,
+        "mae": 0.0
+      }
+    },
+    "fox.profile1.8bpc.yuv444.odd-width.odd-height": {
+      "flat": {
+        "count": 731,
+        "max": 5,
+        "mae": 0.0002906098680430061
+      },
+      "edge": {
+        "count": 3,
+        "max": 1,
+        "mae": 1.0403694560012153e-06
+      },
+      "both": {
+        "count": 3,
+        "max": 1,
+        "mae": 1.0403694560012153e-06
+      }
+    },
+    "colors_hdr_rec2020": {
+      "flat": {
+        "count": 14757,
+        "max": 3,
+        "mae": 0.12406666666666667
+      },
+      "edge": {
+        "count": 11011,
+        "max": 2,
+        "mae": 0.09188333333333333
+      },
+      "both": {
+        "count": 14757,
+        "max": 3,
+        "mae": 0.12406666666666667
+      }
+    }
+  },
+  "refined-results": {
+    "plum-blossom-small.profile1.8bpc.yuv444.alpha-full": {
+      "count": 0,
+      "max": 0,
+      "mae": 0.0
+    },
+    "fox.profile0.8bpc.yuv420": {
+      "count": 39026,
+      "max": 7,
+      "mae": 0.027353959025470654
+    },
+    "fox.profile2.12bpc.yuv444": {
+      "count": 0,
+      "max": 0,
+      "mae": 0.0
+    },
+    "fox.profile1.10bpc.yuv444": {
+      "count": 35,
+      "max": 1,
+      "mae": 1.2112403100775194e-05
+    },
+    "paris_icc_exif_xmp": {
+      "count": 0,
+      "max": 0,
+      "mae": 0.0
+    },
+    "fox.profile1.8bpc.yuv444.odd-width.odd-height": {
+      "count": 0,
+      "max": 0,
+      "mae": 0.0
+    },
+    "colors_hdr_rec2020": {
+      "count": 0,
+      "max": 0,
+      "mae": 0.0
+    }
+  },
+  "all-probes-results": {
+    "plum-blossom-small.profile1.8bpc.yuv444.alpha-full": {
+      "count": 0,
+      "max": 0,
+      "mae": 0.0
+    },
+    "fox.profile0.8bpc.yuv420": {
+      "count": 158,
+      "max": 2,
+      "mae": 0.00011074197120708749
+    },
+    "fox.profile2.12bpc.yuv444": {
+      "count": 0,
+      "max": 0,
+      "mae": 0.0
+    },
+    "fox.profile1.10bpc.yuv444": {
+      "count": 0,
+      "max": 0,
+      "mae": 0.0
+    },
+    "paris_icc_exif_xmp": {
+      "count": 0,
+      "max": 0,
+      "mae": 0.0
+    },
+    "fox.profile1.8bpc.yuv444.odd-width.odd-height": {
+      "count": 0,
+      "max": 0,
+      "mae": 0.0
+    },
+    "colors_hdr_rec2020": {
+      "count": 0,
+      "max": 0,
+      "mae": 0.0
+    }
+  },
+  "fox8_after_all_probes_stages": {
+    "raw": {
+      "count": 0,
+      "max": 0,
+      "first": []
+    },
+    "deblock": {
+      "count": 158,
+      "max": 2,
+      "first": [
+        {
+          "plane": 1,
+          "x": 599,
+          "y": 2,
+          "actual": 139,
+          "expected": 138
+        },
+        {
+          "plane": 1,
+          "x": 600,
+          "y": 2,
+          "actual": 138,
+          "expected": 137
+        },
+        {
+          "plane": 1,
+          "x": 601,
+          "y": 2,
+          "actual": 137,
+          "expected": 136
+        },
+        {
+          "plane": 1,
+          "x": 598,
+          "y": 3,
+          "actual": 135,
+          "expected": 136
+        },
+        {
+          "plane": 1,
+          "x": 598,
+          "y": 4,
+          "actual": 132,
+          "expected": 133
+        }
+      ]
+    }
+  },
+  "reference_source_tags": {
+    "dav1d_1.5.1": "42b2b24fb8819f1ed3643aa9cf2a62f03868e3aa",
+    "aom_v3.12.1": "10aece4157eb79315da205f39e19bf6ab3ee30d0",
+    "note": "Installed references are Debian packages recorded above; tags identify source inspection/C dav1d rebuild, not exact Debian build commits."
+  }
+}

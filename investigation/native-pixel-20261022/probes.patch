@@ -1,0 +1,351 @@
+diff --git a/src/av1/decode.rs b/src/av1/decode.rs
+index 2cefc5e..ed99dee 100644
+--- a/src/av1/decode.rs
++++ b/src/av1/decode.rs
+@@ -511,6 +511,16 @@ pub(crate) fn alloc_coded_frame_buffers(
+         })?))
+         .map_err(|_| DecoderError::InvalidParam("AV1 frame height is too large".to_string()))?
+             << 2;
++    let coded_width = if std::env::var_os("AVIF_PROBE_CFL_PAD").is_some() {
++        coded_width.div_ceil(64) * 64
++    } else {
++        coded_width
++    };
++    let coded_height = if std::env::var_os("AVIF_PROBE_CFL_PAD").is_some() {
++        coded_height.div_ceil(64) * 64
++    } else {
++        coded_height
++    };
+     let mut coded_layouts = plan.planes.clone();
+     for layout in &mut coded_layouts {
+         layout.width = round_shift_usize(coded_width, layout.subsampling_x);
+diff --git a/src/av1/tile_decode/block_syntax.rs b/src/av1/tile_decode/block_syntax.rs
+index ae2e522..9bfa068 100644
+--- a/src/av1/tile_decode/block_syntax.rs
++++ b/src/av1/tile_decode/block_syntax.rs
+@@ -404,15 +404,53 @@ impl<'a> TileDecoder<'a> {
+             }
+         }
+         let y_smooth_neighbour = self.has_smooth_intra_neighbour(0, x, y);
+-        let uv_smooth_neighbour = self.has_smooth_intra_neighbour(1, x, y);
++        let uv_smooth_neighbour = if std::env::var_os("AVIF_PROBE_UV_SMOOTH").is_some() {
++            let sx = usize::from(sequence.color_config.subsampling_x);
++            let sy = usize::from(sequence.color_config.subsampling_y);
++            let cx = (x >> (2 + sx)) << (2 + sx);
++            let cy = (y >> (2 + sy)) << (2 + sy);
++            let above = cy >= (4 << sy)
++                && self.uv_smooth_grid[(cy / 4 - 1) * self.mi_cols + x / 4].unwrap_or(false);
++            let left = cx >= (4 << sx)
++                && self.uv_smooth_grid[(y / 4) * self.mi_cols + cx / 4 - 1].unwrap_or(false);
++            above || left
++        } else {
++            self.has_smooth_intra_neighbour(1, x, y)
++        };
+         self.set_y_mode_context(x, y, block_size, intra_mode_context(y_mode));
+-        self.set_smooth_context(
+-            x,
+-            y,
+-            block_size,
+-            y_mode.is_smooth(),
+-            matches!(uv_mode, Some(UvPredictionMode::Intra(mode)) if mode.is_smooth()),
+-        );
++        if std::env::var_os("AVIF_PROBE_UV_SMOOTH").is_some() {
++            fill_mi_grid(
++                &mut self.y_smooth_grid,
++                self.mi_cols,
++                self.mi_rows,
++                x,
++                y,
++                block_size,
++                y_mode.is_smooth(),
++            );
++            if has_chroma {
++                let sx = usize::from(sequence.color_config.subsampling_x);
++                let sy = usize::from(sequence.color_config.subsampling_y);
++                let cx = (x >> (2 + sx)) << (2 + sx);
++                let cy = (y >> (2 + sy)) << (2 + sy);
++                let cw = block_size.width().max(4 << sx);
++                let ch = block_size.height().max(4 << sy);
++                let sm = matches!(uv_mode, Some(UvPredictionMode::Intra(mode)) if mode.is_smooth());
++                for yy in cy / 4..((cy + ch) / 4).min(self.mi_rows) {
++                    for xx in cx / 4..((cx + cw) / 4).min(self.mi_cols) {
++                        self.uv_smooth_grid[yy * self.mi_cols + xx] = Some(sm);
++                    }
++                }
++            }
++        } else {
++            self.set_smooth_context(
++                x,
++                y,
++                block_size,
++                y_mode.is_smooth(),
++                matches!(uv_mode, Some(UvPredictionMode::Intra(mode)) if mode.is_smooth()),
++            );
++        }
+         self.set_skip_context(x, y, block_size, skip);
+         let mut palette = palette;
+         #[cfg(test)]
+diff --git a/src/av1/tile_decode/post_filter_state.rs b/src/av1/tile_decode/post_filter_state.rs
+index e350ee2..c24588d 100644
+--- a/src/av1/tile_decode/post_filter_state.rs
++++ b/src/av1/tile_decode/post_filter_state.rs
+@@ -1381,7 +1381,7 @@ pub(crate) fn deblock_filter_edge_with_length(
+ pub(crate) fn deblock_filter_edge_with_visible_bounds(
+     samples: &mut [u16],
+     width: usize,
+-    _height: usize,
++    height: usize,
+     visible_width: usize,
+     visible_height: usize,
+     edge_x: usize,
+@@ -1392,6 +1392,26 @@ pub(crate) fn deblock_filter_edge_with_visible_bounds(
+     bit_depth: u8,
+     filter_length: u8,
+ ) {
++    let guard_width = if std::env::var_os("AVIF_PROBE_EDGE").is_some() {
++        width
++    } else {
++        visible_width
++    };
++    let guard_height = if std::env::var_os("AVIF_PROBE_EDGE").is_some() {
++        height
++    } else {
++        visible_height
++    };
++    let flat_limit = if std::env::var_os("AVIF_PROBE_FLAT").is_some() {
++        1 << bit_depth.saturating_sub(8)
++    } else {
++        1
++    };
++    if std::env::var_os("AVIF_PROBE_EDGE").is_some()
++        && ((vertical && edge_x >= visible_width) || (!vertical && edge_y >= visible_height))
++    {
++        return;
++    }
+     let radius = match filter_length {
+         // The filter length names the number of taps, but the frame-edge
+         // guard must cover the farthest sample actually read on either side.
+@@ -1401,8 +1421,8 @@ pub(crate) fn deblock_filter_edge_with_visible_bounds(
+         _ => 2,
+     };
+     if level == 0
+-        || (vertical && (edge_x < radius || edge_x.saturating_add(radius) > visible_width))
+-        || (!vertical && (edge_y < radius || edge_y.saturating_add(radius) > visible_height))
++        || (vertical && (edge_x < radius || edge_x.saturating_add(radius) > guard_width))
++        || (!vertical && (edge_y < radius || edge_y.saturating_add(radius) > guard_height))
+     {
+         return;
+     }
+@@ -1494,12 +1514,12 @@ pub(crate) fn deblock_filter_edge_with_visible_bounds(
+             if !mask8 {
+                 continue;
+             }
+-            let flat8 = i32::abs(p1 - p0) <= 1
+-                && i32::abs(q1 - q0) <= 1
+-                && i32::abs(p2 - p0) <= 1
+-                && i32::abs(q2 - q0) <= 1
+-                && i32::abs(p3 - p0) <= 1
+-                && i32::abs(q3 - q0) <= 1;
++            let flat8 = i32::abs(p1 - p0) <= flat_limit
++                && i32::abs(q1 - q0) <= flat_limit
++                && i32::abs(p2 - p0) <= flat_limit
++                && i32::abs(q2 - q0) <= flat_limit
++                && i32::abs(p3 - p0) <= flat_limit
++                && i32::abs(q3 - q0) <= flat_limit;
+             if filter_length == 14 {
+                 let (p4, p5, p6, q4, q5, q6) = if vertical {
+                     (
+@@ -1520,12 +1540,12 @@ pub(crate) fn deblock_filter_edge_with_visible_bounds(
+                         samples[(lane_y + 6) * width + lane_x] as i32,
+                     )
+                 };
+-                let flat2 = i32::abs(p4 - p0) <= 1
+-                    && i32::abs(q4 - q0) <= 1
+-                    && i32::abs(p5 - p0) <= 1
+-                    && i32::abs(q5 - q0) <= 1
+-                    && i32::abs(p6 - p0) <= 1
+-                    && i32::abs(q6 - q0) <= 1;
++                let flat2 = i32::abs(p4 - p0) <= flat_limit
++                    && i32::abs(q4 - q0) <= flat_limit
++                    && i32::abs(p5 - p0) <= flat_limit
++                    && i32::abs(q5 - q0) <= flat_limit
++                    && i32::abs(p6 - p0) <= flat_limit
++                    && i32::abs(q6 - q0) <= flat_limit;
+                 if mask8 && flat8 && flat2 {
+                     let filtered = [
+                         (p6 * 7 + p5 * 2 + p4 * 2 + p3 + p2 + p1 + p0 + q0 + 8) >> 4,
+@@ -1637,10 +1657,10 @@ pub(crate) fn deblock_filter_edge_with_visible_bounds(
+                 && i32::abs(q1 - q0) <= limit
+                 && i32::abs(q2 - q1) <= limit
+                 && 2 * i32::abs(p0 - q0) + i32::abs(p1 - q1) / 2 <= blimit;
+-            let flat6 = i32::abs(p2 - p0) <= 1
+-                && i32::abs(p1 - p0) <= 1
+-                && i32::abs(q1 - q0) <= 1
+-                && i32::abs(q2 - q0) <= 1;
++            let flat6 = i32::abs(p2 - p0) <= flat_limit
++                && i32::abs(p1 - p0) <= flat_limit
++                && i32::abs(q1 - q0) <= flat_limit
++                && i32::abs(q2 - q0) <= flat_limit;
+             if filter_length == 6 && !mask6 {
+                 continue;
+             }
+diff --git a/src/av1/tile_decode/reconstruction.rs b/src/av1/tile_decode/reconstruction.rs
+index bc0b581..c909546 100644
+--- a/src/av1/tile_decode/reconstruction.rs
++++ b/src/av1/tile_decode/reconstruction.rs
+@@ -565,6 +565,20 @@ pub(super) fn decode_plane_block_unit(
+         // The reconstruction already counted non-zero coefficients for its
+         // zero-residual fast path. Reuse that result instead of scanning the
+         // full transform a second time while recording post-filter state.
++        if let Ok(path) = std::env::var("AVIF_RECON_TRACE") {
++            if plane_index > 0
++                && ((block.x >= 160 && block.x < 172 && block.y < 12)
++                    || (block.x >= 1180 && block.y >= 216 && block.y < 256))
++            {
++                use std::io::Write;
++                let mut log = std::fs::OpenOptions::new()
++                    .create(true)
++                    .append(true)
++                    .open(path)
++                    .unwrap();
++                writeln!(log, "TX {} {} {} {} {} type={:?} mode={:?}\nPRED {:?}\nDQ {:?}\nRES {:?}\nRECON {:?}",plane_index,block.x,block.y,block.tx_size.width(),block.tx_size.height(),tx_type,prediction_mode,prediction,dequant,residual,reconstructed).unwrap();
++            }
++        }
+         decoder.record_transform_boundary(
+             reconstructed_transform.block,
+             reconstructed_transform.tx_type,
+@@ -712,6 +726,18 @@ fn predict_block_into(
+     if !left_available && above_available {
+         left.fill(above[0]);
+     }
++    if x == 164 && y == 4 && width == 4 && height == 4 {
++        eprintln!(
++            "EDGE {:?} angle={:?} smooth={} filter={} top={:?} left={:?} corner={}",
++            prediction_mode,
++            angle_delta,
++            smooth_neighbour,
++            enable_intra_edge_filter,
++            above,
++            left,
++            above_left
++        );
++    }
+     let edges = if prediction_mode == PredictionMode::Dc && filter_intra_mode.is_none() {
+         IntraEdges {
+             above: above_available.then_some(&*above),
+@@ -1193,6 +1219,24 @@ fn predict_plane_block_into(
+             subsampling_y,
+         )?;
+     }
++    if let Ok(path) = std::env::var("AVIF_PRED_TRACE") {
++        if plane_index > 0
++            && ((x >= 160 && x < 172 && y < 12) || (x >= 1180 && y >= 216 && y < 256))
++        {
++            use std::io::Write;
++            let mut log = std::fs::OpenOptions::new()
++                .create(true)
++                .append(true)
++                .open(path)
++                .unwrap();
++            writeln!(
++                log,
++                "TX {} {} {} {} {} mode={:?} alpha={:?}\nPRED {:?}",
++                plane_index, x, y, width, height, prediction_mode, cfl_alpha_q3, output
++            )
++            .unwrap();
++        }
++    }
+     Ok(())
+ }
+
+diff --git a/src/decoder.rs b/src/decoder.rs
+index 88ed223..b5a5424 100644
+--- a/src/decoder.rs
++++ b/src/decoder.rs
+@@ -2288,14 +2288,29 @@ fn finish_decoded_still_frame(
+         film_grain,
+         motion_field,
+     } = decoded;
++    if let Ok(dir) = std::env::var("AVIF_STAGE_DIR")
++        && !frame.color_config.monochrome
++    {
++        std::fs::write(
++            format!("{dir}/headers.txt"),
++            format!(
++                "{:?}\n{:?}\ngrain={:?}",
++                headers.frame, headers.sequence, film_grain
++            ),
++        )
++        .unwrap();
++    }
++    investigation_stage_dump(&frame, "raw");
+     if validate_filters {
+         apply_deblock_stage(&mut frame, &headers.frame, &post_filter_state);
++        investigation_stage_dump(&frame, "deblock");
+         let restoration_boundaries = headers
+             .frame
+             .restoration
+             .uses_lr
+             .then(|| capture_restoration_boundary_rows(&frame));
+         apply_cdef_stage(&mut frame, &headers.frame, &post_filter_state);
++        investigation_stage_dump(&frame, "cdef");
+         apply_loop_restoration_stage_with_boundaries(
+             &mut frame,
+             &post_filter_state,
+@@ -2303,6 +2318,7 @@ fn finish_decoded_still_frame(
+             &[1, 2],
+             restoration_boundaries.as_deref(),
+         );
++        investigation_stage_dump(&frame, "restoration");
+         crop_frame_buffers_to_plan(&mut frame.buffers, &headers.decode_plan)?;
+         apply_superres_horizontal(
+             &mut frame.buffers,
+@@ -2317,6 +2333,35 @@ fn finish_decoded_still_frame(
+     Ok((frame, motion_field))
+ }
+
++fn investigation_stage_dump(frame: &DecodedFrame, stage: &str) {
++    if frame.color_config.monochrome {
++        return;
++    }
++    use std::io::Write;
++    let Ok(dir) = std::env::var("AVIF_STAGE_DIR") else {
++        return;
++    };
++    let mut out = std::fs::File::create(format!("{dir}/{stage}.yuv")).unwrap();
++    for p in &frame.buffers.planes {
++        let w = frame
++            .width
++            .div_ceil(1 << usize::from(p.layout.subsampling_x));
++        let h = frame
++            .height
++            .div_ceil(1 << usize::from(p.layout.subsampling_y));
++        for y in 0..h {
++            for x in 0..w {
++                let v = p.samples[y * p.layout.stride() + x];
++                if frame.bit_depth > 8 {
++                    out.write_all(&v.to_le_bytes()).unwrap();
++                } else {
++                    out.write_all(&[v as u8]).unwrap();
++                }
++            }
++        }
++    }
++}
++
+ fn apply_deblock_stage(
+     frame: &mut DecodedFrame,
+     frame_header: &FrameHeader,
+@@ -2984,6 +3029,12 @@ fn apply_deblock_plane_with_filter_grid(
+     shared_filter_grid: Option<&[Option<crate::av1::BlockFilterState>]>,
+     shared_boundary_orders: Option<&StrictDeblockBoundaryOrderOwner>,
+ ) {
++    if std::env::var_os("AVIF_PROBE_ZERO").is_some()
++        && frame_header.loop_filter.levels[0] == 0
++        && frame_header.loop_filter.levels[1] == 0
++    {
++        return;
++    }
+     const FILTER_GRID_STEP: usize = DEBLOCK_FILTER_GRID_STEP;
+     let filter_grid_width = frame_width.div_ceil(FILTER_GRID_STEP);
+     let filter_grid_height = frame_height.div_ceil(FILTER_GRID_STEP);

@@ -1,0 +1,49 @@
+diff --git a/src/recon_tmpl.c b/src/recon_tmpl.c
+index 426fa40..f55fff5 100644
+--- a/src/recon_tmpl.c
++++ b/src/recon_tmpl.c
+@@ -1468,6 +1468,7 @@ void bytefn(dav1d_recon_b_intra)(Dav1dTaskContext *const t, const enum BlockSize
+                             const int sby = t->by >> f->sb_shift;
+                             top_sb_edge += f->sb128w * 128 * (sby - 1);
+                         }
++                        if ((t->bx >> ss_hor)*4 == 164 && (t->by >> ss_ver)*4 == 4) fprintf(stderr,"DAVEDGE pl=%d angle=%d sm=%d mode=%d\n",pl,angle,sm_uv_fl,b->uv_mode);
+                         const enum IntraPredMode uv_mode =
+                              b->uv_mode == CFL_PRED ? DC_PRED : b->uv_mode;
+                         const int xpos = t->bx >> ss_hor, ypos = t->by >> ss_ver;
+@@ -1505,6 +1506,15 @@ void bytefn(dav1d_recon_b_intra)(Dav1dTaskContext *const t, const enum BlockSize
+                         }
+
+                     skip_uv_pred: {}
++                        if (getenv("AVIF_PRED_TRACE")) {
++                            const int px=(t->bx >> ss_hor)*4, py=(t->by >> ss_ver)*4;
++                            if ((px>=160 && px<172 && py<12) || (px>=1180 && py>=216 && py<256)) {
++                                FILE *tr=fopen(getenv("AVIF_PRED_TRACE"),"a");
++                                fprintf(tr,"TX %d %d %d %d %d mode=%d alpha=%d\nPRED",pl+1,px,py,uv_t_dim->w*4,uv_t_dim->h*4,b->uv_mode,b->cfl_alpha[pl]);
++                                for(int yy=0;yy<uv_t_dim->h*4;yy++) for(int xx=0;xx<uv_t_dim->w*4;xx++) fprintf(tr," %d",dst[yy*PXSTRIDE(stride)+xx]);
++                                fprintf(tr,"\n");fclose(tr);
++                            }
++                        }
+                         if (!b->skip) {
+                             enum TxfmType txtp;
+                             int eob;
+@@ -1536,9 +1546,20 @@ void bytefn(dav1d_recon_b_intra)(Dav1dTaskContext *const t, const enum BlockSize
+                                 if (DEBUG_BLOCK_INFO && DEBUG_B_PIXELS)
+                                     coef_dump(cf, uv_t_dim->h * 4,
+                                               uv_t_dim->w * 4, 3, "dq");
++                                FILE *trace = NULL;
++                                const int px = (t->bx * 4) >> ss_hor;
++                                const int py = (t->by * 4) >> ss_ver;
++                                if (getenv("AVIF_RECON_TRACE") && ((px >= 160 && px < 172 && py < 12) || (px >= 1180 && py >= 216 && py < 256))) {
++                                    trace = fopen(getenv("AVIF_RECON_TRACE"), "a");
++                                    fprintf(trace,"TX %d %d %d %d %d type=%d mode=%d eob=%d\n",pl+1,px,py,uv_t_dim->w*4,uv_t_dim->h*4,txtp,b->uv_mode,eob);
++                                    fprintf(trace,"PRED"); for(int yy=0;yy<uv_t_dim->h*4;yy++) for(int xx=0;xx<uv_t_dim->w*4;xx++) fprintf(trace," %d",dst[yy*PXSTRIDE(stride)+xx]); fprintf(trace,"\nDQ");
++                                    for(int k=0;k<uv_t_dim->w*uv_t_dim->h*16;k++) fprintf(trace," %d",cf[k]); fprintf(trace,"\n");
++                                }
+                                 dsp->itx.itxfm_add[b->uvtx]
+                                                   [txtp](dst, stride,
+                                                          cf, eob HIGHBD_CALL_SUFFIX);
++                                if (trace) { fprintf(trace,"RECON"); for(int yy=0;yy<uv_t_dim->h*4;yy++) for(int xx=0;xx<uv_t_dim->w*4;xx++) fprintf(trace," %d",dst[yy*PXSTRIDE(stride)+xx]); fprintf(trace,"\n"); fclose(trace); }
++
+                                 if (DEBUG_BLOCK_INFO && DEBUG_B_PIXELS)
+                                     hex_dump(dst, stride, uv_t_dim->w * 4,
+                                              uv_t_dim->h * 4, "recon");

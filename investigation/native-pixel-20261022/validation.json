@@ -1,0 +1,33 @@
+{
+  "cargo_test_locked": {
+    "exit_code": 0,
+    "suites": 19,
+    "passed": 903,
+    "failed": 0,
+    "ignored": 9,
+    "unit_suite": {
+      "passed": 709,
+      "failed": 0,
+      "ignored": 6
+    }
+  },
+  "avis_regression": {
+    "exit_code": 0,
+    "passed": 7
+  },
+  "cargo_fmt_check": {
+    "exit_code": 0
+  },
+  "measurement_runner": {
+    "images": 7,
+    "native_reproduced": 7,
+    "reference_routes_equal": 4
+  },
+  "probe_patch_apply_check": {
+    "exit_code": 0
+  },
+  "dav1d_trace_patch_reverse_check": {
+    "exit_code": 0
+  },
+  "product_src_cargo_manifest_lock_diff_vs_pr3": "empty"
+}
