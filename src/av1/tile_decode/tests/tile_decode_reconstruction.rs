@@ -344,6 +344,230 @@ fn read_sample_avif() -> Option<Vec<u8>> {
 }
 
 #[test]
+fn small_inter_predictions_use_dimension_specific_four_tap_filters() {
+    // AOM filter.h av1_sub_pel_filters_4[8] is [0,0,-12,76,76,-12,0,0].
+    // A single 128-valued impulse at tap 2 therefore contributes -12; the
+    // full regular and sharp kernels incorrectly contribute -14 and -24.
+    // Add a DC pedestal so negative filter contributions are not clipped.
+    let plane = PlaneBuffer {
+        layout: PlaneLayout {
+            plane: 0,
+            width: 16,
+            height: 16,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 256,
+        },
+        samples: (0..256)
+            .map(|i| if i % 16 == 3 { 192 } else { 64 })
+            .collect(),
+    };
+    use crate::av1::frame::InterpolationFilter::*;
+    use crate::av1::tile_decode::reconstruction::predict_inter_sample;
+    for filter in [Regular, Sharp, Smooth] {
+        let expected = if filter == Smooth { 76 } else { 52 };
+        assert_eq!(
+            predict_inter_sample(&plane, 4, 4, 8, 0, (filter, Regular), 8, (4, 8)),
+            expected,
+            "horizontal {filter:?}"
+        );
+        // Small vertical dimension must not switch the horizontal kernel.
+        let wide = if filter == Sharp {
+            40
+        } else if filter == Smooth {
+            78
+        } else {
+            50
+        };
+        assert_eq!(
+            predict_inter_sample(&plane, 4, 4, 8, 0, (filter, Regular), 8, (8, 4)),
+            wide,
+            "wide horizontal {filter:?}"
+        );
+    }
+    let mut transposed = plane.clone();
+    for y in 0..16 {
+        for x in 0..16 {
+            transposed.samples[y * 16 + x] = plane.samples[x * 16 + y];
+        }
+    }
+    for filter in [Regular, Sharp, Smooth] {
+        let expected = if filter == Smooth { 76 } else { 52 };
+        assert_eq!(
+            predict_inter_sample(&transposed, 4, 4, 0, 8, (Regular, filter), 8, (8, 4)),
+            expected,
+            "vertical {filter:?}"
+        );
+    }
+}
+
+#[test]
+fn obmc_filter_choice_is_independent_of_transform_subdivision() {
+    use crate::av1::frame::InterpolationFilter;
+    use crate::av1::tile_decode::diagnostic::{ObmcNeighbor, ObmcNeighbors};
+    use crate::av1::tile_decode::reconstruction::apply_obmc_edge_blend;
+    let reference = PlaneBuffer {
+        layout: PlaneLayout {
+            plane: 0,
+            width: 32,
+            height: 32,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 1024,
+        },
+        samples: (0..1024)
+            .map(|i| ((i * 37 + i / 32 * 53) % 256) as u16)
+            .collect(),
+    };
+    for above in [true, false] {
+        for filter in [
+            InterpolationFilter::Regular,
+            InterpolationFilter::Sharp,
+            InterpolationFilter::Smooth,
+        ] {
+            let neighbor = ObmcNeighbor {
+                reference_frame: 0,
+                origin_x: if above { 8 } else { 0 },
+                origin_y: if above { 0 } else { 8 },
+                width: 16,
+                height: 16,
+                motion_vector: (4, 4),
+                interpolation_filters: (filter, filter),
+            };
+            let mut neighbors = ObmcNeighbors::default();
+            if above {
+                neighbors.above[0] = Some(neighbor);
+            } else {
+                neighbors.left[0] = Some(neighbor);
+            }
+            let mut whole = vec![64; 16 * 16];
+            apply_obmc_edge_blend(
+                &mut whole,
+                &reference,
+                8,
+                8,
+                8,
+                8,
+                16,
+                16,
+                16,
+                16,
+                0,
+                0,
+                &neighbors,
+                &mut [0; 256],
+                8,
+                None,
+                0,
+            )
+            .unwrap();
+            assert!(whole.iter().any(|&sample| sample != 64));
+            let mut divided = vec![64; 16 * 16];
+            for y in (0..16).step_by(4) {
+                for x in (0..16).step_by(4) {
+                    let mut tile = [64; 16];
+                    apply_obmc_edge_blend(
+                        &mut tile,
+                        &reference,
+                        8,
+                        8,
+                        8 + x,
+                        8 + y,
+                        4,
+                        4,
+                        16,
+                        16,
+                        0,
+                        0,
+                        &neighbors,
+                        &mut [0; 16],
+                        8,
+                        None,
+                        0,
+                    )
+                    .unwrap();
+                    for row in 0..4 {
+                        divided[(y + row) * 16 + x..(y + row) * 16 + x + 4]
+                            .copy_from_slice(&tile[row * 4..row * 4 + 4]);
+                    }
+                }
+            }
+            assert_eq!(whole, divided, "above={above} filter={filter:?}");
+        }
+    }
+}
+
+fn inter_precision_impulse(value: u16) -> PlaneBuffer {
+    let mut samples = vec![0; 16 * 16];
+    samples[4 * 16 + 4] = value;
+    PlaneBuffer {
+        layout: PlaneLayout {
+            plane: 0,
+            width: 16,
+            height: 16,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: samples.len(),
+        },
+        samples,
+    }
+}
+
+#[test]
+fn inter_filter_precision_regular_2d_matches_aom() {
+    use crate::av1::frame::InterpolationFilter::Regular;
+    use crate::av1::tile_decode::reconstruction::predict_inter_sample;
+    // libaom av1_highbd_convolve_2d_sr_c, regular phase (8,8), 8x8 block:
+    // one unit impulse at the source coordinate produces 0 at every depth.
+    // Rounding the horizontal 76/128 to 1 prematurely instead produces 1.
+    let plane = inter_precision_impulse(1);
+    for bit_depth in [8, 10, 12] {
+        assert_eq!(
+            predict_inter_sample(&plane, 4, 4, 8, 8, (Regular, Regular), bit_depth, (8, 8)),
+            0,
+            "{bit_depth}-bit regular 2D interpolation"
+        );
+    }
+}
+
+#[test]
+fn inter_filter_precision_horizontal_matches_aom() {
+    use crate::av1::frame::InterpolationFilter::Regular;
+    use crate::av1::tile_decode::reconstruction::predict_inter_sample;
+    // AOM's horizontal-only route also rounds in two stages (3 then 4 bits):
+    // ROUND(ROUND(21*76,3),4) = 13; a single 7-bit round incorrectly gives 12.
+    assert_eq!(
+        predict_inter_sample(
+            &inter_precision_impulse(21),
+            4,
+            4,
+            8,
+            0,
+            (Regular, Regular),
+            8,
+            (8, 8),
+        ),
+        13
+    );
+}
+
+#[test]
+fn inter_filter_precision_twelve_bit_bilinear_matches_aom() {
+    use crate::av1::frame::InterpolationFilter::Bilinear;
+    use crate::av1::tile_decode::reconstruction::predict_inter_sample;
+    // libaom's 12-bit round_0=5 is material even for the bilinear kernel:
+    // impulse 1, phase (1,8) produces 1, rather than the unrounded product's 0.
+    let plane = inter_precision_impulse(1);
+    for (bit_depth, expected) in [(8, 0), (10, 0), (12, 1)] {
+        assert_eq!(
+            predict_inter_sample(&plane, 4, 4, 1, 8, (Bilinear, Bilinear), bit_depth, (8, 8)),
+            expected,
+            "{bit_depth}-bit bilinear interpolation"
+        );
+    }
+}
+
+#[test]
 fn cfl_at_partial_frame_edge_uses_complete_luma_transform() {
     let data = include_bytes!("../../../../tests/WML2Viewer.avif");
     let info = parse_avif(data).unwrap();

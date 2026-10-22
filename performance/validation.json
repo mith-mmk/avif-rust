@@ -1,0 +1,21 @@
+{
+  "release_all_features": {
+    "command": "cargo test --locked --release --all-features",
+    "passed": 915,
+    "failed": 0,
+    "ignored": 9
+  },
+  "format": "passed",
+  "diff_check": "passed",
+  "policy": "No merge, release, publication, tag, forced push or dependency pin change.",
+  "strict_clippy_all_features_all_targets": "passed",
+  "mandatory_default_avis": {
+    "passed": 7,
+    "failed": 0,
+    "full_native_samples": 368640
+  },
+  "filter_and_strict_budget_tests": {
+    "passed": 45,
+    "failed": 0
+  }
+}

@@ -112,6 +112,7 @@ pub(super) fn decode_luma_leaf_block(
         block_mode
             .motion_vector
             .is_some_and(|(x, y)| x != 0 || y != 0),
+        block_mode.global_motion_index.is_some(),
         block_mode.y_mode,
         block_mode.uv_mode,
         block_mode.delta_lf,

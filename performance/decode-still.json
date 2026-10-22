@@ -1,0 +1,140 @@
+{
+  "system": "Linux-6.18.55-x86_64-with-glibc2.41",
+  "before_binary": "/tmp/avif-decode-before",
+  "after_binary": "/tmp/avif-decode-after",
+  "arguments": [
+    "tests/WML2Viewer.avif",
+    "still",
+    "9"
+  ],
+  "trials": {
+    "before": [
+      {
+        "median_ms": 124.553358,
+        "min_ms": 119.455401,
+        "max_ms": 135.043699,
+        "iterations": 9,
+        "allocations": 27058,
+        "requested_bytes": 52553475,
+        "checksum": "f1d0fb13ee6627ef",
+        "peak_rss_kib": 31176,
+        "workload": "input=tests/WML2Viewer.avif bytes=20557 dimensions=900x900 bit_depth=8 frames=1 mode=still"
+      },
+      {
+        "median_ms": 123.894076,
+        "min_ms": 113.663759,
+        "max_ms": 146.13671,
+        "iterations": 9,
+        "allocations": 27058,
+        "requested_bytes": 52553475,
+        "checksum": "f1d0fb13ee6627ef",
+        "peak_rss_kib": 30992,
+        "workload": "input=tests/WML2Viewer.avif bytes=20557 dimensions=900x900 bit_depth=8 frames=1 mode=still"
+      },
+      {
+        "median_ms": 124.996694,
+        "min_ms": 113.149826,
+        "max_ms": 132.512139,
+        "iterations": 9,
+        "allocations": 27058,
+        "requested_bytes": 52553475,
+        "checksum": "f1d0fb13ee6627ef",
+        "peak_rss_kib": 29620,
+        "workload": "input=tests/WML2Viewer.avif bytes=20557 dimensions=900x900 bit_depth=8 frames=1 mode=still"
+      },
+      {
+        "median_ms": 113.407975,
+        "min_ms": 108.333527,
+        "max_ms": 130.884669,
+        "iterations": 9,
+        "allocations": 27058,
+        "requested_bytes": 52553475,
+        "checksum": "f1d0fb13ee6627ef",
+        "peak_rss_kib": 31000,
+        "workload": "input=tests/WML2Viewer.avif bytes=20557 dimensions=900x900 bit_depth=8 frames=1 mode=still"
+      },
+      {
+        "median_ms": 117.357312,
+        "min_ms": 109.716689,
+        "max_ms": 127.230663,
+        "iterations": 9,
+        "allocations": 27058,
+        "requested_bytes": 52553475,
+        "checksum": "f1d0fb13ee6627ef",
+        "peak_rss_kib": 31148,
+        "workload": "input=tests/WML2Viewer.avif bytes=20557 dimensions=900x900 bit_depth=8 frames=1 mode=still"
+      }
+    ],
+    "after": [
+      {
+        "median_ms": 123.866357,
+        "min_ms": 113.811146,
+        "max_ms": 166.795916,
+        "iterations": 9,
+        "allocations": 27056,
+        "requested_bytes": 49313523,
+        "checksum": "f1d0fb13ee6627ef",
+        "peak_rss_kib": 30732,
+        "workload": "input=tests/WML2Viewer.avif bytes=20557 dimensions=900x900 bit_depth=8 frames=1 mode=still"
+      },
+      {
+        "median_ms": 126.991631,
+        "min_ms": 112.500399,
+        "max_ms": 144.171982,
+        "iterations": 9,
+        "allocations": 27056,
+        "requested_bytes": 49313523,
+        "checksum": "f1d0fb13ee6627ef",
+        "peak_rss_kib": 30600,
+        "workload": "input=tests/WML2Viewer.avif bytes=20557 dimensions=900x900 bit_depth=8 frames=1 mode=still"
+      },
+      {
+        "median_ms": 109.487313,
+        "min_ms": 105.436463,
+        "max_ms": 126.507841,
+        "iterations": 9,
+        "allocations": 27056,
+        "requested_bytes": 49313523,
+        "checksum": "f1d0fb13ee6627ef",
+        "peak_rss_kib": 30672,
+        "workload": "input=tests/WML2Viewer.avif bytes=20557 dimensions=900x900 bit_depth=8 frames=1 mode=still"
+      },
+      {
+        "median_ms": 111.472267,
+        "min_ms": 108.293673,
+        "max_ms": 115.237177,
+        "iterations": 9,
+        "allocations": 27056,
+        "requested_bytes": 49313523,
+        "checksum": "f1d0fb13ee6627ef",
+        "peak_rss_kib": 30604,
+        "workload": "input=tests/WML2Viewer.avif bytes=20557 dimensions=900x900 bit_depth=8 frames=1 mode=still"
+      },
+      {
+        "median_ms": 123.427576,
+        "min_ms": 112.330172,
+        "max_ms": 147.369633,
+        "iterations": 9,
+        "allocations": 27056,
+        "requested_bytes": 49313523,
+        "checksum": "f1d0fb13ee6627ef",
+        "peak_rss_kib": 30732,
+        "workload": "input=tests/WML2Viewer.avif bytes=20557 dimensions=900x900 bit_depth=8 frames=1 mode=still"
+      }
+    ]
+  },
+  "summary": {
+    "before": {
+      "median_ms": 123.894076,
+      "allocations": 27058,
+      "requested_bytes": 52553475,
+      "peak_rss_kib": 31000
+    },
+    "after": {
+      "median_ms": 123.427576,
+      "allocations": 27056,
+      "requested_bytes": 49313523,
+      "peak_rss_kib": 30672
+    }
+  }
+}

@@ -243,6 +243,8 @@ fn cdef_filter_state(x: usize, y: usize, block_size: BlockSize) -> BlockFilterSt
         skip: false,
         is_inter: false,
         reference_frame: None,
+        loop_filter_reference: Some(0),
+        loop_filter_mode: 0,
         has_nonzero_mv: false,
         y_mode: PredictionMode::Dc,
         uv_mode: None,
@@ -1864,6 +1866,25 @@ fn strict_cdef_source_core_matches_legacy_for_subsampling_and_edges() {
         &[(0, 0, 0, 0, 0)],
     );
     assert_eq!(strict_output, source);
+}
+
+#[test]
+fn deblock_filter_grid_keeps_each_four_pixel_reference() {
+    let plan = StrictDeblockFilterGridPlan::for_frame(8, 8).unwrap();
+    assert_eq!((plan.width, plan.height, plan.len), (2, 2, 4));
+    let mut state = PostFilterState::default();
+    for index in 0..4 {
+        let mut block = cdef_filter_state((index % 2) * 4, (index / 2) * 4, BlockSize::Block4x4);
+        block.loop_filter_reference = Some(index as u8 + 1);
+        state.block_filter_states.push(block);
+    }
+    let mut grid = vec![None; plan.len];
+    super::populate_deblock_filter_grid(&mut grid, plan.width, plan.height, &state);
+    let refs: Vec<_> = grid
+        .iter()
+        .map(|v| v.unwrap().loop_filter_reference.unwrap())
+        .collect();
+    assert_eq!(refs, [1, 2, 3, 4]);
 }
 
 #[test]

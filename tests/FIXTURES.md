@@ -37,6 +37,19 @@ and is included in the published-source package test inventory.
   chroma palette maps, incorrect inferred compound index, and rejection of
   a valid one-byte entropy tile. The required test checks complete decoding
   and agreement between batch, incremental, primary and indexed display APIs.
+- `avis-subsampled-key-reference.yuv`: the first displayed frame of the same
+  non-lossless AVIS fixture, as 6,144 native Y/U/V bytes. FFmpeg dav1d 1.5.1,
+  FFmpeg libaom 3.12.1 and scalar AOM commit
+  `9440aeedd097343b763dfe1c75af72c99f4a3175` agree exactly. This is a
+  same-bitstream decoder oracle, not a comparison with the uncompressed input.
+  It catches CDEF incorrectly using chroma subsampled bounds for the luma plane.
+  SHA-256: `d1dcfdf234f15af9ebc4ff8952c687921def68c891032268921c8e22421e94b6`.
+- `avis-subsampled-reference.yuv`: all 60 displayed frames of the tracked
+  non-lossless AVIS bitstream, with 368,640 native Y/U/V bytes. The same
+  dav1d, libaom and scalar AOM versions above agree byte-for-byte. Required
+  regressions compare every sample exactly, including Inter, hidden-reference
+  propagation and show-existing output; no tolerance or external tool is used.
+  SHA-256: `3c97d5771e916c2cc1c54df81f1c5ac9fd6a505b02953509af7a6d998171c8bc`.
 - `lossless-sub8x8-palette.avif`: the lossless first key frame, remuxed as a
   still item. It fails strict entropy termination on the pre-fix decoder.
   SHA-256: `8848e29f4d8f8289fe25011f61e5a11353f81538b3390266fad15bce6529ff62`.
@@ -64,11 +77,37 @@ ffmpeg -y -v error -c:v libdav1d \
   -pix_fmt yuv420p -f rawvideo .test-avis-regenerate/lossless-sub8x8-palette.yuv
 ```
 
-The non-lossless 60-frame fixture is a decode/sequence-state regression,
-not a claim of exact pixel conformance. Independent full-sequence decoding
-must select `-map 0:v:1`; FFmpeg's default stream is only the primary still.
-The current decoder still differs from the independent oracle on this lossy
-sequence. See `avis-validation.json` for measured differences and scope.
+The tracked 60-frame fixture now has an exact independent native-sample oracle.
+This establishes conformance for this bitstream rather than every AV1 feature
+or stream. Independent full-sequence decoding must select `-map 0:v:1`;
+FFmpeg's default stream is only the primary still. See
+`reconstruction-validation.json` for stage isolation, source pins and results.
+
+Regenerate the non-lossless key oracle from the tracked AVIS bitstream (not
+by re-encoding the source):
+
+```sh
+ffmpeg -y -v error -c:v libdav1d -i tests/avis-subsampled-palette.avif \
+  -map 0:v:1 -frames:v 1 -pix_fmt yuv420p -f rawvideo \
+  tests/avis-subsampled-key-reference.yuv
+```
+
+The independent libaom decode uses the same command with `-c:v libaom-av1`.
+Temporary stage instrumentation in AOM and Rust verified that the key frame
+matched before CDEF; the instrumentation is not part of the shipping sources.
+
+Regenerate the full-sequence oracle from the same tracked bitstream:
+
+```sh
+ffmpeg -y -v error -c:v libdav1d -i tests/avis-subsampled-palette.avif \
+  -map 0:v:1 -pix_fmt yuv420p -f rawvideo \
+  tests/avis-subsampled-reference.yuv
+```
+
+The same command with `-c:v libaom-av1` must produce identical bytes. A scalar
+AOM decode of the remuxed IVF stream independently confirms all samples and
+all 61 coded frames at prefilter, deblock, CDEF and restoration checkpoints.
+Temporary tracing used to isolate these stages is removed from shipping code.
 
 ## Native pixel conformance fixtures
 

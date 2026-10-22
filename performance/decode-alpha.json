@@ -1,0 +1,140 @@
+{
+  "system": "Linux-6.18.55-x86_64-with-glibc2.41",
+  "before_binary": "/tmp/avif-decode-before",
+  "after_binary": "/tmp/avif-decode-after",
+  "arguments": [
+    "tests/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
+    "still",
+    "9"
+  ],
+  "trials": {
+    "before": [
+      {
+        "median_ms": 2.35597,
+        "min_ms": 2.278016,
+        "max_ms": 2.564242,
+        "iterations": 9,
+        "allocations": 2756,
+        "requested_bytes": 1952009,
+        "checksum": "078f606fe04d1454",
+        "peak_rss_kib": 3164,
+        "workload": "input=tests/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif bytes=3463 dimensions=128x128 bit_depth=8 frames=1 mode=still"
+      },
+      {
+        "median_ms": 2.256522,
+        "min_ms": 2.22837,
+        "max_ms": 2.414062,
+        "iterations": 9,
+        "allocations": 2756,
+        "requested_bytes": 1952009,
+        "checksum": "078f606fe04d1454",
+        "peak_rss_kib": 3216,
+        "workload": "input=tests/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif bytes=3463 dimensions=128x128 bit_depth=8 frames=1 mode=still"
+      },
+      {
+        "median_ms": 2.464486,
+        "min_ms": 2.271122,
+        "max_ms": 2.584472,
+        "iterations": 9,
+        "allocations": 2756,
+        "requested_bytes": 1952009,
+        "checksum": "078f606fe04d1454",
+        "peak_rss_kib": 3356,
+        "workload": "input=tests/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif bytes=3463 dimensions=128x128 bit_depth=8 frames=1 mode=still"
+      },
+      {
+        "median_ms": 2.443836,
+        "min_ms": 2.254278,
+        "max_ms": 2.700913,
+        "iterations": 9,
+        "allocations": 2756,
+        "requested_bytes": 1952009,
+        "checksum": "078f606fe04d1454",
+        "peak_rss_kib": 3256,
+        "workload": "input=tests/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif bytes=3463 dimensions=128x128 bit_depth=8 frames=1 mode=still"
+      },
+      {
+        "median_ms": 2.247237,
+        "min_ms": 2.211555,
+        "max_ms": 2.764166,
+        "iterations": 9,
+        "allocations": 2756,
+        "requested_bytes": 1952009,
+        "checksum": "078f606fe04d1454",
+        "peak_rss_kib": 3364,
+        "workload": "input=tests/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif bytes=3463 dimensions=128x128 bit_depth=8 frames=1 mode=still"
+      }
+    ],
+    "after": [
+      {
+        "median_ms": 2.435824,
+        "min_ms": 2.24887,
+        "max_ms": 3.227105,
+        "iterations": 9,
+        "allocations": 2754,
+        "requested_bytes": 1886473,
+        "checksum": "078f606fe04d1454",
+        "peak_rss_kib": 3208,
+        "workload": "input=tests/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif bytes=3463 dimensions=128x128 bit_depth=8 frames=1 mode=still"
+      },
+      {
+        "median_ms": 2.335126,
+        "min_ms": 2.254377,
+        "max_ms": 2.439349,
+        "iterations": 9,
+        "allocations": 2754,
+        "requested_bytes": 1886473,
+        "checksum": "078f606fe04d1454",
+        "peak_rss_kib": 3220,
+        "workload": "input=tests/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif bytes=3463 dimensions=128x128 bit_depth=8 frames=1 mode=still"
+      },
+      {
+        "median_ms": 2.557333,
+        "min_ms": 2.213087,
+        "max_ms": 2.884402,
+        "iterations": 9,
+        "allocations": 2754,
+        "requested_bytes": 1886473,
+        "checksum": "078f606fe04d1454",
+        "peak_rss_kib": 3304,
+        "workload": "input=tests/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif bytes=3463 dimensions=128x128 bit_depth=8 frames=1 mode=still"
+      },
+      {
+        "median_ms": 2.24872,
+        "min_ms": 2.230824,
+        "max_ms": 2.380272,
+        "iterations": 9,
+        "allocations": 2754,
+        "requested_bytes": 1886473,
+        "checksum": "078f606fe04d1454",
+        "peak_rss_kib": 3296,
+        "workload": "input=tests/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif bytes=3463 dimensions=128x128 bit_depth=8 frames=1 mode=still"
+      },
+      {
+        "median_ms": 2.324761,
+        "min_ms": 2.227489,
+        "max_ms": 2.421232,
+        "iterations": 9,
+        "allocations": 2754,
+        "requested_bytes": 1886473,
+        "checksum": "078f606fe04d1454",
+        "peak_rss_kib": 3320,
+        "workload": "input=tests/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif bytes=3463 dimensions=128x128 bit_depth=8 frames=1 mode=still"
+      }
+    ]
+  },
+  "summary": {
+    "before": {
+      "median_ms": 2.35597,
+      "allocations": 2756,
+      "requested_bytes": 1952009,
+      "peak_rss_kib": 3256
+    },
+    "after": {
+      "median_ms": 2.335126,
+      "allocations": 2754,
+      "requested_bytes": 1886473,
+      "peak_rss_kib": 3296
+    }
+  }
+}

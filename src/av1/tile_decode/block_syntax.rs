@@ -1656,7 +1656,7 @@ impl<'a> TileDecoder<'a> {
         Ok(self.current_delta_lf)
     }
 
-    fn read_intra_tx_size(
+    pub(super) fn read_intra_tx_size(
         &mut self,
         frame: &FrameHeader,
         block_size: BlockSize,
@@ -1680,6 +1680,12 @@ impl<'a> TileDecoder<'a> {
             // Using the square helper here turns edge partitions such as
             // 32x64 into 32x32 and desynchronizes the entropy stream.
             TxMode::Largest => block_size.largest_supported_rect_tx_size(),
+            // skip_txfm suppresses the inter/IntrABC transform-size syntax,
+            // but the inferred size remains max_txsize_rect_lookup. It is
+            // also the transform extent used by loop filtering at PU edges.
+            TxMode::Select if skip && (is_inter || use_intrabc) => {
+                block_size.largest_supported_rect_tx_size()
+            }
             // Intra blocks signal the selected transform size even when
             // skip_txfm suppresses coefficient payloads. IntrABC is parsed as
             // an inter block by the AV1 syntax, so skipped IntrABC blocks do
@@ -2350,26 +2356,42 @@ fn validate_intrabc_mv(
     Ok(())
 }
 
-fn distance_weighted_compound_weight(
+pub(super) fn distance_weighted_compound_weight(
     sequence: &SequenceHeader,
     frame: &FrameHeader,
     primary_type: usize,
     secondary_type: usize,
 ) -> u8 {
+    // AV1's distance buckets deliberately do not use the exact distance
+    // ratio. AOM stores the first prediction's weight in sixteenths; retain
+    // this decoder's existing /64 contract for the compound blender.
+    const DISTANCE_FACTORS: [[i32; 2]; 3] = [[2, 3], [2, 5], [2, 7]];
+    const WEIGHTS: [[u8; 2]; 4] = [[9, 7], [11, 5], [12, 4], [13, 3]];
+    const MAX_FRAME_DISTANCE: i32 = 31;
     let current = frame.order_hint;
-    let primary = frame.reference_order_hints[primary_type].unwrap_or(current);
-    let secondary = frame.reference_order_hints[secondary_type].unwrap_or(current);
-    let primary_distance =
-        relative_order_distance(sequence.order_hint_bits, primary, current).abs();
-    let secondary_distance =
-        relative_order_distance(sequence.order_hint_bits, secondary, current).abs();
-    let total = primary_distance.saturating_add(secondary_distance);
-    if total == 0 {
-        return 32;
+    let primary = frame.reference_order_hints[primary_type].unwrap_or(0);
+    let secondary = frame.reference_order_hints[secondary_type].unwrap_or(0);
+    // d0 refers to the second reference, d1 to the first reference. This
+    // ordering also determines the specified tie and zero-distance behavior.
+    let d0 = relative_order_distance(sequence.order_hint_bits, secondary, current)
+        .abs()
+        .min(MAX_FRAME_DISTANCE);
+    let d1 = relative_order_distance(sequence.order_hint_bits, current, primary)
+        .abs()
+        .min(MAX_FRAME_DISTANCE);
+    let order = usize::from(d0 <= d1);
+    let mut bucket = 3;
+    if d0 != 0 && d1 != 0 {
+        for (index, factors) in DISTANCE_FACTORS.iter().enumerate() {
+            let first = d0 * factors[order];
+            let second = d1 * factors[1 - order];
+            if (d0 > d1 && first < second) || (d0 <= d1 && first > second) {
+                bucket = index;
+                break;
+            }
+        }
     }
-    u8::try_from((i64::from(secondary_distance) * 64 + i64::from(total / 2)) / i64::from(total))
-        .unwrap_or(32)
-        .min(64)
+    WEIGHTS[bucket][order] * 4
 }
 
 fn relative_order_distance(bits: u8, reference: u32, current: u32) -> i32 {

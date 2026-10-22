@@ -2,6 +2,36 @@
 
 All notable changes to this crate are documented in this file.
 
+## Unreleased
+
+- Apply CDEF over the full luma plane for subsampled images, retaining chroma
+  dimensions only for chroma planes in both serial and parallel paths.
+- Select AV1's four-tap interpolation kernels on prediction axes of four pixels
+  or less, using the full prediction block size rather than transform fragments.
+- Preserve single-reference separable interpolation precision with AV1's staged
+  rounding, including horizontal-only and 12-bit bilinear predictions; retain
+  the exact 8/10-bit bilinear fast path.
+- Retain fractional compound prediction precision through translation, warp,
+  equal/distance weighting and masks; clip only after the final blend.
+- Use AV1's discrete distance-weight table and correct wedge tables/signs.
+- Fix warped prediction output stride and affine filter phase origins.
+- Reconstruct shared sub-8x8 chroma regions using their luma owners' refs/MVs/filters.
+- Reuse and downsample the luma compound mask for chroma at every subsampling.
+- Correct inter-intra mask orientation and direction weights; preserve full
+  prediction-block edges across transform subdivisions and subsample luma wedges.
+- Select deblock strength from logical reference/mode metadata, with normative
+  delta scaling, previous-level fallback and shared-chroma MI/PU ownership.
+- Infer maximum rectangular transforms for skipped inter/IntrABC without
+  consuming entropy; retain lossless 4x4 transforms.
+- Use each OBMC neighbor's own primary reference, pairing sub8 neighbors and
+  enforcing the normative overlap limits.
+- Use AV1's reciprocal and signed rounding for affine projection/shear;
+  apply warp eligibility to full plane prediction geometry.
+- Add exact native YUV coverage for all 60 displayed AVIS frames. Independent
+  AOM stage dumps match all 61 coded frames before and after every filter.
+  This fixture's pixel differences are resolved; general AV1 conformance and
+  strict sequence sample-layout support are not expanded by this claim.
+
 ## 0.1.1 - 2026-10-19
 
 - Fix AVIS entropy desynchronization for shared sub-8x8 chroma palette maps

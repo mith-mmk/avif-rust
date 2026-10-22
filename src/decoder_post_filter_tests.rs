@@ -45,7 +45,8 @@ fn segmentation_loop_filter_delta_is_applied_before_other_deltas() {
 #[test]
 fn inter_loop_filter_uses_reference_and_motion_mode_deltas() {
     assert_eq!(loop_filter_reference_delta_index(true, Some(7)), 7);
-    assert_eq!(loop_filter_mode_delta_index(true, true), 1);
+    assert_eq!(loop_filter_mode_delta_index(true, false), 1);
+    assert_eq!(loop_filter_mode_delta_index(true, true), 0);
     assert_eq!(loop_filter_reference_delta_index(false, Some(7)), 0);
     assert_eq!(loop_filter_mode_delta_index(false, true), 0);
 }
@@ -284,6 +285,8 @@ fn cdef_block_mask_matches_aom_skip_txfm_rule() {
         skip: true,
         is_inter: false,
         reference_frame: None,
+        loop_filter_reference: Some(0),
+        loop_filter_mode: 0,
         has_nonzero_mv: false,
         y_mode: PredictionMode::Dc,
         uv_mode: Some(UvPredictionMode::Intra(PredictionMode::Dc)),
@@ -657,4 +660,287 @@ fn alpha_row_chunks_match_one_pass_with_subsampling() {
         );
     }
     assert_eq!(chunked, one_pass);
+}
+
+#[test]
+fn loop_filter_delta_scale_and_clamps_match_aom() {
+    // AV1 get_filter_level: clamp delta-LF, clamp segmentation, then
+    // scale reference/mode deltas by 1 << (segmented_level >> 5).
+    for (base, enabled, reference, mode, block, segment, expected) in [
+        (31, true, 1, 1, 0, 0, 33),
+        (32, true, 1, 1, 0, 0, 36),
+        (32, true, -2, 1, 0, 0, 30),
+        (30, true, 1, 1, 0, 2, 36),
+        (60, false, 0, 0, 10, -8, 55),
+        (2, false, 0, 0, -9, 10, 10),
+        (60, true, -2, 1, 10, -8, 53),
+    ] {
+        assert_eq!(
+            apply_loop_filter_deltas(base, enabled, reference, mode, block, segment),
+            expected
+        );
+    }
+}
+
+#[test]
+fn intra_deblock_ignores_nonzero_mode_delta_zero() {
+    let info = crate::container::parse_avif(include_bytes!("../tests/WML2Viewer.avif")).unwrap();
+    let seq = crate::obu::find_obu_payload(
+        &info.primary_item_payload,
+        crate::obu::ObuType::SequenceHeader,
+    )
+    .unwrap()
+    .unwrap();
+    let sequence = crate::av1::parse_sequence_header(seq).unwrap();
+    let payload =
+        crate::obu::find_obu_payload(&info.primary_item_payload, crate::obu::ObuType::Frame)
+            .unwrap()
+            .unwrap();
+    let mut frame = crate::av1::parse_frame_header(payload, &sequence).unwrap();
+    frame.loop_filter.levels = [2, 2, 0, 0];
+    frame.loop_filter.delta_enabled = true;
+    frame.loop_filter.ref_deltas = [0; 8];
+    frame.loop_filter.mode_deltas = [0; 2];
+    frame.loop_filter.sharpness = 0;
+    let mut state = PostFilterState::default();
+    for y in [0, 8] {
+        state.block_filter_states.push(BlockFilterState {
+            x: 0,
+            y,
+            block_size: BlockSize::Block8x8,
+            segment_id: 0,
+            skip: false,
+            is_inter: false,
+            reference_frame: None,
+            loop_filter_reference: Some(0),
+            loop_filter_mode: 0,
+            has_nonzero_mv: false,
+            y_mode: PredictionMode::Dc,
+            uv_mode: None,
+            delta_lf: [0; 4],
+        });
+        state
+            .transform_boundaries
+            .push(crate::av1::TransformBoundary {
+                block: crate::av1::TransformBlock {
+                    plane: 0,
+                    x: 0,
+                    y,
+                    tx_size: crate::av1::TxSize::Tx8x8,
+                },
+                tx_type: crate::av1::TxType::DctDct,
+                non_zero_coefficients: 0,
+                skip: false,
+                is_inter: false,
+                reference_frame: None,
+                has_nonzero_mv: false,
+                y_mode: PredictionMode::Dc,
+                uv_mode: None,
+            });
+    }
+    let mut baseline = PlaneBuffer {
+        layout: PlaneLayout {
+            plane: 0,
+            width: 8,
+            height: 16,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 128,
+        },
+        samples: (0..128)
+            .map(|i| match i / 8 {
+                0..=6 => 40,
+                7 => 41,
+                8 => 46,
+                _ => 47,
+            })
+            .collect(),
+    };
+    let mut nonzero = baseline.clone();
+    super::apply_deblock_plane(&mut baseline, 0, 8, 16, 8, false, false, &frame, &state);
+    frame.loop_filter.mode_deltas[0] = 10;
+    super::apply_deblock_plane(&mut nonzero, 0, 8, 16, 8, false, false, &frame, &state);
+    assert_eq!(nonzero.samples, baseline.samples);
+    assert_eq!(nonzero.samples[5 * 8 + 4], 40);
+}
+
+#[test]
+fn subsampled_skipped_chroma_prediction_edge_uses_bottom_right_owner() {
+    let info = crate::container::parse_avif(include_bytes!("../tests/WML2Viewer.avif")).unwrap();
+    let seq = crate::obu::find_obu_payload(
+        &info.primary_item_payload,
+        crate::obu::ObuType::SequenceHeader,
+    )
+    .unwrap()
+    .unwrap();
+    let sequence = crate::av1::parse_sequence_header(seq).unwrap();
+    let payload =
+        crate::obu::find_obu_payload(&info.primary_item_payload, crate::obu::ObuType::Frame)
+            .unwrap()
+            .unwrap();
+    let mut frame = crate::av1::parse_frame_header(payload, &sequence).unwrap();
+    frame.loop_filter.levels = [0, 0, 7, 0];
+    frame.loop_filter.delta_enabled = true;
+    frame.loop_filter.ref_deltas = [0; 8];
+    frame.loop_filter.ref_deltas[0] = -7;
+    frame.loop_filter.mode_deltas = [0; 2];
+    frame.loop_filter.sharpness = 0;
+    let mut state = PostFilterState::default();
+    // Shared chroma belongs to the bottom-right luma MI. The top-left MI
+    // intentionally has zero strength, so selecting it is observable.
+    for y in (0..16).step_by(4) {
+        for x in (0..16).step_by(4) {
+            state.block_filter_states.push(BlockFilterState {
+                x,
+                y,
+                block_size: BlockSize::Block4x4,
+                segment_id: 0,
+                skip: true,
+                is_inter: true,
+                reference_frame: Some(0),
+                loop_filter_reference: Some(if x % 8 == 4 && y % 8 == 4 { 1 } else { 0 }),
+                loop_filter_mode: 1,
+                has_nonzero_mv: false,
+                y_mode: PredictionMode::Dc,
+                uv_mode: None,
+                delta_lf: [0; 4],
+            });
+        }
+    }
+    state
+        .transform_boundaries
+        .push(crate::av1::TransformBoundary {
+            block: crate::av1::TransformBlock {
+                plane: 1,
+                x: 0,
+                y: 4,
+                tx_size: crate::av1::TxSize::Tx4x4,
+            },
+            tx_type: crate::av1::TxType::DctDct,
+            non_zero_coefficients: 0,
+            skip: true,
+            is_inter: true,
+            reference_frame: Some(0),
+            has_nonzero_mv: false,
+            y_mode: PredictionMode::Dc,
+            uv_mode: None,
+        });
+    let rows = [16, 97, 97, 97, 100, 101, 98, 101];
+    let mut plane = PlaneBuffer {
+        layout: PlaneLayout {
+            plane: 1,
+            width: 8,
+            height: 8,
+            subsampling_x: 1,
+            subsampling_y: 1,
+            sample_count: 64,
+        },
+        samples: (0..64).map(|i| rows[i / 8]).collect(),
+    };
+    super::apply_deblock_plane(&mut plane, 1, 16, 16, 8, true, true, &frame, &state);
+    // AOM set_lpf_parameters: logical LAST, level7, len4, skipped PU edge.
+    assert_eq!(plane.samples[3 * 8 + 1], 98);
+    assert_eq!(plane.samples[4 * 8 + 1], 99);
+}
+
+#[test]
+fn chroma_deblock_owner_coordinates_match_aom_mi_mapping() {
+    // AOM: mi_col = ss_x | ((x << ss_x) >> 2), and likewise for rows.
+    // The preceding plane sample must select the preceding shared MI,
+    // rather than simply adding four to its already odd luma MI index.
+    for (subsampling, coordinate, expected) in [
+        (0, 0, 0),
+        (0, 3, 0),
+        (0, 4, 4),
+        (0, 11, 8),
+        (1, 0, 4),
+        (1, 3, 4),
+        (1, 4, 12),
+        (1, 7, 12),
+        (1, 8, 20),
+        (1, 11, 20),
+        (1, 12, 28),
+    ] {
+        assert_eq!(
+            super::deblock_luma_owner_coordinate(coordinate, subsampling),
+            expected
+        );
+    }
+}
+
+#[test]
+fn deblock_zero_current_strength_uses_previous_block_strength() {
+    let info = crate::container::parse_avif(include_bytes!("../tests/WML2Viewer.avif")).unwrap();
+    let seq = crate::obu::find_obu_payload(
+        &info.primary_item_payload,
+        crate::obu::ObuType::SequenceHeader,
+    )
+    .unwrap()
+    .unwrap();
+    let sequence = crate::av1::parse_sequence_header(seq).unwrap();
+    let payload =
+        crate::obu::find_obu_payload(&info.primary_item_payload, crate::obu::ObuType::Frame)
+            .unwrap()
+            .unwrap();
+    let mut frame = crate::av1::parse_frame_header(payload, &sequence).unwrap();
+    frame.loop_filter.levels = [1, 0, 0, 0];
+    frame.loop_filter.delta_enabled = true;
+    frame.loop_filter.ref_deltas = [0; 8];
+    frame.loop_filter.ref_deltas[4] = -1;
+    frame.loop_filter.mode_deltas = [0; 2];
+    frame.loop_filter.sharpness = 0;
+    let mut state = PostFilterState::default();
+    for (x, reference) in [(0, 1), (8, 4)] {
+        state.block_filter_states.push(BlockFilterState {
+            x,
+            y: 0,
+            block_size: BlockSize::Block8x8,
+            segment_id: 0,
+            skip: true,
+            is_inter: true,
+            reference_frame: Some(0),
+            loop_filter_reference: Some(reference),
+            loop_filter_mode: 1,
+            has_nonzero_mv: false,
+            y_mode: PredictionMode::Dc,
+            uv_mode: None,
+            delta_lf: [0; 4],
+        });
+    }
+    state
+        .transform_boundaries
+        .push(crate::av1::TransformBoundary {
+            block: crate::av1::TransformBlock {
+                plane: 0,
+                x: 8,
+                y: 0,
+                tx_size: crate::av1::TxSize::Tx8x8,
+            },
+            tx_type: crate::av1::TxType::DctDct,
+            non_zero_coefficients: 0,
+            skip: true,
+            is_inter: true,
+            reference_frame: Some(0),
+            has_nonzero_mv: false,
+            y_mode: PredictionMode::Dc,
+            uv_mode: None,
+        });
+    // Actual order37 same-bitstream prefilter neighborhood at edge(8,29).
+    let row = [
+        32, 32, 32, 32, 32, 32, 32, 31, 32, 32, 32, 33, 33, 33, 33, 33,
+    ];
+    let mut plane = PlaneBuffer {
+        layout: PlaneLayout {
+            plane: 0,
+            width: 16,
+            height: 8,
+            subsampling_x: 0,
+            subsampling_y: 0,
+            sample_count: 128,
+        },
+        samples: (0..128).map(|i| row[i % 16]).collect(),
+    };
+    super::apply_deblock_plane(&mut plane, 0, 16, 8, 8, false, false, &frame, &state);
+    // AOM picks previous level1 when current level0: lim1, mblim7, len8.
+    assert_eq!(plane.samples[7], 32);
 }

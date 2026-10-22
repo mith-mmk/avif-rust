@@ -1,5 +1,8 @@
 # Native pixel conformance validation
 
+This is the PR #4 checkpoint record. For subsequent PR #3 integration, see
+[the combined-tree validation](pr3-main-integration.md).
+
 Base: main `070ad6509bad18f9ab76732d543659ef6d7f9129`. This branch is independent
 of open PR #3 (`d3ea4e602763951626d678291cc9c325e2c475b2`). Investigation:
 [5f2f38c](https://github.com/mith-mmk/avif-rust/tree/5f2f38c236051271a63798ab99662c9426573f80/investigation/native-pixel-20261022).
