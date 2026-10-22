@@ -61,6 +61,17 @@ fn zero_deblock_strengths_skip_boundary_traversal() {
         &state
     ));
 
+    let mut disabled_with_deltas = loop_filter;
+    disabled_with_deltas.delta_enabled = true;
+    disabled_with_deltas.ref_deltas[0] = 1;
+    disabled_with_deltas.mode_deltas[0] = 2;
+    disabled_with_deltas.levels[2] = 3;
+    assert!(!deblock_has_active_strengths(
+        &disabled_with_deltas,
+        &segmentation,
+        &state
+    ));
+
     let mut active_loop_filter = loop_filter;
     active_loop_filter.levels[0] = 1;
     assert!(deblock_has_active_strengths(

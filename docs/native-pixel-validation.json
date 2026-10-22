@@ -675,5 +675,61 @@
       "fixed": 10,
       "changed": 345
     }
-  ]
+  ],
+  "seven_images_strict_stages": [
+    {
+      "name": "colors_hdr_rec2020.avif",
+      "raw": 0,
+      "deblock": 0,
+      "cdef": 0,
+      "restoration": 0
+    },
+    {
+      "name": "fox.profile0.8bpc.yuv420.avif",
+      "raw": 0,
+      "deblock": 0,
+      "cdef": 0,
+      "restoration": 0
+    },
+    {
+      "name": "fox.profile1.10bpc.yuv444.avif",
+      "raw": 0,
+      "deblock": 0,
+      "cdef": 0,
+      "restoration": 0
+    },
+    {
+      "name": "fox.profile1.8bpc.yuv444.odd-width.odd-height.avif",
+      "raw": 0,
+      "deblock": 0,
+      "cdef": 0,
+      "restoration": 0
+    },
+    {
+      "name": "fox.profile2.12bpc.yuv444.avif",
+      "raw": 0,
+      "deblock": 0,
+      "cdef": 0,
+      "restoration": 0
+    },
+    {
+      "name": "paris_icc_exif_xmp.avif",
+      "raw": 0,
+      "deblock": 0,
+      "cdef": 0,
+      "restoration": 0
+    },
+    {
+      "name": "plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
+      "raw": 0,
+      "deblock": 0,
+      "cdef": 0,
+      "restoration": 0
+    }
+  ],
+  "plum_alpha": {
+    "samples": 16384,
+    "libaom_vs_dav1d_differences": 0,
+    "native_strict_vs_reference_differences": 0
+  }
 }

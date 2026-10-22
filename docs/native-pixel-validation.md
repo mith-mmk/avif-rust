@@ -43,7 +43,8 @@ References:
 
 The seven attached images (fox 8-bit 420, fox 10/12-bit 444, odd-size fox 8-bit
 444, plum alpha, Rec.2020 HDR, Paris ICC/Exif/XMP) have **zero differences at all
-four stages against both references**, and zero final strict/legacy differences.
+four stages against both references**, in both legacy and strict paths, and zero final strict/legacy differences.
+The 16,384 alpha samples also match both references.
 Stage dumps were inserted only in a disposable copy of this product patch.
 The private attached inputs, extracted bitstreams and raw frames are not committed.
 See the machine-readable summary in `native-pixel-validation.json`.
@@ -58,7 +59,8 @@ CfL, padded metadata, and strict exact/one-under admission and rollback.
 Fixture regeneration and licensing are in `tests/FIXTURES.md`.
 
 Local default release suite: 869 passed, 0 failed, 9 explicitly ignored.
-`cargo clippy --all-targets -- -D warnings` is included in validation. Hosted CI
+All-features release suite: 881 passed, 0 failed, 9 explicitly ignored.
+`cargo clippy --all-targets -- -D warnings` passed. Hosted CI
 and additional feature checks are recorded in the PR after completion.
 
 ## Broader coverage and remaining limits
