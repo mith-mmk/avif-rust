@@ -2335,8 +2335,8 @@ fn apply_deblock_stage(
     let subsampling_y = frame.color_config.subsampling_y;
     // The metadata grid is expressed in luma MI coordinates for every
     // plane. Build it once and share its immutable view across workers.
-    let grid_width = frame_width.div_ceil(DEBLOCK_FILTER_GRID_STEP);
-    let grid_height = frame_height.div_ceil(DEBLOCK_FILTER_GRID_STEP);
+    let grid_width = frame_width.div_ceil(8) * 2;
+    let grid_height = frame_height.div_ceil(8) * 2;
     let mut filter_grid = vec![None; grid_width * grid_height];
     populate_deblock_filter_grid(&mut filter_grid, grid_width, grid_height, state);
     let filter_grid = filter_grid.as_slice();
@@ -2399,10 +2399,11 @@ impl StrictDeblockFilterGridPlan {
                 "native AV1 deblock filter grid dimensions are empty".to_string(),
             ));
         }
-        const STEP: usize = DEBLOCK_FILTER_GRID_STEP;
+        // Two 4x4 MI cells per coded 8-pixel unit, including padded owners.
+        const STEP: usize = 8;
         let width = width
             .checked_add(STEP - 1)
-            .map(|value| value / STEP)
+            .map(|value| value / STEP * 2)
             .ok_or_else(|| {
                 DecoderError::InvalidParam(
                     "native AV1 deblock filter grid width overflows".to_string(),
@@ -2410,7 +2411,7 @@ impl StrictDeblockFilterGridPlan {
             })?;
         let height = height
             .checked_add(STEP - 1)
-            .map(|value| value / STEP)
+            .map(|value| value / STEP * 2)
             .ok_or_else(|| {
                 DecoderError::InvalidParam(
                     "native AV1 deblock filter grid height overflows".to_string(),
@@ -2985,8 +2986,9 @@ fn apply_deblock_plane_with_filter_grid(
     shared_boundary_orders: Option<&StrictDeblockBoundaryOrderOwner>,
 ) {
     const FILTER_GRID_STEP: usize = DEBLOCK_FILTER_GRID_STEP;
-    let filter_grid_width = frame_width.div_ceil(FILTER_GRID_STEP);
-    let filter_grid_height = frame_height.div_ceil(FILTER_GRID_STEP);
+    // Keep the bottom/right chroma owner even when it lies beyond visible MI.
+    let filter_grid_width = frame_width.div_ceil(8) * 2;
+    let filter_grid_height = frame_height.div_ceil(8) * 2;
     let filter_grid = match shared_filter_grid {
         Some(filter_grid) => std::borrow::Cow::Borrowed(filter_grid),
         None => {
@@ -3001,6 +3003,11 @@ fn apply_deblock_plane_with_filter_grid(
         }
     };
     let block_filter_state_at = |x: usize, y: usize| {
+        // Bounds must be checked in two dimensions: a padded MI at the right
+        // edge must never wrap into the next metadata row.
+        if x / FILTER_GRID_STEP >= filter_grid_width || y / FILTER_GRID_STEP >= filter_grid_height {
+            return None;
+        }
         filter_grid
             .get((y / FILTER_GRID_STEP) * filter_grid_width + x / FILTER_GRID_STEP)
             .copied()
@@ -3439,30 +3446,12 @@ fn tile_id_at(tile_info: &crate::av1::TileInfo, x: usize, y: usize) -> usize {
 #[inline]
 fn deblock_has_active_strengths(
     loop_filter: &LoopFilterParams,
-    segmentation: &SegmentationParams,
-    state: &PostFilterState,
+    _segmentation: &SegmentationParams,
+    _state: &PostFilterState,
 ) -> bool {
-    if loop_filter.levels.iter().any(|&level| level != 0) {
-        return true;
-    }
-    if loop_filter.delta_enabled
-        && (loop_filter.ref_deltas.iter().any(|&delta| delta != 0)
-            || loop_filter.mode_deltas.iter().any(|&delta| delta != 0))
-    {
-        return true;
-    }
-    if segmentation
-        .segment_delta_lf
-        .iter()
-        .flatten()
-        .any(|&delta| delta != 0)
-    {
-        return true;
-    }
-    state
-        .block_filter_states
-        .iter()
-        .any(|block| block.delta_lf.iter().any(|&delta| delta != 0))
+    // AV1 disables the entire loop filter when both frame luma levels are
+    // zero. Reference/segment/block deltas do not enable it in that case.
+    loop_filter.levels[0] != 0 || loop_filter.levels[1] != 0
 }
 
 fn apply_loop_filter_deltas(

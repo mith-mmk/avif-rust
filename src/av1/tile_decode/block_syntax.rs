@@ -404,14 +404,23 @@ impl<'a> TileDecoder<'a> {
             }
         }
         let y_smooth_neighbour = self.has_smooth_intra_neighbour(0, x, y);
-        let uv_smooth_neighbour = self.has_smooth_intra_neighbour(1, x, y);
+        let uv_smooth_neighbour = self.has_chroma_smooth_neighbour(
+            x,
+            y,
+            sequence.color_config.subsampling_x,
+            sequence.color_config.subsampling_y,
+        );
         self.set_y_mode_context(x, y, block_size, intra_mode_context(y_mode));
         self.set_smooth_context(
             x,
             y,
             block_size,
             y_mode.is_smooth(),
-            matches!(uv_mode, Some(UvPredictionMode::Intra(mode)) if mode.is_smooth()),
+            has_chroma.then_some(
+                matches!(uv_mode, Some(UvPredictionMode::Intra(mode)) if mode.is_smooth()),
+            ),
+            sequence.color_config.subsampling_x,
+            sequence.color_config.subsampling_y,
         );
         self.set_skip_context(x, y, block_size, skip);
         let mut palette = palette;
@@ -1218,7 +1227,15 @@ impl<'a> TileDecoder<'a> {
             interpolation_filter
                 .unwrap_or((InterpolationFilter::Regular, InterpolationFilter::Regular)),
         );
-        self.set_smooth_context(x, y, block_size, false, false);
+        self.set_smooth_context(
+            x,
+            y,
+            block_size,
+            false,
+            (!sequence.color_config.monochrome && chroma_reference).then_some(false),
+            sequence.color_config.subsampling_x,
+            sequence.color_config.subsampling_y,
+        );
         self.set_skip_context(x, y, block_size, skip);
         let (tx_size_context, tx_size_symbol, tx_size, transform_blocks) =
             self.read_intra_tx_size(frame, block_size, skip, true, false, x, y)?;
@@ -2152,7 +2169,9 @@ impl<'a> TileDecoder<'a> {
         y: usize,
         block_size: BlockSize,
         y_smooth: bool,
-        uv_smooth: bool,
+        uv_smooth: Option<bool>,
+        subsampling_x: bool,
+        subsampling_y: bool,
     ) {
         fill_mi_grid(
             &mut self.y_smooth_grid,
@@ -2163,15 +2182,33 @@ impl<'a> TileDecoder<'a> {
             block_size,
             y_smooth,
         );
-        fill_mi_grid(
-            &mut self.uv_smooth_grid,
-            self.mi_cols,
-            self.mi_rows,
-            x,
-            y,
-            block_size,
-            uv_smooth,
-        );
+        // A sub-8x8 luma block without chroma must not overwrite the shared
+        // chroma context. The owner fills the complete chroma footprint.
+        if let Some(smooth) = uv_smooth {
+            let sx = usize::from(subsampling_x);
+            let sy = usize::from(subsampling_y);
+            let cx = (x >> (2 + sx)) << (2 + sx);
+            let cy = (y >> (2 + sy)) << (2 + sy);
+            let width = block_size.width().max(4 << sx);
+            let height = block_size.height().max(4 << sy);
+            for row in cy / 4..((cy + height) / 4).min(self.mi_rows) {
+                for col in cx / 4..((cx + width) / 4).min(self.mi_cols) {
+                    self.uv_smooth_grid[row * self.mi_cols + col] = Some(smooth);
+                }
+            }
+        }
+    }
+
+    fn has_chroma_smooth_neighbour(&self, x: usize, y: usize, sx: bool, sy: bool) -> bool {
+        let sx = usize::from(sx);
+        let sy = usize::from(sy);
+        let cx = (x >> (2 + sx)) << (2 + sx);
+        let cy = (y >> (2 + sy)) << (2 + sy);
+        let above = cy >= (4 << sy)
+            && self.uv_smooth_grid[(cy / 4 - 1) * self.mi_cols + x / 4].unwrap_or(false);
+        let left = cx >= (4 << sx)
+            && self.uv_smooth_grid[(y / 4) * self.mi_cols + cx / 4 - 1].unwrap_or(false);
+        above || left
     }
 
     fn has_smooth_intra_neighbour(&self, plane: usize, x: usize, y: usize) -> bool {
@@ -2379,4 +2416,60 @@ pub(super) fn cfl_signs(joint_sign: usize) -> Result<(usize, usize), DecoderErro
     let sign_u = ((joint_sign + 1) * 11) >> 5;
     let sign_v = joint_sign + 1 - 3 * sign_u;
     Ok((sign_u, sign_v))
+}
+
+#[cfg(test)]
+mod chroma_smooth_tests {
+    use super::*;
+
+    #[test]
+    fn chroma_owner_preserves_shared_smooth_context_for_sub8_blocks() {
+        let data = include_bytes!("../../../tests/WML2Viewer.avif");
+        let info = crate::container::parse_avif(data).unwrap();
+        let seq = crate::obu::find_obu_payload(
+            &info.primary_item_payload,
+            crate::obu::ObuType::SequenceHeader,
+        )
+        .unwrap()
+        .unwrap();
+        let sequence = crate::av1::parse_sequence_header(seq).unwrap();
+        let payload =
+            crate::obu::find_obu_payload(&info.primary_item_payload, crate::obu::ObuType::Frame)
+                .unwrap()
+                .unwrap();
+        let frame = crate::av1::parse_frame_header(payload, &sequence).unwrap();
+        for (sx, sy) in [(true, true), (true, false), (false, false)] {
+            let mut decoder = TileDecoder::new(&[0, 0], &frame).unwrap();
+            let owner_x = if sx { 4 } else { 0 };
+            let owner_y = if sy { 4 } else { 0 };
+            decoder.set_smooth_context(
+                owner_x,
+                owner_y,
+                BlockSize::Block4x4,
+                true,
+                Some(true),
+                sx,
+                sy,
+            );
+            // A later luma-only partition must leave the chroma footprint intact.
+            decoder.set_smooth_context(0, 0, BlockSize::Block4x4, false, None, sx, sy);
+            assert_eq!(decoder.uv_smooth_grid[0], Some(true));
+            assert_eq!(decoder.y_smooth_grid[0], Some(false));
+            let next_x = owner_x + (4 << usize::from(sx));
+            let next_y = owner_y + (4 << usize::from(sy));
+            assert!(decoder.has_chroma_smooth_neighbour(next_x, owner_y, sx, sy));
+            assert!(decoder.has_chroma_smooth_neighbour(owner_x, next_y, sx, sy));
+            assert!(!decoder.has_chroma_smooth_neighbour(owner_x, owner_y, sx, sy));
+            decoder.set_smooth_context(
+                owner_x,
+                owner_y,
+                BlockSize::Block4x4,
+                false,
+                Some(false),
+                sx,
+                sy,
+            );
+            assert!(!decoder.has_chroma_smooth_neighbour(next_x, owner_y, sx, sy));
+        }
+    }
 }

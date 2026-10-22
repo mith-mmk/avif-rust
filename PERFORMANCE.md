@@ -44,3 +44,12 @@ The mandatory full sequence oracle still compares 368,640 native samples against
 ## Validation
 
 Release all-features suite: 915 passed, 0 failed, 9 existing ignored. Strict all-target/all-feature Clippy and format pass. Default mandatory AVIS tests7/7 and filter/strict-budget tests45/45 pass, including all368,640 independent reference samples.
+
+## Integration with PR #4 (2026-10-22)
+
+The historical numbers above describe `d3ea4e6`, before the native pixel fixes.
+The combined tree retains one shared immutable grid while padding it to PR #4's
+coded MI extent and preserving strict admission. A fresh allocation-only check
+against main `94876c3` confirms two fewer calls for both tracked still/alpha
+inputs with identical output hashes. See `docs/pr3-main-integration.md` for the
+current counts and correctness audit. No new throughput or RSS claim is made.

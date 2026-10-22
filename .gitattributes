@@ -1,2 +1,3 @@
 # Native-plane oracle bytes must survive every checkout unchanged.
 *.yuv binary
+/tests/native-pixel/*.avif binary

@@ -1,0 +1,964 @@
+{
+  "units": "native samples (u8 or little-endian u16), not differing bytes; primary color only unless alpha explicitly named",
+  "main_commit": "070ad6509bad18f9ab76732d543659ef6d7f9129",
+  "previous_pr_commit": "a1f700df3d027cc651f5bc7ace79e4acabb20726",
+  "libaom": {
+    "version": "3.12.1",
+    "commit": "10aece4157eb79315da205f39e19bf6ab3ee30d0"
+  },
+  "dav1d": {
+    "version": "1.5.1",
+    "commit": "42b2b24fb8819f1ed3643aa9cf2a62f03868e3aa"
+  },
+  "cases": [
+    {
+      "set": "images",
+      "name": "colors_hdr_rec2020.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 120000,"main": {"count": 11011,"max": 2,"sum_abs": 11026},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "9980e58ddf718a923f1738c34aad1c72f8e5795ec07e68f1a5f9bd216ca19740",
+      "verification": {"set": "images","name": "colors_hdr_rec2020.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "images",
+      "name": "fox.profile0.8bpc.yuv420.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 1444800,"main": {"count": 38881,"max": 7,"sum_abs": 39374},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "cb884c82ac7b6d4fa03b1f687e9e20abc346107095473e9c1d422aaf0de14eaf",
+      "verification": {"set": "images","name": "fox.profile0.8bpc.yuv420.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "images",
+      "name": "fox.profile1.10bpc.yuv444.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 2889600,"main": {"count": 172557,"max": 12,"sum_abs": 217799},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "a10de8204aee73ba1786daca6390546bd7aa6b069aaa644012219a1c11246a43",
+      "verification": {"set": "images","name": "fox.profile1.10bpc.yuv444.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "images",
+      "name": "fox.profile1.8bpc.yuv444.odd-width.odd-height.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 2883591,"main": {"count": 731,"max": 5,"sum_abs": 838},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "fad3b6dd9cb99e6925858f69aafae3f68c861845f2c3d4a6d1c51c6161490134",
+      "verification": {"set": "images","name": "fox.profile1.8bpc.yuv444.odd-width.odd-height.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "images",
+      "name": "fox.profile2.12bpc.yuv444.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 2889600,"main": {"count": 396432,"max": 46,"sum_abs": 1039419},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "ed96eca6ed79863eaf91e4d666e4e220b5fa4e5a6cb1696477ba901ac12f5dde",
+      "verification": {"set": "images","name": "fox.profile2.12bpc.yuv444.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "images",
+      "name": "paris_icc_exif_xmp.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 365118,"main": {"count": 218,"max": 6,"sum_abs": 294},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "961bc38b61e60b7651fa20efa24269ae2f35e4958822a81c908c9bbf9b3f66e1",
+      "verification": {"set": "images","name": "paris_icc_exif_xmp.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "images",
+      "name": "plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 49152,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "245a3dad6371dc702f29eb7e9735f843b63c525da871859728bedbe5bb274985",
+      "verification": {"set": "images","name": "plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}},"alpha_bytes_exact": 16384}
+    },
+    {
+      "set": "corpus",
+      "name": "abc_color_irot_alpha_irot.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 393216,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "b371cc88244a873131e4d10ff9363d71ce4f41cf333bd4a491b38d970d9abd3b",
+      "verification": {"set": "corpus","name": "abc_color_irot_alpha_irot.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}},"alpha_bytes_exact": 131072}
+    },
+    {
+      "set": "corpus",
+      "name": "fox.profile0.8bpc.yuv420.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 1444800,"main": {"count": 38881,"max": 7,"sum_abs": 39374},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "cb884c82ac7b6d4fa03b1f687e9e20abc346107095473e9c1d422aaf0de14eaf",
+      "verification": {"set": "corpus","name": "fox.profile0.8bpc.yuv420.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "corpus",
+      "name": "fox.profile0.8bpc.yuv420.monochrome.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 963200,"main": {"count": 132,"max": 2,"sum_abs": 137},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "15d84077066c47fdbe2a7b8ed583a17017d09a033144ac1b31486d6c8f6f5c82",
+      "verification": {"set": "corpus","name": "fox.profile0.8bpc.yuv420.monochrome.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "corpus",
+      "name": "fox.profile0.8bpc.yuv420.monochrome.odd-width.odd-height.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 961197,"main": {"count": 770,"max": 3,"sum_abs": 867},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "dd069f3c3c4f7589f5f7ef1d7b6a91b8cb975d32663a4a92b6d75219edd72954",
+      "verification": {"set": "corpus","name": "fox.profile0.8bpc.yuv420.monochrome.odd-width.odd-height.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "corpus",
+      "name": "fox.profile0.8bpc.yuv420.odd-height.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1443596,"main": {"count": 71572,"max": 10,"sum_abs": 74555},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1443596,"main": {"count": 71572,"max": 10,"sum_abs": 74555},"candidate": {"count": 92,"max": 7,"sum_abs": 362},"newly_incorrect": 90,"error_increased": 92,"changed_remaining_errors": 92,"first_errors": [{"index": 981860,"main": 130,"candidate": 128,"reference": 130},{"index": 981861,"main": 130,"candidate": 128,"reference": 130},{"index": 982462,"main": 130,"candidate": 128,"reference": 130},{"index": 982463,"main": 130,"candidate": 128,"reference": 130},{"index": 983064,"main": 130,"candidate": 128,"reference": 130},{"index": 983065,"main": 130,"candidate": 128,"reference": 130},{"index": 983666,"main": 130,"candidate": 128,"reference": 130},{"index": 983667,"main": 130,"candidate": 128,"reference": 130}]}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1443596,"main": {"count": 71944,"max": 11,"sum_abs": 75093},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1443596,"main": {"count": 71944,"max": 11,"sum_abs": 75093},"candidate": {"count": 151,"max": 8,"sum_abs": 370},"newly_incorrect": 126,"error_increased": 144,"changed_remaining_errors": 146,"first_errors": [{"index": 981259,"main": 130,"candidate": 129,"reference": 130},{"index": 981859,"main": 130,"candidate": 129,"reference": 130},{"index": 981860,"main": 130,"candidate": 129,"reference": 130},{"index": 981861,"main": 130,"candidate": 129,"reference": 130},{"index": 982461,"main": 130,"candidate": 129,"reference": 130},{"index": 982462,"main": 130,"candidate": 129,"reference": 130},{"index": 982463,"main": 130,"candidate": 128,"reference": 130},{"index": 983063,"main": 130,"candidate": 129,"reference": 130}]}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1443596,"main": {"count": 71944,"max": 11,"sum_abs": 75093},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1443596,"main": {"count": 71944,"max": 11,"sum_abs": 75093},"candidate": {"count": 151,"max": 8,"sum_abs": 370},"newly_incorrect": 126,"error_increased": 144,"changed_remaining_errors": 146,"first_errors": [{"index": 981259,"main": 130,"candidate": 129,"reference": 130},{"index": 981859,"main": 130,"candidate": 129,"reference": 130},{"index": 981860,"main": 130,"candidate": 129,"reference": 130},{"index": 981861,"main": 130,"candidate": 129,"reference": 130},{"index": 982461,"main": 130,"candidate": 129,"reference": 130},{"index": 982462,"main": 130,"candidate": 129,"reference": 130},{"index": 982463,"main": 130,"candidate": 128,"reference": 130},{"index": 983063,"main": 130,"candidate": 129,"reference": 130}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1443596,"main": {"count": 71944,"max": 11,"sum_abs": 75093},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1443596,"main": {"count": 71944,"max": 11,"sum_abs": 75093},"candidate": {"count": 151,"max": 8,"sum_abs": 370},"newly_incorrect": 126,"error_increased": 144,"changed_remaining_errors": 146,"first_errors": [{"index": 981259,"main": 130,"candidate": 129,"reference": 130},{"index": 981859,"main": 130,"candidate": 129,"reference": 130},{"index": 981860,"main": 130,"candidate": 129,"reference": 130},{"index": 981861,"main": 130,"candidate": 129,"reference": 130},{"index": 982461,"main": 130,"candidate": 129,"reference": 130},{"index": 982462,"main": 130,"candidate": 129,"reference": 130},{"index": 982463,"main": 130,"candidate": 128,"reference": 130},{"index": 983063,"main": 130,"candidate": 129,"reference": 130}]}}
+      },
+      "final_main_comparison": {"samples": 1443596,"main": {"count": 71944,"max": 11,"sum_abs": 75093},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "75628450288ace3386651725411c8f0ffff7eb95f82c5307b0faa3350f09f50e",
+      "verification": {"set": "corpus","name": "fox.profile0.8bpc.yuv420.odd-height.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "corpus",
+      "name": "fox.profile0.8bpc.yuv420.odd-width.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 1444000,"main": {"count": 14026,"max": 7,"sum_abs": 14859},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "f91b6f455412adabc5094011362eaaa1f6a9d5740de0b8a1be42a96c16e7617f",
+      "verification": {"set": "corpus","name": "fox.profile0.8bpc.yuv420.odd-width.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "corpus",
+      "name": "fox.profile1.10bpc.yuv444.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 2889600,"main": {"count": 172557,"max": 12,"sum_abs": 217799},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "a10de8204aee73ba1786daca6390546bd7aa6b069aaa644012219a1c11246a43",
+      "verification": {"set": "corpus","name": "fox.profile1.10bpc.yuv444.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "corpus",
+      "name": "fox.profile2.12bpc.yuv444.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 2889600,"main": {"count": 396432,"max": 46,"sum_abs": 1039419},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "ed96eca6ed79863eaf91e4d666e4e220b5fa4e5a6cb1696477ba901ac12f5dde",
+      "verification": {"set": "corpus","name": "fox.profile2.12bpc.yuv444.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "corpus",
+      "name": "fox.profile2.8bpc.yuv422.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1926400,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1926400,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 768,"max": 2,"sum_abs": 974},"newly_incorrect": 768,"error_increased": 768,"changed_remaining_errors": 768,"first_errors": [{"index": 1185328,"main": 123,"candidate": 122,"reference": 123},{"index": 1185329,"main": 124,"candidate": 123,"reference": 124},{"index": 1185330,"main": 125,"candidate": 123,"reference": 125},{"index": 1185331,"main": 125,"candidate": 123,"reference": 125},{"index": 1185332,"main": 126,"candidate": 124,"reference": 126},{"index": 1185333,"main": 126,"candidate": 125,"reference": 126},{"index": 1185334,"main": 127,"candidate": 125,"reference": 127},{"index": 1185335,"main": 127,"candidate": 125,"reference": 127}]}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1926400,"main": {"count": 193,"max": 4,"sum_abs": 245},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1926400,"main": {"count": 193,"max": 4,"sum_abs": 245},"candidate": {"count": 827,"max": 2,"sum_abs": 1002},"newly_incorrect": 827,"error_increased": 827,"changed_remaining_errors": 827,"first_errors": [{"index": 1184727,"main": 125,"candidate": 124,"reference": 125},{"index": 1184728,"main": 125,"candidate": 124,"reference": 125},{"index": 1184729,"main": 125,"candidate": 124,"reference": 125},{"index": 1184732,"main": 126,"candidate": 125,"reference": 126},{"index": 1184733,"main": 126,"candidate": 125,"reference": 126},{"index": 1184734,"main": 126,"candidate": 125,"reference": 126},{"index": 1184735,"main": 126,"candidate": 125,"reference": 126},{"index": 1185327,"main": 123,"candidate": 122,"reference": 123}]}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1926400,"main": {"count": 193,"max": 4,"sum_abs": 245},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1926400,"main": {"count": 193,"max": 4,"sum_abs": 245},"candidate": {"count": 827,"max": 2,"sum_abs": 1002},"newly_incorrect": 827,"error_increased": 827,"changed_remaining_errors": 827,"first_errors": [{"index": 1184727,"main": 125,"candidate": 124,"reference": 125},{"index": 1184728,"main": 125,"candidate": 124,"reference": 125},{"index": 1184729,"main": 125,"candidate": 124,"reference": 125},{"index": 1184732,"main": 126,"candidate": 125,"reference": 126},{"index": 1184733,"main": 126,"candidate": 125,"reference": 126},{"index": 1184734,"main": 126,"candidate": 125,"reference": 126},{"index": 1184735,"main": 126,"candidate": 125,"reference": 126},{"index": 1185327,"main": 123,"candidate": 122,"reference": 123}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1926400,"main": {"count": 193,"max": 4,"sum_abs": 245},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1926400,"main": {"count": 193,"max": 4,"sum_abs": 245},"candidate": {"count": 827,"max": 2,"sum_abs": 1002},"newly_incorrect": 827,"error_increased": 827,"changed_remaining_errors": 827,"first_errors": [{"index": 1184727,"main": 125,"candidate": 124,"reference": 125},{"index": 1184728,"main": 125,"candidate": 124,"reference": 125},{"index": 1184729,"main": 125,"candidate": 124,"reference": 125},{"index": 1184732,"main": 126,"candidate": 125,"reference": 126},{"index": 1184733,"main": 126,"candidate": 125,"reference": 126},{"index": 1184734,"main": 126,"candidate": 125,"reference": 126},{"index": 1184735,"main": 126,"candidate": 125,"reference": 126},{"index": 1185327,"main": 123,"candidate": 122,"reference": 123}]}}
+      },
+      "final_main_comparison": {"samples": 1926400,"main": {"count": 193,"max": 4,"sum_abs": 245},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "2cb363d30f83bff58ee049874b1808b37cb1d35342edf16b3ce25cb243c9ea55",
+      "verification": {"set": "corpus","name": "fox.profile2.8bpc.yuv422.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "corpus",
+      "name": "fox.profile2.8bpc.yuv422.odd-height.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 1923992,"main": {"count": 367,"max": 3,"sum_abs": 405},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "efc70882aacbb533c0e833a4401949d152dceb364846442cdccca5048ad17a60",
+      "verification": {"set": "corpus","name": "fox.profile2.8bpc.yuv422.odd-height.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "corpus",
+      "name": "fox.profile2.8bpc.yuv422.odd-width.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1925600,"main": {"count": 1312,"max": 2,"sum_abs": 1317},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1925600,"main": {"count": 1312,"max": 2,"sum_abs": 1317},"candidate": {"count": 227,"max": 2,"sum_abs": 316},"newly_incorrect": 227,"error_increased": 227,"changed_remaining_errors": 227,"first_errors": [{"index": 1184528,"main": 123,"candidate": 122,"reference": 123},{"index": 1184529,"main": 124,"candidate": 122,"reference": 124},{"index": 1184530,"main": 125,"candidate": 123,"reference": 125},{"index": 1184531,"main": 125,"candidate": 124,"reference": 125},{"index": 1184532,"main": 126,"candidate": 125,"reference": 126},{"index": 1184533,"main": 127,"candidate": 125,"reference": 127},{"index": 1184534,"main": 127,"candidate": 125,"reference": 127},{"index": 1184535,"main": 126,"candidate": 125,"reference": 126}]}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1925600,"main": {"count": 2203,"max": 5,"sum_abs": 2360},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1925600,"main": {"count": 2203,"max": 5,"sum_abs": 2360},"candidate": {"count": 241,"max": 2,"sum_abs": 317},"newly_incorrect": 241,"error_increased": 241,"changed_remaining_errors": 241,"first_errors": [{"index": 1183927,"main": 125,"candidate": 124,"reference": 125},{"index": 1183928,"main": 125,"candidate": 124,"reference": 125},{"index": 1183931,"main": 126,"candidate": 125,"reference": 126},{"index": 1183932,"main": 126,"candidate": 125,"reference": 126},{"index": 1183934,"main": 126,"candidate": 125,"reference": 126},{"index": 1183935,"main": 126,"candidate": 125,"reference": 126},{"index": 1184528,"main": 124,"candidate": 123,"reference": 124},{"index": 1184529,"main": 125,"candidate": 124,"reference": 125}]}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1925600,"main": {"count": 2203,"max": 5,"sum_abs": 2360},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1925600,"main": {"count": 2203,"max": 5,"sum_abs": 2360},"candidate": {"count": 241,"max": 2,"sum_abs": 317},"newly_incorrect": 241,"error_increased": 241,"changed_remaining_errors": 241,"first_errors": [{"index": 1183927,"main": 125,"candidate": 124,"reference": 125},{"index": 1183928,"main": 125,"candidate": 124,"reference": 125},{"index": 1183931,"main": 126,"candidate": 125,"reference": 126},{"index": 1183932,"main": 126,"candidate": 125,"reference": 126},{"index": 1183934,"main": 126,"candidate": 125,"reference": 126},{"index": 1183935,"main": 126,"candidate": 125,"reference": 126},{"index": 1184528,"main": 124,"candidate": 123,"reference": 124},{"index": 1184529,"main": 125,"candidate": 124,"reference": 125}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1925600,"main": {"count": 2203,"max": 5,"sum_abs": 2360},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1925600,"main": {"count": 2203,"max": 5,"sum_abs": 2360},"candidate": {"count": 241,"max": 2,"sum_abs": 317},"newly_incorrect": 241,"error_increased": 241,"changed_remaining_errors": 241,"first_errors": [{"index": 1183927,"main": 125,"candidate": 124,"reference": 125},{"index": 1183928,"main": 125,"candidate": 124,"reference": 125},{"index": 1183931,"main": 126,"candidate": 125,"reference": 126},{"index": 1183932,"main": 126,"candidate": 125,"reference": 126},{"index": 1183934,"main": 126,"candidate": 125,"reference": 126},{"index": 1183935,"main": 126,"candidate": 125,"reference": 126},{"index": 1184528,"main": 124,"candidate": 123,"reference": 124},{"index": 1184529,"main": 125,"candidate": 124,"reference": 125}]}}
+      },
+      "final_main_comparison": {"samples": 1925600,"main": {"count": 2203,"max": 5,"sum_abs": 2360},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "c07575c88ef400c1725c9260a19439e0e784da41c7db3867059019ddbdb3bebe",
+      "verification": {"set": "corpus","name": "fox.profile2.8bpc.yuv422.odd-width.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "corpus",
+      "name": "fox.profile2.8bpc.yuv422.odd-width.odd-height.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1923193,"main": {"count": 16168,"max": 2,"sum_abs": 16177},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1923193,"main": {"count": 16168,"max": 2,"sum_abs": 16177},"candidate": {"count": 1568,"max": 6,"sum_abs": 2895},"newly_incorrect": 1568,"error_increased": 1568,"changed_remaining_errors": 1568,"first_errors": [{"index": 1375973,"main": 135,"candidate": 141,"reference": 135},{"index": 1375974,"main": 135,"candidate": 140,"reference": 135},{"index": 1376575,"main": 136,"candidate": 142,"reference": 136},{"index": 1376576,"main": 135,"candidate": 141,"reference": 135},{"index": 1377177,"main": 136,"candidate": 142,"reference": 136},{"index": 1377178,"main": 136,"candidate": 142,"reference": 136},{"index": 1377779,"main": 137,"candidate": 142,"reference": 137},{"index": 1377780,"main": 137,"candidate": 142,"reference": 137}]}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1923193,"main": {"count": 17009,"max": 3,"sum_abs": 17190},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1923193,"main": {"count": 17009,"max": 3,"sum_abs": 17190},"candidate": {"count": 1684,"max": 7,"sum_abs": 2887},"newly_incorrect": 1650,"error_increased": 1671,"changed_remaining_errors": 1680,"first_errors": [{"index": 1375370,"main": 137,"candidate": 138,"reference": 137},{"index": 1375371,"main": 136,"candidate": 138,"reference": 137},{"index": 1375372,"main": 136,"candidate": 137,"reference": 136},{"index": 1375972,"main": 138,"candidate": 138,"reference": 137},{"index": 1375973,"main": 136,"candidate": 139,"reference": 137},{"index": 1375974,"main": 136,"candidate": 139,"reference": 136},{"index": 1376574,"main": 138,"candidate": 139,"reference": 137},{"index": 1376575,"main": 136,"candidate": 140,"reference": 137}]}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1923193,"main": {"count": 17009,"max": 3,"sum_abs": 17190},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1923193,"main": {"count": 17009,"max": 3,"sum_abs": 17190},"candidate": {"count": 1684,"max": 7,"sum_abs": 2887},"newly_incorrect": 1650,"error_increased": 1671,"changed_remaining_errors": 1680,"first_errors": [{"index": 1375370,"main": 137,"candidate": 138,"reference": 137},{"index": 1375371,"main": 136,"candidate": 138,"reference": 137},{"index": 1375372,"main": 136,"candidate": 137,"reference": 136},{"index": 1375972,"main": 138,"candidate": 138,"reference": 137},{"index": 1375973,"main": 136,"candidate": 139,"reference": 137},{"index": 1375974,"main": 136,"candidate": 139,"reference": 136},{"index": 1376574,"main": 138,"candidate": 139,"reference": 137},{"index": 1376575,"main": 136,"candidate": 140,"reference": 137}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1923193,"main": {"count": 17009,"max": 3,"sum_abs": 17190},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1923193,"main": {"count": 17009,"max": 3,"sum_abs": 17190},"candidate": {"count": 1684,"max": 7,"sum_abs": 2887},"newly_incorrect": 1650,"error_increased": 1671,"changed_remaining_errors": 1680,"first_errors": [{"index": 1375370,"main": 137,"candidate": 138,"reference": 137},{"index": 1375371,"main": 136,"candidate": 138,"reference": 137},{"index": 1375372,"main": 136,"candidate": 137,"reference": 136},{"index": 1375972,"main": 138,"candidate": 138,"reference": 137},{"index": 1375973,"main": 136,"candidate": 139,"reference": 137},{"index": 1375974,"main": 136,"candidate": 139,"reference": 136},{"index": 1376574,"main": 138,"candidate": 139,"reference": 137},{"index": 1376575,"main": 136,"candidate": 140,"reference": 137}]}}
+      },
+      "final_main_comparison": {"samples": 1923193,"main": {"count": 17009,"max": 3,"sum_abs": 17190},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "86aee64fd7b11b9834537ea14b2eff234c062c98d32fab51ff14aba262d5b106",
+      "verification": {"set": "corpus","name": "fox.profile2.8bpc.yuv422.odd-width.odd-height.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "corpus",
+      "name": "kimono.crop.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1108992,"main": {"count": 131056,"max": 14,"sum_abs": 182555},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1108992,"main": {"count": 131056,"max": 14,"sum_abs": 182555},"candidate": {"count": 1848,"max": 26,"sum_abs": 8132},"newly_incorrect": 1801,"error_increased": 1831,"changed_remaining_errors": 1831,"first_errors": [{"index": 762792,"main": 105,"candidate": 130,"reference": 105},{"index": 763153,"main": 106,"candidate": 131,"reference": 106},{"index": 763514,"main": 107,"candidate": 133,"reference": 107},{"index": 763875,"main": 110,"candidate": 136,"reference": 110},{"index": 764236,"main": 113,"candidate": 139,"reference": 113},{"index": 764597,"main": 118,"candidate": 143,"reference": 118},{"index": 764958,"main": 120,"candidate": 145,"reference": 120},{"index": 765319,"main": 119,"candidate": 144,"reference": 119}]}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1108992,"main": {"count": 162092,"max": 14,"sum_abs": 216569},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1108992,"main": {"count": 162092,"max": 14,"sum_abs": 216569},"candidate": {"count": 1848,"max": 26,"sum_abs": 8132},"newly_incorrect": 1708,"error_increased": 1786,"changed_remaining_errors": 1803,"first_errors": [{"index": 762792,"main": 105,"candidate": 130,"reference": 105},{"index": 763153,"main": 106,"candidate": 131,"reference": 106},{"index": 763514,"main": 107,"candidate": 133,"reference": 107},{"index": 763875,"main": 110,"candidate": 136,"reference": 110},{"index": 764236,"main": 113,"candidate": 139,"reference": 113},{"index": 764597,"main": 118,"candidate": 143,"reference": 118},{"index": 764958,"main": 120,"candidate": 145,"reference": 120},{"index": 765319,"main": 119,"candidate": 144,"reference": 119}]}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1108992,"main": {"count": 162092,"max": 14,"sum_abs": 216569},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1108992,"main": {"count": 162092,"max": 14,"sum_abs": 216569},"candidate": {"count": 1848,"max": 26,"sum_abs": 8132},"newly_incorrect": 1708,"error_increased": 1786,"changed_remaining_errors": 1803,"first_errors": [{"index": 762792,"main": 105,"candidate": 130,"reference": 105},{"index": 763153,"main": 106,"candidate": 131,"reference": 106},{"index": 763514,"main": 107,"candidate": 133,"reference": 107},{"index": 763875,"main": 110,"candidate": 136,"reference": 110},{"index": 764236,"main": 113,"candidate": 139,"reference": 113},{"index": 764597,"main": 118,"candidate": 143,"reference": 118},{"index": 764958,"main": 120,"candidate": 145,"reference": 120},{"index": 765319,"main": 119,"candidate": 144,"reference": 119}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1108992,"main": {"count": 162092,"max": 14,"sum_abs": 216569},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1108992,"main": {"count": 162092,"max": 14,"sum_abs": 216569},"candidate": {"count": 1848,"max": 26,"sum_abs": 8132},"newly_incorrect": 1708,"error_increased": 1786,"changed_remaining_errors": 1803,"first_errors": [{"index": 762792,"main": 105,"candidate": 130,"reference": 105},{"index": 763153,"main": 106,"candidate": 131,"reference": 106},{"index": 763514,"main": 107,"candidate": 133,"reference": 107},{"index": 763875,"main": 110,"candidate": 136,"reference": 110},{"index": 764236,"main": 113,"candidate": 139,"reference": 113},{"index": 764597,"main": 118,"candidate": 143,"reference": 118},{"index": 764958,"main": 120,"candidate": 145,"reference": 120},{"index": 765319,"main": 119,"candidate": 144,"reference": 119}]}}
+      },
+      "final_main_comparison": {"samples": 1108992,"main": {"count": 162092,"max": 14,"sum_abs": 216569},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "f175dcd9c64813b759da185fa67076fb772b76059845b2aad3ddcfab257f75ad",
+      "verification": {"set": "corpus","name": "kimono.crop.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "corpus",
+      "name": "kimono.mirror-horizontal.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1108992,"main": {"count": 98944,"max": 7,"sum_abs": 102195},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1108992,"main": {"count": 98944,"max": 7,"sum_abs": 102195},"candidate": {"count": 162,"max": 43,"sum_abs": 2977},"newly_incorrect": 146,"error_increased": 162,"changed_remaining_errors": 162,"first_errors": [{"index": 739688,"main": 136,"candidate": 114,"reference": 136},{"index": 740049,"main": 136,"candidate": 115,"reference": 136},{"index": 740410,"main": 137,"candidate": 115,"reference": 137},{"index": 740771,"main": 137,"candidate": 116,"reference": 137},{"index": 741132,"main": 137,"candidate": 116,"reference": 137},{"index": 741493,"main": 136,"candidate": 115,"reference": 136},{"index": 741854,"main": 135,"candidate": 114,"reference": 135},{"index": 742215,"main": 135,"candidate": 114,"reference": 135}]}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1108992,"main": {"count": 131125,"max": 7,"sum_abs": 137670},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1108992,"main": {"count": 131125,"max": 7,"sum_abs": 137670},"candidate": {"count": 162,"max": 43,"sum_abs": 2977},"newly_incorrect": 139,"error_increased": 162,"changed_remaining_errors": 162,"first_errors": [{"index": 739688,"main": 136,"candidate": 114,"reference": 136},{"index": 740049,"main": 136,"candidate": 115,"reference": 136},{"index": 740410,"main": 137,"candidate": 115,"reference": 137},{"index": 740771,"main": 137,"candidate": 116,"reference": 137},{"index": 741132,"main": 137,"candidate": 116,"reference": 137},{"index": 741493,"main": 136,"candidate": 115,"reference": 136},{"index": 741854,"main": 135,"candidate": 114,"reference": 135},{"index": 742215,"main": 135,"candidate": 114,"reference": 135}]}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1108992,"main": {"count": 131125,"max": 7,"sum_abs": 137670},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1108992,"main": {"count": 131125,"max": 7,"sum_abs": 137670},"candidate": {"count": 162,"max": 43,"sum_abs": 2977},"newly_incorrect": 139,"error_increased": 162,"changed_remaining_errors": 162,"first_errors": [{"index": 739688,"main": 136,"candidate": 114,"reference": 136},{"index": 740049,"main": 136,"candidate": 115,"reference": 136},{"index": 740410,"main": 137,"candidate": 115,"reference": 137},{"index": 740771,"main": 137,"candidate": 116,"reference": 137},{"index": 741132,"main": 137,"candidate": 116,"reference": 137},{"index": 741493,"main": 136,"candidate": 115,"reference": 136},{"index": 741854,"main": 135,"candidate": 114,"reference": 135},{"index": 742215,"main": 135,"candidate": 114,"reference": 135}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1108992,"main": {"count": 131125,"max": 7,"sum_abs": 137670},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1108992,"main": {"count": 131125,"max": 7,"sum_abs": 137670},"candidate": {"count": 162,"max": 43,"sum_abs": 2977},"newly_incorrect": 139,"error_increased": 162,"changed_remaining_errors": 162,"first_errors": [{"index": 739688,"main": 136,"candidate": 114,"reference": 136},{"index": 740049,"main": 136,"candidate": 115,"reference": 136},{"index": 740410,"main": 137,"candidate": 115,"reference": 137},{"index": 740771,"main": 137,"candidate": 116,"reference": 137},{"index": 741132,"main": 137,"candidate": 116,"reference": 137},{"index": 741493,"main": 136,"candidate": 115,"reference": 136},{"index": 741854,"main": 135,"candidate": 114,"reference": 135},{"index": 742215,"main": 135,"candidate": 114,"reference": 135}]}}
+      },
+      "final_main_comparison": {"samples": 1108992,"main": {"count": 131125,"max": 7,"sum_abs": 137670},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "2bbc004d91145488610158a5acdb4d706495a2b15511db20ff57bb9efd80885c",
+      "verification": {"set": "corpus","name": "kimono.mirror-horizontal.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "corpus",
+      "name": "kimono.mirror-vertical.rotate270.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1108992,"main": {"count": 92742,"max": 7,"sum_abs": 95622},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1108992,"main": {"count": 92742,"max": 7,"sum_abs": 95622},"candidate": {"count": 378,"max": 6,"sum_abs": 908},"newly_incorrect": 196,"error_increased": 281,"changed_remaining_errors": 378,"first_errors": [{"index": 919832,"main": 130,"candidate": 123,"reference": 129},{"index": 919833,"main": 130,"candidate": 123,"reference": 129},{"index": 919834,"main": 130,"candidate": 123,"reference": 129},{"index": 919835,"main": 130,"candidate": 123,"reference": 129},{"index": 919836,"main": 129,"candidate": 125,"reference": 128},{"index": 919837,"main": 128,"candidate": 125,"reference": 127},{"index": 919838,"main": 127,"candidate": 125,"reference": 126},{"index": 919839,"main": 127,"candidate": 125,"reference": 126}]}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1108992,"main": {"count": 126197,"max": 7,"sum_abs": 132375},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1108992,"main": {"count": 126197,"max": 7,"sum_abs": 132375},"candidate": {"count": 378,"max": 6,"sum_abs": 908},"newly_incorrect": 201,"error_increased": 286,"changed_remaining_errors": 377,"first_errors": [{"index": 919832,"main": 130,"candidate": 123,"reference": 129},{"index": 919833,"main": 130,"candidate": 123,"reference": 129},{"index": 919834,"main": 129,"candidate": 123,"reference": 129},{"index": 919835,"main": 129,"candidate": 123,"reference": 129},{"index": 919836,"main": 129,"candidate": 125,"reference": 128},{"index": 919837,"main": 128,"candidate": 125,"reference": 127},{"index": 919838,"main": 127,"candidate": 125,"reference": 126},{"index": 919839,"main": 127,"candidate": 125,"reference": 126}]}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1108992,"main": {"count": 126197,"max": 7,"sum_abs": 132375},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1108992,"main": {"count": 126197,"max": 7,"sum_abs": 132375},"candidate": {"count": 378,"max": 6,"sum_abs": 908},"newly_incorrect": 201,"error_increased": 286,"changed_remaining_errors": 377,"first_errors": [{"index": 919832,"main": 130,"candidate": 123,"reference": 129},{"index": 919833,"main": 130,"candidate": 123,"reference": 129},{"index": 919834,"main": 129,"candidate": 123,"reference": 129},{"index": 919835,"main": 129,"candidate": 123,"reference": 129},{"index": 919836,"main": 129,"candidate": 125,"reference": 128},{"index": 919837,"main": 128,"candidate": 125,"reference": 127},{"index": 919838,"main": 127,"candidate": 125,"reference": 126},{"index": 919839,"main": 127,"candidate": 125,"reference": 126}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1108992,"main": {"count": 126197,"max": 7,"sum_abs": 132375},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1108992,"main": {"count": 126197,"max": 7,"sum_abs": 132375},"candidate": {"count": 378,"max": 6,"sum_abs": 908},"newly_incorrect": 201,"error_increased": 286,"changed_remaining_errors": 377,"first_errors": [{"index": 919832,"main": 130,"candidate": 123,"reference": 129},{"index": 919833,"main": 130,"candidate": 123,"reference": 129},{"index": 919834,"main": 129,"candidate": 123,"reference": 129},{"index": 919835,"main": 129,"candidate": 123,"reference": 129},{"index": 919836,"main": 129,"candidate": 125,"reference": 128},{"index": 919837,"main": 128,"candidate": 125,"reference": 127},{"index": 919838,"main": 127,"candidate": 125,"reference": 126},{"index": 919839,"main": 127,"candidate": 125,"reference": 126}]}}
+      },
+      "final_main_comparison": {"samples": 1108992,"main": {"count": 126197,"max": 7,"sum_abs": 132375},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "33c36ec2274b00ac6f81c9f61e55c20cbfce1649ad27520afe635310f516ead1",
+      "verification": {"set": "corpus","name": "kimono.mirror-vertical.rotate270.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "corpus",
+      "name": "kimono.rotate270.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1108992,"main": {"count": 34033,"max": 5,"sum_abs": 35281},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1108992,"main": {"count": 34033,"max": 5,"sum_abs": 35281},"candidate": {"count": 1086,"max": 13,"sum_abs": 3823},"newly_incorrect": 1086,"error_increased": 1086,"changed_remaining_errors": 1086,"first_errors": [{"index": 919824,"main": 134,"candidate": 121,"reference": 134},{"index": 919825,"main": 135,"candidate": 123,"reference": 135},{"index": 919826,"main": 134,"candidate": 122,"reference": 134},{"index": 919827,"main": 133,"candidate": 121,"reference": 133},{"index": 919828,"main": 132,"candidate": 120,"reference": 132},{"index": 919829,"main": 132,"candidate": 120,"reference": 132},{"index": 919830,"main": 131,"candidate": 119,"reference": 131},{"index": 919831,"main": 131,"candidate": 119,"reference": 131}]}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1108992,"main": {"count": 72911,"max": 5,"sum_abs": 75488},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1108992,"main": {"count": 72911,"max": 5,"sum_abs": 75488},"candidate": {"count": 1086,"max": 13,"sum_abs": 3823},"newly_incorrect": 1006,"error_increased": 1063,"changed_remaining_errors": 1080,"first_errors": [{"index": 919824,"main": 134,"candidate": 121,"reference": 134},{"index": 919825,"main": 134,"candidate": 123,"reference": 135},{"index": 919826,"main": 134,"candidate": 122,"reference": 134},{"index": 919827,"main": 133,"candidate": 121,"reference": 133},{"index": 919828,"main": 132,"candidate": 120,"reference": 132},{"index": 919829,"main": 132,"candidate": 120,"reference": 132},{"index": 919830,"main": 131,"candidate": 119,"reference": 131},{"index": 919831,"main": 131,"candidate": 119,"reference": 131}]}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1108992,"main": {"count": 72911,"max": 5,"sum_abs": 75488},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1108992,"main": {"count": 72911,"max": 5,"sum_abs": 75488},"candidate": {"count": 1086,"max": 13,"sum_abs": 3823},"newly_incorrect": 1006,"error_increased": 1063,"changed_remaining_errors": 1080,"first_errors": [{"index": 919824,"main": 134,"candidate": 121,"reference": 134},{"index": 919825,"main": 134,"candidate": 123,"reference": 135},{"index": 919826,"main": 134,"candidate": 122,"reference": 134},{"index": 919827,"main": 133,"candidate": 121,"reference": 133},{"index": 919828,"main": 132,"candidate": 120,"reference": 132},{"index": 919829,"main": 132,"candidate": 120,"reference": 132},{"index": 919830,"main": 131,"candidate": 119,"reference": 131},{"index": 919831,"main": 131,"candidate": 119,"reference": 131}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1108992,"main": {"count": 72911,"max": 5,"sum_abs": 75488},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1108992,"main": {"count": 72911,"max": 5,"sum_abs": 75488},"candidate": {"count": 1086,"max": 13,"sum_abs": 3823},"newly_incorrect": 1006,"error_increased": 1063,"changed_remaining_errors": 1080,"first_errors": [{"index": 919824,"main": 134,"candidate": 121,"reference": 134},{"index": 919825,"main": 134,"candidate": 123,"reference": 135},{"index": 919826,"main": 134,"candidate": 122,"reference": 134},{"index": 919827,"main": 133,"candidate": 121,"reference": 133},{"index": 919828,"main": 132,"candidate": 120,"reference": 132},{"index": 919829,"main": 132,"candidate": 120,"reference": 132},{"index": 919830,"main": 131,"candidate": 119,"reference": 131},{"index": 919831,"main": 131,"candidate": 119,"reference": 131}]}}
+      },
+      "final_main_comparison": {"samples": 1108992,"main": {"count": 72911,"max": 5,"sum_abs": 75488},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "79a99a0415276cc11f2e871d070a9df84df3385888a2f2fa3534320f6bed98ed",
+      "verification": {"set": "corpus","name": "kimono.rotate270.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "corpus",
+      "name": "kimono.rotate90.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1108992,"main": {"count": 60958,"max": 7,"sum_abs": 64999},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1108992,"main": {"count": 60958,"max": 7,"sum_abs": 64999},"candidate": {"count": 637,"max": 22,"sum_abs": 5131},"newly_incorrect": 548,"error_increased": 596,"changed_remaining_errors": 617,"first_errors": [{"index": 920504,"main": 138,"candidate": 136,"reference": 138},{"index": 920505,"main": 138,"candidate": 136,"reference": 139},{"index": 920506,"main": 138,"candidate": 136,"reference": 138},{"index": 920507,"main": 138,"candidate": 136,"reference": 138},{"index": 920508,"main": 137,"candidate": 136,"reference": 138},{"index": 920509,"main": 138,"candidate": 136,"reference": 139},{"index": 920510,"main": 138,"candidate": 137,"reference": 139},{"index": 920511,"main": 138,"candidate": 137,"reference": 139}]}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1108992,"main": {"count": 96237,"max": 7,"sum_abs": 102414},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1108992,"main": {"count": 96237,"max": 7,"sum_abs": 102414},"candidate": {"count": 637,"max": 22,"sum_abs": 5131},"newly_incorrect": 527,"error_increased": 592,"changed_remaining_errors": 615,"first_errors": [{"index": 920504,"main": 138,"candidate": 136,"reference": 138},{"index": 920505,"main": 138,"candidate": 136,"reference": 139},{"index": 920506,"main": 138,"candidate": 136,"reference": 138},{"index": 920507,"main": 138,"candidate": 136,"reference": 138},{"index": 920508,"main": 137,"candidate": 136,"reference": 138},{"index": 920509,"main": 138,"candidate": 136,"reference": 139},{"index": 920510,"main": 138,"candidate": 137,"reference": 139},{"index": 920511,"main": 138,"candidate": 137,"reference": 139}]}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1108992,"main": {"count": 96237,"max": 7,"sum_abs": 102414},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1108992,"main": {"count": 96237,"max": 7,"sum_abs": 102414},"candidate": {"count": 637,"max": 22,"sum_abs": 5131},"newly_incorrect": 527,"error_increased": 592,"changed_remaining_errors": 615,"first_errors": [{"index": 920504,"main": 138,"candidate": 136,"reference": 138},{"index": 920505,"main": 138,"candidate": 136,"reference": 139},{"index": 920506,"main": 138,"candidate": 136,"reference": 138},{"index": 920507,"main": 138,"candidate": 136,"reference": 138},{"index": 920508,"main": 137,"candidate": 136,"reference": 138},{"index": 920509,"main": 138,"candidate": 136,"reference": 139},{"index": 920510,"main": 138,"candidate": 137,"reference": 139},{"index": 920511,"main": 138,"candidate": 137,"reference": 139}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 1108992,"main": {"count": 96237,"max": 7,"sum_abs": 102414},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 1108992,"main": {"count": 96237,"max": 7,"sum_abs": 102414},"candidate": {"count": 637,"max": 22,"sum_abs": 5131},"newly_incorrect": 527,"error_increased": 592,"changed_remaining_errors": 615,"first_errors": [{"index": 920504,"main": 138,"candidate": 136,"reference": 138},{"index": 920505,"main": 138,"candidate": 136,"reference": 139},{"index": 920506,"main": 138,"candidate": 136,"reference": 138},{"index": 920507,"main": 138,"candidate": 136,"reference": 138},{"index": 920508,"main": 137,"candidate": 136,"reference": 138},{"index": 920509,"main": 138,"candidate": 136,"reference": 139},{"index": 920510,"main": 138,"candidate": 137,"reference": 139},{"index": 920511,"main": 138,"candidate": 137,"reference": 139}]}}
+      },
+      "final_main_comparison": {"samples": 1108992,"main": {"count": 96237,"max": 7,"sum_abs": 102414},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "bd1157d8c840713c82b907b9d3ae80bc3817849e11c323d875f8016e035bd3cc",
+      "verification": {"set": "corpus","name": "kimono.rotate90.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "corpus",
+      "name": "plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 49152,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "245a3dad6371dc702f29eb7e9735f843b63c525da871859728bedbe5bb274985",
+      "verification": {"set": "corpus","name": "plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}},"alpha_bytes_exact": 16384}
+    },
+    {
+      "set": "synthetic",
+      "name": "gray-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 7161,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "3169c5f9d41ce13f398e4b210275e82d9d74bd74dfaf249c22032ce64a63cb88",
+      "verification": {"set": "synthetic","name": "gray-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic",
+      "name": "gray-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 7161,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 7161,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 7161,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 7161,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 7161,"main": {"count": 2387,"max": 2,"sum_abs": 2586},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 7161,"main": {"count": 2387,"max": 2,"sum_abs": 2586},"candidate": {"count": 2387,"max": 2,"sum_abs": 2586},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": [{"index": 50,"main": 107,"candidate": 107,"reference": 106},{"index": 51,"main": 107,"candidate": 107,"reference": 106},{"index": 55,"main": 107,"candidate": 107,"reference": 106},{"index": 56,"main": 108,"candidate": 108,"reference": 107},{"index": 57,"main": 108,"candidate": 108,"reference": 107},{"index": 60,"main": 108,"candidate": 108,"reference": 107},{"index": 61,"main": 108,"candidate": 108,"reference": 107},{"index": 64,"main": 110,"candidate": 110,"reference": 109}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 7161,"main": {"count": 2387,"max": 2,"sum_abs": 2586},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 7161,"main": {"count": 2387,"max": 2,"sum_abs": 2586},"candidate": {"count": 2387,"max": 2,"sum_abs": 2586},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": [{"index": 50,"main": 107,"candidate": 107,"reference": 106},{"index": 51,"main": 107,"candidate": 107,"reference": 106},{"index": 55,"main": 107,"candidate": 107,"reference": 106},{"index": 56,"main": 108,"candidate": 108,"reference": 107},{"index": 57,"main": 108,"candidate": 108,"reference": 107},{"index": 60,"main": 108,"candidate": 108,"reference": 107},{"index": 61,"main": 108,"candidate": 108,"reference": 107},{"index": 64,"main": 110,"candidate": 110,"reference": 109}]}}
+      },
+      "final_main_comparison": {"samples": 7161,"main": {"count": 2387,"max": 2,"sum_abs": 2586},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "072180c075c6e243af75debe3c0b67edb076b1a671f720e914250963ee4b876d",
+      "verification": {"set": "synthetic","name": "gray-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic",
+      "name": "gray10le-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 7161,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "6d80e2d3baaed8adf0bb9af750206f80a23f8d7344eba0a0a5379c3d430702a2",
+      "verification": {"set": "synthetic","name": "gray10le-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic",
+      "name": "gray10le-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 7161,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 7161,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 7161,"main": {"count": 26,"max": 5,"sum_abs": 42},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 7161,"main": {"count": 26,"max": 5,"sum_abs": 42},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 7161,"main": {"count": 4105,"max": 8,"sum_abs": 8505},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 7161,"main": {"count": 4105,"max": 8,"sum_abs": 8505},"candidate": {"count": 4086,"max": 8,"sum_abs": 8465},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 7,"first_errors": [{"index": 47,"main": 451,"candidate": 451,"reference": 452},{"index": 48,"main": 445,"candidate": 445,"reference": 446},{"index": 50,"main": 429,"candidate": 429,"reference": 430},{"index": 51,"main": 418,"candidate": 418,"reference": 419},{"index": 52,"main": 412,"candidate": 412,"reference": 415},{"index": 53,"main": 413,"candidate": 413,"reference": 415},{"index": 56,"main": 445,"candidate": 445,"reference": 443},{"index": 57,"main": 448,"candidate": 448,"reference": 444}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 7161,"main": {"count": 4105,"max": 8,"sum_abs": 8505},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 7161,"main": {"count": 4105,"max": 8,"sum_abs": 8505},"candidate": {"count": 4086,"max": 8,"sum_abs": 8465},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 7,"first_errors": [{"index": 47,"main": 451,"candidate": 451,"reference": 452},{"index": 48,"main": 445,"candidate": 445,"reference": 446},{"index": 50,"main": 429,"candidate": 429,"reference": 430},{"index": 51,"main": 418,"candidate": 418,"reference": 419},{"index": 52,"main": 412,"candidate": 412,"reference": 415},{"index": 53,"main": 413,"candidate": 413,"reference": 415},{"index": 56,"main": 445,"candidate": 445,"reference": 443},{"index": 57,"main": 448,"candidate": 448,"reference": 444}]}}
+      },
+      "final_main_comparison": {"samples": 7161,"main": {"count": 4105,"max": 8,"sum_abs": 8505},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "814de01d11f987d8458a98ca4fc3f38daba29f145b7b99b2bf9512557eeead21",
+      "verification": {"set": "synthetic","name": "gray10le-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic",
+      "name": "gray12le-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 7161,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "10864f64720818d00dfe50faef5b7db0773898fc08478d0389690c1ea7b53bc5",
+      "verification": {"set": "synthetic","name": "gray12le-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic",
+      "name": "gray12le-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 7161,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 7161,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 7161,"main": {"count": 12,"max": 10,"sum_abs": 74},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 7161,"main": {"count": 12,"max": 10,"sum_abs": 74},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 7161,"main": {"count": 4579,"max": 18,"sum_abs": 17022},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 7161,"main": {"count": 4579,"max": 18,"sum_abs": 17022},"candidate": {"count": 4575,"max": 18,"sum_abs": 16960},"newly_incorrect": 1,"error_increased": 1,"changed_remaining_errors": 7,"first_errors": [{"index": 47,"main": 1864,"candidate": 1864,"reference": 1859},{"index": 48,"main": 1863,"candidate": 1863,"reference": 1854},{"index": 49,"main": 1841,"candidate": 1841,"reference": 1835},{"index": 50,"main": 1805,"candidate": 1805,"reference": 1800},{"index": 51,"main": 1767,"candidate": 1767,"reference": 1762},{"index": 52,"main": 1722,"candidate": 1722,"reference": 1717},{"index": 53,"main": 1683,"candidate": 1683,"reference": 1686},{"index": 54,"main": 1684,"candidate": 1684,"reference": 1687}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 7161,"main": {"count": 7160,"max": 1410,"sum_abs": 3244755},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 7161,"main": {"count": 7160,"max": 1410,"sum_abs": 3244755},"candidate": {"count": 7160,"max": 1410,"sum_abs": 3251044},"newly_incorrect": 0,"error_increased": 60,"changed_remaining_errors": 102,"first_errors": [{"index": 0,"main": 1728,"candidate": 1728,"reference": 1938},{"index": 1,"main": 1709,"candidate": 1709,"reference": 1951},{"index": 2,"main": 1727,"candidate": 1727,"reference": 1977},{"index": 3,"main": 1405,"candidate": 1405,"reference": 2008},{"index": 4,"main": 1407,"candidate": 1407,"reference": 2040},{"index": 5,"main": 1636,"candidate": 1636,"reference": 2078},{"index": 6,"main": 1837,"candidate": 1837,"reference": 2116},{"index": 7,"main": 1738,"candidate": 1738,"reference": 2149}]}}
+      },
+      "final_main_comparison": {"samples": 7161,"main": {"count": 7160,"max": 1410,"sum_abs": 3244755},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "404b845575c8d5268d8201021562a5e924c093fbb1f2b0f20bc63a64f7340bff",
+      "verification": {"set": "synthetic","name": "gray12le-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic",
+      "name": "yuv420p-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 10827,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "01d2b03dda7b79b65488b42cab39a7df0b22df6dd8cc26009c6ea1b6030aebae",
+      "verification": {"set": "synthetic","name": "yuv420p-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic",
+      "name": "yuv420p-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 10827,"main": {"count": 10,"max": 1,"sum_abs": 10},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 10827,"main": {"count": 10,"max": 1,"sum_abs": 10},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 24,"max": 1,"sum_abs": 24,"new_bad_vs_main": 0,"main_comparison": {"samples": 10827,"main": {"count": 37,"max": 2,"sum_abs": 39},"candidate": {"count": 24,"max": 1,"sum_abs": 24},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": [{"index": 9393,"main": 145,"candidate": 145,"reference": 146},{"index": 9394,"main": 144,"candidate": 144,"reference": 143},{"index": 9534,"main": 145,"candidate": 145,"reference": 146},{"index": 9535,"main": 144,"candidate": 144,"reference": 143},{"index": 9648,"main": 92,"candidate": 92,"reference": 91},{"index": 9649,"main": 92,"candidate": 92,"reference": 93},{"index": 9695,"main": 90,"candidate": 90,"reference": 89},{"index": 9696,"main": 90,"candidate": 90,"reference": 91}]},"previous_pr_comparison": {"samples": 10827,"main": {"count": 37,"max": 2,"sum_abs": 39},"candidate": {"count": 24,"max": 1,"sum_abs": 24},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": [{"index": 9393,"main": 145,"candidate": 145,"reference": 146},{"index": 9394,"main": 144,"candidate": 144,"reference": 143},{"index": 9534,"main": 145,"candidate": 145,"reference": 146},{"index": 9535,"main": 144,"candidate": 144,"reference": 143},{"index": 9648,"main": 92,"candidate": 92,"reference": 91},{"index": 9649,"main": 92,"candidate": 92,"reference": 93},{"index": 9695,"main": 90,"candidate": 90,"reference": 89},{"index": 9696,"main": 90,"candidate": 90,"reference": 91}]}},
+        "cdef": {"count": 25,"max": 1,"sum_abs": 25,"new_bad_vs_main": 0,"main_comparison": {"samples": 10827,"main": {"count": 1645,"max": 2,"sum_abs": 1734},"candidate": {"count": 25,"max": 1,"sum_abs": 25},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": [{"index": 9347,"main": 146,"candidate": 146,"reference": 147},{"index": 9393,"main": 146,"candidate": 146,"reference": 147},{"index": 9394,"main": 145,"candidate": 145,"reference": 144},{"index": 9440,"main": 145,"candidate": 145,"reference": 146},{"index": 9533,"main": 144,"candidate": 144,"reference": 145},{"index": 9536,"main": 143,"candidate": 143,"reference": 142},{"index": 9582,"main": 143,"candidate": 143,"reference": 144},{"index": 9648,"main": 92,"candidate": 92,"reference": 91}]},"previous_pr_comparison": {"samples": 10827,"main": {"count": 1645,"max": 2,"sum_abs": 1734},"candidate": {"count": 1632,"max": 2,"sum_abs": 1719},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": [{"index": 49,"main": 107,"candidate": 107,"reference": 108},{"index": 51,"main": 108,"candidate": 108,"reference": 107},{"index": 53,"main": 103,"candidate": 103,"reference": 104},{"index": 55,"main": 109,"candidate": 109,"reference": 108},{"index": 56,"main": 109,"candidate": 109,"reference": 108},{"index": 59,"main": 108,"candidate": 108,"reference": 107},{"index": 63,"main": 107,"candidate": 107,"reference": 108},{"index": 64,"main": 110,"candidate": 110,"reference": 109}]}},
+        "restoration": {"count": 25,"max": 1,"sum_abs": 25,"new_bad_vs_main": 0,"main_comparison": {"samples": 10827,"main": {"count": 1645,"max": 2,"sum_abs": 1734},"candidate": {"count": 25,"max": 1,"sum_abs": 25},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": [{"index": 9347,"main": 146,"candidate": 146,"reference": 147},{"index": 9393,"main": 146,"candidate": 146,"reference": 147},{"index": 9394,"main": 145,"candidate": 145,"reference": 144},{"index": 9440,"main": 145,"candidate": 145,"reference": 146},{"index": 9533,"main": 144,"candidate": 144,"reference": 145},{"index": 9536,"main": 143,"candidate": 143,"reference": 142},{"index": 9582,"main": 143,"candidate": 143,"reference": 144},{"index": 9648,"main": 92,"candidate": 92,"reference": 91}]},"previous_pr_comparison": {"samples": 10827,"main": {"count": 1645,"max": 2,"sum_abs": 1734},"candidate": {"count": 1632,"max": 2,"sum_abs": 1719},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": [{"index": 49,"main": 107,"candidate": 107,"reference": 108},{"index": 51,"main": 108,"candidate": 108,"reference": 107},{"index": 53,"main": 103,"candidate": 103,"reference": 104},{"index": 55,"main": 109,"candidate": 109,"reference": 108},{"index": 56,"main": 109,"candidate": 109,"reference": 108},{"index": 59,"main": 108,"candidate": 108,"reference": 107},{"index": 63,"main": 107,"candidate": 107,"reference": 108},{"index": 64,"main": 110,"candidate": 110,"reference": 109}]}}
+      },
+      "final_main_comparison": {"samples": 10827,"main": {"count": 1645,"max": 2,"sum_abs": 1734},"candidate": {"count": 25,"max": 1,"sum_abs": 25},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": [{"index": 9347,"main": 146,"candidate": 146,"reference": 147},{"index": 9393,"main": 146,"candidate": 146,"reference": 147},{"index": 9394,"main": 145,"candidate": 145,"reference": 144},{"index": 9440,"main": 145,"candidate": 145,"reference": 146},{"index": 9533,"main": 144,"candidate": 144,"reference": 145},{"index": 9536,"main": 143,"candidate": 143,"reference": 142},{"index": 9582,"main": 143,"candidate": 143,"reference": 144},{"index": 9648,"main": 92,"candidate": 92,"reference": 91}]},
+      "sha256": "a480cabe137ea22ad64e8a3ac9891621eaf5847abe31bb8ee0c9555ab043de5f",
+      "verification": {"set": "synthetic","name": "yuv420p-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic",
+      "name": "yuv420p10le-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 10827,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "ce38a0d97c32e96a527021518c03dca41d2dcba0ce304d3f36103804956df9cb",
+      "verification": {"set": "synthetic","name": "yuv420p10le-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic",
+      "name": "yuv420p10le-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 10827,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 10827,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 10827,"main": {"count": 86,"max": 5,"sum_abs": 112},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 10827,"main": {"count": 86,"max": 5,"sum_abs": 112},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 10827,"main": {"count": 3810,"max": 7,"sum_abs": 7285},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 10827,"main": {"count": 3810,"max": 7,"sum_abs": 7285},"candidate": {"count": 3739,"max": 7,"sum_abs": 7195},"newly_incorrect": 6,"error_increased": 7,"changed_remaining_errors": 13,"first_errors": [{"index": 47,"main": 465,"candidate": 465,"reference": 464},{"index": 49,"main": 435,"candidate": 435,"reference": 437},{"index": 50,"main": 437,"candidate": 437,"reference": 435},{"index": 51,"main": 438,"candidate": 438,"reference": 434},{"index": 53,"main": 416,"candidate": 416,"reference": 419},{"index": 54,"main": 423,"candidate": 423,"reference": 421},{"index": 55,"main": 435,"candidate": 435,"reference": 432},{"index": 56,"main": 438,"candidate": 438,"reference": 434}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 10827,"main": {"count": 3810,"max": 7,"sum_abs": 7285},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 10827,"main": {"count": 3810,"max": 7,"sum_abs": 7285},"candidate": {"count": 3739,"max": 7,"sum_abs": 7195},"newly_incorrect": 6,"error_increased": 7,"changed_remaining_errors": 13,"first_errors": [{"index": 47,"main": 465,"candidate": 465,"reference": 464},{"index": 49,"main": 435,"candidate": 435,"reference": 437},{"index": 50,"main": 437,"candidate": 437,"reference": 435},{"index": 51,"main": 438,"candidate": 438,"reference": 434},{"index": 53,"main": 416,"candidate": 416,"reference": 419},{"index": 54,"main": 423,"candidate": 423,"reference": 421},{"index": 55,"main": 435,"candidate": 435,"reference": 432},{"index": 56,"main": 438,"candidate": 438,"reference": 434}]}}
+      },
+      "final_main_comparison": {"samples": 10827,"main": {"count": 3810,"max": 7,"sum_abs": 7285},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "a34190aae9192fc6c86baf02ccffe339c92102343d675998ac81417a73908b92",
+      "verification": {"set": "synthetic","name": "yuv420p10le-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic",
+      "name": "yuv420p12le-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 10827,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "dcf92f01fed67401c6b4a850779f77fd906c581e4fc0a4be0eae26addba86c1d",
+      "verification": {"set": "synthetic","name": "yuv420p12le-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic",
+      "name": "yuv420p12le-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 10827,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 10827,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 10827,"main": {"count": 69,"max": 13,"sum_abs": 197},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 10827,"main": {"count": 69,"max": 13,"sum_abs": 197},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 10827,"main": {"count": 4731,"max": 29,"sum_abs": 19480},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 10827,"main": {"count": 4731,"max": 29,"sum_abs": 19480},"candidate": {"count": 4642,"max": 29,"sum_abs": 19309},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 6,"first_errors": [{"index": 47,"main": 1834,"candidate": 1834,"reference": 1832},{"index": 48,"main": 1801,"candidate": 1801,"reference": 1799},{"index": 49,"main": 1759,"candidate": 1759,"reference": 1756},{"index": 50,"main": 1724,"candidate": 1724,"reference": 1723},{"index": 51,"main": 1706,"candidate": 1706,"reference": 1708},{"index": 52,"main": 1704,"candidate": 1704,"reference": 1706},{"index": 53,"main": 1713,"candidate": 1713,"reference": 1712},{"index": 54,"main": 1725,"candidate": 1725,"reference": 1721}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 10827,"main": {"count": 4731,"max": 29,"sum_abs": 19480},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 10827,"main": {"count": 4731,"max": 29,"sum_abs": 19480},"candidate": {"count": 4642,"max": 29,"sum_abs": 19309},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 6,"first_errors": [{"index": 47,"main": 1834,"candidate": 1834,"reference": 1832},{"index": 48,"main": 1801,"candidate": 1801,"reference": 1799},{"index": 49,"main": 1759,"candidate": 1759,"reference": 1756},{"index": 50,"main": 1724,"candidate": 1724,"reference": 1723},{"index": 51,"main": 1706,"candidate": 1706,"reference": 1708},{"index": 52,"main": 1704,"candidate": 1704,"reference": 1706},{"index": 53,"main": 1713,"candidate": 1713,"reference": 1712},{"index": 54,"main": 1725,"candidate": 1725,"reference": 1721}]}}
+      },
+      "final_main_comparison": {"samples": 10827,"main": {"count": 4731,"max": 29,"sum_abs": 19480},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "9d35f4a74a1c079fe3019975ab20d452df9240ee1d8a0dbd39183e8037dff400",
+      "verification": {"set": "synthetic","name": "yuv420p12le-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic",
+      "name": "yuv422p-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 14399,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "c465fcded177dfbad2f8ff3a42a2c40f03996a6d8abea7fa959b134aa07ff7e7",
+      "verification": {"set": "synthetic","name": "yuv422p-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic",
+      "name": "yuv422p-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 14399,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 14399,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 14399,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 14399,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 14399,"main": {"count": 872,"max": 2,"sum_abs": 902},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 14399,"main": {"count": 872,"max": 2,"sum_abs": 902},"candidate": {"count": 872,"max": 2,"sum_abs": 902},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": [{"index": 47,"main": 112,"candidate": 112,"reference": 113},{"index": 51,"main": 105,"candidate": 105,"reference": 106},{"index": 52,"main": 104,"candidate": 104,"reference": 105},{"index": 55,"main": 107,"candidate": 107,"reference": 106},{"index": 64,"main": 110,"candidate": 110,"reference": 109},{"index": 67,"main": 93,"candidate": 93,"reference": 94},{"index": 140,"main": 112,"candidate": 112,"reference": 113},{"index": 145,"main": 104,"candidate": 104,"reference": 105}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 14399,"main": {"count": 872,"max": 2,"sum_abs": 902},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 14399,"main": {"count": 872,"max": 2,"sum_abs": 902},"candidate": {"count": 872,"max": 2,"sum_abs": 902},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": [{"index": 47,"main": 112,"candidate": 112,"reference": 113},{"index": 51,"main": 105,"candidate": 105,"reference": 106},{"index": 52,"main": 104,"candidate": 104,"reference": 105},{"index": 55,"main": 107,"candidate": 107,"reference": 106},{"index": 64,"main": 110,"candidate": 110,"reference": 109},{"index": 67,"main": 93,"candidate": 93,"reference": 94},{"index": 140,"main": 112,"candidate": 112,"reference": 113},{"index": 145,"main": 104,"candidate": 104,"reference": 105}]}}
+      },
+      "final_main_comparison": {"samples": 14399,"main": {"count": 872,"max": 2,"sum_abs": 902},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "c8ddc29222188aaba47927739cceec4cc600e77aabbac53d240ca3d8b6d1d251",
+      "verification": {"set": "synthetic","name": "yuv422p-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic",
+      "name": "yuv422p10le-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 14399,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "e97171448fbf5424b687e084103423369d7f7f2437f1ba7bdbc9e4d250f57472",
+      "verification": {"set": "synthetic","name": "yuv422p10le-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic",
+      "name": "yuv422p10le-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 14399,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 14399,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 14399,"main": {"count": 93,"max": 3,"sum_abs": 129},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 14399,"main": {"count": 93,"max": 3,"sum_abs": 129},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 14399,"main": {"count": 2676,"max": 8,"sum_abs": 5147},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 14399,"main": {"count": 2676,"max": 8,"sum_abs": 5147},"candidate": {"count": 2592,"max": 8,"sum_abs": 5045},"newly_incorrect": 3,"error_increased": 5,"changed_remaining_errors": 9,"first_errors": [{"index": 47,"main": 457,"candidate": 457,"reference": 459},{"index": 48,"main": 455,"candidate": 455,"reference": 456},{"index": 49,"main": 458,"candidate": 458,"reference": 454},{"index": 52,"main": 425,"candidate": 425,"reference": 427},{"index": 53,"main": 424,"candidate": 424,"reference": 427},{"index": 54,"main": 431,"candidate": 431,"reference": 430},{"index": 55,"main": 437,"candidate": 437,"reference": 435},{"index": 56,"main": 439,"candidate": 439,"reference": 436}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 14399,"main": {"count": 2676,"max": 8,"sum_abs": 5147},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 14399,"main": {"count": 2676,"max": 8,"sum_abs": 5147},"candidate": {"count": 2592,"max": 8,"sum_abs": 5045},"newly_incorrect": 3,"error_increased": 5,"changed_remaining_errors": 9,"first_errors": [{"index": 47,"main": 457,"candidate": 457,"reference": 459},{"index": 48,"main": 455,"candidate": 455,"reference": 456},{"index": 49,"main": 458,"candidate": 458,"reference": 454},{"index": 52,"main": 425,"candidate": 425,"reference": 427},{"index": 53,"main": 424,"candidate": 424,"reference": 427},{"index": 54,"main": 431,"candidate": 431,"reference": 430},{"index": 55,"main": 437,"candidate": 437,"reference": 435},{"index": 56,"main": 439,"candidate": 439,"reference": 436}]}}
+      },
+      "final_main_comparison": {"samples": 14399,"main": {"count": 2676,"max": 8,"sum_abs": 5147},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "84da57bf4f0d11be57c56ea6f7e8444f6242d4df0df0ef98ecc1ddab53016202",
+      "verification": {"set": "synthetic","name": "yuv422p10le-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic",
+      "name": "yuv422p12le-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 14399,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "06a679d0bfd97ef57d9333312793847e5106d9eabb24c8253ec734f9f966f9fe",
+      "verification": {"set": "synthetic","name": "yuv422p12le-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic",
+      "name": "yuv422p12le-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 14399,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 14399,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 14399,"main": {"count": 181,"max": 19,"sum_abs": 937},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 14399,"main": {"count": 181,"max": 19,"sum_abs": 937},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 14399,"main": {"count": 3224,"max": 17,"sum_abs": 10200},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 14399,"main": {"count": 3224,"max": 17,"sum_abs": 10200},"candidate": {"count": 2925,"max": 17,"sum_abs": 9343},"newly_incorrect": 2,"error_increased": 3,"changed_remaining_errors": 11,"first_errors": [{"index": 48,"main": 1796,"candidate": 1796,"reference": 1797},{"index": 51,"main": 1693,"candidate": 1693,"reference": 1695},{"index": 52,"main": 1678,"candidate": 1678,"reference": 1682},{"index": 53,"main": 1675,"candidate": 1675,"reference": 1679},{"index": 54,"main": 1680,"candidate": 1680,"reference": 1682},{"index": 55,"main": 1691,"candidate": 1691,"reference": 1692},{"index": 57,"main": 1714,"candidate": 1714,"reference": 1713},{"index": 58,"main": 1720,"candidate": 1720,"reference": 1719}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 14399,"main": {"count": 3224,"max": 17,"sum_abs": 10200},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 14399,"main": {"count": 3224,"max": 17,"sum_abs": 10200},"candidate": {"count": 2925,"max": 17,"sum_abs": 9343},"newly_incorrect": 2,"error_increased": 3,"changed_remaining_errors": 11,"first_errors": [{"index": 48,"main": 1796,"candidate": 1796,"reference": 1797},{"index": 51,"main": 1693,"candidate": 1693,"reference": 1695},{"index": 52,"main": 1678,"candidate": 1678,"reference": 1682},{"index": 53,"main": 1675,"candidate": 1675,"reference": 1679},{"index": 54,"main": 1680,"candidate": 1680,"reference": 1682},{"index": 55,"main": 1691,"candidate": 1691,"reference": 1692},{"index": 57,"main": 1714,"candidate": 1714,"reference": 1713},{"index": 58,"main": 1720,"candidate": 1720,"reference": 1719}]}}
+      },
+      "final_main_comparison": {"samples": 14399,"main": {"count": 3224,"max": 17,"sum_abs": 10200},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "c6226015847c11b84e3ac32ab4f1058edd036b25015f3cb8736548c07936634c",
+      "verification": {"set": "synthetic","name": "yuv422p12le-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic",
+      "name": "yuv444p-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 21483,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "18635254229d0cc78fcfbd4f311b20e3bf49acddda81c810ca01b23e0261f6fd",
+      "verification": {"set": "synthetic","name": "yuv444p-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic",
+      "name": "yuv444p-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 21483,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 21483,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 21483,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 21483,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 21483,"main": {"count": 12,"max": 1,"sum_abs": 12},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 21483,"main": {"count": 12,"max": 1,"sum_abs": 12},"candidate": {"count": 12,"max": 1,"sum_abs": 12},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": [{"index": 7091,"main": 132,"candidate": 132,"reference": 131},{"index": 7810,"main": 129,"candidate": 129,"reference": 130},{"index": 7996,"main": 126,"candidate": 126,"reference": 127},{"index": 13112,"main": 108,"candidate": 108,"reference": 107},{"index": 14173,"main": 102,"candidate": 102,"reference": 103},{"index": 14174,"main": 101,"candidate": 101,"reference": 100},{"index": 14269,"main": 97,"candidate": 97,"reference": 96},{"index": 14300,"main": 76,"candidate": 76,"reference": 75}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 21483,"main": {"count": 12,"max": 1,"sum_abs": 12},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 21483,"main": {"count": 12,"max": 1,"sum_abs": 12},"candidate": {"count": 12,"max": 1,"sum_abs": 12},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": [{"index": 7091,"main": 132,"candidate": 132,"reference": 131},{"index": 7810,"main": 129,"candidate": 129,"reference": 130},{"index": 7996,"main": 126,"candidate": 126,"reference": 127},{"index": 13112,"main": 108,"candidate": 108,"reference": 107},{"index": 14173,"main": 102,"candidate": 102,"reference": 103},{"index": 14174,"main": 101,"candidate": 101,"reference": 100},{"index": 14269,"main": 97,"candidate": 97,"reference": 96},{"index": 14300,"main": 76,"candidate": 76,"reference": 75}]}}
+      },
+      "final_main_comparison": {"samples": 21483,"main": {"count": 12,"max": 1,"sum_abs": 12},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "8db6fb58dc3eb00790848ded2de39ed23727eeef80dded5b5598bb4e64cd06d6",
+      "verification": {"set": "synthetic","name": "yuv444p-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic",
+      "name": "yuv444p10le-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 21483,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "2bf6397ab8a8a47aff7eb85991c80d9d177a9d8ce5bf66788f7137f88269af6d",
+      "verification": {"set": "synthetic","name": "yuv444p10le-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic",
+      "name": "yuv444p10le-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 21483,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 21483,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 21483,"main": {"count": 84,"max": 6,"sum_abs": 129},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 21483,"main": {"count": 84,"max": 6,"sum_abs": 129},"candidate": {"count": 2,"max": 1,"sum_abs": 2},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 2,"first_errors": [{"index": 7022,"main": 332,"candidate": 331,"reference": 330},{"index": 7115,"main": 331,"candidate": 332,"reference": 333}]}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 21483,"main": {"count": 163,"max": 3,"sum_abs": 177},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 21483,"main": {"count": 163,"max": 3,"sum_abs": 177},"candidate": {"count": 52,"max": 2,"sum_abs": 54},"newly_incorrect": 2,"error_increased": 2,"changed_remaining_errors": 2,"first_errors": [{"index": 1393,"main": 441,"candidate": 441,"reference": 440},{"index": 1394,"main": 447,"candidate": 447,"reference": 446},{"index": 1580,"main": 425,"candidate": 425,"reference": 426},{"index": 4462,"main": 573,"candidate": 573,"reference": 574},{"index": 4556,"main": 571,"candidate": 571,"reference": 572},{"index": 5114,"main": 535,"candidate": 535,"reference": 534},{"index": 5300,"main": 529,"candidate": 529,"reference": 528},{"index": 6928,"main": 328,"candidate": 328,"reference": 329}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 21483,"main": {"count": 163,"max": 3,"sum_abs": 177},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 21483,"main": {"count": 163,"max": 3,"sum_abs": 177},"candidate": {"count": 52,"max": 2,"sum_abs": 54},"newly_incorrect": 2,"error_increased": 2,"changed_remaining_errors": 2,"first_errors": [{"index": 1393,"main": 441,"candidate": 441,"reference": 440},{"index": 1394,"main": 447,"candidate": 447,"reference": 446},{"index": 1580,"main": 425,"candidate": 425,"reference": 426},{"index": 4462,"main": 573,"candidate": 573,"reference": 574},{"index": 4556,"main": 571,"candidate": 571,"reference": 572},{"index": 5114,"main": 535,"candidate": 535,"reference": 534},{"index": 5300,"main": 529,"candidate": 529,"reference": 528},{"index": 6928,"main": 328,"candidate": 328,"reference": 329}]}}
+      },
+      "final_main_comparison": {"samples": 21483,"main": {"count": 163,"max": 3,"sum_abs": 177},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "bee591760b6f498fb7eec6b3955b95dbe36757228f862db99a530b6fcb6eacb8",
+      "verification": {"set": "synthetic","name": "yuv444p10le-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic",
+      "name": "yuv444p12le-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 21483,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "5fceaacda7b2473a16e7e73d4ab6798d9d8dc59f029b9bb6a28082c836519dee",
+      "verification": {"set": "synthetic","name": "yuv444p12le-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic",
+      "name": "yuv444p12le-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 21483,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 21483,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 21483,"main": {"count": 166,"max": 33,"sum_abs": 965},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 21483,"main": {"count": 166,"max": 33,"sum_abs": 965},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 21483,"main": {"count": 454,"max": 42,"sum_abs": 1129},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 21483,"main": {"count": 454,"max": 42,"sum_abs": 1129},"candidate": {"count": 95,"max": 7,"sum_abs": 162},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": [{"index": 4463,"main": 2298,"candidate": 2298,"reference": 2297},{"index": 4555,"main": 2253,"candidate": 2253,"reference": 2254},{"index": 4556,"main": 2272,"candidate": 2272,"reference": 2275},{"index": 5207,"main": 2146,"candidate": 2146,"reference": 2145},{"index": 5299,"main": 2095,"candidate": 2095,"reference": 2096},{"index": 5300,"main": 2108,"candidate": 2108,"reference": 2109},{"index": 7083,"main": 1948,"candidate": 1948,"reference": 1947},{"index": 7084,"main": 1971,"candidate": 1971,"reference": 1972}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 21483,"main": {"count": 454,"max": 42,"sum_abs": 1129},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 21483,"main": {"count": 454,"max": 42,"sum_abs": 1129},"candidate": {"count": 95,"max": 7,"sum_abs": 162},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": [{"index": 4463,"main": 2298,"candidate": 2298,"reference": 2297},{"index": 4555,"main": 2253,"candidate": 2253,"reference": 2254},{"index": 4556,"main": 2272,"candidate": 2272,"reference": 2275},{"index": 5207,"main": 2146,"candidate": 2146,"reference": 2145},{"index": 5299,"main": 2095,"candidate": 2095,"reference": 2096},{"index": 5300,"main": 2108,"candidate": 2108,"reference": 2109},{"index": 7083,"main": 1948,"candidate": 1948,"reference": 1947},{"index": 7084,"main": 1971,"candidate": 1971,"reference": 1972}]}}
+      },
+      "final_main_comparison": {"samples": 21483,"main": {"count": 454,"max": 42,"sum_abs": 1129},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "c472295819baa55198c01abb9ce329390ecbefbcc88b5098e6398fc1f27325aa",
+      "verification": {"set": "synthetic","name": "yuv444p12le-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "gray-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 6205,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "7cd3713609cba5d59ee266f033ce186e973bff02a999bdeca3ed1deea76571a6",
+      "verification": {"set": "synthetic-filtered","name": "gray-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "gray-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 6205,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 6205,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 6205,"main": {"count": 21,"max": 2,"sum_abs": 32},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 6205,"main": {"count": 21,"max": 2,"sum_abs": 32},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 6205,"main": {"count": 21,"max": 2,"sum_abs": 32},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 6205,"main": {"count": 21,"max": 2,"sum_abs": 32},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 6205,"main": {"count": 21,"max": 2,"sum_abs": 32},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 6205,"main": {"count": 21,"max": 2,"sum_abs": 32},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}}
+      },
+      "final_main_comparison": {"samples": 6205,"main": {"count": 21,"max": 2,"sum_abs": 32},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "c6f027933ef18c611b7a1f9239a23ddf700fd333e6a97f2ba9927fc05ce7978b",
+      "verification": {"set": "synthetic-filtered","name": "gray-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "gray10le-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 6205,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "a57cc3a693e7442aafdbd32d27e204ff189e100d0f7b01ecb6cbcd787f6ab2cb",
+      "verification": {"set": "synthetic-filtered","name": "gray10le-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "gray10le-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 6205,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 6205,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 6205,"main": {"count": 38,"max": 8,"sum_abs": 91},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 6205,"main": {"count": 38,"max": 8,"sum_abs": 91},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 6205,"main": {"count": 38,"max": 8,"sum_abs": 91},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 6205,"main": {"count": 38,"max": 8,"sum_abs": 91},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 6205,"main": {"count": 38,"max": 8,"sum_abs": 91},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 6205,"main": {"count": 38,"max": 8,"sum_abs": 91},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}}
+      },
+      "final_main_comparison": {"samples": 6205,"main": {"count": 38,"max": 8,"sum_abs": 91},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "e54c488b62bbad2adec8b980a7bac711ce1430b65217cd1e552e92468c8e4e89",
+      "verification": {"set": "synthetic-filtered","name": "gray10le-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "gray12le-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 6205,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "a6f7b70db8bb110698c188d5532193fe08f70e2b37d2667f2ab6988e6e5ea546",
+      "verification": {"set": "synthetic-filtered","name": "gray12le-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "gray12le-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 6205,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 6205,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 6205,"main": {"count": 81,"max": 45,"sum_abs": 1151},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 6205,"main": {"count": 81,"max": 45,"sum_abs": 1151},"candidate": {"count": 4,"max": 30,"sum_abs": 69},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 2,"first_errors": [{"index": 5920,"main": 963,"candidate": 963,"reference": 978},{"index": 6005,"main": 963,"candidate": 963,"reference": 993},{"index": 6090,"main": 963,"candidate": 996,"reference": 1008},{"index": 6175,"main": 1082,"candidate": 1049,"reference": 1037}]}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 6205,"main": {"count": 81,"max": 45,"sum_abs": 1151},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 6205,"main": {"count": 81,"max": 45,"sum_abs": 1151},"candidate": {"count": 4,"max": 30,"sum_abs": 69},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 2,"first_errors": [{"index": 5920,"main": 963,"candidate": 963,"reference": 978},{"index": 6005,"main": 963,"candidate": 963,"reference": 993},{"index": 6090,"main": 963,"candidate": 996,"reference": 1008},{"index": 6175,"main": 1082,"candidate": 1049,"reference": 1037}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 6205,"main": {"count": 81,"max": 45,"sum_abs": 1151},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 6205,"main": {"count": 81,"max": 45,"sum_abs": 1151},"candidate": {"count": 4,"max": 30,"sum_abs": 69},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 2,"first_errors": [{"index": 5920,"main": 963,"candidate": 963,"reference": 978},{"index": 6005,"main": 963,"candidate": 963,"reference": 993},{"index": 6090,"main": 963,"candidate": 996,"reference": 1008},{"index": 6175,"main": 1082,"candidate": 1049,"reference": 1037}]}}
+      },
+      "final_main_comparison": {"samples": 6205,"main": {"count": 81,"max": 45,"sum_abs": 1151},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "8f52ba5f23f025093bf913b88fe9f81927959426966b9cf4f7225f485b5d5909",
+      "verification": {"set": "synthetic-filtered","name": "gray12le-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "yuv420p-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 9387,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "127e8b8ccf3ba1493816abd1b9e082592f99a144dd645f6f6a7419faecf34355",
+      "verification": {"set": "synthetic-filtered","name": "yuv420p-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "yuv420p-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 9387,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 9387,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 9387,"main": {"count": 31,"max": 3,"sum_abs": 53},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 9387,"main": {"count": 31,"max": 3,"sum_abs": 53},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 9387,"main": {"count": 31,"max": 3,"sum_abs": 53},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 9387,"main": {"count": 31,"max": 3,"sum_abs": 53},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 9387,"main": {"count": 31,"max": 3,"sum_abs": 53},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 9387,"main": {"count": 31,"max": 3,"sum_abs": 53},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}}
+      },
+      "final_main_comparison": {"samples": 9387,"main": {"count": 31,"max": 3,"sum_abs": 53},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "e37cdcf1264314c23ab1f6677b66fa07ac41f3abf72efaa2bedb3e62e7e4e416",
+      "verification": {"set": "synthetic-filtered","name": "yuv420p-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "yuv420p10le-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 9387,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "3e47c8ba2e8d482de11c4679d4fbeff0c5fb23ce7958a0e76528b16b050c1258",
+      "verification": {"set": "synthetic-filtered","name": "yuv420p10le-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "yuv420p10le-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 9387,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 9387,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 9387,"main": {"count": 130,"max": 11,"sum_abs": 414},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 9387,"main": {"count": 130,"max": 11,"sum_abs": 414},"candidate": {"count": 3,"max": 1,"sum_abs": 3},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 3,"first_errors": [{"index": 6159,"main": 426,"candidate": 418,"reference": 419},{"index": 7717,"main": 513,"candidate": 523,"reference": 522},{"index": 7760,"main": 555,"candidate": 545,"reference": 546}]}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 9387,"main": {"count": 130,"max": 11,"sum_abs": 414},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 9387,"main": {"count": 130,"max": 11,"sum_abs": 414},"candidate": {"count": 3,"max": 1,"sum_abs": 3},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 3,"first_errors": [{"index": 6159,"main": 426,"candidate": 418,"reference": 419},{"index": 7717,"main": 513,"candidate": 523,"reference": 522},{"index": 7760,"main": 555,"candidate": 545,"reference": 546}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 9387,"main": {"count": 130,"max": 11,"sum_abs": 414},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 9387,"main": {"count": 130,"max": 11,"sum_abs": 414},"candidate": {"count": 3,"max": 1,"sum_abs": 3},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 3,"first_errors": [{"index": 6159,"main": 426,"candidate": 418,"reference": 419},{"index": 7717,"main": 513,"candidate": 523,"reference": 522},{"index": 7760,"main": 555,"candidate": 545,"reference": 546}]}}
+      },
+      "final_main_comparison": {"samples": 9387,"main": {"count": 130,"max": 11,"sum_abs": 414},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "9c892be4daf85cf1bf7f58d0d1f0d1a5d91368c29d6aa018c0a19cfd0a5e4c2f",
+      "verification": {"set": "synthetic-filtered","name": "yuv420p10le-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "yuv420p12le-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 9387,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "c8d34fae628dfce3b53dad127361ca039141b1fb2e04dfa90d9446e0a29bfeab",
+      "verification": {"set": "synthetic-filtered","name": "yuv420p12le-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "yuv420p12le-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 9387,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 9387,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 9387,"main": {"count": 160,"max": 52,"sum_abs": 2049},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 9387,"main": {"count": 160,"max": 52,"sum_abs": 2049},"candidate": {"count": 4,"max": 3,"sum_abs": 10},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 4,"first_errors": [{"index": 6058,"main": 1779,"candidate": 1812,"reference": 1809},{"index": 6143,"main": 1911,"candidate": 1878,"reference": 1881},{"index": 7717,"main": 2064,"candidate": 2103,"reference": 2101},{"index": 7760,"main": 2230,"candidate": 2191,"reference": 2193}]}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 9387,"main": {"count": 160,"max": 52,"sum_abs": 2049},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 9387,"main": {"count": 160,"max": 52,"sum_abs": 2049},"candidate": {"count": 4,"max": 3,"sum_abs": 10},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 4,"first_errors": [{"index": 6058,"main": 1779,"candidate": 1812,"reference": 1809},{"index": 6143,"main": 1911,"candidate": 1878,"reference": 1881},{"index": 7717,"main": 2064,"candidate": 2103,"reference": 2101},{"index": 7760,"main": 2230,"candidate": 2191,"reference": 2193}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 9387,"main": {"count": 160,"max": 52,"sum_abs": 2049},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 9387,"main": {"count": 160,"max": 52,"sum_abs": 2049},"candidate": {"count": 4,"max": 3,"sum_abs": 10},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 4,"first_errors": [{"index": 6058,"main": 1779,"candidate": 1812,"reference": 1809},{"index": 6143,"main": 1911,"candidate": 1878,"reference": 1881},{"index": 7717,"main": 2064,"candidate": 2103,"reference": 2101},{"index": 7760,"main": 2230,"candidate": 2191,"reference": 2193}]}}
+      },
+      "final_main_comparison": {"samples": 9387,"main": {"count": 160,"max": 52,"sum_abs": 2049},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "29e2561fde1ad8349b88b8a6b226c81e3dbb3514df0608366bc768290a6bfdc1",
+      "verification": {"set": "synthetic-filtered","name": "yuv420p12le-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "yuv422p-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 12483,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "cbb718fc58cbd7f72dc91578a78d217c2bdae63d364ef7f4f0465a789865569a",
+      "verification": {"set": "synthetic-filtered","name": "yuv422p-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "yuv422p-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 12483,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 12483,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 12483,"main": {"count": 26,"max": 3,"sum_abs": 45},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 12483,"main": {"count": 26,"max": 3,"sum_abs": 45},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 12483,"main": {"count": 26,"max": 3,"sum_abs": 45},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 12483,"main": {"count": 26,"max": 3,"sum_abs": 45},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 12483,"main": {"count": 26,"max": 3,"sum_abs": 45},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 12483,"main": {"count": 26,"max": 3,"sum_abs": 45},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}}
+      },
+      "final_main_comparison": {"samples": 12483,"main": {"count": 26,"max": 3,"sum_abs": 45},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "3a830b5c0e846cadcaaeffa0708b8b201e4aca79801b14a1bcf83b6f3099f6ef",
+      "verification": {"set": "synthetic-filtered","name": "yuv422p-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "yuv422p10le-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 12483,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "58c6b8c03ffe5f01139d4d9a2a4ed12fa0cddfc5cd34ae6d4acac71f01491f50",
+      "verification": {"set": "synthetic-filtered","name": "yuv422p10le-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "yuv422p10le-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 12483,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 12483,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 12483,"main": {"count": 112,"max": 12,"sum_abs": 379},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 12483,"main": {"count": 112,"max": 12,"sum_abs": 379},"candidate": {"count": 3,"max": 1,"sum_abs": 3},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 3,"first_errors": [{"index": 6159,"main": 422,"candidate": 415,"reference": 416},{"index": 12448,"main": 437,"candidate": 430,"reference": 431},{"index": 12472,"main": 438,"candidate": 447,"reference": 446}]}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 12483,"main": {"count": 112,"max": 12,"sum_abs": 379},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 12483,"main": {"count": 112,"max": 12,"sum_abs": 379},"candidate": {"count": 3,"max": 1,"sum_abs": 3},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 3,"first_errors": [{"index": 6159,"main": 422,"candidate": 415,"reference": 416},{"index": 12448,"main": 437,"candidate": 430,"reference": 431},{"index": 12472,"main": 438,"candidate": 447,"reference": 446}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 12483,"main": {"count": 112,"max": 12,"sum_abs": 379},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 12483,"main": {"count": 112,"max": 12,"sum_abs": 379},"candidate": {"count": 3,"max": 1,"sum_abs": 3},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 3,"first_errors": [{"index": 6159,"main": 422,"candidate": 415,"reference": 416},{"index": 12448,"main": 437,"candidate": 430,"reference": 431},{"index": 12472,"main": 438,"candidate": 447,"reference": 446}]}}
+      },
+      "final_main_comparison": {"samples": 12483,"main": {"count": 112,"max": 12,"sum_abs": 379},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "cf393da4e626afa8c28e1f5ad9a8f0f04af72b741b3b34a0f489615c520de3b3",
+      "verification": {"set": "synthetic-filtered","name": "yuv422p10le-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "yuv422p12le-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 12483,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "02684ee19dc6bc4b944ccf781d5e79c3b0f4a9bd329c64631d2c278c1f779bec",
+      "verification": {"set": "synthetic-filtered","name": "yuv422p12le-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "yuv422p12le-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 12483,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 12483,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 12483,"main": {"count": 234,"max": 53,"sum_abs": 2231},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 12483,"main": {"count": 234,"max": 53,"sum_abs": 2231},"candidate": {"count": 10,"max": 44,"sum_abs": 102},"newly_incorrect": 2,"error_increased": 2,"changed_remaining_errors": 10,"first_errors": [{"index": 12404,"main": 1631,"candidate": 1650,"reference": 1649},{"index": 12413,"main": 1955,"candidate": 1975,"reference": 1976},{"index": 12416,"main": 1973,"candidate": 2002,"reference": 1999},{"index": 12429,"main": 1835,"candidate": 1810,"reference": 1812},{"index": 12437,"main": 1370,"candidate": 1414,"reference": 1370},{"index": 12447,"main": 1719,"candidate": 1700,"reference": 1701},{"index": 12456,"main": 2065,"candidate": 2045,"reference": 2044},{"index": 12459,"main": 2101,"candidate": 2072,"reference": 2075}]}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 12483,"main": {"count": 234,"max": 53,"sum_abs": 2231},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 12483,"main": {"count": 234,"max": 53,"sum_abs": 2231},"candidate": {"count": 10,"max": 44,"sum_abs": 102},"newly_incorrect": 2,"error_increased": 2,"changed_remaining_errors": 10,"first_errors": [{"index": 12404,"main": 1631,"candidate": 1650,"reference": 1649},{"index": 12413,"main": 1955,"candidate": 1975,"reference": 1976},{"index": 12416,"main": 1973,"candidate": 2002,"reference": 1999},{"index": 12429,"main": 1835,"candidate": 1810,"reference": 1812},{"index": 12437,"main": 1370,"candidate": 1414,"reference": 1370},{"index": 12447,"main": 1719,"candidate": 1700,"reference": 1701},{"index": 12456,"main": 2065,"candidate": 2045,"reference": 2044},{"index": 12459,"main": 2101,"candidate": 2072,"reference": 2075}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 12483,"main": {"count": 234,"max": 53,"sum_abs": 2231},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 12483,"main": {"count": 234,"max": 53,"sum_abs": 2231},"candidate": {"count": 10,"max": 44,"sum_abs": 102},"newly_incorrect": 2,"error_increased": 2,"changed_remaining_errors": 10,"first_errors": [{"index": 12404,"main": 1631,"candidate": 1650,"reference": 1649},{"index": 12413,"main": 1955,"candidate": 1975,"reference": 1976},{"index": 12416,"main": 1973,"candidate": 2002,"reference": 1999},{"index": 12429,"main": 1835,"candidate": 1810,"reference": 1812},{"index": 12437,"main": 1370,"candidate": 1414,"reference": 1370},{"index": 12447,"main": 1719,"candidate": 1700,"reference": 1701},{"index": 12456,"main": 2065,"candidate": 2045,"reference": 2044},{"index": 12459,"main": 2101,"candidate": 2072,"reference": 2075}]}}
+      },
+      "final_main_comparison": {"samples": 12483,"main": {"count": 234,"max": 53,"sum_abs": 2231},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "8d74303b370cdb4725b77e8913e081210f553702836f74779012334065fed527",
+      "verification": {"set": "synthetic-filtered","name": "yuv422p12le-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "yuv444p-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 18615,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "9ae4fd471e061d80d7b174a0e22dff8d850b21d3cf70aff7d8b35664c9ef3349",
+      "verification": {"set": "synthetic-filtered","name": "yuv444p-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "yuv444p-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 18615,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 18615,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 18615,"main": {"count": 84,"max": 3,"sum_abs": 151},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 18615,"main": {"count": 84,"max": 3,"sum_abs": 151},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 18615,"main": {"count": 84,"max": 3,"sum_abs": 151},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 18615,"main": {"count": 84,"max": 3,"sum_abs": 151},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 18615,"main": {"count": 84,"max": 3,"sum_abs": 151},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 18615,"main": {"count": 84,"max": 3,"sum_abs": 151},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}}
+      },
+      "final_main_comparison": {"samples": 18615,"main": {"count": 84,"max": 3,"sum_abs": 151},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "342b7254a7b0b5bcc784160bfe48d4e9da27ab8c0861c8f7fa9b0bb3625767f3",
+      "verification": {"set": "synthetic-filtered","name": "yuv444p-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "yuv444p10le-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 18615,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "48845e19d91d6e91307a868f60356b521e8a0f22134ba86c5c444ef19f6767dc",
+      "verification": {"set": "synthetic-filtered","name": "yuv444p10le-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "yuv444p10le-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 18615,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 18615,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 18615,"main": {"count": 126,"max": 13,"sum_abs": 613},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 18615,"main": {"count": 126,"max": 13,"sum_abs": 613},"candidate": {"count": 5,"max": 4,"sum_abs": 12},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 4,"first_errors": [{"index": 6074,"main": 390,"candidate": 398,"reference": 397},{"index": 6175,"main": 277,"candidate": 273,"reference": 272},{"index": 18392,"main": 463,"candidate": 463,"reference": 460},{"index": 18477,"main": 466,"candidate": 457,"reference": 453},{"index": 18562,"main": 435,"candidate": 444,"reference": 447}]}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 18615,"main": {"count": 126,"max": 13,"sum_abs": 613},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 18615,"main": {"count": 126,"max": 13,"sum_abs": 613},"candidate": {"count": 5,"max": 4,"sum_abs": 12},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 4,"first_errors": [{"index": 6074,"main": 390,"candidate": 398,"reference": 397},{"index": 6175,"main": 277,"candidate": 273,"reference": 272},{"index": 18392,"main": 463,"candidate": 463,"reference": 460},{"index": 18477,"main": 466,"candidate": 457,"reference": 453},{"index": 18562,"main": 435,"candidate": 444,"reference": 447}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 18615,"main": {"count": 126,"max": 13,"sum_abs": 613},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 18615,"main": {"count": 126,"max": 13,"sum_abs": 613},"candidate": {"count": 5,"max": 4,"sum_abs": 12},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 4,"first_errors": [{"index": 6074,"main": 390,"candidate": 398,"reference": 397},{"index": 6175,"main": 277,"candidate": 273,"reference": 272},{"index": 18392,"main": 463,"candidate": 463,"reference": 460},{"index": 18477,"main": 466,"candidate": 457,"reference": 453},{"index": 18562,"main": 435,"candidate": 444,"reference": 447}]}}
+      },
+      "final_main_comparison": {"samples": 18615,"main": {"count": 126,"max": 13,"sum_abs": 613},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "51e2b0a85ac5e1850a365b1c8adecaa1dd06472bc07668a289df2f386abf956a",
+      "verification": {"set": "synthetic-filtered","name": "yuv444p10le-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "yuv444p12le-lossless.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0}
+      },
+      "final_main_comparison": {"samples": 18615,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "794a322a41acc91e8cd4f222167c9142dd8667dc87c52afbcf64f667db289fbb",
+      "verification": {"set": "synthetic-filtered","name": "yuv444p12le-lossless.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    },
+    {
+      "set": "synthetic-filtered",
+      "name": "yuv444p12le-lossy.avif",
+      "stages": {
+        "raw": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 18615,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 18615,"main": {"count": 0,"max": 0,"sum_abs": 0},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []}},
+        "deblock": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 18615,"main": {"count": 322,"max": 63,"sum_abs": 5322},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 18615,"main": {"count": 322,"max": 63,"sum_abs": 5322},"candidate": {"count": 10,"max": 17,"sum_abs": 56},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 9,"first_errors": [{"index": 6090,"main": 1027,"candidate": 1032,"reference": 1031},{"index": 6091,"main": 955,"candidate": 975,"reference": 976},{"index": 6098,"main": 895,"candidate": 920,"reference": 921},{"index": 6099,"main": 907,"candidate": 937,"reference": 936},{"index": 6175,"main": 1050,"candidate": 1045,"reference": 1046},{"index": 6176,"main": 1055,"candidate": 1035,"reference": 1034},{"index": 6184,"main": 1044,"candidate": 1014,"reference": 1015},{"index": 18392,"main": 1856,"candidate": 1856,"reference": 1840}]}},
+        "cdef": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 18615,"main": {"count": 322,"max": 63,"sum_abs": 5322},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 18615,"main": {"count": 322,"max": 63,"sum_abs": 5322},"candidate": {"count": 10,"max": 17,"sum_abs": 56},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 9,"first_errors": [{"index": 6090,"main": 1027,"candidate": 1032,"reference": 1031},{"index": 6091,"main": 955,"candidate": 975,"reference": 976},{"index": 6098,"main": 895,"candidate": 920,"reference": 921},{"index": 6099,"main": 907,"candidate": 937,"reference": 936},{"index": 6175,"main": 1050,"candidate": 1045,"reference": 1046},{"index": 6176,"main": 1055,"candidate": 1035,"reference": 1034},{"index": 6184,"main": 1044,"candidate": 1014,"reference": 1015},{"index": 18392,"main": 1856,"candidate": 1856,"reference": 1840}]}},
+        "restoration": {"count": 0,"max": 0,"sum_abs": 0,"new_bad_vs_main": 0,"main_comparison": {"samples": 18615,"main": {"count": 322,"max": 63,"sum_abs": 5322},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},"previous_pr_comparison": {"samples": 18615,"main": {"count": 322,"max": 63,"sum_abs": 5322},"candidate": {"count": 10,"max": 17,"sum_abs": 56},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 9,"first_errors": [{"index": 6090,"main": 1027,"candidate": 1032,"reference": 1031},{"index": 6091,"main": 955,"candidate": 975,"reference": 976},{"index": 6098,"main": 895,"candidate": 920,"reference": 921},{"index": 6099,"main": 907,"candidate": 937,"reference": 936},{"index": 6175,"main": 1050,"candidate": 1045,"reference": 1046},{"index": 6176,"main": 1055,"candidate": 1035,"reference": 1034},{"index": 6184,"main": 1044,"candidate": 1014,"reference": 1015},{"index": 18392,"main": 1856,"candidate": 1856,"reference": 1840}]}}
+      },
+      "final_main_comparison": {"samples": 18615,"main": {"count": 322,"max": 63,"sum_abs": 5322},"candidate": {"count": 0,"max": 0,"sum_abs": 0},"newly_incorrect": 0,"error_increased": 0,"changed_remaining_errors": 0,"first_errors": []},
+      "sha256": "b1a5ea969009bf2ac839153deefb5c92b18acd81d810d782eab6d53184c62aa4",
+      "verification": {"set": "synthetic-filtered","name": "yuv444p12le-lossy.avif","strict_equal": true,"stages": {"raw": {"strict_equal": true,"references_equal": true},"deblock": {"strict_equal": true,"references_equal": true},"cdef": {"strict_equal": true,"references_equal": true},"restoration": {"strict_equal": true,"references_equal": true}}}
+    }
+  ]
+}

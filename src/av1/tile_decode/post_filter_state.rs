@@ -1218,10 +1218,9 @@ pub(crate) fn sgrproj_filter_unit_into_with_fixed_scratch_bit_depth_visible(
                 // AOM's av1_x_by_xplus1 table maps zero to one and rounds
                 // 256*z/(z+1) to nearest for every other variance value.
                 let af = sgr_x_by_xplus1(z);
-                let bf = round_shift(
-                    i64::from(256 - af) * normalized_sum * ((4096 + n / 2) / n),
-                    12,
-                );
+                // Only variance is normalized to 8-bit. The affine offset
+                // must retain the original sample precision.
+                let bf = round_shift(i64::from(256 - af) * sum * ((4096 + n / 2) / n), 12);
                 let index = yy * stride + xx;
                 a[index] = af;
                 b[index] = bf;
@@ -1381,7 +1380,7 @@ pub(crate) fn deblock_filter_edge_with_length(
 pub(crate) fn deblock_filter_edge_with_visible_bounds(
     samples: &mut [u16],
     width: usize,
-    _height: usize,
+    height: usize,
     visible_width: usize,
     visible_height: usize,
     edge_x: usize,
@@ -1392,6 +1391,11 @@ pub(crate) fn deblock_filter_edge_with_visible_bounds(
     bit_depth: u8,
     filter_length: u8,
 ) {
+    // An edge must be visible, but its taps can use reconstructed coded padding.
+    if (vertical && edge_x >= visible_width) || (!vertical && edge_y >= visible_height) {
+        return;
+    }
+    let flat_limit = 1 << bit_depth.saturating_sub(8);
     let radius = match filter_length {
         // The filter length names the number of taps, but the frame-edge
         // guard must cover the farthest sample actually read on either side.
@@ -1401,8 +1405,8 @@ pub(crate) fn deblock_filter_edge_with_visible_bounds(
         _ => 2,
     };
     if level == 0
-        || (vertical && (edge_x < radius || edge_x.saturating_add(radius) > visible_width))
-        || (!vertical && (edge_y < radius || edge_y.saturating_add(radius) > visible_height))
+        || (vertical && (edge_x < radius || edge_x.saturating_add(radius) > width))
+        || (!vertical && (edge_y < radius || edge_y.saturating_add(radius) > height))
     {
         return;
     }
@@ -1423,7 +1427,9 @@ pub(crate) fn deblock_filter_edge_with_visible_bounds(
         let (lane_x, lane_y, p1, p0, q0, q1) = if vertical {
             let x = edge_x;
             let y = edge_y + lane;
-            if y >= visible_height {
+            // Complete the four-lane unit: later perpendicular edges may
+            // read its padding lanes. Edge eligibility remains visible-only.
+            if y >= visible_height.div_ceil(4).saturating_mul(4).min(height) {
                 continue;
             }
             (
@@ -1437,7 +1443,7 @@ pub(crate) fn deblock_filter_edge_with_visible_bounds(
         } else {
             let x = edge_x + lane;
             let y = edge_y;
-            if x >= visible_width {
+            if x >= visible_width.div_ceil(4).saturating_mul(4).min(width) {
                 continue;
             }
             (
@@ -1494,12 +1500,12 @@ pub(crate) fn deblock_filter_edge_with_visible_bounds(
             if !mask8 {
                 continue;
             }
-            let flat8 = i32::abs(p1 - p0) <= 1
-                && i32::abs(q1 - q0) <= 1
-                && i32::abs(p2 - p0) <= 1
-                && i32::abs(q2 - q0) <= 1
-                && i32::abs(p3 - p0) <= 1
-                && i32::abs(q3 - q0) <= 1;
+            let flat8 = i32::abs(p1 - p0) <= flat_limit
+                && i32::abs(q1 - q0) <= flat_limit
+                && i32::abs(p2 - p0) <= flat_limit
+                && i32::abs(q2 - q0) <= flat_limit
+                && i32::abs(p3 - p0) <= flat_limit
+                && i32::abs(q3 - q0) <= flat_limit;
             if filter_length == 14 {
                 let (p4, p5, p6, q4, q5, q6) = if vertical {
                     (
@@ -1520,12 +1526,12 @@ pub(crate) fn deblock_filter_edge_with_visible_bounds(
                         samples[(lane_y + 6) * width + lane_x] as i32,
                     )
                 };
-                let flat2 = i32::abs(p4 - p0) <= 1
-                    && i32::abs(q4 - q0) <= 1
-                    && i32::abs(p5 - p0) <= 1
-                    && i32::abs(q5 - q0) <= 1
-                    && i32::abs(p6 - p0) <= 1
-                    && i32::abs(q6 - q0) <= 1;
+                let flat2 = i32::abs(p4 - p0) <= flat_limit
+                    && i32::abs(q4 - q0) <= flat_limit
+                    && i32::abs(p5 - p0) <= flat_limit
+                    && i32::abs(q5 - q0) <= flat_limit
+                    && i32::abs(p6 - p0) <= flat_limit
+                    && i32::abs(q6 - q0) <= flat_limit;
                 if mask8 && flat8 && flat2 {
                     let filtered = [
                         (p6 * 7 + p5 * 2 + p4 * 2 + p3 + p2 + p1 + p0 + q0 + 8) >> 4,
@@ -1637,10 +1643,10 @@ pub(crate) fn deblock_filter_edge_with_visible_bounds(
                 && i32::abs(q1 - q0) <= limit
                 && i32::abs(q2 - q1) <= limit
                 && 2 * i32::abs(p0 - q0) + i32::abs(p1 - q1) / 2 <= blimit;
-            let flat6 = i32::abs(p2 - p0) <= 1
-                && i32::abs(p1 - p0) <= 1
-                && i32::abs(q1 - q0) <= 1
-                && i32::abs(q2 - q0) <= 1;
+            let flat6 = i32::abs(p2 - p0) <= flat_limit
+                && i32::abs(p1 - p0) <= flat_limit
+                && i32::abs(q1 - q0) <= flat_limit
+                && i32::abs(q2 - q0) <= flat_limit;
             if filter_length == 6 && !mask6 {
                 continue;
             }
@@ -2492,6 +2498,152 @@ mod tests {
         let before = sharp.clone();
         deblock_filter_edge_with_visible_bounds(&mut sharp, 16, 4, 16, 4, 2, 0, true, 20, 7, 8, 4);
         assert_eq!(sharp, before);
+    }
+
+    #[test]
+    fn high_bitdepth_flat_filters_match_libaom_3_12_1_vectors() {
+        // aom_highbd_lpf_vertical_{6,8,14}_c, E=64, I=20, H=1.
+        // The within-side variation is exactly 1 << (bit_depth - 8).
+        let cases = [
+            (
+                10,
+                6,
+                [
+                    404, 400, 400, 404, 400, 400, 403, 406, 409, 412, 412, 412, 416, 412, 412, 416,
+                ],
+            ),
+            (
+                10,
+                8,
+                [
+                    404, 400, 400, 404, 400, 402, 405, 406, 409, 411, 411, 412, 416, 412, 412, 416,
+                ],
+            ),
+            (
+                10,
+                14,
+                [
+                    404, 400, 402, 403, 403, 404, 405, 407, 408, 410, 410, 411, 412, 412, 412, 416,
+                ],
+            ),
+            (
+                12,
+                6,
+                [
+                    1616, 1600, 1600, 1616, 1600, 1600, 1610, 1624, 1636, 1646, 1648, 1648, 1664,
+                    1648, 1648, 1664,
+                ],
+            ),
+            (
+                12,
+                8,
+                [
+                    1616, 1600, 1600, 1616, 1600, 1608, 1618, 1622, 1634, 1642, 1644, 1648, 1664,
+                    1648, 1648, 1664,
+                ],
+            ),
+            (
+                12,
+                14,
+                [
+                    1616, 1600, 1606, 1610, 1613, 1616, 1620, 1626, 1632, 1638, 1640, 1643, 1646,
+                    1648, 1648, 1664,
+                ],
+            ),
+        ];
+        for (depth, length, expected) in cases {
+            for vertical in [true, false] {
+                let mut samples = vec![0u16; 16 * 16];
+                for y in 0..16 {
+                    for x in 0..16 {
+                        let axis = if vertical { x } else { y };
+                        samples[y * 16 + x] =
+                            (100 + if axis >= 8 { 3 } else { 0 } + u16::from(axis % 3 == 0))
+                                << (depth - 8);
+                    }
+                }
+                deblock_filter_edge_with_visible_bounds(
+                    &mut samples,
+                    16,
+                    16,
+                    16,
+                    16,
+                    if vertical { 8 } else { 0 },
+                    if vertical { 0 } else { 8 },
+                    vertical,
+                    20,
+                    0,
+                    depth,
+                    length,
+                );
+                let actual: Vec<_> = (0..16)
+                    .map(|i| samples[if vertical { i } else { i * 16 }])
+                    .collect();
+                assert_eq!(
+                    actual, expected,
+                    "depth={depth} length={length} vertical={vertical}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn visible_edge_filters_complete_four_lane_unit_but_not_later_padding() {
+        for vertical in [true, false] {
+            let mut samples = vec![0u16; 16 * 16];
+            for y in 0..16 {
+                for x in 0..16 {
+                    samples[y * 16 + x] = if (if vertical { x } else { y }) < 8 {
+                        40
+                    } else {
+                        38
+                    };
+                }
+            }
+            let original = samples.clone();
+            deblock_filter_edge_with_visible_bounds(
+                &mut samples,
+                16,
+                16,
+                if vertical { 9 } else { 2 },
+                if vertical { 2 } else { 9 },
+                if vertical { 8 } else { 0 },
+                if vertical { 0 } else { 8 },
+                vertical,
+                23,
+                0,
+                8,
+                8,
+            );
+            for lane in 0..4 {
+                assert_eq!(
+                    samples[if vertical {
+                        lane * 16 + 7
+                    } else {
+                        7 * 16 + lane
+                    }],
+                    39
+                );
+                assert_eq!(
+                    samples[if vertical {
+                        lane * 16 + 8
+                    } else {
+                        8 * 16 + lane
+                    }],
+                    39
+                );
+            }
+            for lane in 4..16 {
+                for axis in 0..16 {
+                    let i = if vertical {
+                        lane * 16 + axis
+                    } else {
+                        axis * 16 + lane
+                    };
+                    assert_eq!(samples[i], original[i]);
+                }
+            }
+        }
     }
 
     #[test]

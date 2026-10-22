@@ -1886,3 +1886,17 @@ fn deblock_filter_grid_keeps_each_four_pixel_reference() {
         .collect();
     assert_eq!(refs, [1, 2, 3, 4]);
 }
+
+#[test]
+fn deblock_grid_keeps_padded_chroma_owner_in_its_row() {
+    let plan = StrictDeblockFilterGridPlan::for_frame(1204, 9).unwrap();
+    assert_eq!((plan.width, plan.height), (302, 4));
+    let owner_x = super::deblock_luma_owner_coordinate(600, 1);
+    assert_eq!(owner_x, 1204);
+    assert!(owner_x / 4 < plan.width);
+    assert_eq!(super::deblock_luma_owner_coordinate(599, 1), 1196);
+    assert_eq!(super::deblock_luma_owner_coordinate(600, 0), 600);
+    let mut budget = DecodeBudget::new(Some(plan.requested_bytes - 1));
+    assert!(StrictDeblockFilterGridOwner::admit(plan, &mut budget).is_err());
+    assert_eq!(budget.accounting().aggregate_live, 0);
+}

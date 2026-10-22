@@ -566,3 +566,49 @@ fn inter_filter_precision_twelve_bit_bilinear_matches_aom() {
         );
     }
 }
+
+#[test]
+fn cfl_at_partial_frame_edge_uses_complete_luma_transform() {
+    let data = include_bytes!("../../../../tests/WML2Viewer.avif");
+    let info = parse_avif(data).unwrap();
+    let sequence = parse_sequence_header(
+        find_obu_payload(&info.primary_item_payload, ObuType::SequenceHeader)
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    let payload = find_obu_payload(&info.primary_item_payload, ObuType::Frame)
+        .unwrap()
+        .unwrap();
+    let frame = parse_frame_header(payload, &sequence).unwrap();
+    let tile = parse_tile_group(payload, frame.uncompressed_header_bits, &frame.tile_info).unwrap();
+    let mut plan = build_still_decode_plan(&sequence, &frame, &tile).unwrap();
+    plan.width = 85;
+    plan.height = 4;
+    plan.bit_depth = 10;
+    plan.planes.truncate(1);
+    plan.planes[0] = PlaneLayout {
+        plane: 0,
+        width: 85,
+        height: 4,
+        subsampling_x: 0,
+        subsampling_y: 0,
+        sample_count: 340,
+    };
+    let mut buffers = crate::av1::decode::alloc_coded_frame_buffers(&plan).unwrap();
+    let luma = &mut buffers.planes[0];
+    for y in 0..4 {
+        for x in 64..luma.layout.width {
+            luma.samples[y * luma.layout.width + x] = 400 + (x as u16 - 64) * 4;
+        }
+    }
+    let mut prediction = vec![512; 32 * 4];
+    apply_cfl_prediction(&mut prediction, luma, 64, 0, 32, 4, 8, 10, 0, 0).unwrap();
+    // Mean of all 32 reconstructed luma values is 462, including x=88..95
+    // beyond the old MI-aligned backing. Visible chroma must use that mean.
+    for row in prediction.as_chunks::<32>().0 {
+        for (x, &sample) in row[..21].iter().enumerate() {
+            assert_eq!(sample, 450 + x as u16 * 4);
+        }
+    }
+}
