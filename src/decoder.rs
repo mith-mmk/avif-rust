@@ -2386,10 +2386,11 @@ impl StrictDeblockFilterGridPlan {
                 "native AV1 deblock filter grid dimensions are empty".to_string(),
             ));
         }
+        // Two 4x4 MI cells per coded 8-pixel unit, including padded owners.
         const STEP: usize = 8;
         let width = width
             .checked_add(STEP - 1)
-            .map(|value| value / STEP)
+            .map(|value| value / STEP * 2)
             .ok_or_else(|| {
                 DecoderError::InvalidParam(
                     "native AV1 deblock filter grid width overflows".to_string(),
@@ -2397,7 +2398,7 @@ impl StrictDeblockFilterGridPlan {
             })?;
         let height = height
             .checked_add(STEP - 1)
-            .map(|value| value / STEP)
+            .map(|value| value / STEP * 2)
             .ok_or_else(|| {
                 DecoderError::InvalidParam(
                     "native AV1 deblock filter grid height overflows".to_string(),
@@ -2820,7 +2821,7 @@ fn populate_deblock_filter_grid(
     filter_grid_height: usize,
     state: &PostFilterState,
 ) {
-    const FILTER_GRID_STEP: usize = 8;
+    const FILTER_GRID_STEP: usize = 4;
     for candidate in &state.block_filter_states {
         let start_x = (candidate.x / FILTER_GRID_STEP).min(filter_grid_width);
         let start_y = (candidate.y / FILTER_GRID_STEP).min(filter_grid_height);
@@ -2970,9 +2971,10 @@ fn apply_deblock_plane_with_filter_grid(
     shared_filter_grid: Option<&[Option<crate::av1::BlockFilterState>]>,
     shared_boundary_orders: Option<&StrictDeblockBoundaryOrderOwner>,
 ) {
-    const FILTER_GRID_STEP: usize = 8;
-    let filter_grid_width = frame_width.div_ceil(FILTER_GRID_STEP);
-    let filter_grid_height = frame_height.div_ceil(FILTER_GRID_STEP);
+    const FILTER_GRID_STEP: usize = 4;
+    // Keep the bottom/right chroma owner even when it lies beyond visible MI.
+    let filter_grid_width = frame_width.div_ceil(8) * 2;
+    let filter_grid_height = frame_height.div_ceil(8) * 2;
     let filter_grid = match shared_filter_grid {
         Some(filter_grid) => std::borrow::Cow::Borrowed(filter_grid),
         None => {
@@ -2987,6 +2989,11 @@ fn apply_deblock_plane_with_filter_grid(
         }
     };
     let block_filter_state_at = |x: usize, y: usize| {
+        // Bounds must be checked in two dimensions: a padded MI at the right
+        // edge must never wrap into the next metadata row.
+        if x / FILTER_GRID_STEP >= filter_grid_width || y / FILTER_GRID_STEP >= filter_grid_height {
+            return None;
+        }
         filter_grid
             .get((y / FILTER_GRID_STEP) * filter_grid_width + x / FILTER_GRID_STEP)
             .copied()
@@ -3092,7 +3099,10 @@ fn apply_deblock_plane_with_filter_grid(
                 let current_block = if plane_index == 0 {
                     None
                 } else {
-                    block_filter_state_at(edge_x << subsampling_x, edge_y << subsampling_y)
+                    block_filter_state_at(
+                        deblock_luma_owner_coordinate(edge_x, subsampling_x),
+                        deblock_luma_owner_coordinate(edge_y, subsampling_y),
+                    )
                 };
                 let luma_x = if plane_index == 0 {
                     edge_x
@@ -3109,7 +3119,11 @@ fn apply_deblock_plane_with_filter_grid(
                 {
                     continue;
                 }
-                let filter_state = block_filter_state_at(luma_x, luma_y);
+                let filter_state = if plane_index == 0 {
+                    block_filter_state_at(luma_x, luma_y)
+                } else {
+                    current_block
+                };
                 // Select the per-block reference/motion deltas for both still
                 // images and AVIS inter frames. Intra blocks use the
                 // INTRA_FRAME reference slot and zero-MV mode delta.
@@ -3169,11 +3183,17 @@ fn apply_deblock_plane_with_filter_grid(
                     None
                 } else if vertical {
                     edge_x.checked_sub(1).and_then(|x| {
-                        block_filter_state_at(x << subsampling_x, edge_y << subsampling_y)
+                        block_filter_state_at(
+                            deblock_luma_owner_coordinate(x, subsampling_x),
+                            deblock_luma_owner_coordinate(edge_y, subsampling_y),
+                        )
                     })
                 } else {
                     edge_y.checked_sub(1).and_then(|y| {
-                        block_filter_state_at(edge_x << subsampling_x, y << subsampling_y)
+                        block_filter_state_at(
+                            deblock_luma_owner_coordinate(edge_x, subsampling_x),
+                            deblock_luma_owner_coordinate(y, subsampling_y),
+                        )
                     })
                 };
                 let previous_dimension = if plane_index != 0 {
@@ -3317,6 +3337,11 @@ fn apply_deblock_plane_with_filter_grid(
     }
 }
 
+// Subsampled chroma belongs to the bottom/right luma MI of the shared unit.
+fn deblock_luma_owner_coordinate(coordinate: usize, subsampling: usize) -> usize {
+    (((coordinate << subsampling) >> 2) | subsampling) << 2
+}
+
 fn is_tile_edge(frame_header: &FrameHeader, x: usize, y: usize, vertical: bool) -> bool {
     let tile_info = &frame_header.tile_info;
     if tile_info.tile_cols * tile_info.tile_rows <= 1 {
@@ -3354,30 +3379,12 @@ fn tile_id_at(tile_info: &crate::av1::TileInfo, x: usize, y: usize) -> usize {
 #[inline]
 fn deblock_has_active_strengths(
     loop_filter: &LoopFilterParams,
-    segmentation: &SegmentationParams,
-    state: &PostFilterState,
+    _segmentation: &SegmentationParams,
+    _state: &PostFilterState,
 ) -> bool {
-    if loop_filter.levels.iter().any(|&level| level != 0) {
-        return true;
-    }
-    if loop_filter.delta_enabled
-        && (loop_filter.ref_deltas.iter().any(|&delta| delta != 0)
-            || loop_filter.mode_deltas.iter().any(|&delta| delta != 0))
-    {
-        return true;
-    }
-    if segmentation
-        .segment_delta_lf
-        .iter()
-        .flatten()
-        .any(|&delta| delta != 0)
-    {
-        return true;
-    }
-    state
-        .block_filter_states
-        .iter()
-        .any(|block| block.delta_lf.iter().any(|&delta| delta != 0))
+    // AV1 disables the entire loop filter when both frame luma levels are
+    // zero. Reference/segment/block deltas do not enable it in that case.
+    loop_filter.levels[0] != 0 || loop_filter.levels[1] != 0
 }
 
 fn apply_loop_filter_deltas(
@@ -4515,8 +4522,14 @@ fn apply_cdef_stage_with_optional_indices(
                         subsampling_y,
                         cdef_coeff_shift,
                         cdef,
-                        ceil_shift(visible_luma_width, usize::from(subsampling_x)),
-                        ceil_shift(visible_luma_height, usize::from(subsampling_y)),
+                        ceil_shift(
+                            visible_luma_width,
+                            usize::from(plane_index > 0 && subsampling_x),
+                        ),
+                        ceil_shift(
+                            visible_luma_height,
+                            usize::from(plane_index > 0 && subsampling_y),
+                        ),
                         cdef_blocks,
                         strict_snapshots,
                     );
@@ -4533,8 +4546,14 @@ fn apply_cdef_stage_with_optional_indices(
             subsampling_y,
             cdef_coeff_shift,
             cdef,
-            ceil_shift(visible_luma_width, usize::from(subsampling_x)),
-            ceil_shift(visible_luma_height, usize::from(subsampling_y)),
+            ceil_shift(
+                visible_luma_width,
+                usize::from(plane_index > 0 && subsampling_x),
+            ),
+            ceil_shift(
+                visible_luma_height,
+                usize::from(plane_index > 0 && subsampling_y),
+            ),
             cdef_blocks,
             strict_snapshots,
         );

@@ -1214,7 +1214,7 @@ fn predict_plane_block_into(
         let luma_plane = luma_plane.ok_or_else(|| {
             DecoderError::Bitstream("AV1 CFL prediction is missing its luma plane".to_string())
         })?;
-        apply_cfl_prediction(
+        apply_cfl_prediction_with_luma_bounds(
             output,
             luma_plane,
             x,
@@ -1225,6 +1225,18 @@ fn predict_plane_block_into(
             bit_depth,
             subsampling_x,
             subsampling_y,
+            cfl_luma_end(
+                block_x << subsampling_x,
+                block_mode.block_size.width().max(4 << subsampling_x),
+                block_mode.tx_size.width(),
+                frame.frame_width as usize,
+            ),
+            cfl_luma_end(
+                block_y << subsampling_y,
+                block_mode.block_size.height().max(4 << subsampling_y),
+                block_mode.tx_size.height(),
+                frame.frame_height as usize,
+            ),
         )?;
     }
     Ok(())
@@ -3048,6 +3060,20 @@ fn predict_dc_block(
     vec![value.min(maximum) as u16; width * height]
 }
 
+// Only transforms whose origins are inside the coded MI rectangle are
+// reconstructed. CfL repeats the last *subsampled* luma column/row when its
+// chroma block extends farther; backing allocation is not availability.
+fn cfl_luma_end(origin: usize, block_extent: usize, tx_extent: usize, visible: usize) -> usize {
+    let coded = visible.div_ceil(8) * 8;
+    origin
+        + coded
+            .saturating_sub(origin)
+            .min(block_extent)
+            .div_ceil(tx_extent)
+            * tx_extent
+}
+
+#[cfg(test)]
 #[expect(
     clippy::too_many_arguments,
     reason = "CFL parameters mirror the normative subsampled prediction inputs"
@@ -3063,6 +3089,40 @@ pub(super) fn apply_cfl_prediction(
     bit_depth: u8,
     subsampling_x: usize,
     subsampling_y: usize,
+) -> Result<(), DecoderError> {
+    apply_cfl_prediction_with_luma_bounds(
+        prediction,
+        luma_plane,
+        x,
+        y,
+        width,
+        height,
+        alpha_q3,
+        bit_depth,
+        subsampling_x,
+        subsampling_y,
+        luma_plane.layout.width,
+        luma_plane.layout.height,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "CFL parameters mirror the normative subsampled prediction inputs"
+)]
+fn apply_cfl_prediction_with_luma_bounds(
+    prediction: &mut [u16],
+    luma_plane: &PlaneBuffer,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    alpha_q3: i8,
+    bit_depth: u8,
+    subsampling_x: usize,
+    subsampling_y: usize,
+    reconstructed_width: usize,
+    reconstructed_height: usize,
 ) -> Result<(), DecoderError> {
     let sample_count = width.checked_mul(height).ok_or_else(|| {
         DecoderError::InvalidParam("AV1 CFL transform dimensions are too large".to_string())
@@ -3080,9 +3140,22 @@ pub(super) fn apply_cfl_prediction(
         ));
     }
 
+    if reconstructed_width == 0 || reconstructed_height == 0 {
+        return Err(DecoderError::Bitstream(
+            "AV1 CFL reconstructed extent is empty".to_string(),
+        ));
+    }
+    // Prefix-decode callers may supply visible-only buffers. Full decoding
+    // retains complete transforms; either way, never read beyond the owner.
+    let available_width = reconstructed_width
+        .min(luma_width)
+        .div_ceil(1 << subsampling_x);
+    let available_height = reconstructed_height
+        .min(luma_height)
+        .div_ceil(1 << subsampling_y);
     let luma_q3_at = |row: usize, col: usize| {
-        let source_x = (x + col) << subsampling_x;
-        let source_y = (y + row) << subsampling_y;
+        let source_x = (x + col).min(available_width - 1) << subsampling_x;
+        let source_y = (y + row).min(available_height - 1) << subsampling_y;
         let mut luma_sum = 0u32;
         for luma_row in 0..(1usize << subsampling_y) {
             let source_y = (source_y + luma_row).min(luma_height - 1);
@@ -3187,6 +3260,48 @@ fn predict_palette_block_into(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cfl_padding_repeats_last_reconstructed_subsample_not_allocation() {
+        assert_eq!(cfl_luma_end(1184, 32, 8, 1204), 1208);
+        assert_eq!(cfl_luma_end(1184, 32, 32, 1204), 1216);
+        assert_eq!(cfl_luma_end(704, 32, 8, 722), 728);
+        for sy in [0, 1] {
+            let mut luma = PlaneBuffer {
+                layout: crate::av1::decode::PlaneLayout {
+                    plane: 0,
+                    width: 16,
+                    height: 8,
+                    subsampling_x: 0,
+                    subsampling_y: 0,
+                    sample_count: 128,
+                },
+                samples: vec![0; 128],
+            };
+            for row in 0..(1 << sy) {
+                luma.samples[row * 16..row * 16 + 6]
+                    .copy_from_slice(&[100, 100, 200, 200, 100, 500]);
+            }
+            let mut prediction = vec![512; 8];
+            apply_cfl_prediction_with_luma_bounds(
+                &mut prediction,
+                &luma,
+                0,
+                0,
+                4,
+                2,
+                8,
+                10,
+                1,
+                sy,
+                6,
+                1 << sy,
+            )
+            .unwrap();
+            // Subsampled luma [100,200,300,300], mean 225, repeated vertically.
+            assert_eq!(prediction, [387, 487, 587, 587, 387, 487, 587, 587]);
+        }
+    }
 
     #[test]
     fn transform_prediction_reads_reconstructed_neighbor() {

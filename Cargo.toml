@@ -28,6 +28,8 @@ include = [
     "/tests/WML2Viewer.avif",
     "/tests/plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
     "/tests/FIXTURES.md",
+    "/tests/native_pixel_conformance.rs",
+    "/tests/native-pixel/**",
 ]
 
 [dependencies]

@@ -496,21 +496,25 @@ fn alloc_frame_buffers_for_layouts(
     })
 }
 
+// Reconstruct complete transforms at the coded frame edge. CfL averages the
+// full luma transform, including samples outside the visible/MI-aligned area.
+// The largest transform is 64 samples; visible dimensions are preserved and
+// the existing crop removes this storage after filtering. Both allocation
+// paths use the same checked geometry; strict decode charges actual capacity.
+fn reconstruction_extent(visible: usize) -> Result<usize, DecoderError> {
+    visible
+        .checked_add(63)
+        .map(|value| value / 64 * 64)
+        .ok_or_else(|| {
+            DecoderError::InvalidParam("AV1 reconstruction extent overflows".to_string())
+        })
+}
+
 pub(crate) fn alloc_coded_frame_buffers(
     plan: &FrameDecodePlan,
 ) -> Result<FrameBuffers, DecoderError> {
-    let coded_width =
-        usize::try_from(mi_dimension(u32::try_from(plan.width).map_err(|_| {
-            DecoderError::InvalidParam("AV1 frame width is too large".to_string())
-        })?))
-        .map_err(|_| DecoderError::InvalidParam("AV1 frame width is too large".to_string()))?
-            << 2;
-    let coded_height =
-        usize::try_from(mi_dimension(u32::try_from(plan.height).map_err(|_| {
-            DecoderError::InvalidParam("AV1 frame height is too large".to_string())
-        })?))
-        .map_err(|_| DecoderError::InvalidParam("AV1 frame height is too large".to_string()))?
-            << 2;
+    let coded_width = reconstruction_extent(plan.width)?;
+    let coded_height = reconstruction_extent(plan.height)?;
     let mut coded_layouts = plan.planes.clone();
     for layout in &mut coded_layouts {
         layout.width = round_shift_usize(coded_width, layout.subsampling_x);
@@ -532,18 +536,8 @@ pub(crate) fn alloc_coded_frame_buffers_with_budget(
     budget: &mut DecodeBudget,
     limits: &NativeDecodeLimits,
 ) -> Result<(FrameBuffers, NativeFrameAllocation), DecoderError> {
-    let coded_width =
-        usize::try_from(mi_dimension(u32::try_from(plan.width).map_err(|_| {
-            DecoderError::InvalidParam("AV1 frame width is too large".to_string())
-        })?))
-        .map_err(|_| DecoderError::InvalidParam("AV1 frame width is too large".to_string()))?
-            << 2;
-    let coded_height =
-        usize::try_from(mi_dimension(u32::try_from(plan.height).map_err(|_| {
-            DecoderError::InvalidParam("AV1 frame height is too large".to_string())
-        })?))
-        .map_err(|_| DecoderError::InvalidParam("AV1 frame height is too large".to_string()))?
-            << 2;
+    let coded_width = reconstruction_extent(plan.width)?;
+    let coded_height = reconstruction_extent(plan.height)?;
     if plan.planes.len() > 3 {
         return Err(DecoderError::InvalidParam(
             "native AVIF coded frame has too many planes".to_string(),
@@ -956,6 +950,35 @@ mod tests {
     }
 
     #[test]
+    fn complete_transform_allocation_is_charged_and_rolls_back_at_one_under() {
+        let plan = native_crop_plan(65, 33);
+        let limits = native_limits(1 << 20);
+        let legacy = alloc_coded_frame_buffers(&plan).unwrap();
+        assert_eq!(
+            (
+                legacy.planes[0].layout.width,
+                legacy.planes[0].layout.height
+            ),
+            (128, 64)
+        );
+        let mut budget = DecodeBudget::new(None);
+        let (frame, mut owners) =
+            alloc_coded_frame_buffers_with_budget(&plan, &mut budget, &limits).unwrap();
+        assert_eq!(frame, legacy);
+        let needed = budget.accounting().aggregate_live;
+        owners.release(&mut budget).unwrap();
+        let mut under = DecodeBudget::new(Some(needed - 1));
+        assert!(alloc_coded_frame_buffers_with_budget(&plan, &mut under, &limits).is_err());
+        assert_eq!(under.accounting().aggregate_live, 0);
+        let mut exact = DecodeBudget::new(Some(needed));
+        let (_, mut owners) =
+            alloc_coded_frame_buffers_with_budget(&plan, &mut exact, &limits).unwrap();
+        owners.release(&mut exact).unwrap();
+        assert_eq!(exact.accounting().aggregate_live, 0);
+        assert!(reconstruction_extent(usize::MAX).is_err());
+    }
+
+    #[test]
     fn native_crop_accounts_coded_and_visible_peak_then_retires_coded_owner() {
         let plan = native_crop_plan(5, 5);
         let limits = native_limits(1 << 20);
@@ -963,7 +986,7 @@ mod tests {
         let (mut buffers, mut owners) =
             alloc_coded_frame_buffers_with_budget(&plan, &mut budget, &limits).unwrap();
         let coded_live = budget.accounting().aggregate_live;
-        assert_eq!(buffers.planes[0].layout.width, 8);
+        assert_eq!(buffers.planes[0].layout.width, 64);
 
         crop_native_frame_buffers_to_plan(&mut buffers, &mut owners, &plan, &mut budget, &limits)
             .unwrap();
@@ -978,7 +1001,7 @@ mod tests {
 
     #[test]
     fn native_crop_skips_replacement_when_coded_and_visible_layouts_match() {
-        let plan = native_crop_plan(8, 8);
+        let plan = native_crop_plan(64, 64);
         let limits = native_limits(1 << 20);
         let mut budget = DecodeBudget::new(limits.max_live_allocation_bytes());
         let (mut buffers, mut owners) =
@@ -1091,7 +1114,7 @@ mod tests {
             DecodeBudget,
             NativeDecodeLimits,
         ) {
-            let plan = native_crop_plan(8, 8);
+            let plan = native_crop_plan(64, 64);
             let limits = native_limits(1 << 20);
             let mut budget = DecodeBudget::new(None);
             let (master, master_owners) =
@@ -1227,7 +1250,7 @@ mod tests {
     }
 
     #[test]
-    fn coded_buffers_preserve_aligned_mi_padding_until_crop() {
+    fn coded_buffers_preserve_complete_transform_padding_until_crop() {
         let plan = FrameDecodePlan {
             width: 900,
             height: 900,
@@ -1253,8 +1276,8 @@ mod tests {
             tiles: Vec::new(),
         };
         let mut buffers = alloc_coded_frame_buffers(&plan).unwrap();
-        assert_eq!(buffers.planes[0].layout.width, 904);
-        assert_eq!(buffers.planes[0].layout.height, 904);
+        assert_eq!(buffers.planes[0].layout.width, 960);
+        assert_eq!(buffers.planes[0].layout.height, 960);
         buffers.planes[0].samples[899] = 7;
         buffers.planes[0].samples[900] = 9;
 
