@@ -150,6 +150,7 @@ Stage extraction requires private instrumentation at the named boundaries;
 no instrumentation is enabled in product builds. Final bundled tests need none.
 
 PR #3 remains independent and unchanged. A non-mutating merge-tree check found
-conflicts in `.gitattributes`, `src/av1/tile_decode/tests/tile_decode_reconstruction.rs`,
+six conflicts in `.gitattributes`, `src/av1/tile_decode/reconstruction.rs`,
+`src/av1/tile_decode/tests/tile_decode_reconstruction.rs`,
 `src/decoder.rs`, `src/decoder/deblock_budget_tests.rs`, and `tests/FIXTURES.md`.
 That branch needs its own reconciliation and validation before any later merge.
