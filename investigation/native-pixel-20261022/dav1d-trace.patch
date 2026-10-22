@@ -1,3 +1,64 @@
+diff --git a/src/lf_apply_tmpl.c b/src/lf_apply_tmpl.c
+index 4ef3bec..2a93b77 100644
+--- a/src/lf_apply_tmpl.c
++++ b/src/lf_apply_tmpl.c
+@@ -28,6 +28,8 @@
+ #include "config.h"
+
+ #include <string.h>
++#include <stdio.h>
++#include <stdlib.h>
+
+ #include "common/intops.h"
+
+@@ -173,6 +175,23 @@ void bytefn(dav1d_copy_lpf)(Dav1dFrameContext *const f,
+     }
+ }
+
++
++static void trace_uv_edge(const Dav1dFrameContext *f, pixel *dst, const ptrdiff_t ls, const uint32_t *mask, const uint8_t (*lvl)[4], ptrdiff_t b4_stride, int n, int vertical, const char *phase) {
++    if (!getenv("AVIF_EDGE_TRACE")) return;
++    ptrdiff_t pos=dst-(pixel*)f->cur.data[1];
++    int x=pos%PXSTRIDE(ls),y=pos/PXSTRIDE(ls);
++    for(int j=0;j<n;j++) {
++        if(!((mask[0]|mask[1])&(1U<<j))) continue;
++        int ex=x+(vertical?0:4*j),ey=y+(vertical?4*j:0);
++        if(ex<596 || ex>604 || ey>8) continue;
++        const uint8_t (*l)[4]=lvl+(vertical?j*b4_stride:j);
++        int L=l[0][0]?l[0][0]:l[vertical?-1:-b4_stride][0];
++        fprintf(stderr,"DAV %s x=%d y=%d v=%d len=%d L=%d E=%d I=%d H=%d\n",phase,ex,ey,vertical,4+2*!!(mask[1]&(1U<<j)),L,f->lf.lim_lut.e[L],f->lf.lim_lut.i[L],L>>4);
++        pixel *q=dst+(vertical?4*j*PXSTRIDE(ls):4*j);
++        for(int lane=0;lane<4;lane++) {fprintf(stderr,"DAV taps %d",lane);for(int d=-3;d<3;d++) fprintf(stderr," %d",q[(vertical?lane*PXSTRIDE(ls):lane)+(vertical?d:d*PXSTRIDE(ls))]);fprintf(stderr,"\n");}
++    }
++}
++
+ static inline void filter_plane_cols_y(const Dav1dFrameContext *const f,
+                                        const int have_left,
+                                        const uint8_t (*lvl)[4],
+@@ -267,9 +286,11 @@ static inline void filter_plane_cols_uv(const Dav1dFrameContext *const f,
+             hmask[1] = mask[x][1][1];
+         }
+         hmask[2] = 0;
++        trace_uv_edge(f,&u[x*4],ls,hmask,(const uint8_t(*)[4]) &lvl[x][2],b4_stride,endy4-starty4,1,"before");
+         dsp->lf.loop_filter_sb[1][0](&u[x * 4], ls, hmask,
+                                      (const uint8_t(*)[4]) &lvl[x][2], b4_stride,
+                                      &f->lf.lim_lut, endy4 - starty4 HIGHBD_CALL_SUFFIX);
++        trace_uv_edge(f,&u[x*4],ls,hmask,(const uint8_t(*)[4]) &lvl[x][2],b4_stride,endy4-starty4,1,"after");
+         dsp->lf.loop_filter_sb[1][0](&v[x * 4], ls, hmask,
+                                      (const uint8_t(*)[4]) &lvl[x][3], b4_stride,
+                                      &f->lf.lim_lut, endy4 - starty4 HIGHBD_CALL_SUFFIX);
+@@ -301,9 +322,11 @@ static inline void filter_plane_rows_uv(const Dav1dFrameContext *const f,
+             mask[y][1][0] | ((unsigned) mask[y][1][1] << (16 >> ss_hor)),
+             0,
+         };
++        trace_uv_edge(f,&u[off_l],ls,vmask,(const uint8_t(*)[4]) &lvl[0][2],b4_stride,w,0,"before");
+         dsp->lf.loop_filter_sb[1][1](&u[off_l], ls, vmask,
+                                      (const uint8_t(*)[4]) &lvl[0][2], b4_stride,
+                                      &f->lf.lim_lut, w HIGHBD_CALL_SUFFIX);
++        trace_uv_edge(f,&u[off_l],ls,vmask,(const uint8_t(*)[4]) &lvl[0][2],b4_stride,w,0,"after");
+         dsp->lf.loop_filter_sb[1][1](&v[off_l], ls, vmask,
+                                      (const uint8_t(*)[4]) &lvl[0][3], b4_stride,
+                                      &f->lf.lim_lut, w HIGHBD_CALL_SUFFIX);
 diff --git a/src/recon_tmpl.c b/src/recon_tmpl.c
 index 426fa40..f55fff5 100644
 --- a/src/recon_tmpl.c

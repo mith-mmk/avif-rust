@@ -1,0 +1,290 @@
+{
+  "starting_commit": "70dc474759ac85649e35987200eefe05ea1d3695",
+  "decoder_base": "d3ea4e602763951626d678291cc9c325e2c475b2",
+  "dav1d_source": "42b2b24fb8819f1ed3643aa9cf2a62f03868e3aa",
+  "scope": "Investigation only. Product sources unchanged; probes run in private detached worktree.",
+  "enabled_probes": [
+    "FLAT",
+    "EDGE",
+    "ZERO",
+    "CFL_PAD",
+    "UV_SMOOTH",
+    "GRID_PAD"
+  ],
+  "first_residual": {
+    "plane": "U",
+    "x": 599,
+    "y": 2,
+    "actual": 139,
+    "expected": 138,
+    "edge": {
+      "x": 600,
+      "y": 0,
+      "lane": 2,
+      "vertical": true,
+      "level": 7,
+      "edge_limit": 25,
+      "inside_limit": 7,
+      "hev_threshold": 0,
+      "input_taps_p2_p1_p0_q0_q1_q2": [
+        141,
+        140,
+        140,
+        136,
+        136,
+        136
+      ],
+      "old_length": 6,
+      "reference_and_padded_grid_length": 4,
+      "old_output_taps": [
+        141,
+        140,
+        139,
+        138,
+        137,
+        136
+      ],
+      "reference_output_taps": [
+        141,
+        140,
+        138,
+        137,
+        136,
+        136
+      ]
+    },
+    "grid": {
+      "frame_width": 1204,
+      "visible_mi_columns": 301,
+      "coded_mi_columns": 302,
+      "owner_luma_x": 1204,
+      "owner_luma_y": 4,
+      "owner_mi_col": 301,
+      "owner_mi_row": 1,
+      "old_flat_index": 602,
+      "old_reinterpreted_mi_col": 0,
+      "old_reinterpreted_mi_row": 2,
+      "old_block": {
+        "x": 0,
+        "y": 0,
+        "size": "16x16"
+      },
+      "correct_block": {
+        "x": 1200,
+        "y": 0,
+        "size": "8x16"
+      }
+    }
+  },
+  "bounded_lookup_only": {
+    "GRID_BOUNDS": {
+      "count": 10,
+      "max": 1
+    },
+    "GRID_PAD": {
+      "count": 0,
+      "max": 0
+    }
+  },
+  "all_images": {
+    "colors_hdr_rec2020.avif": {
+      "count": 0,
+      "max": 0,
+      "samples": 120000,
+      "stages": {
+        "raw": 0,
+        "deblock": 0,
+        "cdef": 0,
+        "restoration": 0
+      },
+      "native_color_sha256": "43721854d26686fec9ea7e442111b42141b9da6757aa8eca8ea6c931d10a2a15",
+      "independent_reference_sha256": "43721854d26686fec9ea7e442111b42141b9da6757aa8eca8ea6c931d10a2a15"
+    },
+    "fox.profile0.8bpc.yuv420.avif": {
+      "count": 0,
+      "max": 0,
+      "samples": 1444800,
+      "stages": {
+        "raw": 0,
+        "deblock": 0,
+        "cdef": 0,
+        "restoration": 0
+      },
+      "native_color_sha256": "47cbd6ffb44d83139d8f003857e550187af323695a0b857b39e378554175dc9d",
+      "independent_reference_sha256": "47cbd6ffb44d83139d8f003857e550187af323695a0b857b39e378554175dc9d"
+    },
+    "fox.profile1.10bpc.yuv444.avif": {
+      "count": 0,
+      "max": 0,
+      "samples": 2889600,
+      "stages": {
+        "raw": 0,
+        "deblock": 0,
+        "cdef": 0,
+        "restoration": 0
+      },
+      "native_color_sha256": "ff563b7dac20f756ceb1800900064564822ee15dbca9214a432ad822cd5c2e0e",
+      "independent_reference_sha256": "ff563b7dac20f756ceb1800900064564822ee15dbca9214a432ad822cd5c2e0e"
+    },
+    "fox.profile1.8bpc.yuv444.odd-width.odd-height.avif": {
+      "count": 0,
+      "max": 0,
+      "samples": 2883591,
+      "stages": {
+        "raw": 0,
+        "deblock": 0,
+        "cdef": 0,
+        "restoration": 0
+      },
+      "native_color_sha256": "aac86e23051859ce4558b863b2b683bc8b693e32ebb8b6540a8dace4f173b0d8",
+      "independent_reference_sha256": "aac86e23051859ce4558b863b2b683bc8b693e32ebb8b6540a8dace4f173b0d8"
+    },
+    "fox.profile2.12bpc.yuv444.avif": {
+      "count": 0,
+      "max": 0,
+      "samples": 2889600,
+      "stages": {
+        "raw": 0,
+        "deblock": 0,
+        "cdef": 0,
+        "restoration": 0
+      },
+      "native_color_sha256": "389deb9638ee353c928bbabe9d3f0b61c9caecc5f2e776acd7b9d3c1ed03ed51",
+      "independent_reference_sha256": "389deb9638ee353c928bbabe9d3f0b61c9caecc5f2e776acd7b9d3c1ed03ed51"
+    },
+    "paris_icc_exif_xmp.avif": {
+      "count": 0,
+      "max": 0,
+      "samples": 365118,
+      "stages": {
+        "raw": 0,
+        "deblock": 0,
+        "cdef": 0,
+        "restoration": 0
+      },
+      "native_color_sha256": "cd485d47f16fc96c3c5e7e3218f5a80cf8fa3d2ed1966de4443fa30359aea97b",
+      "independent_reference_sha256": "cd485d47f16fc96c3c5e7e3218f5a80cf8fa3d2ed1966de4443fa30359aea97b"
+    },
+    "plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif": {
+      "count": 0,
+      "max": 0,
+      "samples": 49152,
+      "stages": {
+        "raw": 0,
+        "deblock": 0,
+        "cdef": 0,
+        "restoration": 0
+      },
+      "alpha_count": 0,
+      "native_color_sha256": "79128f06b4b1e49742a5cf56bca2f61f880226c7d09e2cae984694ad7d1dd157",
+      "independent_reference_sha256": "79128f06b4b1e49742a5cf56bca2f61f880226c7d09e2cae984694ad7d1dd157"
+    }
+  },
+  "ablations": [
+    {
+      "omitted": "FLAT",
+      "image": "fox.profile1.10bpc.yuv444",
+      "raw_count": 0,
+      "final_count": 172519,
+      "max": 12
+    },
+    {
+      "omitted": "FLAT",
+      "image": "fox.profile2.12bpc.yuv444",
+      "raw_count": 0,
+      "final_count": 396432,
+      "max": 46
+    },
+    {
+      "omitted": "EDGE",
+      "image": "fox.profile1.8bpc.yuv444.odd-width.odd-height",
+      "raw_count": 0,
+      "final_count": 731,
+      "max": 5
+    },
+    {
+      "omitted": "EDGE",
+      "image": "paris_icc_exif_xmp",
+      "raw_count": 0,
+      "final_count": 218,
+      "max": 6
+    },
+    {
+      "omitted": "ZERO",
+      "image": "colors_hdr_rec2020",
+      "raw_count": 0,
+      "final_count": 14757,
+      "max": 3
+    },
+    {
+      "omitted": "CFL_PAD",
+      "image": "fox.profile1.10bpc.yuv444",
+      "raw_count": 37,
+      "final_count": 35,
+      "max": 1
+    },
+    {
+      "omitted": "UV_SMOOTH",
+      "image": "fox.profile0.8bpc.yuv420",
+      "raw_count": 38603,
+      "final_count": 38871,
+      "max": 7
+    },
+    {
+      "omitted": "GRID_PAD",
+      "image": "fox.profile0.8bpc.yuv420",
+      "raw_count": 0,
+      "final_count": 158,
+      "max": 2
+    }
+  ],
+  "controls": {
+    "colors_hdr_rec2020.avif": {
+      "new_native_instrumentation_baseline_identical": true,
+      "dav1d_c_trace_final_identical": true
+    },
+    "fox.profile0.8bpc.yuv420.avif": {
+      "new_native_instrumentation_baseline_identical": true,
+      "dav1d_c_trace_final_identical": true
+    },
+    "fox.profile1.10bpc.yuv444.avif": {
+      "new_native_instrumentation_baseline_identical": true,
+      "dav1d_c_trace_final_identical": true
+    },
+    "fox.profile1.8bpc.yuv444.odd-width.odd-height.avif": {
+      "new_native_instrumentation_baseline_identical": true,
+      "dav1d_c_trace_final_identical": true
+    },
+    "fox.profile2.12bpc.yuv444.avif": {
+      "new_native_instrumentation_baseline_identical": true,
+      "dav1d_c_trace_final_identical": true
+    },
+    "paris_icc_exif_xmp.avif": {
+      "new_native_instrumentation_baseline_identical": true,
+      "dav1d_c_trace_final_identical": true
+    },
+    "plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif": {
+      "new_native_instrumentation_baseline_identical": true,
+      "dav1d_c_trace_final_identical": true
+    }
+  },
+  "patch_sha256": {
+    "probes.patch": "9d206bb7edd77840d81a2629aa0feb36f88fa86da5741ae243ea9b6cea35a9e7",
+    "dav1d-trace.patch": "49a034581f3ed612864e9704b88a6d560fff44dd9dd51410e63f4c1037a9cee8"
+  },
+  "validation": {
+    "patched_release_build": "passed",
+    "all_7_raw_deblock_cdef_restoration": "exact",
+    "alpha": "16384 samples exact",
+    "native_instrumentation_baseline_control": "7/7 byte-identical",
+    "dav1d_C_final_control": "7/7 byte-identical to installed dav1d/libaom",
+    "patch_forward_reverse_checks": "passed",
+    "product_diff_vs_starting_commit": "empty",
+    "full_existing_tests": "903 passed / 0 failed / 9 ignored on previous unchanged product sources; not rerun for trace-only follow-up"
+  },
+  "limits": [
+    "No production fix or strict allocation budget implementation.",
+    "Only seven still images; no new AVIS/inter/tile/subsampling corpus conformance claim.",
+    "Coded grid padding validated here on legacy source-plane API; strict grid planner/budget must be updated and tested in any future fix."
+  ]
+}

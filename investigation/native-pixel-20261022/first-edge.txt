@@ -1,0 +1,25 @@
+Correct coded-grid probe, U plane:
+NATIVE before x=600 y=0 v=true len=4 level=7 dim=4 prev=8 block=TransformBlock { plane: 1, x: 600, y: 0, tx_size: Tx4x8 } cur=Some(BlockFilterState { x: 1200, y: 0, block_size: Block8x16, segment_id: 0, skip: false, is_inter: false, reference_frame: None, loop_filter_reference: Some(0), loop_filter_mode: 0, has_nonzero_mv: false, y_mode: Horizontal, uv_mode: Some(Intra(Dc)), delta_lf: [0, 0, 0, 0] }) previous=Some(BlockFilterState { x: 1184, y: 0, block_size: Block16x8, segment_id: 0, skip: false, is_inter: false, reference_frame: None, loop_filter_reference: Some(0), loop_filter_mode: 0, has_nonzero_mv: false, y_mode: Smooth, uv_mode: Some(Intra(Dc)), delta_lf: [0, 0, 0, 0] })
+NATIVE taps 0 [135, 138, 141, 139, 139, 139]
+NATIVE taps 1 [140, 141, 142, 137, 137, 137]
+NATIVE taps 2 [141, 140, 140, 136, 136, 136]
+NATIVE taps 3 [138, 136, 135, 134, 134, 134]
+NATIVE after 0 [135, 138, 140, 140, 139, 139]
+NATIVE after 1 [140, 141, 141, 138, 137, 137]
+NATIVE after 2 [141, 140, 138, 137, 136, 136]
+NATIVE after 3 [138, 136, 135, 134, 134, 134]
+
+Original full-probe result before GRID_PAD:
+NATIVE before x=600 y=0 v=true len=6 level=7 dim=8 prev=8 block=TransformBlock { plane: 1, x: 600, y: 0, tx_size: Tx4x8 } cur=Some(BlockFilterState { x: 0, y: 0, block_size: Block16x16, segment_id: 0, skip: false, is_inter: false, reference_frame: None, loop_filter_reference: Some(0), loop_filter_mode: 0, has_nonzero_mv: false, y_mode: Dc, uv_mode: Some(Cfl), delta_lf: [0, 0, 0, 0] }) previous=Some(BlockFilterState { x: 1184, y: 0, block_size: Block16x8, segment_id: 0, skip: false, is_inter: false, reference_frame: None, loop_filter_reference: Some(0), loop_filter_mode: 0, has_nonzero_mv: false, y_mode: Smooth, uv_mode: Some(Intra(Dc)), delta_lf: [0, 0, 0, 0] })
+NATIVE taps 0 [135, 138, 141, 139, 139, 139]
+NATIVE taps 1 [140, 141, 142, 137, 137, 137]
+NATIVE taps 2 [141, 140, 140, 136, 136, 136]
+NATIVE taps 3 [138, 136, 135, 134, 134, 134]
+NATIVE after 0 [135, 138, 140, 140, 139, 139]
+NATIVE after 1 [140, 141, 141, 138, 137, 137]
+NATIVE after 2 [141, 140, 139, 138, 137, 136]
+NATIVE after 3 [138, 136, 135, 134, 134, 134]
+
+C dav1d 1.5.1, corresponding edge (see residual-evidence.json for numeric summary):
+DAV before x=600 y=0 v=1 len=4 L=7 E=25 I=7 H=0
+DAV after x=600 y=0 v=1 len=4 L=7 E=25 I=7 H=0

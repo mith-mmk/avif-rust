@@ -7,7 +7,7 @@
 
 libaom と dav1d は対象 7 枚で完全一致した。native PR #3 の差分数・最大差・MAE は Mac 計測と完全に再現した。native 側に複数の独立した問題がある。色変換、ICC、HDR 表示変換、film grain、byte stride、plane 順序の比較条件差では説明できない。
 
-隔離した仮説検証で 6/7 枚を完全一致まで説明できた。fox8 はフィルター前まで完全一致したが、deblock 後に **158 samples / max 2** が残る。この残差の具体的な edge metadata / kernel 原因は未確定。全画像の修正完了を主張しない。
+初回調査では6/7枚が一致し、fox8のdeblock後に158 samples/max2が残った。astra追補で、右端chroma ownerのmetadata lookupが次行へ折り返す原因を特定した。coded MI gridを保持する隔離probeを加え、**全7画像・全4段階・plum alphaが完全一致**した。製品修正は未実施。詳細・対照実験・限界は [FOLLOWUP.md](FOLLOWUP.md) と `residual-evidence.json` を参照。
 
 ## 固定した対象と参照
 
@@ -61,7 +61,7 @@ main は fox8 のみ count=38,881、PR と 270 samples 異なる。他 6 枚は 
 
 4. **右端 CfL luma backing — 高確度、正式な最小実装は未設計。** fox10 V block (1184,224), 32x32、alpha=-1。native と C dav1d で dequant 配列は一致するが、予測は full transform 内 47 samples 不一致、可視領域で raw 37 samples 不一致。例 V(1186,224) の予測503/502、再構成505/504。`alloc_coded_frame_buffers` は MI padding までしか luma を保持せず、CfL は layout 端を clamp する。luma transform の完全な再構成領域を保持する allocation probe と flat-threshold probe で fox10 **172,557 → 0**。全 plane を一律64-alignする probe は因果検証用で、正式なメモリ設計の提案ではない。
 
-5. **subsampled chroma smooth context ownership — raw 差の原因として高確度。** fox8 chroma block (164,4), 4x4 D135。入力 top/left edge は先行復元と整合するが native smooth=false、dav1d smooth flag=512 (true)。native は UV を持たない luma sub8 block でも UV smooth grid を false で更新し、隣接判定も chroma ownership と異なる座標を使う。UV 構文がある時だけ対応 chroma footprint を更新し、chroma owner 座標で隣を読む probe で **raw 38,603 → 0**。最初の U(167,4) は130、期待131。deblock 等の probe 併用後も **158 / max2 / MAE0.000110742** が残る。最初の残差は U(599,2)=139、期待138。raw は既にゼロなので残差の最初の処理は deblock と確定できるが、edge 選択・level・tap のどれかはまだ特定していない。
+5. **subsampled chroma smooth context ownership — raw 差の原因として高確度。** fox8 chroma block (164,4), 4x4 D135。入力 top/left edge は先行復元と整合するが native smooth=false、dav1d smooth flag=512 (true)。native は UV を持たない luma sub8 block でも UV smooth grid を false で更新し、隣接判定も chroma ownership と異なる座標を使う。UV 構文がある時だけ対応 chroma footprint を更新し、chroma owner 座標で隣を読む probe で **raw 38,603 → 0**。最初の U(167,4) は130、期待131。初回5 probe併用時には **158 / max2 / MAE0.000110742** が残った。最初の残差は U(599,2)=139、期待138。初回で残差の最初の処理をdeblockと確定した。追補では右端metadata gridの行折り返しによる6-tap/4-tap選択差と特定し、coded grid probeで158差分もゼロになった。
 
 これらは画像ごとの単なる最終 diff 減少だけでなく、独立参照の段階出力、予測/係数比較、一要因 probe を組み合わせた判定。ただし AV1 全 bitstream への一般適合性や strict allocation contract の適合を証明するものではない。
 
@@ -73,7 +73,7 @@ main は fox8 のみ count=38,881、PR と 270 samples 異なる。他 6 枚は 
 2. visible edge eligibility と coded-padding tap readability を分離。frame 外の edge は禁止。
 3. UV smooth context の更新・参照を chroma owner に揃え、UV のない luma block で破壊しない。
 4. CfL に必要な luma reconstruction を保存。全面64-alignをそのまま採用せず strict/native budget、crop、allocation tests を設計する。
-5. fox8 の残る158差分を、同一 raw 入力で native/dav1d の edge 座標・filter length・level・入力 tap を照合して絞る。最初は U(599,2) に影響する edge。ここを解決するまで完全適合とはしない。
+5. deblock metadata gridをcoded MI寸法へ統一し、2次元lookupに範囲チェックを追加する。strict grid planとbudgetも併せて検証する。追補で、この所有ブロック情報の不足がfox8の残る158差分の原因と確定した。
 
 ## 再現用ファイル
 
@@ -86,7 +86,7 @@ main は fox8 のみ count=38,881、PR と 270 samples 異なる。他 6 枚は 
 
 例: PR SHA の別 checkout に `git apply probes.patch` し、`cargo build --locked --release --example investigate_dump`。dav1d 1.5.1 の matching headers と library に C harness を link する。`python3 measure.py INPUT PRIVATE_OUT NATIVE_DUMP DAV1D_DUMP` を probe env なしで実行。private output は results/*.native, *.obu, *.meta, *.davstage{0,1,3,7}, *.libaom-av1, *.libdav1d と stages/IMAGE/{raw,deblock,cdef,restoration}.yuv。main は別 checkout/binary で同じ example を実行する。
 
-probe は `AVIF_PROBE_FLAT`, `AVIF_PROBE_EDGE`, `AVIF_PROBE_ZERO`, `AVIF_PROBE_CFL_PAD`, `AVIF_PROBE_UV_SMOOTH` を必要な実験だけ1に設定する。`AVIF_RECON_TRACE` / `AVIF_PRED_TRACE` は private file path、`AVIF_STAGE_DIR` は private directory path。本 probe はエラー処理・効率・allocation保証を持つ正式パッチではない。
+probe は `AVIF_PROBE_FLAT`, `AVIF_PROBE_EDGE`, `AVIF_PROBE_ZERO`, `AVIF_PROBE_CFL_PAD`, `AVIF_PROBE_UV_SMOOTH`、追補の `AVIF_PROBE_GRID_PAD` を必要な実験だけ1に設定する。`AVIF_RECON_TRACE` / `AVIF_PRED_TRACE` は private file path、`AVIF_STAGE_DIR` は private directory path。本 probe はエラー処理・効率・allocation保証を持つ正式パッチではない。
 
 既存 CI の全マトリクス、Wasm、fuzz、encode/package は調査のためには実行していない。変更対象は計測・記録のみで、製品ソースは指定 PR SHA のまま。
 
