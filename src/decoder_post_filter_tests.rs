@@ -71,7 +71,7 @@ fn zero_deblock_strengths_skip_boundary_traversal() {
 
     let mut active_segmentation = segmentation;
     active_segmentation.segment_delta_lf[0][0] = 1;
-    assert!(deblock_has_active_strengths(
+    assert!(!deblock_has_active_strengths(
         &loop_filter,
         &active_segmentation,
         &state

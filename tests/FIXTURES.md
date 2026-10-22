@@ -69,3 +69,31 @@ not a claim of exact pixel conformance. Independent full-sequence decoding
 must select `-map 0:v:1`; FFmpeg's default stream is only the primary still.
 The current decoder still differs from the independent oracle on this lossy
 sequence. See `avis-validation.json` for measured differences and scope.
+
+## Native pixel conformance fixtures
+
+`native-pixel/` contains five synthetic 85x73 images and unconverted planar
+YUV oracles, generated from the arithmetic pattern in
+`scripts/generate_native_pixel_fixtures.py`. No attached/user images or their
+pixels are included. The generated fixture data is provided under this
+repository's MIT license. SHA-256 digests are in `native-pixel/manifest.json`.
+
+Generation used FFmpeg 7.1.5, libaom 3.12.1 and dav1d 1.5.1. Both independent
+decoders produced identical oracle bytes. 8-bit samples occupy one byte;
+10/12-bit samples are little-endian u16. The test compares every native sample
+and requires legacy/strict equality, with no external executables at test time.
+The lossy cases disable CDEF/restoration to isolate reconstruction and deblock;
+the 12-bit case is lossless. Separate unit vectors exercise 10/12-bit flat
+6/8/14-tap deblock against libaom's C implementation, and partial-frame CfL,
+shared chroma smooth contexts, padded metadata, and strict allocation admission.
+
+```sh
+python scripts/generate_native_pixel_fixtures.py /tmp/native-pixel-regenerated
+cargo test --locked --test native_pixel_conformance
+```
+
+The generator additionally produces unbundled feature combinations for broader
+manual validation. Encoded bytes can vary across encoder versions; do not
+replace oracles with native output. The five bundled names are listed in the
+manifest. Broader validation and known remaining differences are documented in
+`docs/native-pixel-validation.md`.

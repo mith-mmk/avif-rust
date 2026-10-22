@@ -1,0 +1,679 @@
+{
+  "units": "byte differences, not sample differences; alpha excluded from color comparisons",
+  "seven_images_dav1d_stages": [
+    {
+      "name": "colors_hdr_rec2020.avif",
+      "raw": 0,
+      "deblock": 0,
+      "cdef": 0,
+      "restoration": 0
+    },
+    {
+      "name": "fox.profile0.8bpc.yuv420.avif",
+      "raw": 0,
+      "deblock": 0,
+      "cdef": 0,
+      "restoration": 0
+    },
+    {
+      "name": "fox.profile1.10bpc.yuv444.avif",
+      "raw": 0,
+      "deblock": 0,
+      "cdef": 0,
+      "restoration": 0
+    },
+    {
+      "name": "fox.profile1.8bpc.yuv444.odd-width.odd-height.avif",
+      "raw": 0,
+      "deblock": 0,
+      "cdef": 0,
+      "restoration": 0
+    },
+    {
+      "name": "fox.profile2.12bpc.yuv444.avif",
+      "raw": 0,
+      "deblock": 0,
+      "cdef": 0,
+      "restoration": 0
+    },
+    {
+      "name": "paris_icc_exif_xmp.avif",
+      "raw": 0,
+      "deblock": 0,
+      "cdef": 0,
+      "restoration": 0
+    },
+    {
+      "name": "plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
+      "raw": 0,
+      "deblock": 0,
+      "cdef": 0,
+      "restoration": 0
+    }
+  ],
+  "seven_images_libaom_stages": [
+    {
+      "name": "colors_hdr_rec2020.avif",
+      "raw": 0,
+      "deblock": 0,
+      "cdef": 0,
+      "restoration": 0
+    },
+    {
+      "name": "fox.profile0.8bpc.yuv420.avif",
+      "raw": 0,
+      "deblock": 0,
+      "cdef": 0,
+      "restoration": 0
+    },
+    {
+      "name": "fox.profile1.10bpc.yuv444.avif",
+      "raw": 0,
+      "deblock": 0,
+      "cdef": 0,
+      "restoration": 0
+    },
+    {
+      "name": "fox.profile1.8bpc.yuv444.odd-width.odd-height.avif",
+      "raw": 0,
+      "deblock": 0,
+      "cdef": 0,
+      "restoration": 0
+    },
+    {
+      "name": "fox.profile2.12bpc.yuv444.avif",
+      "raw": 0,
+      "deblock": 0,
+      "cdef": 0,
+      "restoration": 0
+    },
+    {
+      "name": "paris_icc_exif_xmp.avif",
+      "raw": 0,
+      "deblock": 0,
+      "cdef": 0,
+      "restoration": 0
+    },
+    {
+      "name": "plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
+      "raw": 0,
+      "deblock": 0,
+      "cdef": 0,
+      "restoration": 0
+    }
+  ],
+  "corpus": [
+    {
+      "name": "abc_color_irot_alpha_irot.avif",
+      "references_agree": true,
+      "main": {
+        "bytes": 524288,
+        "refbytes": 393216,
+        "diffbytes": 0
+      },
+      "fixed": {
+        "bytes": 524288,
+        "refbytes": 393216,
+        "diffbytes": 0
+      },
+      "strict_equal": true
+    },
+    {
+      "name": "fox.profile0.8bpc.yuv420.avif",
+      "references_agree": true,
+      "main": {
+        "bytes": 1444800,
+        "refbytes": 1444800,
+        "diffbytes": 38881
+      },
+      "fixed": {
+        "bytes": 1444800,
+        "refbytes": 1444800,
+        "diffbytes": 0
+      },
+      "strict_equal": true
+    },
+    {
+      "name": "fox.profile0.8bpc.yuv420.monochrome.avif",
+      "references_agree": true,
+      "main": {
+        "bytes": 963200,
+        "refbytes": 963200,
+        "diffbytes": 132
+      },
+      "fixed": {
+        "bytes": 963200,
+        "refbytes": 963200,
+        "diffbytes": 0
+      },
+      "strict_equal": true
+    },
+    {
+      "name": "fox.profile0.8bpc.yuv420.monochrome.odd-width.odd-height.avif",
+      "references_agree": true,
+      "main": {
+        "bytes": 961197,
+        "refbytes": 961197,
+        "diffbytes": 770
+      },
+      "fixed": {
+        "bytes": 961197,
+        "refbytes": 961197,
+        "diffbytes": 0
+      },
+      "strict_equal": true
+    },
+    {
+      "name": "fox.profile0.8bpc.yuv420.odd-height.avif",
+      "references_agree": true,
+      "main": {
+        "bytes": 1443596,
+        "refbytes": 1443596,
+        "diffbytes": 71944
+      },
+      "fixed": {
+        "bytes": 1443596,
+        "refbytes": 1443596,
+        "diffbytes": 151
+      },
+      "strict_equal": true
+    },
+    {
+      "name": "fox.profile0.8bpc.yuv420.odd-width.avif",
+      "references_agree": true,
+      "main": {
+        "bytes": 1444000,
+        "refbytes": 1444000,
+        "diffbytes": 14026
+      },
+      "fixed": {
+        "bytes": 1444000,
+        "refbytes": 1444000,
+        "diffbytes": 0
+      },
+      "strict_equal": true
+    },
+    {
+      "name": "fox.profile1.10bpc.yuv444.avif",
+      "references_agree": true,
+      "main": {
+        "bytes": 5779200,
+        "refbytes": 5779200,
+        "diffbytes": 177213
+      },
+      "fixed": {
+        "bytes": 5779200,
+        "refbytes": 5779200,
+        "diffbytes": 0
+      },
+      "strict_equal": true
+    },
+    {
+      "name": "fox.profile2.12bpc.yuv444.avif",
+      "references_agree": true,
+      "main": {
+        "bytes": 5779200,
+        "refbytes": 5779200,
+        "diffbytes": 403560
+      },
+      "fixed": {
+        "bytes": 5779200,
+        "refbytes": 5779200,
+        "diffbytes": 0
+      },
+      "strict_equal": true
+    },
+    {
+      "name": "fox.profile2.8bpc.yuv422.avif",
+      "references_agree": true,
+      "main": {
+        "bytes": 1926400,
+        "refbytes": 1926400,
+        "diffbytes": 193
+      },
+      "fixed": {
+        "bytes": 1926400,
+        "refbytes": 1926400,
+        "diffbytes": 827
+      },
+      "strict_equal": true
+    },
+    {
+      "name": "fox.profile2.8bpc.yuv422.odd-height.avif",
+      "references_agree": true,
+      "main": {
+        "bytes": 1923992,
+        "refbytes": 1923992,
+        "diffbytes": 367
+      },
+      "fixed": {
+        "bytes": 1923992,
+        "refbytes": 1923992,
+        "diffbytes": 0
+      },
+      "strict_equal": true
+    },
+    {
+      "name": "fox.profile2.8bpc.yuv422.odd-width.avif",
+      "references_agree": true,
+      "main": {
+        "bytes": 1925600,
+        "refbytes": 1925600,
+        "diffbytes": 2203
+      },
+      "fixed": {
+        "bytes": 1925600,
+        "refbytes": 1925600,
+        "diffbytes": 241
+      },
+      "strict_equal": true
+    },
+    {
+      "name": "fox.profile2.8bpc.yuv422.odd-width.odd-height.avif",
+      "references_agree": true,
+      "main": {
+        "bytes": 1923193,
+        "refbytes": 1923193,
+        "diffbytes": 17009
+      },
+      "fixed": {
+        "bytes": 1923193,
+        "refbytes": 1923193,
+        "diffbytes": 1684
+      },
+      "strict_equal": true
+    },
+    {
+      "name": "kimono.crop.avif",
+      "references_agree": true,
+      "main": {
+        "bytes": 1108992,
+        "refbytes": 1108992,
+        "diffbytes": 162092
+      },
+      "fixed": {
+        "bytes": 1108992,
+        "refbytes": 1108992,
+        "diffbytes": 1848
+      },
+      "strict_equal": true
+    },
+    {
+      "name": "kimono.mirror-horizontal.avif",
+      "references_agree": true,
+      "main": {
+        "bytes": 1108992,
+        "refbytes": 1108992,
+        "diffbytes": 131125
+      },
+      "fixed": {
+        "bytes": 1108992,
+        "refbytes": 1108992,
+        "diffbytes": 162
+      },
+      "strict_equal": true
+    },
+    {
+      "name": "kimono.mirror-vertical.rotate270.avif",
+      "references_agree": true,
+      "main": {
+        "bytes": 1108992,
+        "refbytes": 1108992,
+        "diffbytes": 126197
+      },
+      "fixed": {
+        "bytes": 1108992,
+        "refbytes": 1108992,
+        "diffbytes": 378
+      },
+      "strict_equal": true
+    },
+    {
+      "name": "kimono.rotate270.avif",
+      "references_agree": true,
+      "main": {
+        "bytes": 1108992,
+        "refbytes": 1108992,
+        "diffbytes": 72911
+      },
+      "fixed": {
+        "bytes": 1108992,
+        "refbytes": 1108992,
+        "diffbytes": 1086
+      },
+      "strict_equal": true
+    },
+    {
+      "name": "kimono.rotate90.avif",
+      "references_agree": true,
+      "main": {
+        "bytes": 1108992,
+        "refbytes": 1108992,
+        "diffbytes": 96237
+      },
+      "fixed": {
+        "bytes": 1108992,
+        "refbytes": 1108992,
+        "diffbytes": 637
+      },
+      "strict_equal": true
+    },
+    {
+      "name": "plum-blossom-small.profile1.8bpc.yuv444.alpha-full.avif",
+      "references_agree": true,
+      "main": {
+        "bytes": 65536,
+        "refbytes": 49152,
+        "diffbytes": 0
+      },
+      "fixed": {
+        "bytes": 65536,
+        "refbytes": 49152,
+        "diffbytes": 0
+      },
+      "strict_equal": true
+    },
+    {
+      "name": "sofa_grid1x5_420.avif",
+      "references_agree": false,
+      "main": {
+        "unsupported": "primary item is not an elementary AV1 frame (grid)"
+      },
+      "fixed": {
+        "unsupported": "primary item is not an elementary AV1 frame (grid)"
+      }
+    }
+  ],
+  "synthetic_default_filters": [
+    {
+      "name": "gray-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "gray-lossy.avif",
+      "baseline": 2387,
+      "fixed": 2387,
+      "changed": 0
+    },
+    {
+      "name": "gray10le-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "gray10le-lossy.avif",
+      "baseline": 4154,
+      "fixed": 4135,
+      "changed": 26
+    },
+    {
+      "name": "gray12le-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "gray12le-lossy.avif",
+      "baseline": 13722,
+      "fixed": 13723,
+      "changed": 169
+    },
+    {
+      "name": "yuv420p-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "yuv420p-lossy.avif",
+      "baseline": 1645,
+      "fixed": 1632,
+      "changed": 13
+    },
+    {
+      "name": "yuv420p10le-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "yuv420p10le-lossy.avif",
+      "baseline": 3849,
+      "fixed": 3776,
+      "changed": 92
+    },
+    {
+      "name": "yuv420p12le-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "yuv420p12le-lossy.avif",
+      "baseline": 4800,
+      "fixed": 4710,
+      "changed": 96
+    },
+    {
+      "name": "yuv422p-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "yuv422p-lossy.avif",
+      "baseline": 872,
+      "fixed": 872,
+      "changed": 0
+    },
+    {
+      "name": "yuv422p10le-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "yuv422p10le-lossy.avif",
+      "baseline": 2690,
+      "fixed": 2606,
+      "changed": 96
+    },
+    {
+      "name": "yuv422p12le-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "yuv422p12le-lossy.avif",
+      "baseline": 3259,
+      "fixed": 2957,
+      "changed": 315
+    },
+    {
+      "name": "yuv444p-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "yuv444p-lossy.avif",
+      "baseline": 12,
+      "fixed": 12,
+      "changed": 0
+    },
+    {
+      "name": "yuv444p10le-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "yuv444p10le-lossy.avif",
+      "baseline": 163,
+      "fixed": 52,
+      "changed": 115
+    },
+    {
+      "name": "yuv444p12le-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "yuv444p12le-lossy.avif",
+      "baseline": 461,
+      "fixed": 96,
+      "changed": 365
+    }
+  ],
+  "synthetic_cdef_restoration_disabled": [
+    {
+      "name": "gray-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "gray-lossy.avif",
+      "baseline": 21,
+      "fixed": 0,
+      "changed": 21
+    },
+    {
+      "name": "gray10le-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "gray10le-lossy.avif",
+      "baseline": 38,
+      "fixed": 0,
+      "changed": 38
+    },
+    {
+      "name": "gray12le-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "gray12le-lossy.avif",
+      "baseline": 86,
+      "fixed": 4,
+      "changed": 84
+    },
+    {
+      "name": "yuv420p-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "yuv420p-lossy.avif",
+      "baseline": 31,
+      "fixed": 0,
+      "changed": 31
+    },
+    {
+      "name": "yuv420p10le-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "yuv420p10le-lossy.avif",
+      "baseline": 131,
+      "fixed": 3,
+      "changed": 131
+    },
+    {
+      "name": "yuv420p12le-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "yuv420p12le-lossy.avif",
+      "baseline": 164,
+      "fixed": 4,
+      "changed": 164
+    },
+    {
+      "name": "yuv422p-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "yuv422p-lossy.avif",
+      "baseline": 26,
+      "fixed": 0,
+      "changed": 26
+    },
+    {
+      "name": "yuv422p10le-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "yuv422p10le-lossy.avif",
+      "baseline": 113,
+      "fixed": 3,
+      "changed": 113
+    },
+    {
+      "name": "yuv422p12le-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "yuv422p12le-lossy.avif",
+      "baseline": 243,
+      "fixed": 10,
+      "changed": 245
+    },
+    {
+      "name": "yuv444p-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "yuv444p-lossy.avif",
+      "baseline": 84,
+      "fixed": 0,
+      "changed": 84
+    },
+    {
+      "name": "yuv444p10le-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "yuv444p10le-lossy.avif",
+      "baseline": 129,
+      "fixed": 5,
+      "changed": 128
+    },
+    {
+      "name": "yuv444p12le-lossless.avif",
+      "baseline": 0,
+      "fixed": 0,
+      "changed": 0
+    },
+    {
+      "name": "yuv444p12le-lossy.avif",
+      "baseline": 346,
+      "fixed": 10,
+      "changed": 345
+    }
+  ]
+}
