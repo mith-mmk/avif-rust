@@ -10,6 +10,11 @@
 decoder. It provides direct RGBA helpers, access to decoded AV1 source planes,
 and a callback interface compatible with [`wml2`](https://github.com/mith-mmk/wml2-on-rust).
 
+Version 0.2.0 updates the public `parse_info` / `decode` reader boundary to
+`bin-rs` 0.0.11. Callers passing readers must update their direct bin-rs
+dependency too; 0.0.10 reader types are not interchangeable. Codec behavior,
+optional encoder/shared-buffer versions and Rust 1.88 MSRV are unchanged.
+
 Version 0.1.2 fixes native still-image and AVIS reconstruction, coded-edge
 filtering and shared metadata allocation; see [the changelog](CHANGELOG.md).
 The bundled 60-frame AVIS sequence matches every independent native sample.
@@ -62,14 +67,14 @@ and arithmetic-reader overread are rejected as bitstream errors.
 ## Installation
 
 ```console
-cargo add avif-rust@0.1.2
+cargo add avif-rust@0.2.0
 ```
 
 Or add the registry dependency manually:
 
 ```toml
 [dependencies]
-avif-rust = "0.1.2"
+avif-rust = "0.2.0"
 ```
 
 The minimum supported Rust version (MSRV) is Rust 1.88.
