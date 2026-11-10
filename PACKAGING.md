@@ -1,5 +1,20 @@
 # Distribution checks
 
+## Decoder 0.2.0
+
+This decoder-only release updates the public reader dependency to bin-rs 0.0.11.
+The 0.2 boundary is intentional: bin-rs 0.0.10 and 0.0.11 expose distinct public
+trait identities. Do not release this change as 0.1.3. Encoder 0.1.2 and shared
+buffer 0.1.0 already exist and must not be republished for this update.
+
+Apply the clean-checkout, registry archive, consumer and post-upload verification
+steps below to decoder 0.2.0. Check the normalized manifest and lockfile use
+registry bin-rs 0.0.11, avif-image-buffer 0.1.0 and optional avifenc-rust 0.1.2.
+Run `reader_boundary` against the extracted package as well as the checkout;
+retain native/AVIS, encode/shared/transcode, Rust 1.88 MSRV and WASM checks.
+The historical local-chain script below is not a substitute for registry checks.
+No codec source or existing conformance limitation changes in this release.
+
 ## Decoder 0.1.2
 
 Publish the verified `avifenc-rust` 0.1.2 first, then `avif-rust` 0.1.2.
