@@ -2,6 +2,15 @@
 
 All notable changes to this crate are documented in this file.
 
+## 0.3.0 - 2026-11-11
+
+- Require bin-rs 0.1.0 for the public `parse_info` and `decode` reader APIs.
+  This changes their public `BinaryReader` trait identity: consumers passing
+  readers must update their direct bin-rs dependency from 0.0.11 to 0.1.0.
+  The 0.3 boundary keeps existing `^0.2` consumers on the compatible 0.2 line.
+- No codec, pixel-output, feature-default or MSRV change. Rust 1.88 remains
+  supported; optional avifenc-rust stays at 0.1.2 and avif-image-buffer at 0.1.0.
+
 ## 0.2.0 - 2026-11-10
 
 - Require bin-rs 0.0.11 for the public `parse_info` and `decode` reader APIs.

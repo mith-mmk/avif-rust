@@ -1,5 +1,21 @@
 # Distribution checks
 
+## Decoder 0.3.0
+
+This decoder-only release updates the public reader dependency to bin-rs 0.1.0.
+The 0.3 boundary is intentional: bin-rs 0.0.11 and 0.1.0 expose distinct public
+trait identities. Callers passing readers to `parse_info` or `decode` must
+update their direct bin-rs dependency too. Encoder 0.1.2 and shared buffer 0.1.0
+remain unchanged, including their development Git pins.
+
+Publish bin-rs 0.1.0 first. Then apply the clean-checkout, registry archive,
+consumer and post-upload verification steps below to decoder 0.3.0. Verify
+that the normalized manifest and lockfile use registry bin-rs 0.1.0,
+avif-image-buffer 0.1.0 and optional avifenc-rust 0.1.2, without path patches.
+Run `reader_boundary` against both checkout and extracted package, and retain
+native/AVIS, encode/shared/transcode, Rust 1.88 MSRV and WASM checks. No codec
+source or existing conformance limitation changes in this release.
+
 ## Decoder 0.2.0
 
 This decoder-only release updates the public reader dependency to bin-rs 0.0.11.
