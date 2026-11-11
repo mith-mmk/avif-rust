@@ -11,8 +11,8 @@
 アクセス、[`wml2`](https://github.com/mith-mmk/wml2-on-rust)互換のcallback
 インターフェースを提供します。
 
-0.2.0では公開API `parse_info` / `decode` のreaderを `bin-rs` 0.0.11に更新しました。
-readerを渡す側もbin-rs依存を0.0.11に更新してください。0.0.10のreader型とは互換性がありません。
+0.3.0では公開API `parse_info` / `decode` のreaderを `bin-rs` 0.1.0に更新しました。
+readerを渡す側もbin-rs依存を0.1.0に更新してください。0.0.11のreader型とは互換性がありません。
 codec動作、optional encoder/shared-bufferの版、MSRV Rust 1.88は変更していません。
 
 0.1.2ではnative静止画とAVISの復号、画像端のフィルター、共有metadataの確保を修正しました。
@@ -65,14 +65,14 @@ trailing-one欠落、非ゼロpadding、切り詰め、算術readerの過剰read
 ## インストール
 
 ```console
-cargo add avif-rust@0.2.0
+cargo add avif-rust@0.3.0
 ```
 
 または`Cargo.toml`へ直接追加します。
 
 ```toml
 [dependencies]
-avif-rust = "0.2.0"
+avif-rust = "0.3.0"
 ```
 
 最小サポートRustバージョン（MSRV）はRust 1.88です。
